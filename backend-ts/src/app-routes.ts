@@ -249,6 +249,8 @@ export interface RouteDeps {
   askUserQuestionsRegistry: AskUserQuestionsRegistry;
   /** 正在执行的工具调用（内存态），管理后台会话详情补进行中卡片 */
   inFlightToolRegistry: InFlightToolRegistry;
+  /** LOCAL 设备在线判定（技术方案 2026-11-05 §4.1-7）：会话 VO 的 targetDeviceOnline 快照用。 */
+  hasDeviceConnection?: (userId: number, deviceId: string) => boolean;
   treeSignalPublisher: SessionTreeSignalPublisher;
   workspaceBrowse: WorkspaceBrowseService;
   terminalManager: TerminalManager;
@@ -497,6 +499,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       askUserQuestionsRegistry,
       treeSignalPublisher,
       existsSessionUnderWorkspace: (userId: number, path: string) => sessionRepo.existsSessionUnderWorkspace(userId, path),
+      hasDeviceConnection: deps.hasDeviceConnection,
     });
     const sessionShareService = new SessionShareService(
       new MysqlSessionShareRepository(db),

@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { isCurrentChatSession, isAbsoluteFileRef, resolveFileRefPaths, useChat } from './useChat'
 import { api } from '../api'
+import { ElMessage } from 'element-plus'
 import { useSessionStore } from '../stores/session'
 
 const ws = vi.hoisted(() => ({
@@ -455,5 +456,39 @@ describe('resolveFileRefPaths 绝对路径跳过（含 Windows 盘符）', () =>
     // 形似盘符但冒号后无斜杠（drive-relative 路径）：按相对路径处理
     expect(isAbsoluteFileRef('Z:x')).toBe(false)
     expect(isAbsoluteFileRef('C:x')).toBe(false)
+  })
+})
+
+// 技术方案 2026-11-05 §4.1-3：浏览器不能新建 LOCAL 任务，但可接管已有 LOCAL 会话对话
+describe('LOCAL 模式浏览器边界', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    ws.connect.mockResolvedValue(undefined)
+    vi.mocked(api.get).mockResolvedValue({ data: [] } as never)
+  })
+
+  it('浏览器新建 LOCAL 任务被拦截（不建连、不建会话）', async () => {
+    const chat = useChat(ref('1'), ref('LOCAL'))
+    await chat.sendMessage('hi')
+
+    expect(ElMessage.error).toHaveBeenCalledWith(expect.stringContaining('不能新建本地任务'))
+    expect(ws.connect).not.toHaveBeenCalled()
+  })
+
+  it('浏览器继续已有 LOCAL 会话时放行到发送链路', async () => {
+    const chat = useChat(ref('1'), ref('LOCAL'))
+    vi.mocked(api.get).mockImplementation((url: string) => url.endsWith('/messages')
+      ? Promise.resolve({ data: { messages: [], hasMore: false } } as never)
+      : Promise.resolve({ data: [] } as never))
+    await chat.restoreSession('9', 'LOCAL')
+    expect(chat.sessionId.value).toBe('9')
+
+    // 用连接失败截断发送链路：只要 connect 被调用，即说明浏览器续聊 LOCAL 未被拦截
+    ws.connect.mockRejectedValueOnce(new Error('stop here'))
+    await chat.sendMessage('hi')
+
+    expect(ElMessage.error).not.toHaveBeenCalledWith(expect.stringContaining('不能新建本地任务'))
+    expect(ws.connect).toHaveBeenCalled()
   })
 })

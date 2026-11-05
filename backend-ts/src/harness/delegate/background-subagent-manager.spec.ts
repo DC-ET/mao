@@ -399,7 +399,7 @@ describe('BackgroundSubagentManager.spawn child title', () => {
         }),
       },
       visibilityService: { notifySubagentCreated: vi.fn() },
-      localToolSessionRegistry: { setUserForSession: vi.fn(), removeSession: vi.fn() },
+      localToolSessionRegistry: { setTargetForSession: vi.fn(), removeSession: vi.fn() },
       agentLoop: () => ({ registerCancelFlag: () => ({ get: () => false, set: () => undefined }) }),
       agentExecutor: { submit: vi.fn() },
       subagentExecutionMapper: {},

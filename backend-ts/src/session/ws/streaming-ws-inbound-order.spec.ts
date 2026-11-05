@@ -65,7 +65,7 @@ describe('StreamingWsHandler auth-window serialization', () => {
     releaseAuth();
     await auth;
 
-    expect(register).toHaveBeenCalledWith(socket, 7, 'electron', expect.anything(), true);
+    expect(register).toHaveBeenCalledWith(socket, 7, 'electron', expect.anything(), true, null);
     expect(subscribe).toHaveBeenCalledWith(7, 11);
     expect(closeConnection).not.toHaveBeenCalled();
     expect(socket.close).not.toHaveBeenCalled();

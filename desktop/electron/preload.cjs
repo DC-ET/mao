@@ -174,6 +174,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   desktopBadge: (count) => ipcRenderer.invoke('desktop-badge', { count }),
   desktopPrefsGet: () => ipcRenderer.invoke('desktop-prefs-get'),
   desktopPrefsSet: (patch) => ipcRenderer.invoke('desktop-prefs-set', patch),
+  getDeviceInfo: () => ipcRenderer.invoke('device-info-get'),
   desktopShortcutSet: (accel) => ipcRenderer.invoke('desktop-shortcut-set', accel),
   onDesktopShortcutFailed: (callback) => onIpc('desktop-shortcut-failed', callback),
   onTrayNewTask: (callback) => onIpc('tray-new-task', callback),

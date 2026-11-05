@@ -11,8 +11,10 @@ const {
   normalizeDesktopPrefs,
   readDesktopPrefs,
   writeDesktopPrefs,
+  ensureDesktopDeviceId,
   clearDesktopPrefsCache,
   DEFAULT_GLOBAL_SHORTCUT,
+  DEVICE_ID_PATTERN,
 } = require('./desktopPrefs.cjs')
 
 function tempUserData(t) {
@@ -146,4 +148,45 @@ test('写盘后缓存生效：同 dir 二次读盘不重复解析文件（clearD
   writeDesktopPrefs(dir, { closeToTray: 'quit' })
   fs.writeFileSync(getDesktopPrefsPath(dir), JSON.stringify({ closeToTray: 'tray' }))
   assert.equal(readDesktopPrefs(dir, { force: true }).closeToTray, 'tray')
+})
+
+test('设备 ID：ensure 时本机生成并落盘，后续读取稳定不变', (t) => {
+  const dir = tempUserData(t)
+  // 读路径不落盘：仅查看偏好不应凭空创建文件
+  const readOnly = readDesktopPrefs(dir)
+  assert.match(readOnly.deviceId, DEVICE_ID_PATTERN)
+  assert.equal(fs.existsSync(getDesktopPrefsPath(dir)), false)
+
+  const id = ensureDesktopDeviceId(dir)
+  assert.match(id, DEVICE_ID_PATTERN)
+  const persisted = JSON.parse(fs.readFileSync(getDesktopPrefsPath(dir), 'utf8'))
+  assert.equal(persisted.deviceId, id)
+  clearDesktopPrefsCache()
+  assert.equal(readDesktopPrefs(dir).deviceId, id, '设备 ID 必须跨读取稳定')
+  assert.equal(ensureDesktopDeviceId(dir), id, '重复 ensure 不改写设备 ID')
+})
+
+test('设备 ID：patch 不可改写（desktopPrefsSet 无法改绑设备）', (t) => {
+  const dir = tempUserData(t)
+  const first = readDesktopPrefs(dir)
+  const written = writeDesktopPrefs(dir, { deviceId: 'attacker-dev', closeToTray: 'quit' })
+  assert.equal(written.prefs.deviceId, first.deviceId)
+  assert.equal(written.prefs.closeToTray, 'quit')
+  const persisted = JSON.parse(fs.readFileSync(getDesktopPrefsPath(dir), 'utf8'))
+  assert.equal(persisted.deviceId, first.deviceId)
+})
+
+test('设备 ID：旧文件缺字段 / 脏值 → 重新生成本机 ID，其余字段照常读入', (t) => {
+  const dir = tempUserData(t)
+  fs.writeFileSync(getDesktopPrefsPath(dir), JSON.stringify({ deviceId: 'bad id!', closeToTray: 'quit' }))
+  const prefs = readDesktopPrefs(dir)
+  assert.match(prefs.deviceId, DEVICE_ID_PATTERN)
+  assert.notEqual(prefs.deviceId, 'bad id!')
+  assert.equal(prefs.closeToTray, 'quit')
+  // ensure 后脏值被替换为新 ID 落盘
+  const id = ensureDesktopDeviceId(dir)
+  assert.match(id, DEVICE_ID_PATTERN)
+  const persisted = JSON.parse(fs.readFileSync(getDesktopPrefsPath(dir), 'utf8'))
+  assert.equal(persisted.deviceId, id)
+  assert.equal(persisted.closeToTray, 'quit')
 })

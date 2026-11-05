@@ -67,6 +67,7 @@ function makeService() {
     listDescendantSideTasks: vi.fn(async () => []),
     listDescendantSideTasksByRoots: vi.fn(async () => new Map<number, Session[]>()),
     insert: vi.fn(async (s: Session) => { s.id = 99; return 99; }),
+    claimTargetDevice: vi.fn(async () => 1),
     lockActiveSessionById: vi.fn(),
     logicalDelete: vi.fn(),
     transaction: vi.fn(async (fn: (db: unknown) => Promise<unknown>) => {
@@ -108,7 +109,7 @@ function makeService() {
     fileChangeRepo,
     agentLookup,
     {} as PathSandbox,
-    {} as EnvironmentInfoProvider,
+    { detect: vi.fn(async () => ({ isGit: false, platform: 'linux', shell: '/bin/bash', osVersion: 'Linux' })) } as unknown as EnvironmentInfoProvider,
     {} as UserCommandLookup,
     {} as GitOperationService,
     sessionCompactionService,
@@ -208,6 +209,74 @@ describe('SessionService archive', () => {
     );
     expect(cli.source).toBe('cli');
     expect(sessionRepo.insert).toHaveBeenLastCalledWith(expect.objectContaining({ source: 'cli' }));
+  });
+
+  // 技术方案 2026-11-05 D5/D14：LOCAL 创建即绑定执行端设备；CLOUD 忽略；空白归 null（不可改绑的前提）。
+  it('createSession 仅 LOCAL 落目标设备两列（CLOUD 忽略、空白归 null）', async () => {
+    const { service, sessionRepo, agentLookup } = makeService();
+    const lookup = agentLookup as unknown as { findById: (id: number) => Promise<{ id: number; enabled: number }> };
+    lookup.findById = vi.fn(async () => ({ id: 5, enabled: 1 }));
+
+    const local = await service.createSession(
+      7, 5, 't', 'LOCAL', '/tmp/ws', null, null, 'darwin', null, null, null, null, null, null, null, 'desktop', ' dev-a ', ' Mac A ',
+    );
+    expect(local.targetDeviceId).toBe('dev-a');
+    expect(local.targetDeviceName).toBe('Mac A');
+    expect(sessionRepo.insert).toHaveBeenLastCalledWith(expect.objectContaining({
+      targetDeviceId: 'dev-a', targetDeviceName: 'Mac A',
+    }));
+
+    // CLOUD：传了也不落库（服务端执行，设备绑定无意义）
+    const cloud = await service.createSession(
+      7, 5, 't', 'CLOUD', '/tmp/ws', null, null, null, null, null, null, null, null, null, null, 'web', 'dev-a', 'Mac A',
+    );
+    expect(cloud.targetDeviceId).toBeNull();
+    expect(cloud.targetDeviceName).toBeNull();
+    expect(sessionRepo.insert).toHaveBeenLastCalledWith(expect.objectContaining({
+      targetDeviceId: null, targetDeviceName: null,
+    }));
+
+    // 空白：视为未提供
+    const blank = await service.createSession(
+      7, 5, 't', 'LOCAL', '/tmp/ws', null, null, null, null, null, null, null, null, null, null, 'desktop', '   ', '   ',
+    );
+    expect(blank.targetDeviceId).toBeNull();
+    expect(blank.targetDeviceName).toBeNull();
+  });
+
+  // 历史 LOCAL 会话惰性认领（D15）：SQL 条件更新只在 NULL 时生效，已认领时读回现值不覆盖。
+  it('claimTargetDevice 只补空绑定；已被认领时读回现值；空设备 ID 直接返回 null', async () => {
+    const { service, sessionRepo } = makeService();
+    vi.mocked(sessionRepo.claimTargetDevice).mockResolvedValue(0);
+    vi.mocked(sessionRepo.findById).mockResolvedValue({
+      id: 20, userId: 7, targetDeviceId: 'dev-b', targetDeviceName: 'Win B',
+    } as never);
+
+    await expect(service.claimTargetDevice(20, 'dev-a', 'Mac A')).resolves.toEqual({
+      targetDeviceId: 'dev-b', targetDeviceName: 'Win B',
+    });
+    expect(sessionRepo.claimTargetDevice).toHaveBeenCalledWith(20, 'dev-a', 'Mac A');
+
+    vi.mocked(sessionRepo.claimTargetDevice).mockClear();
+    await expect(service.claimTargetDevice(20, '', 'Mac A')).resolves.toBeNull();
+    expect(sessionRepo.claimTargetDevice).not.toHaveBeenCalled();
+  });
+
+  it('promoteSideTaskToMainSession 继承目标设备绑定', async () => {
+    const { service, sessionRepo, txDb } = makeService();
+    vi.mocked(sessionRepo.findById).mockResolvedValue({
+      id: 20, userId: 7, title: '本地边路', sessionType: 'SIDE_TASK', phase: 'COMPLETED',
+      executionMode: 'LOCAL', workspace: '/tmp/w', permissionLevel: 'READ_WRITE', source: 'desktop',
+      targetDeviceId: 'dev-a', targetDeviceName: 'Mac A',
+    });
+    vi.mocked(sessionRepo.list).mockResolvedValue([]);
+
+    const promoted = await service.promoteSideTaskToMainSession(20, 7);
+    expect(promoted.targetDeviceId).toBe('dev-a');
+    expect(promoted.targetDeviceName).toBe('Mac A');
+    expect(txDb.insert).toHaveBeenCalledWith('session', expect.objectContaining({
+      targetDeviceId: 'dev-a', targetDeviceName: 'Mac A',
+    }));
   });
 
   it('derivesProjectKeyWhenPromotingLegacySideTaskWithoutProjectKey', async () => {

@@ -132,6 +132,8 @@
         :cloud-project-key="parentCloudProjectKey"
         :project-key="parentProjectKey"
         :execution-mode="parentExecutionMode"
+        :target-device-name="sideTargetDeviceName"
+        :target-device-online="sideTargetDeviceOnline"
         :model-id="currentModelId"
         :model-supports-vision="currentModelSupportsVision"
         :permission-level="sidePermissionLevel"
@@ -235,7 +237,13 @@ const sourceLabelText = computed(() =>
 // 来源为边路会话时补拉其 modelId / permissionLevel 作占位缺省：
 // 边路任务这两项可改（PATCH），与主会话可能不一致，缺省必须跟随来源会话
 // 而非主会话——否则 fork 出的新任务会静默拿到主会话的模型 / 权限。
-const sourceSessionMeta = ref<{ modelId?: number; permissionLevel?: string } | null>(null)
+const sourceSessionMeta = ref<{
+  modelId?: number
+  permissionLevel?: string
+  /** 来源会话的执行端设备（占位期用它预展示边路任务继承的绑定，技术方案 2026-11-05） */
+  targetDeviceName?: string | null
+  targetDeviceOnline?: boolean | null
+} | null>(null)
 const fetchedSourceMetaId = ref<number | null>(null)
 
 async function fetchSourceSessionMeta(sourceId: number) {
@@ -246,7 +254,12 @@ async function fetchSourceSessionMeta(sourceId: number) {
     // 补拉返回前来源可能已被覆写/清除（占位复用的竞态窗口）：迟到响应不得覆盖最新选择
     if (fetchedSourceMetaId.value !== sourceId) return
     if (data) {
-      sourceSessionMeta.value = { modelId: data.modelId, permissionLevel: data.permissionLevel }
+      sourceSessionMeta.value = {
+        modelId: data.modelId,
+        permissionLevel: data.permissionLevel,
+        targetDeviceName: data.targetDeviceName ?? null,
+        targetDeviceOnline: data.targetDeviceOnline ?? null,
+      }
     }
   } catch {
     if (fetchedSourceMetaId.value !== sourceId) return
@@ -278,10 +291,26 @@ const parentCloudProjectKey = computed(() => {
   const session = parentSession.value
   return session ? cloudProjectKeyForNewTask(session) || '' : ''
 })
-
 // Real session ID: start with props if positive, otherwise 0
 const realSessionId = ref(props.sideSessionId > 0 ? props.sideSessionId : 0)
 const hasRealSession = computed(() => realSessionId.value > 0)
+
+/** 真实边路会话的设备绑定（loadSideSessionMeta 从会话详情回填） */
+const sideSessionDevice = ref<{ name: string | null; online: boolean | null } | null>(null)
+
+/**
+ * 边路任务目标设备（技术方案 2026-11-05 §4.1-4）：边路会话继承父/来源会话绑定。
+ * 真实会话读会话详情；占位期（会话尚未创建）用来源会话、回退主会话预展示，
+ * 避免输入区把已绑定设备的本地边路任务误显示为「未登记执行端」。
+ */
+const sideTargetDeviceName = computed<string | null>(() => {
+  if (hasRealSession.value) return sideSessionDevice.value?.name ?? null
+  return sourceSessionMeta.value?.targetDeviceName ?? parentSession.value?.targetDeviceName ?? null
+})
+const sideTargetDeviceOnline = computed<boolean | null>(() => {
+  if (hasRealSession.value) return sideSessionDevice.value?.online ?? null
+  return sourceSessionMeta.value?.targetDeviceOnline ?? parentSession.value?.targetDeviceOnline ?? null
+})
 
 // 队列操作与主会话共用同一实现；差异只有会话 id 来源（占位态还没有真实会话）
 const { fetchQueue, insertQueueMessage, deleteQueueMessage, reorderQueueMessage, handleQueueEdit } = useChatQueue(
@@ -588,6 +617,11 @@ async function loadSideSessionMeta() {
     const { data } = await api.get(`/sessions/${sid}`)
     // 同一 Tab 可能在请求返回前被指派给另一个边路会话。迟到响应不得把来源会话的 phase 写进去。
     if (realSessionId.value !== sid) return
+    // 绑定设备快照（技术方案 2026-11-05）：边路会话继承来源会话的 targetDeviceId/Name
+    sideSessionDevice.value = {
+      name: data?.targetDeviceName ?? null,
+      online: data?.targetDeviceOnline ?? null,
+    }
     if (data?.modelId != null) {
       sideModelId.value = sideModelId.value ?? data.modelId
     }

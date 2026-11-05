@@ -19,6 +19,7 @@ import { LocalExecutor } from '../local/executor';
 import { addTrustedWorkspace, isWorkspaceTrusted, workspaceExists } from '../local/trust';
 import { collectLocalUnsyncedSkills, readAgentsMd } from '../local/local-skills';
 import { buildOsVersion, detectShell, isGitWorkspace } from '../local/paths';
+import { resolveDeviceIdentity } from '../local/device-identity';
 import type { ApprovalPolicy } from '../local/approval';
 import { formatHistorySummary, formatSessionBanner, formatWelcomeHints } from '../ui/welcome';
 import type { InkTuiRenderer } from '../tui/ink-renderer';
@@ -329,6 +330,10 @@ async function resolveTargetSession(ctx: ChatContext): Promise<SessionVO> {
     req.shell = detectShell();
     req.osVersion = buildOsVersion();
     req.isGit = isGitWorkspace(workspace);
+    // LOCAL 创建即绑定本机执行端（技术方案 2026-11-05 D5）：CLI 进程与 WS 连接同源设备。
+    const device = resolveDeviceIdentity();
+    req.targetDeviceId = device.id;
+    req.targetDeviceName = device.name;
   }
   const session = await rest.createSession(req);
   return session;

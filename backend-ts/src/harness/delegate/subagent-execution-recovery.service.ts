@@ -76,8 +76,8 @@ export class SubagentExecutionRecoveryService {
       context.cancelFlag = cancel;
       if (child.executionMode?.toUpperCase() === 'LOCAL') {
         if (parent.userId != null) {
-          this.localRegistry.setUserForSession(parent.id!, parent.userId);
-          this.localRegistry.setUserForSession(child.id!, parent.userId);
+          this.localRegistry.setTargetForSession(parent.id!, parent.userId, parent.targetDeviceId ?? null);
+          this.localRegistry.setTargetForSession(child.id!, parent.userId, child.targetDeviceId ?? parent.targetDeviceId ?? null);
         }
         const connected = await this.waitForLocal(child.id!, cancel);
         if (!connected) throw new Error('LOCAL 客户端未在恢复等待期内连接');

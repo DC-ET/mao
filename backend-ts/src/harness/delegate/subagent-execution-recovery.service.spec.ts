@@ -20,7 +20,7 @@ function harness(claimed: boolean) {
   const buildSubContext = vi.fn(async () => ({ currentRound: 0 }));
   const agentLoop = { registerCancelFlag: vi.fn(() => ({ get: () => false })), removeCancelFlag: vi.fn() };
   const visibilityService = { executeVisible: vi.fn(), finishSubagent: vi.fn(async () => undefined) };
-  const localRegistry = { isConnected: vi.fn(async () => true), setUserForSession: vi.fn(), removeSession: vi.fn() };
+  const localRegistry = { isConnected: vi.fn(async () => true), setTargetForSession: vi.fn(), removeSession: vi.fn() };
   const service = new SubagentExecutionRecoveryService(
     executionMapper as never, sessionMapper as never, sessionService as never,
     compactionService as never, definitionRegistry as never, buildSubContext as never,
@@ -73,7 +73,7 @@ describe('SubagentExecutionRecoveryService', () => {
       vi.fn(async () => ({ currentRound: 0 })) as never,
       { registerCancelFlag: vi.fn(() => ({ get: () => false })), removeCancelFlag: vi.fn() } as never,
       visibilityService as never,
-      { isConnected: vi.fn(async () => false), setUserForSession: vi.fn(), removeSession: vi.fn() } as never,
+      { isConnected: vi.fn(async () => false), setTargetForSession: vi.fn(), removeSession: vi.fn() } as never,
       0,
     );
     await service.recover(execution as never);

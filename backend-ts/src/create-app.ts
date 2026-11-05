@@ -953,6 +953,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     dingtalk,
     notifPref,
     wsHandler, terminalWsHandler,
+    hasDeviceConnection: (userId: number, deviceId: string) => wsRegistry.hasDeviceConnection(userId, deviceId),
   });
 
   const { closeApp } = assembleLifecycle({

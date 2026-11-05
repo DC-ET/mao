@@ -95,6 +95,8 @@
       :cloud-projects="cloudProjects"
       :cloud-indicator-label="cloudIndicatorLabel"
       :dir-name="dirName"
+      :target-device-name="targetDeviceName"
+      :target-device-online="targetDeviceOnline"
       :permission-level="permissionLevel"
       :model-id="modelId"
       :waiting-for-save="waitingForSave"
@@ -190,6 +192,10 @@ const props = withDefaults(defineProps<{
   cloudProjectKey?: string
   projectKey?: string
   executionMode?: string
+  /** LOCAL 会话绑定的执行端设备名（技术方案 2026-11-05）：已有会话展示与离线拦截用 */
+  targetDeviceName?: string | null
+  /** 请求时快照：绑定执行端在线态；null / undefined = 未知（未绑定或非 WS 装配），不拦截 */
+  targetDeviceOnline?: boolean | null
   modelId?: number
   modelSupportsVision?: boolean
   placeholder?: string
@@ -218,6 +224,8 @@ const props = withDefaults(defineProps<{
   workspace: '',
   cloudProjectKey: '',
   executionMode: 'CLOUD',
+  targetDeviceName: null,
+  targetDeviceOnline: null,
   placeholder: '告诉 Agent 你想做什么...',
   permissionLevel: 'READ_ONLY',
   isNewTask: false,
@@ -621,7 +629,7 @@ const editor = useEditor({
       } else if (pastePlan.kind === 'convert' && typeof text === 'string') {
         if (props.executionMode === 'LOCAL' && !isElectronClient) {
           // 本地模式不支持附件（与 addPendingFile 同口径）：不拦截粘贴，回落普通插入
-          ElMessage.warning('本地模式不支持文件上传，请使用桌面客户端')
+          ElMessage.warning('浏览器端暂不支持本地任务附件，请在桌面客户端添加')
         } else {
           event.preventDefault()
           void addPendingFile(createPastedTextFile(text, nextPastedTextSeq()))
@@ -1024,7 +1032,7 @@ function addPendingImage(file: File) {
 /** 非图片文件暂存到待发列表，发送时再处理（CLOUD 懒上传 / LOCAL 懒拷贝，无需预先创建会话）。 */
 async function addPendingFile(file: File) {
   if (props.executionMode === 'LOCAL' && !isElectronClient) {
-    ElMessage.warning('本地模式不支持文件上传，请使用桌面客户端')
+    ElMessage.warning('浏览器端暂不支持本地任务附件，请在桌面客户端添加')
     return
   }
   if (pendingFiles.value.length >= MAX_PENDING_ATTACHMENTS) {
@@ -1126,8 +1134,16 @@ function handleDropFiles(e: DragEvent) {
 
 async function handleSend() {
   if (props.disabled || !canSend.value || !editor.value) return
-  if (props.executionMode === 'LOCAL' && !isElectronClient) {
-    ElMessage.error('浏览器端不支持本地模式，请使用桌面客户端创建本地任务')
+  if (props.executionMode === 'LOCAL' && !isElectronClient && props.isNewTask) {
+    // 浏览器不能新建 LOCAL 会话（技术方案 2026-11-05 §4.1-3）：本地任务必须在桌面端创建；
+    // 已有 LOCAL 会话允许浏览器接管对话（执行端仍是绑定设备）。
+    ElMessage.error('浏览器端不能新建本地任务，请在桌面客户端创建；已有本地任务可直接继续对话')
+    return
+  }
+  // 绑定设备离线时前端先拦（技术方案 2026-11-05 §4.1-7，快照语义）；服务端发送校验仍是权威兜底。
+  // 仅限浏览器：桌面端本身就是执行端，快照可能因 WS 重连/刚上线而过期，误拦会挡住自己的正常发送。
+  if (props.executionMode === 'LOCAL' && !props.isNewTask && !isElectronClient && props.targetDeviceOnline === false) {
+    ElMessage.error(`设备「${props.targetDeviceName || '执行端'}」已离线，请在该设备上打开 Mao 后重试`)
     return
   }
 

@@ -306,11 +306,25 @@ export class SessionRepository {
       parentSessionId: session.parentSessionId,
       sessionType: session.sessionType ?? 'NORMAL',
       source: session.source ?? 'web',
+      targetDeviceId: session.targetDeviceId,
+      targetDeviceName: session.targetDeviceName,
       runtimeStatusJson: session.runtimeStatusJson,
       deleted: 0,
     });
     session.id = id;
     return id;
+  }
+
+  /**
+   * 历史 LOCAL 会话惰性认领（技术方案 2026-11-05 D15）：仅当 target_device_id 为空时写入，幂等。
+   * 返回受影响行数：0 = 已被其他连接认领（调用方读回现值，不覆盖）。
+   */
+  async claimTargetDevice(id: number, deviceId: string, deviceName: string | null): Promise<number> {
+    const result = await this.db.execute(
+      'UPDATE `session` SET target_device_id = ?, target_device_name = ? WHERE id = ? AND target_device_id IS NULL AND deleted = 0',
+      [deviceId, deviceName, id],
+    );
+    return Number(result.affectedRows ?? 0);
   }
 
   async updateById(session: Session): Promise<void> {

@@ -21,6 +21,10 @@ export interface Session {
   osVersion?: string | null;
   /** 会话来源（web / embed / desktop / cli / android / 系统来源），派生会话继承父会话。 */
   source?: string | null;
+  /** LOCAL 会话绑定的执行端设备 id（空=未绑定）。 */
+  targetDeviceId?: string | null;
+  /** 执行端设备名快照（hostname）。 */
+  targetDeviceName?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 }

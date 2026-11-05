@@ -48,6 +48,17 @@ export interface DesktopPrefs {
   trayHintShown: boolean
   globalShortcut: string | null
   autoStart: boolean
+  /** 稳定设备 ID（跨会话委托执行端，技术方案 2026-11-05）：本机生成、只读不可改 */
+  deviceId?: string | null
+}
+
+/** 本机设备身份（WS auth 帧 / 建 LOCAL 会话携带，技术方案 2026-11-05 §4.2） */
+export interface DesktopDeviceInfo {
+  id: string
+  /** 默认主机名，服务端仅用于展示 */
+  name: string
+  /** process.platform：darwin / win32 / linux */
+  platform: string
 }
 
 export interface DesktopPrefsGetResult {

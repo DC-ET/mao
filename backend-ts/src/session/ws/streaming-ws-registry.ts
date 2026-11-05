@@ -9,6 +9,16 @@ export interface WsSocket {
   close(code?: number, reason?: string): void;
 }
 
+/**
+ * LOCAL 执行端设备信息：由 electron / cli 在 WS auth 帧自报；缺省或非法视为旧客户端，
+ * 不进入设备索引（其 LOCAL 会话保持用户级广播回退）。
+ */
+export interface WsDeviceInfo {
+  id: string;
+  name: string;
+  platform: string;
+}
+
 export const WS_OPEN = 1;
 
 /** 能作为 LOCAL 模式本机执行端的 WS client 类型。 */
@@ -95,6 +105,10 @@ export class StreamingWsRegistry {
   private readonly thinkingSessions = new Set<number>();
   /** 会话当前在途执行的 executionId：订阅快照据此把新 executionId 告知重连客户端（含崩溃恢复、通道入站等不经 WS handler 提交的执行）。 */
   private readonly sessionExecutions = new Map<number, string>();
+  /** socket.id → 连接自报的设备信息（仅 LOCAL capable 客户端且字段合法时登记）。 */
+  private readonly connectionDevice = new Map<string, WsDeviceInfo>();
+  /** userId → deviceId → 当前执行连接（同设备覆盖为最新一条，避免多窗口/多实例重复执行）。 */
+  private readonly deviceExecutors = new Map<number, Map<string, WsSocket>>();
   /** agent sessionId → 绑定的 embed 连接（页面执行端）。每个会话只绑定一个页面连接。 */
   private readonly embedSessionBindings = new Map<number, WsSocket>();
   /** embed 连接 → 该连接绑定的 agent sessionId 集合（断线清理用）。 */
@@ -132,8 +146,17 @@ export class StreamingWsRegistry {
     return this.outboundQueue.length + this.criticalQueue.length;
   }
 
-  register(session: WsSocket, userId: number, clientType: string | null | undefined, metadata?: WsAuthMetadata, pageEnabled = true): void {
+  register(
+    session: WsSocket,
+    userId: number,
+    clientType: string | null | undefined,
+    metadata?: WsAuthMetadata,
+    pageEnabled = true,
+    device?: WsDeviceInfo | null,
+  ): void {
     if (this.closedConnections.has(session)) return;
+    // 同一 socket 重复 auth / 重连注册：先释放旧设备映射，避免旧 deviceId 指向已失效连接
+    this.releaseDevice(session);
     const previous = this.connectionAuth.get(session.id);
     if (previous?.timer) clearTimeout(previous.timer);
     this.connectionAuth.delete(session.id);
@@ -143,7 +166,8 @@ export class StreamingWsRegistry {
       this.scheduleAuthExpiry(session, auth);
     }
     this.sessionToUser.set(session.id, userId);
-    this.sessionToClientType.set(session.id, this.normalizeClientType(clientType));
+    const normalizedClientType = this.normalizeClientType(clientType);
+    this.sessionToClientType.set(session.id, normalizedClientType);
     this.sessionPageEnabled.set(session.id, pageEnabled);
     let set = this.userSessions.get(userId);
     if (!set) {
@@ -151,7 +175,18 @@ export class StreamingWsRegistry {
       this.userSessions.set(userId, set);
     }
     set.add(session);
-    console.info(`WS stream registered: userId=${userId}, wsSessionId=${session.id}, clientType=${this.sessionToClientType.get(session.id)}, pageEnabled=${pageEnabled}`);
+    // 只有本地执行端（electron / cli）的设备身份参与定向；browser / android / embed 不登记
+    if (device?.id && LOCAL_CAPABLE_CLIENTS.has(normalizedClientType)) {
+      this.connectionDevice.set(session.id, { ...device });
+      let executors = this.deviceExecutors.get(userId);
+      if (!executors) {
+        executors = new Map();
+        this.deviceExecutors.set(userId, executors);
+      }
+      // 同 deviceId 覆盖为最新连接：同机多窗口 / 快速重连时只保留一个执行连接
+      executors.set(device.id, session);
+    }
+    console.info(`WS stream registered: userId=${userId}, wsSessionId=${session.id}, clientType=${normalizedClientType}, pageEnabled=${pageEnabled}, deviceId=${device?.id ?? '-'}`);
   }
 
   unregister(session: WsSocket): void {
@@ -161,6 +196,7 @@ export class StreamingWsRegistry {
     this.connectionAuth.delete(session.id);
     this.sessionPageEnabled.delete(session.id);
     this.releaseEmbedConnection(session);
+    this.releaseDevice(session);
     const userId = this.sessionToUser.get(session.id);
     this.sessionToUser.delete(session.id);
     this.sessionToClientType.delete(session.id);
@@ -174,6 +210,35 @@ export class StreamingWsRegistry {
         }
       }
     }
+  }
+
+  /**
+   * 释放连接上的设备映射：仅当该设备当前执行连接正是本 socket 时才处理，
+   * 避免同一设备的旧连接（被新连接覆盖后）断开时误删新连接。
+   * 执行连接断开时回落同设备的其它存活连接（同机多窗口 / 多个 CLI 进程）——
+   * 否则仍存活的那条不再收到定向投递，设备被整体误判离线。
+   */
+  private releaseDevice(session: WsSocket): void {
+    const device = this.connectionDevice.get(session.id);
+    if (!device) return;
+    this.connectionDevice.delete(session.id);
+    const userId = this.sessionToUser.get(session.id);
+    if (userId == null) return;
+    const executors = this.deviceExecutors.get(userId);
+    if (!executors) return;
+    if (executors.get(device.id) !== session) return;
+    const fallback = [...(this.userSessions.get(userId) ?? [])].find((candidate) =>
+      candidate !== session
+      && this.connectionDevice.get(candidate.id)?.id === device.id
+      && candidate.readyState === WS_OPEN
+      && this.isConnectionAuthorized(candidate),
+    );
+    if (fallback != null) {
+      executors.set(device.id, fallback);
+      return;
+    }
+    executors.delete(device.id);
+    if (executors.size === 0) this.deviceExecutors.delete(userId);
   }
 
   /** 收发入口均检查墙上时间，不依赖到期回调获得调度。 */
@@ -326,6 +391,67 @@ export class StreamingWsRegistry {
 
   sendToLocalClients(userId: number, event: WsEvent): void {
     this.enqueue(userId, event, 'LOCAL_ONLY');
+  }
+
+  /**
+   * 定向投递到指定设备的执行连接（同步直发，不走增量队列）。
+   * 工具指令 / 技能同步这类帧丢失会让服务端等待方悬挂，不能随普通增量帧一起被丢弃。
+   */
+  sendToDevice(userId: number, deviceId: string, event: WsEvent): WsDeliveryResult {
+    const result: WsDeliveryResult = { targetCount: 0, successCount: 0, failureCount: 0 };
+    if (userId == null || !deviceId) return result;
+    const socket = this.deviceExecutors.get(userId)?.get(deviceId);
+    if (!socket) return result;
+    if (socket.readyState !== WS_OPEN || !this.isConnectionAuthorized(socket)) return result;
+    let json: string;
+    try {
+      json = JSON.stringify(event);
+    } catch {
+      return { targetCount: 1, successCount: 0, failureCount: 1 };
+    }
+    result.targetCount = 1;
+    try {
+      socket.send(json);
+      result.successCount = 1;
+    } catch {
+      result.failureCount = 1;
+    }
+    return result;
+  }
+
+  /** 连接自报的设备 id（浏览器 / 旧客户端返回 null）。 */
+  getDeviceId(session: WsSocket): string | null {
+    return this.connectionDevice.get(session.id)?.id ?? null;
+  }
+
+  /** 连接自报的设备信息（浏览器 / 旧客户端返回 null）。 */
+  getDeviceInfo(session: WsSocket): WsDeviceInfo | null {
+    return this.connectionDevice.get(session.id) ?? null;
+  }
+
+  /** 按 deviceId 取设备信息（认领时写设备名快照用）。 */
+  getDevice(userId: number, deviceId: string): WsDeviceInfo | null {
+    const socket = this.deviceExecutors.get(userId)?.get(deviceId);
+    if (!socket) return null;
+    return this.connectionDevice.get(socket.id) ?? null;
+  }
+
+  /** 指定设备当前是否有可用的执行连接。 */
+  hasDeviceConnection(userId: number, deviceId: string | null | undefined): boolean {
+    if (deviceId == null || deviceId === '') return false;
+    const socket = this.deviceExecutors.get(userId)?.get(deviceId);
+    return socket != null && socket.readyState === WS_OPEN && this.isConnectionAuthorized(socket);
+  }
+
+  /** 当前用户在线执行设备的 deviceId 集合（Map key 天然去重；仅统计带设备身份的 local 连接）。 */
+  getOnlineDeviceIds(userId: number): string[] {
+    const executors = this.deviceExecutors.get(userId);
+    if (!executors) return [];
+    const ids: string[] = [];
+    for (const [deviceId, socket] of executors) {
+      if (socket.readyState === WS_OPEN && this.isConnectionAuthorized(socket)) ids.push(deviceId);
+    }
+    return ids;
   }
 
   getClientType(session: WsSocket): string | null {

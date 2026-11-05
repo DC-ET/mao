@@ -54,6 +54,11 @@ export interface Session {
   platform?: string
   shell?: string
   osVersion?: string
+  /** LOCAL 会话绑定的执行端设备（技术方案 2026-11-05）：创建后不可改绑 */
+  targetDeviceId?: string | null
+  targetDeviceName?: string | null
+  /** 请求时快照：绑定的执行端是否在线（未绑定 / 未注入判定时为 null） */
+  targetDeviceOnline?: boolean | null
   contextTokens?: number
   /** 最近一次请求的构成快照，刷新后随会话详情带回 */
   contextManifest?: import('../../types/chat').ContextManifest | null

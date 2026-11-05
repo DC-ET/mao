@@ -1,3 +1,19 @@
+## 0.0.438 (2026-11-05)
+
+### 后端
+- **本地任务跨设备委托：LOCAL 会话创建即绑定执行端设备（不可改绑）**：`session` 表新增 `target_device_id` / `target_device_name`（V186，设备名为主机名快照，存量行为 NULL）。WS 握手 auth 帧支持上报 `device:{id,name,platform}`，注册表按设备登记执行连接；LOCAL 工具调用改定向投递给会话绑定的设备（未绑定的历史会话保持用户级广播回退），技能/MCP 同步帧同样定向。`POST /v1/sessions` 的 LOCAL 分支接受并落库两列（字符集/长度校验，CLOUD 忽略），会话 VO 返回 `targetDeviceId / targetDeviceName / targetDeviceOnline`（在线态为请求时快照，未绑定时缺省）。历史会话惰性认领：WS 入站发送时优先由发起连接的设备认领；无设备身份时仅在「唯一在线且平台一致」的设备上认领；多台同平台设备在线则拒绝并提示到桌面客户端打开一次完成登记；认领使用 `target_device_id IS NULL` 条件更新，已绑定会话永不被覆盖。边路任务 / 子代理 / 边路提升均继承目标设备绑定。
+- **浏览器可继续已有 LOCAL 会话对话**：服务端不再依赖前端拦截——浏览器 WS 连接无设备身份，但已绑定设备的 LOCAL 会话仍会投递到绑定设备执行；浏览器仍不能创建 LOCAL 会话。
+
+### 前端（桌面 / Web）
+- **本地任务展示执行端与在线态**：会话输入区显示「本地任务 · 设备名（在线/离线）」，历史会话未登记执行端时显示「本地任务 · 未登记执行端」；绑定设备离线时发送前拦截并提示。
+- **浏览器边界按「新建 / 继续」区分**：浏览器新建本地任务仍被拦截；打开已有本地任务可继续对话（执行端仍是绑定设备），本地任务附件仍需桌面客户端添加。
+
+### 桌面 Electron
+- **设备身份与 LOCAL 绑定**：首次需要时生成稳定 `deviceId`（UUID，与偏好同存 `userData/desktop-prefs.json`，设置不可改写），新增 `device-info-get` IPC（返回 `{ id, name: hostname, platform }`）；WS 握手首帧 auth 携带设备身份，创建 LOCAL 会话自动带上本机 `targetDeviceId / targetDeviceName`。
+
+### 终端 CLI（mao-agent）
+- **LOCAL 会话绑定本机设备**：`deviceId` 持久化到 `~/.mao/agent-cli/device.json`（缺失/脏值自动重建），WS auth 帧上报 `{ id, name: hostname, platform }`；`--local` 创建会话时携带本机设备绑定。
+
 ## 0.0.437 (2026-11-05)
 
 ### 后端

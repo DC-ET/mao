@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import type { WsEvent } from './event-types';
+import { resolveDeviceIdentity, type DeviceIdentity } from '../local/device-identity';
 import {
   WS_CLIENT_TYPE,
   WS_HEARTBEAT_INTERVAL_MS,
@@ -16,6 +17,8 @@ export interface WsClientOptions {
   baseUrl: string;
   getToken: () => Promise<string | null>;
   client?: string;
+  /** 本机设备身份解析（默认读 ~/.mao/agent-cli/device.json）；测试可注入避免落盘 */
+  getDevice?: () => DeviceIdentity;
   heartbeatIntervalMs?: number;
   silenceTimeoutMs?: number;
   reconnectInitialMs?: number;
@@ -212,8 +215,9 @@ export class WsClient {
         this.reconnectDelay = this.reconnectInitialMs;
         this.consecutiveFailures = 0;
         this.lastServerMessageAt = Date.now();
-        // 鉴权首帧：token 不进握手 URL，连接后第一条消息必须先于任何业务帧（subscribe 等）
-        this.send({ type: 'auth', token, client });
+        // 鉴权首帧：token 不进握手 URL，连接后第一条消息必须先于任何业务帧（subscribe 等）。
+        // 携带本机设备身份（技术方案 2026-11-05 §4.2）：服务端按设备定向投递 LOCAL 工具请求。
+        this.send({ type: 'auth', token, client, device: this.opts.getDevice?.() ?? resolveDeviceIdentity() });
         this.startHeartbeat();
         for (const sid of this.subscribed) {
           this.send({ type: 'subscribe', sessionId: sid });

@@ -35,7 +35,7 @@ function makeHarness() {
   const executor = new CapturingExecutor();
   const registry = {
     send: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(), hasLocalClientConnection: vi.fn(() => false),
-    sendToLocalClients: vi.fn(), clearActiveToolCalls: vi.fn(), setSessionThinking: vi.fn(),
+    sendToLocalClients: vi.fn(), sendToDevice: vi.fn(() => ({ targetCount: 0, successCount: 0, failureCount: 0 })), hasDeviceConnection: vi.fn(() => false), getDeviceId: vi.fn(() => null), getDeviceInfo: vi.fn(() => null), getDevice: vi.fn(() => null), getOnlineDeviceIds: vi.fn(() => []), clearActiveToolCalls: vi.fn(), setSessionThinking: vi.fn(),
     getSessionExecution: vi.fn(() => undefined),
     // WS 入口（handleTextMessage）鉴权与用户解析
     getUserId: vi.fn(() => 7), isConnectionAuthorized: vi.fn(() => true), closeConnection: vi.fn(),
@@ -61,7 +61,7 @@ function makeHarness() {
     taskTerminalService: { finishExecution: vi.fn(async () => undefined) },
     messageQueueService,
     localToolSessionRegistry: {
-      setUserForSession: vi.fn(), isConnected: vi.fn(async () => true), failAllForSession: vi.fn(), failAllForUser: vi.fn(),
+      setTargetForSession: vi.fn(), resolveTarget: vi.fn(async () => null), isConnected: vi.fn(async () => true), failAllForSession: vi.fn(), failAllForUser: vi.fn(), failAllForDevice: vi.fn(),
       completeToolRequest: vi.fn(), completeToolRequestError: vi.fn(),
     },
     askUserQuestionsRegistry: { failAllForSession: vi.fn(), getPendingForSession: vi.fn(() => []), complete: vi.fn() },

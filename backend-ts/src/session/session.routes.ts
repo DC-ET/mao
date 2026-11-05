@@ -66,6 +66,11 @@ export interface SessionRouteDeps {
    * 用户自建会话允许落在参与过的飞书/钉钉群工作区；缺省时群工作区一律拒绝（fail-closed）。
    */
   existsSessionUnderWorkspace?: (userId: number, path: string) => Promise<boolean>;
+  /**
+   * LOCAL 会话目标设备在线判定（技术方案 2026-11-05 §4.1-7）：用于会话 VO 的 targetDeviceOnline 快照。
+   * 注入回调而非 WS registry，HTTP 层不依赖 WS 细节；缺省视为未知（不展示在线态）。
+   */
+  hasDeviceConnection?: (userId: number, deviceId: string) => boolean;
 }
 
 interface CreateSessionRequest {
@@ -84,6 +89,9 @@ interface CreateSessionRequest {
   shell?: string | null;
   osVersion?: string | null;
   source?: string | null;
+  /** LOCAL 执行端绑定（创建即定）：deviceId 长度 ≤64 且仅字母数字 / 下划线 / 连字符；deviceName ≤128 去首尾空白。 */
+  targetDeviceId?: string | null;
+  targetDeviceName?: string | null;
 }
 
 interface UpdateSessionRequest {
@@ -94,6 +102,29 @@ interface UpdateSessionRequest {
   memoryInjectionDisabled?: boolean | null;
   modelId?: number | null;
   agentId?: number | null;
+}
+
+/** targetDeviceId 校验：长度 ≤64、字符集白名单（不锁 UUID 形状，防脏值即可）；空值归 null。 */
+function normalizeTargetDeviceId(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string' || value.length > 64 || !/^[A-Za-z0-9_-]+$/.test(value)) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, 'targetDeviceId 非法（长度 ≤64，仅允许字母 / 数字 / 下划线 / 连字符）');
+  }
+  return value;
+}
+
+/** targetDeviceName 校验：去首尾空白，≤128；空串归 null（视为未提供）。 */
+function normalizeTargetDeviceName(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value !== 'string') {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, 'targetDeviceName 非法');
+  }
+  const trimmed = value.trim();
+  if (trimmed === '') return null;
+  if (trimmed.length > 128) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, 'targetDeviceName 超长（≤128）');
+  }
+  return trimmed;
 }
 
 export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDeps): void {
@@ -139,6 +170,19 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     const agentMap = await batchLoadAgents(sessions);
     const modelMap = await batchLoadModels(sessions, agentMap);
     const vos = sessions.map((s) => toSessionVO(s, agentMap, modelMap));
+    // LOCAL 设备在线态（技术方案 2026-11-05 §4.1-7）：请求时快照，权威判定在服务端发送校验；
+    // 未绑定 / 未注入判定函数时为 null（前端不展示在线态）。
+    const hasDeviceConnection = deps.hasDeviceConnection;
+    vos.forEach((vo, i) => {
+      const session = sessions[i];
+      const deviceId = session?.targetDeviceId;
+      const ownerId = session?.userId;
+      if (hasDeviceConnection == null || deviceId == null || deviceId === '' || ownerId == null) {
+        vo.targetDeviceOnline = null;
+      } else {
+        vo.targetDeviceOnline = hasDeviceConnection(ownerId, deviceId);
+      }
+    });
     const mainIds = sessions.map((s) => s.id!).filter((id) => id != null);
     // tree* 首刷口径与 WS 信号 / recursive 列表一致：聚合并发树下的全部后代边路任务。
     // 列表 / dashboard 查询本就排除 SIDE_TASK / SUBAGENT，这里的主会话集合全部是树根。
@@ -159,12 +203,14 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     if (body.source != null && !isClientDeclarableSessionSource(body.source)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, "source 仅允许 'web' / 'embed' / 'desktop' / 'cli' / 'android'");
     }
+    const targetDeviceId = normalizeTargetDeviceId(body.targetDeviceId);
+    const targetDeviceName = normalizeTargetDeviceName(body.targetDeviceName);
     await assertOwnedSessionWorkspace(deps.pathSandbox, userId, body.executionMode, body.workspace, deps.existsSessionUnderWorkspace);
     const session = await sessionService.createSession(
       userId, parseEntityId(body.agentId), body.title, body.executionMode, body.workspace,
       body.permissionLevel, body.isGit, body.platform, body.shell, body.osVersion,
       parseEntityId(body.modelId), body.cloudProjectKey, body.workspaceMode, body.gitCloneUrl, body.gitBranch,
-      body.source as SessionSource | null,
+      body.source as SessionSource | null, targetDeviceId, targetDeviceName,
     );
     const vos = await enrichSessions([session]);
     return sendOk(reply, vos[0]);

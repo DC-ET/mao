@@ -198,6 +198,7 @@ type DesktopNotifyResultPayload = import('./desktop').DesktopNotifyResultPayload
 type DesktopPrefs = import('./desktop').DesktopPrefs
 type DesktopPrefsGetResult = import('./desktop').DesktopPrefsGetResult
 type DesktopPrefsSetResult = import('./desktop').DesktopPrefsSetResult
+type DesktopDeviceInfo = import('./desktop').DesktopDeviceInfo
 type DesktopShortcutFailedPayload = import('./desktop').DesktopShortcutFailedPayload
 
 interface AppUpdateInfo {
@@ -411,6 +412,8 @@ interface ElectronAPI {
   desktopBadge(count: number): Promise<{ ok: boolean }>
   desktopPrefsGet(): Promise<DesktopPrefsGetResult>
   desktopPrefsSet(patch: Partial<DesktopPrefs>): Promise<DesktopPrefsSetResult>
+  /** 本机设备身份（稳定 deviceId + 主机名 + 平台）：WS auth 帧与建 LOCAL 会话使用 */
+  getDeviceInfo(): Promise<DesktopDeviceInfo>
   desktopShortcutSet(accel: string | null): Promise<DesktopPrefsSetResult>
   onDesktopShortcutFailed(callback: (data: DesktopShortcutFailedPayload) => void): RemoveListener
   onTrayNewTask(callback: () => void): RemoveListener

@@ -37,7 +37,7 @@ function session(overrides: Record<string, unknown> = {}) {
 }
 
 describe('session and admin routes', () => {
-  async function app(options: { participated?: boolean } = {}) {
+  async function app(options: { participated?: boolean; hasDeviceConnection?: (userId: number, deviceId: string) => boolean } = {}) {
     const fastify = Fastify();
     fastify.setErrorHandler(handleError);
     fastify.addHook('preHandler', (req, _r, done) => {
@@ -131,6 +131,7 @@ describe('session and admin routes', () => {
       runTraceService: runTraceService as unknown as RunTraceService,
       runTraceRecordService: runTraceRecordService as unknown as RunTraceRecordService,
       existsSessionUnderWorkspace: vi.fn(async () => options.participated ?? false),
+      hasDeviceConnection: options.hasDeviceConnection,
     });
     registerAdminSessionRoutes(fastify, {
       sessionService,
@@ -670,14 +671,15 @@ describe('session and admin routes', () => {
 
   it('creates session with client-declared source and rejects unknown/system source', async () => {
     const { fastify, sessionService } = await app();
-    // 五个客户端可自报值全部放行，source 落在 createSession 的尾参（第 16 参）
+    // 五个客户端可自报值全部放行，source 落在 createSession 的第 16 参
+    // （第 17/18 参是 LOCAL 执行端绑定 targetDeviceId / targetDeviceName）
     for (const source of ['web', 'embed', 'desktop', 'cli', 'android']) {
       const created = JSON.parse((await fastify.inject({
         method: 'POST', url: '/v1/sessions', payload: { title: 't', agentId: 9, source },
       })).body);
       expect(created.code, `source=${source}`).toBe(0);
     }
-    expect(vi.mocked(sessionService.createSession).mock.calls.map((args) => args[args.length - 1]))
+    expect(vi.mocked(sessionService.createSession).mock.calls.map((args) => args[15]))
       .toEqual(['web', 'embed', 'desktop', 'cli', 'android']);
     // 未知值 / 系统来源仍拒绝：系统来源只能由各通道内部调用方写入
     // （否则可把会话伪造进「信号哨兵」等分组，防伪造分组归属）
@@ -947,5 +949,85 @@ describe('session and admin routes', () => {
     // 本人根内目录：放行（现行为不回退）
     expect((await jsonRejected(join(rejected.root, '7', 'my-ws'))).body.code).toBe(0);
     await rejected.fastify.close();
+  });
+
+  // 桌面端/CLI 创建 LOCAL 会话时绑定本机设备（技术方案 2026-11-05 §4.1-1/§4.1-7）。
+  it('POST /sessions 透传并回显 LOCAL 目标设备绑定；空白值归 null', async () => {
+    const { fastify, sessionService } = await app();
+    vi.mocked(sessionService.createSession).mockResolvedValueOnce(session({
+      executionMode: 'LOCAL', targetDeviceId: 'dev-a', targetDeviceName: 'Mac A',
+    }) as never);
+
+    const res = await fastify.inject({
+      method: 'POST', url: '/v1/sessions',
+      payload: {
+        title: 't', agentId: '9', executionMode: 'LOCAL', platform: 'darwin',
+        targetDeviceId: 'dev-a', targetDeviceName: '  Mac A  ',
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.code).toBe(0);
+    expect(body.data.targetDeviceId).toBe('dev-a');
+    expect(body.data.targetDeviceName).toBe('Mac A');
+    // 未注入在线判定回调：null 按 Jackson 口径省略（前端按缺省不展示）
+    expect(body.data.targetDeviceOnline).toBeUndefined();
+    const args = vi.mocked(sessionService.createSession).mock.calls.at(-1)!;
+    expect(args[16]).toBe('dev-a');
+    expect(args[17]).toBe('Mac A');
+
+    // 空设备 ID / 空白设备名：归 null（视为未提供）
+    await fastify.inject({
+      method: 'POST', url: '/v1/sessions',
+      payload: { title: 't', agentId: '9', executionMode: 'LOCAL', targetDeviceId: '', targetDeviceName: '   ' },
+    });
+    const blankArgs = vi.mocked(sessionService.createSession).mock.calls.at(-1)!;
+    expect(blankArgs[16]).toBeNull();
+    expect(blankArgs[17]).toBeNull();
+    await fastify.close();
+  });
+
+  it('POST /sessions 拒绝非法 targetDeviceId 与超长 targetDeviceName', async () => {
+    const { fastify, sessionService } = await app();
+    const post = (payload: object) => fastify.inject({ method: 'POST', url: '/v1/sessions', payload });
+
+    for (const bad of ['dev/a', 'dev a', 'a'.repeat(65), '设备-1']) {
+      const res = await post({ title: 't', agentId: '9', executionMode: 'LOCAL', targetDeviceId: bad });
+      expect(JSON.parse(res.body).code).toBe(2001);
+    }
+    const longName = await post({
+      title: 't', agentId: '9', executionMode: 'LOCAL', targetDeviceId: 'dev-a', targetDeviceName: 'x'.repeat(129),
+    });
+    expect(JSON.parse(longName.body).code).toBe(2001);
+    expect(sessionService.createSession).not.toHaveBeenCalled();
+    await fastify.close();
+  });
+
+  it('GET /sessions/:id 回显 targetDeviceOnline：在线 true / 离线 false / 未绑定与未注入 null', async () => {
+    const online = await app({ hasDeviceConnection: (_uid, deviceId) => deviceId === 'dev-a' });
+    const get = () => online.fastify.inject({ method: 'GET', url: '/v1/sessions/1' });
+
+    vi.mocked(online.sessionService.getSession).mockResolvedValueOnce(
+      session({ executionMode: 'LOCAL', targetDeviceId: 'dev-a' }) as never,
+    );
+    expect(JSON.parse((await get()).body).data.targetDeviceOnline).toBe(true);
+
+    vi.mocked(online.sessionService.getSession).mockResolvedValueOnce(
+      session({ executionMode: 'LOCAL', targetDeviceId: 'dev-b' }) as never,
+    );
+    expect(JSON.parse((await get()).body).data.targetDeviceOnline).toBe(false);
+
+    vi.mocked(online.sessionService.getSession).mockResolvedValueOnce(session({ executionMode: 'LOCAL' }) as never);
+    expect(JSON.parse((await get()).body).data.targetDeviceOnline).toBeUndefined();
+    await online.fastify.close();
+
+    // 未注入回调（如非 WS 装配场景）保持 null（Jackson 口径省略字段），前端不展示在线态
+    const plain = await app();
+    vi.mocked(plain.sessionService.getSession).mockResolvedValueOnce(
+      session({ executionMode: 'LOCAL', targetDeviceId: 'dev-a' }) as never,
+    );
+    const res = await plain.fastify.inject({ method: 'GET', url: '/v1/sessions/1' });
+    expect(JSON.parse(res.body).data.targetDeviceOnline).toBeUndefined();
+    await plain.fastify.close();
   });
 });

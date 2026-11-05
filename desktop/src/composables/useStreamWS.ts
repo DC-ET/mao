@@ -8,6 +8,7 @@ import { nowDateTime } from '../utils/datetime'
 import { mapCompactionEvents } from '../utils/chatMessage'
 import { stripImageUrlLines } from '../utils/imageUrlAnnotation'
 import { clientKind, isElectronClient } from '../utils/platform'
+import { getLocalDeviceInfo } from '../utils/device-info'
 import { updateSideTaskTabTitleFor } from './useCenterTabs'
 import { notifyInboxSystemUpdate, setupDesktopNotifyBridge } from './useInboxSystemNotify'
 import { ensureDesktopShellBridgeFromWs } from './useDesktopShell'
@@ -228,15 +229,29 @@ export function useStreamWS() {
     ws = socket
     intentionalClose = false
 
+    // 设备身份（仅 Electron）：IPC 异步取（模块级缓存），拿到后发首帧。
+    // 浏览器没有设备身份，auth 帧同步发出、不带 device，保持旧广播行为（技术方案 2026-11-05 §4.2）。
+    const sendAuth = () => {
+      if (!isElectronClient()) {
+        socket.send(JSON.stringify({ type: 'auth', token, client }))
+        return
+      }
+      void getLocalDeviceInfo().then((device) => {
+        // 等待期间连接可能已被更新的连接 / disconnect() 取代，或已断开
+        if (socket !== ws || socket.readyState !== WebSocket.OPEN) return
+        socket.send(JSON.stringify({ type: 'auth', token, client, ...(device ? { device } : {}) }))
+      })
+    }
+
     connectPromise = new Promise<void>((resolve, reject) => {
       pendingSettle = { resolve, reject, socket }
       socket.onopen = () => {
         // 已被更新的连接或 disconnect() 取代：本轮握手结果不再有效
         if (socket !== ws) return
-        // 鉴权首帧：必须是新连接发出的第一条消息，先于任何 subscribe 等业务帧。
+        // 鉴权首帧：必须是新连接发出的第一条业务帧，先于任何 subscribe 等业务帧。
         // 此刻还不算「已连接」——等服务端 connected 确认帧（handleAuthenticated）后
         // 才置 connected、重置退避并补订阅，避免业务帧与异步鉴权竞争。
-        socket.send(JSON.stringify({ type: 'auth', token, client }))
+        sendAuth()
         // 心跳与静默判死从握手起生效：鉴权迟迟无响应时由 30s 静默兜底触发重连
         startHeartbeat()
         // 通知点击桥接尽早注册（幂等）：等首条 inbox_updated 再注册会丢掉这期间

@@ -34,6 +34,10 @@ export interface Session {
   parentSessionId?: number | null;
   sessionType?: string | null;
   source?: string | null;
+  /** LOCAL 会话绑定的执行端设备 id（客户端自报，空=未绑定走广播回退）；创建即定不可改。 */
+  targetDeviceId?: string | null;
+  /** 执行端设备名快照（hostname，创建或认领时写入）。 */
+  targetDeviceName?: string | null;
   runtimeStatusJson?: string | null;
   deleted?: number;
   createdAt?: string | null;

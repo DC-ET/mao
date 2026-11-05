@@ -52,7 +52,7 @@ function buildHarness(options: { withBudgetGate?: boolean; checkAdmission?: () =
     isConnectionAuthorized: vi.fn(() => true), sendToConnection: vi.fn(),
     closeConnection: vi.fn(), getUserId: vi.fn(() => 7), send: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(),
     register: vi.fn(), unregister: vi.fn(), hasLocalClientConnection: vi.fn(() => true),
-    sendToLocalClients: vi.fn(), getActiveToolCalls: vi.fn(() => []), clearActiveToolCalls: vi.fn(),
+    sendToLocalClients: vi.fn(), sendToDevice: vi.fn(() => ({ targetCount: 0, successCount: 0, failureCount: 0 })), hasDeviceConnection: vi.fn(() => false), getDeviceId: vi.fn(() => null), getDeviceInfo: vi.fn(() => null), getDevice: vi.fn(() => null), getOnlineDeviceIds: vi.fn(() => []), getActiveToolCalls: vi.fn(() => []), clearActiveToolCalls: vi.fn(),
     isSessionThinking: vi.fn(() => false), setSessionThinking: vi.fn(),
     getClientType: vi.fn(() => 'browser'), bindEmbedSession: vi.fn(), unbindEmbedSession: vi.fn(),
     getEmbedSessionsForConnection: vi.fn(() => []), getEmbedSessionConnection: vi.fn(() => null),
@@ -96,7 +96,7 @@ function buildHarness(options: { withBudgetGate?: boolean; checkAdmission?: () =
     sessionService, taskTerminalService: { finishExecution: vi.fn() }, messageQueueService,
     onScheduledTaskQueueConsumed: vi.fn(async () => undefined),
     localToolSessionRegistry: {
-      setUserForSession: vi.fn(), isConnected: vi.fn(() => true), failAllForSession: vi.fn(), failAllForUser: vi.fn(),
+      setTargetForSession: vi.fn(), resolveTarget: vi.fn(async () => null), isConnected: vi.fn(() => true), failAllForSession: vi.fn(), failAllForUser: vi.fn(), failAllForDevice: vi.fn(),
       completeToolRequest: vi.fn(), completeToolRequestError: vi.fn(),
     },
     askUserQuestionsRegistry: { failAllForSession: vi.fn(), getPendingForSession: vi.fn(() => []), complete: vi.fn() },

@@ -567,7 +567,7 @@ export class BackgroundSubagentManager {
     }
     this.trackRunning(execution.parentSessionId, execution.id);
     if (parentSession.executionMode?.toUpperCase() === 'LOCAL' && parentSession.userId != null) {
-      this.deps.localToolSessionRegistry.setUserForSession(child.id, parentSession.userId);
+      this.deps.localToolSessionRegistry.setTargetForSession(child.id, parentSession.userId, parentSession.targetDeviceId ?? null);
     }
     try {
       this.deps.agentExecutor.submit(() => this.runBackground(execution, child, definition));

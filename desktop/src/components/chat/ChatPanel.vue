@@ -181,6 +181,8 @@
         :cloud-project-key="isNewTaskMode ? newTaskCloudProjectKey : cloudProjectKey"
         :project-key="currentSession?.projectKey"
         :execution-mode="isNewTaskMode ? newTaskMode : executionMode"
+        :target-device-name="isNewTaskMode ? null : (currentSession?.targetDeviceName ?? null)"
+        :target-device-online="isNewTaskMode ? null : (currentSession?.targetDeviceOnline ?? null)"
         :model-id="isNewTaskMode ? newTaskModelId : currentSession?.modelId"
         :model-supports-vision="currentModelSupportsVision"
         :permission-level="permissionLevel"

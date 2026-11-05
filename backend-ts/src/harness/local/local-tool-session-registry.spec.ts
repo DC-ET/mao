@@ -8,7 +8,7 @@ describe('LocalToolSessionRegistry', () => {
     const sessionMapper = { selectById: vi.fn() } as unknown as SessionMapper & { selectById: ReturnType<typeof vi.fn> };
     const registry = new LocalToolSessionRegistry(wsRegistry, sessionMapper);
 
-    registry.setUserForSession(1, 7);
+    registry.setTargetForSession(1, 7);
     wsRegistry.hasLocalClientConnection.mockReturnValue(true);
     expect(await registry.getUserIdForSession(1)).toBe(7);
     expect(await registry.isConnected(1)).toBe(true);
@@ -30,7 +30,7 @@ describe('LocalToolSessionRegistry', () => {
     } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
     const sessionMapper = { selectById: vi.fn() } as unknown as SessionMapper;
     const registry = new LocalToolSessionRegistry(wsRegistry, sessionMapper);
-    registry.setUserForSession(10, 7);
+    registry.setTargetForSession(10, 7);
 
     const pending = await registry.sendToolRequest(10, 'read_file', '{"path":"a"}', '/repo', true, 'danger');
     expect(wsRegistry.sendToLocalClients).toHaveBeenCalled();
@@ -53,7 +53,7 @@ describe('LocalToolSessionRegistry', () => {
       sendToLocalClients: vi.fn(),
     } as unknown as StreamingWsRegistry;
     const registry = new LocalToolSessionRegistry(wsRegistry, { selectById: vi.fn() } as unknown as SessionMapper);
-    registry.setUserForSession(10, 7);
+    registry.setTargetForSession(10, 7);
     const first = await registry.sendToolRequest(10, 'read_file', '{}', '/repo', false, null);
     const second = await registry.sendToolRequest(10, 'shell', '{}', '/repo', false, null);
     registry.completeToolRequestError(10, first.requestId!, 'Local tool execution timed out after 1 seconds');
@@ -74,17 +74,17 @@ describe('LocalToolSessionRegistry', () => {
     const registry = new LocalToolSessionRegistry(wsRegistry, { selectById: vi.fn() } as unknown as SessionMapper);
     expect(await (await registry.sendToolRequest(1, 'tool', '{}', null, false, null)).future).toContain('not connected');
 
-    registry.setUserForSession(1, 7);
+    registry.setTargetForSession(1, 7);
     const pending = await registry.sendToolRequest(1, 'tool', '{}', null, false, null);
-    registry.setUserForSession(1, 8);
+    registry.setTargetForSession(1, 8);
     expect(await pending.future).toContain('re-registered');
 
-    registry.setUserForSession(2, 8);
+    registry.setTargetForSession(2, 8);
     const pendingForUser = await registry.sendToolRequest(2, 'tool', '{}', null, false, null);
     registry.failAllForUser(8);
     expect(await pendingForUser.future).toContain('User disconnected');
 
-    registry.setUserForSession(3, 9);
+    registry.setTargetForSession(3, 9);
     const pendingForSession = await registry.sendToolRequest(3, 'tool', '{}', null, false, null);
     registry.removeSession(3);
     expect(await pendingForSession.future).toContain('Session unregistered');
@@ -99,7 +99,7 @@ describe('LocalToolSessionRegistry', () => {
       sendToLocalClients: vi.fn(),
     } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
     const registry = new LocalToolSessionRegistry(wsRegistry, { selectById: vi.fn() } as unknown as SessionMapper);
-    registry.setUserForSession(10, 7);
+    registry.setTargetForSession(10, 7);
 
     const hint = { ruleType: 'SHELL_PREFIX' as const, ruleValue: 'npm run', label: '本会话总是允许以 npm run 开头的命令' };
     await registry.sendToolRequest(10, 'shell', '{"command":"npm run build"}', null, true, null, hint);
@@ -109,5 +109,79 @@ describe('LocalToolSessionRegistry', () => {
     await registry.sendToolRequest(10, 'shell', '{}', null, true, null);
     const withoutHint = wsRegistry.sendToLocalClients.mock.calls[1][1] as { data: Record<string, unknown> };
     expect('approvalHint' in withoutHint.data).toBe(false);
+  });
+
+  it('routesToBoundDeviceAndChecksDeviceReachability', async () => {
+    const wsRegistry = {
+      hasLocalClientConnection: vi.fn().mockReturnValue(true),
+      hasDeviceConnection: vi.fn().mockReturnValue(true),
+      sendToLocalClients: vi.fn(),
+      sendToDevice: vi.fn(),
+    } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
+    const registry = new LocalToolSessionRegistry(wsRegistry, { selectById: vi.fn() } as unknown as SessionMapper);
+    registry.setTargetForSession(10, 7, 'dev-a');
+    expect(await registry.isConnected(10)).toBe(true);
+    expect(wsRegistry.hasDeviceConnection).toHaveBeenCalledWith(7, 'dev-a');
+
+    await registry.sendToolRequest(10, 'read_file', '{}', '/repo', false, null);
+    expect(wsRegistry.sendToDevice).toHaveBeenCalledWith(7, 'dev-a', expect.objectContaining({ type: 'tool_execute' }));
+    expect(wsRegistry.sendToLocalClients).not.toHaveBeenCalled();
+
+    wsRegistry.hasDeviceConnection.mockReturnValue(false);
+    expect(await registry.isConnected(10)).toBe(false);
+    const offline = await registry.sendToolRequest(10, 'shell', '{}', null, false, null);
+    expect(await offline.future).toContain('not connected');
+  });
+
+  it('keepsExistingDeviceBindingWhenTargetIsRefreshedWithNull', async () => {
+    const wsRegistry = {
+      hasLocalClientConnection: vi.fn(() => true),
+      hasDeviceConnection: vi.fn(() => true),
+      sendToLocalClients: vi.fn(),
+      sendToDevice: vi.fn(),
+    } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
+    const registry = new LocalToolSessionRegistry(wsRegistry, { selectById: vi.fn() } as unknown as SessionMapper);
+    registry.setTargetForSession(10, 7, 'dev-a');
+    registry.setTargetForSession(10, 7, null);
+    await registry.sendToolRequest(10, 'read_file', '{}', '/repo', false, null);
+    expect(wsRegistry.sendToDevice).toHaveBeenCalledWith(7, 'dev-a', expect.anything());
+    expect(wsRegistry.sendToLocalClients).not.toHaveBeenCalled();
+  });
+
+  it('failsOnlyRequestsBoundToDisconnectedDevice', async () => {
+    const wsRegistry = {
+      hasLocalClientConnection: vi.fn(() => true),
+      hasDeviceConnection: vi.fn(() => true),
+      sendToLocalClients: vi.fn(),
+      sendToDevice: vi.fn(),
+    } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
+    const registry = new LocalToolSessionRegistry(wsRegistry, { selectById: vi.fn() } as unknown as SessionMapper);
+    registry.setTargetForSession(10, 7, 'dev-a');
+    registry.setTargetForSession(11, 7, 'dev-b');
+    const a = await registry.sendToolRequest(10, 'tool', '{}', null, false, null);
+    const b = await registry.sendToolRequest(11, 'tool', '{}', null, false, null);
+    registry.failAllForDevice(7, 'dev-a');
+    expect(await a.future).toContain('Device disconnected');
+    let bDone = false;
+    void b.future.then(() => { bDone = true; });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(bDone).toBe(false);
+    registry.completeToolRequest(11, b.requestId!, '{"ok":true}');
+    expect(await b.future).toBe('{"ok":true}');
+  });
+
+  it('resolvesBoundDeviceFromDbWhenMemoryIsEmpty', async () => {
+    const wsRegistry = {
+      hasLocalClientConnection: vi.fn(() => false),
+      hasDeviceConnection: vi.fn(() => true),
+      sendToLocalClients: vi.fn(),
+      sendToDevice: vi.fn(),
+    } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
+    const sessionMapper = { selectById: vi.fn(async () => ({ id: 20, userId: 7, targetDeviceId: 'dev-db' })) };
+    const registry = new LocalToolSessionRegistry(wsRegistry, sessionMapper as unknown as SessionMapper);
+    expect(await registry.isConnected(20)).toBe(true);
+    await registry.sendToolRequest(20, 'tool', '{}', null, false, null);
+    expect(wsRegistry.sendToDevice).toHaveBeenCalledWith(7, 'dev-db', expect.anything());
+    expect(wsRegistry.sendToLocalClients).not.toHaveBeenCalled();
   });
 });

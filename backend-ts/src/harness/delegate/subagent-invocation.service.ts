@@ -47,6 +47,9 @@ export class SubagentInvocationService {
         lastRuntimeUserId: parent.lastRuntimeUserId ?? parent.userId ?? null,
         // 子代理继承父会话来源：admin 按来源筛选时与父保持一致（技术方案 D8）。
         source: parent.source,
+        // 子代理继承父会话执行端绑定（技术方案 2026-11-05 §4.1-4）：LOCAL 子会话保持定向投递。
+        targetDeviceId: parent.targetDeviceId,
+        targetDeviceName: parent.targetDeviceName,
       };
       child.id = await tx.insert('session', child);
       const execution: SubagentExecution = {

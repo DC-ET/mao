@@ -1517,6 +1517,16 @@ ipcMain.handle('desktop-prefs-get', () => {
   return { ok: true, prefs: readDesktopPrefs(), packaged: app.isPackaged, platform: process.platform }
 })
 
+// 本机设备身份（技术方案 2026-11-05 §4.2）：deviceId 首次取用时生成并落盘（ensure），
+// 名字用主机名、平台用 process.platform——渲染层 WS auth 帧与建 LOCAL 会话时携带。
+ipcMain.handle('device-info-get', () => {
+  return {
+    id: desktopPrefsLib.ensureDesktopDeviceId(app.getPath('userData')),
+    name: os.hostname(),
+    platform: process.platform,
+  }
+})
+
 ipcMain.handle('desktop-prefs-set', (event, patch) => {
   const next = patch && typeof patch === 'object' ? patch : {}
   // dev 模式禁止开启自启：直接拒绝，不落盘（防打包前的误开启在打包后生效）

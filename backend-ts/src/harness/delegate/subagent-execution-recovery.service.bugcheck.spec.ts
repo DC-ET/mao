@@ -51,7 +51,7 @@ function harness(messages: Array<Record<string, unknown>>) {
     vi.fn(async () => ({ currentRound: 0 })) as never,
     { registerCancelFlag: vi.fn(() => ({ get: () => false })), removeCancelFlag: vi.fn() } as never,
     visibilityService as never,
-    { isConnected: vi.fn(async () => true), setUserForSession: vi.fn(), removeSession: vi.fn() } as never,
+    { isConnected: vi.fn(async () => true), setTargetForSession: vi.fn(), removeSession: vi.fn() } as never,
   );
   return { service, executionMapper, visibilityService };
 }

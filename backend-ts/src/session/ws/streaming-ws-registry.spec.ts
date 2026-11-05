@@ -168,4 +168,80 @@ describe('StreamingWsRegistry', () => {
       expect(registry.isEmbedPageSession(10)).toBe(true);
     });
   });
+
+  it('registersDeviceIdentityAndRoutesToTheLatestConnectionPerDevice', () => {
+    const first = mockSocket('ws-1');
+    const second = mockSocket('ws-2');
+    registry.register(first, 7, 'electron', undefined, true, { id: 'dev-a', name: 'Mac A', platform: 'darwin' });
+    expect(registry.getDeviceId(first)).toBe('dev-a');
+    expect(registry.getDeviceInfo(first)).toEqual({ id: 'dev-a', name: 'Mac A', platform: 'darwin' });
+    expect(registry.getDevice(7, 'dev-a')).toEqual({ id: 'dev-a', name: 'Mac A', platform: 'darwin' });
+    expect(registry.hasDeviceConnection(7, 'dev-a')).toBe(true);
+    expect(registry.getOnlineDeviceIds(7)).toEqual(['dev-a']);
+
+    // 同 deviceId 覆盖为最新连接：只向新连接投递，避免同机多窗口重复执行
+    registry.register(second, 7, 'electron', undefined, true, { id: 'dev-a', name: 'Mac A', platform: 'darwin' });
+    const result = registry.sendToDevice(7, 'dev-a', wsEvent('tool_execute', 10, { requestId: 'r1' }));
+    expect(result).toMatchObject({ targetCount: 1, successCount: 1 });
+    expect(first.send).not.toHaveBeenCalled();
+    expect(second.send).toHaveBeenCalled();
+
+    // 旧连接断开不清掉新连接；新连接断开后设备才离线
+    registry.unregister(first);
+    expect(registry.hasDeviceConnection(7, 'dev-a')).toBe(true);
+    registry.unregister(second);
+    expect(registry.hasDeviceConnection(7, 'dev-a')).toBe(false);
+    expect(registry.getOnlineDeviceIds(7)).toEqual([]);
+  });
+
+  it('doesNotRegisterDeviceForNonLocalClientsAndReturnsEmptyDelivery', () => {
+    const browser = mockSocket('ws-browser');
+    registry.register(browser, 7, 'browser', undefined, true, { id: 'dev-fake', name: 'x', platform: 'linux' });
+    expect(registry.getDeviceId(browser)).toBeNull();
+    expect(registry.hasDeviceConnection(7, 'dev-fake')).toBe(false);
+    const missing = registry.sendToDevice(7, 'dev-none', wsEvent('tool_execute', 10, {}));
+    expect(missing).toEqual({ targetCount: 0, successCount: 0, failureCount: 0 });
+  });
+
+  it('replacesDeviceMappingWhenSameSocketReauthsWithNewDevice', () => {
+    const socket = mockSocket('ws-1');
+    registry.register(socket, 7, 'electron', undefined, true, { id: 'dev-a', name: 'A', platform: 'darwin' });
+    registry.register(socket, 7, 'electron', undefined, true, { id: 'dev-b', name: 'B', platform: 'darwin' });
+    expect(registry.getDeviceId(socket)).toBe('dev-b');
+    expect(registry.hasDeviceConnection(7, 'dev-a')).toBe(false);
+    expect(registry.hasDeviceConnection(7, 'dev-b')).toBe(true);
+  });
+
+  // 同机多窗口 / 多个 CLI 进程共用同一 deviceId（技术方案 2026-11-05 D4）：
+  // 执行连接断开必须回落另一条存活连接，否则设备被整体误判离线（定向投递 / 在线态 / failAllForDevice 全失真）。
+  it('fallsBackToRemainingConnectionWhenExecutorDisconnects', () => {
+    const first = mockSocket('ws-1');
+    const second = mockSocket('ws-2');
+    registry.register(first, 7, 'cli', undefined, true, { id: 'dev-a', name: 'Host', platform: 'linux' });
+    registry.register(second, 7, 'cli', undefined, true, { id: 'dev-a', name: 'Host', platform: 'linux' });
+
+    registry.unregister(second);
+    expect(registry.hasDeviceConnection(7, 'dev-a')).toBe(true);
+    expect(registry.getOnlineDeviceIds(7)).toEqual(['dev-a']);
+    const result = registry.sendToDevice(7, 'dev-a', wsEvent('tool_execute', 10, { requestId: 'r1' }));
+    expect(result).toMatchObject({ targetCount: 1, successCount: 1 });
+    expect(first.send).toHaveBeenCalled();
+
+    // 设备最后一条连接也断开后才算离线
+    registry.unregister(first);
+    expect(registry.hasDeviceConnection(7, 'dev-a')).toBe(false);
+    expect(registry.getOnlineDeviceIds(7)).toEqual([]);
+  });
+
+  it('keepsNewerExecutorWhenStaleSameDeviceConnectionCloses', () => {
+    const first = mockSocket('ws-1');
+    const second = mockSocket('ws-2');
+    registry.register(first, 7, 'electron', undefined, true, { id: 'dev-a', name: 'Mac', platform: 'darwin' });
+    registry.register(second, 7, 'electron', undefined, true, { id: 'dev-a', name: 'Mac', platform: 'darwin' });
+    // 旧连接（非执行连接）断开：不得回落到它，执行连接仍是 second
+    registry.unregister(first);
+    expect(registry.hasDeviceConnection(7, 'dev-a')).toBe(true);
+    registry.sendToDevice(7, 'dev-a', wsEvent('tool_execute', 10, {}));
+    expect(second.send).toHaveBeenCalled();
+  });
 });

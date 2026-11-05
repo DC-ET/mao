@@ -54,6 +54,7 @@ describe('WsClient', () => {
       getToken: async () => 'tok',
       client: 'cli',
       heartbeatIntervalMs: 10_000,
+      getDevice: () => ({ id: 'dev-test', name: 'Test Host', platform: 'linux' }),
     });
     await client.connect();
     client.subscribe(7);
@@ -63,6 +64,10 @@ describe('WsClient', () => {
     expect(authIndex).toBeGreaterThanOrEqual(0);
     expect((server.received[authIndex] as { token?: string }).token).toBe('tok');
     expect((server.received[authIndex] as { client?: string }).client).toBe('cli');
+    // 设备身份随首帧上报（技术方案 2026-11-05 §4.2）：服务端据此登记可定向投递的执行连接
+    expect((server.received[authIndex] as { device?: unknown }).device).toEqual({
+      id: 'dev-test', name: 'Test Host', platform: 'linux',
+    });
     expect(subscribeIndex).toBeGreaterThan(authIndex);
     client.close();
   });

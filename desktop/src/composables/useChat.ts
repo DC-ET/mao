@@ -340,8 +340,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     sending.value = true
     startedAt.value = new Date().toISOString()
 
-    if (executionMode.value === 'LOCAL' && !isElectron) {
-      ElMessage.error('浏览器端不支持本地模式，请使用桌面客户端创建本地任务')
+    // 浏览器只能接管已有 LOCAL 会话对话，不能新建本地任务（技术方案 2026-11-05 §4.1-3）；
+    // 执行端始终是会话绑定的设备，浏览器只是消息入口。
+    if (executionMode.value === 'LOCAL' && !isElectron && !sessionId.value) {
+      ElMessage.error('浏览器端不能新建本地任务，请在桌面客户端创建；已有本地任务可直接继续对话')
       sending.value = false
       return null
     }

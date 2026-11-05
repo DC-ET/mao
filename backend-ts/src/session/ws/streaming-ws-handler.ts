@@ -63,7 +63,7 @@ function sideRejection(message: string): { message: string; code: string } {
 }
 import type { JwtService } from '../../crypto/jwt.service.js';
 import { contentParts, WsStreamingEventListener, type AgentEventListener, type WsListenerDeps } from './ws-streaming-event-listener.js';
-import type { StreamingWsRegistry, WsSocket } from './streaming-ws-registry.js';
+import type { StreamingWsRegistry, WsDeviceInfo, WsSocket } from './streaming-ws-registry.js';
 import { wsEvent } from './ws-event.js';
 import { isActivePhase } from '../session-vo.js';
 import type { AgentExecutionContext } from '../../harness/core/agent-execution-context.js';
@@ -101,6 +101,8 @@ export interface WsHandlerDeps {
     listSubagentSessions(parentId: number): Promise<Session[]>;
     cleanupIncompleteTail(sessionId: number): Promise<number>;
     updateContextTokens(sessionId: number, tokens: number): Promise<void>;
+    /** 历史 LOCAL 会话惰性认领（技术方案 2026-11-05 D15）：条件更新，返回生效后的绑定。 */
+    claimTargetDevice(sessionId: number, deviceId: string, deviceName: string | null): Promise<{ targetDeviceId: string | null; targetDeviceName: string | null } | null>;
   };
   taskTerminalService: {
     finishExecution(sessionId: number, userId: number, phase: string, executionId: string, reason?: string, notifySource?: TaskNotifySource): Promise<void>;
@@ -122,10 +124,12 @@ export interface WsHandlerDeps {
   onOpenApiCallQueueSettled?: (callLogId: number, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED', queueWaitMs: number | null, messageId: number | null) => Promise<void> | void;
   embedPageToolRegistry: EmbedPageToolRegistry;
   localToolSessionRegistry: {
-    setUserForSession(sessionId: number, userId: number): void;
+    setTargetForSession(sessionId: number, userId: number, deviceId?: string | null): void;
+    resolveTarget(sessionId: number | null): Promise<{ userId: number; deviceId: string | null } | null>;
     isConnected(sessionId: number): boolean | Promise<boolean>;
     failAllForSession(sessionId: number): void;
     failAllForUser(userId: number): void;
+    failAllForDevice(userId: number, deviceId: string): void;
     completeToolRequest(sessionId: number, requestId: string, result: string): void;
     completeToolRequestError(sessionId: number, requestId: string, error: string): void;
   };
@@ -425,11 +429,17 @@ export class StreamingWsHandler {
 
   afterConnectionClosed(session: WsSocket): void {
     const userId = this.deps.registry.getUserId(session);
+    // 设备身份必须在 unregister 前取：unregister 会清理 connectionDevice / deviceExecutors
+    const deviceId = this.deps.registry.getDeviceId(session);
     // 页面连接断开：先让该连接上所有等待中的页面工具立即失败，再注销连接与绑定。
     for (const boundSessionId of this.deps.registry.getEmbedSessionsForConnection(session)) {
       this.deps.embedPageToolRegistry.failSession(boundSessionId, '页面连接已断开，页面操作已取消', 'embed_client_not_connected');
     }
     this.deps.registry.unregister(session);
+    if (userId != null && deviceId != null && !this.deps.registry.hasDeviceConnection(userId, deviceId)) {
+      // 目标设备已无执行连接：失败其绑定会话的 pending 工具请求（绑定保留，闪断重连可继续）
+      this.deps.localToolSessionRegistry.failAllForDevice(userId, deviceId);
+    }
     if (userId != null && !this.deps.registry.hasLocalClientConnection(userId)) {
       this.deps.localToolSessionRegistry.failAllForUser(userId);
     }
@@ -501,7 +511,8 @@ export class StreamingWsHandler {
       const clientType = this.normalizeClient(typeof root.client === 'string' ? root.client : undefined);
       // 页面操作能力声明：缺省/非布尔按 true（旧版 SDK 不发送该字段，行为与现状一致）。
       const pageEnabled = typeof root.pageEnabled === 'boolean' ? root.pageEnabled : true;
-      this.deps.registry.register(session, metadata.userId, clientType, metadata, pageEnabled);
+      const device = this.parseDevice(root);
+      this.deps.registry.register(session, metadata.userId, clientType, metadata, pageEnabled, device);
       this.deps.registry.sendToConnection(session, wsEvent('connected', null, { userId: metadata.userId }));
       return;
     }
@@ -520,8 +531,8 @@ export class StreamingWsHandler {
     switch (type) {
       case 'subscribe': await this.handleSubscribe(session, userId, root); break;
       case 'unsubscribe': this.handleUnsubscribe(session, userId, root); break;
-      case 'send_message': await this.handleSendMessage(userId, root, true); break;
-      case 'edit_and_resend': await this.handleEditAndResend(userId, root); break;
+      case 'send_message': await this.handleSendMessage(session, userId, root, true); break;
+      case 'edit_and_resend': await this.handleEditAndResend(session, userId, root); break;
       case 'cancel': await this.handleCancel(userId, root); break;
       case 'enqueue_message': await this.handleEnqueueMessage(userId, root); break;
       case 'insert_message': await this.handleInsertMessage(userId, root); break;
@@ -534,9 +545,9 @@ export class StreamingWsHandler {
       case 'page_tool_result': await this.handlePageToolResult(session, userId, root); break;
       case 'tool_approval': await this.handleToolApproval(userId, root); break;
       case 'ask_user_questions_result': await this.handleAskUserQuestionsResult(userId, root); break;
-      case 'create_side_session': await this.handleCreateSideSession(userId, root); break;
+      case 'create_side_session': await this.handleCreateSideSession(session, userId, root); break;
       case 'cancel_side_task': await this.handleCancelSideTask(userId, root); break;
-      case 'retry_execution': await this.handleRetryExecution(userId, root); break;
+      case 'retry_execution': await this.handleRetryExecution(session, userId, root); break;
       case 'compact_now': await this.handleCompactNow(userId, root); break;
       case 'ping': this.deps.registry.send(userId, wsEvent('pong', null, {})); break;
       default: break;
@@ -563,7 +574,11 @@ export class StreamingWsHandler {
     }
     const active = this.isSessionActive(s.phase);
     if (s.executionMode === 'LOCAL' && active) {
-      this.deps.localToolSessionRegistry.setUserForSession(sessionId, userId);
+      // 订阅是入站点：桌面端打开历史会话时顺带完成惰性认领；失败静默（发送时会再引导）
+      const target = await this.prepareLocalTarget(session, s, userId);
+      if ('error' in target) {
+        this.deps.localToolSessionRegistry.setTargetForSession(sessionId, userId, null);
+      }
     }
     // 订阅既是流式事件通道，也是客户端断线后的状态校准点。即使任务已结束，
     // 也必须回传终态，避免完成事件恰好在断线期间丢失后界面永久停在“执行中”。
@@ -598,7 +613,7 @@ export class StreamingWsHandler {
     }
   }
 
-  private async handleSendMessage(userId: number, root: Record<string, unknown>, clearTodos: boolean): Promise<void> {
+  private async handleSendMessage(socket: WsSocket | undefined, userId: number, root: Record<string, unknown>, clearTodos: boolean): Promise<void> {
     const sessionId = this.getLong(root, 'sessionId');
     if (sessionId == null) return;
     const data = (root.data ?? {}) as Record<string, unknown>;
@@ -710,7 +725,14 @@ export class StreamingWsHandler {
     }
     if (!claimAlreadyHeld) this.executionClaims.add(sessionId);
     if (session.executionMode === 'LOCAL') {
-      this.deps.localToolSessionRegistry.setUserForSession(sessionId, userId);
+      // 历史会话惰性认领只在 WS 入站（有 socket）生效；队列消费传 undefined，不认领
+      const localTarget = await this.prepareLocalTarget(socket, session, userId);
+      if ('error' in localTarget) {
+        if (claimAlreadyHeld) await requeueIfClaimed();
+        else this.executionClaims.delete(sessionId);
+        this.deps.registry.send(userId, wsEvent('error', sessionId, { message: localTarget.error }));
+        return;
+      }
       if (!(await this.deps.localToolSessionRegistry.isConnected(sessionId))) {
         // 手动发送的 claim 是本方法刚自行添加的：requeueIfClaimed 只回补自动消费的
         // 消息，对手动发送 no-op。不显式释放会让该会话后续所有发送都被
@@ -928,7 +950,9 @@ export class StreamingWsHandler {
     const sessionId = session.id!;
     this.deps.titleService.scheduleForFirstUserMessage(sessionId, savedMessage.id, savedMessage.content ?? '');
     if (session.executionMode === 'LOCAL') {
-      this.deps.localToolSessionRegistry.setUserForSession(sessionId, userId);
+      // 执行态入口不做认领（无 socket）：经 registry / DB 解析绑定值登记（惰性认领已写库的
+      // 会话也能定向）；null 不会覆盖已有绑定。认领本身只发生在 WS 入站。
+      await this.prepareLocalTarget(undefined, session, userId);
       if (!(await this.deps.localToolSessionRegistry.isConnected(sessionId))) {
         throw new Error('Local client is not connected. Please ensure the desktop app is running.');
       }
@@ -973,7 +997,7 @@ export class StreamingWsHandler {
     await run;
   }
 
-  private async handleEditAndResend(userId: number, root: Record<string, unknown>): Promise<void> {
+  private async handleEditAndResend(socket: WsSocket | undefined, userId: number, root: Record<string, unknown>): Promise<void> {
     const sessionId = this.getLong(root, 'sessionId');
     const messageId = this.getLong(root, 'messageId');
     if (sessionId == null || messageId == null) return;
@@ -1031,7 +1055,12 @@ export class StreamingWsHandler {
       }
     }
     if (session.executionMode === 'LOCAL') {
-      this.deps.localToolSessionRegistry.setUserForSession(sessionId, userId);
+      const localTarget = await this.prepareLocalTarget(socket, session, userId);
+      if ('error' in localTarget) {
+        this.executionClaims.delete(sessionId);
+        this.deps.registry.send(userId, wsEvent('error', sessionId, { message: localTarget.error }));
+        return;
+      }
       if (!(await this.deps.localToolSessionRegistry.isConnected(sessionId))) {
         this.executionClaims.delete(sessionId);
         this.deps.registry.send(userId, wsEvent('error', sessionId, { message: 'Local client is not connected. Please ensure the desktop app is running.' }));
@@ -1164,7 +1193,7 @@ export class StreamingWsHandler {
     }
   }
 
-  private async handleCreateSideSession(userId: number, root: Record<string, unknown>): Promise<void> {
+  private async handleCreateSideSession(socket: WsSocket | undefined, userId: number, root: Record<string, unknown>): Promise<void> {
     const parentSessionId = this.getLong(root, 'sessionId');
     if (parentSessionId == null) return;
     const data = (root.data ?? {}) as Record<string, unknown>;
@@ -1184,9 +1213,21 @@ export class StreamingWsHandler {
     const parentSession = await this.requireOwnedSession(userId, parentSessionId);
     if (!parentSession) return;
     this.deps.registry.subscribe(userId, parentSessionId);
-    if (parentSession.executionMode === 'LOCAL' && !this.deps.registry.hasLocalClientConnection(userId)) {
-      this.deps.registry.send(userId, wsEvent('error', parentSessionId, sideRejection('Local client is not connected. Please ensure the desktop app is running.')));
-      return;
+    let sideTarget: { deviceId: string | null; deviceName: string | null } | null = null;
+    if (parentSession.executionMode === 'LOCAL') {
+      const localTarget = await this.prepareLocalTarget(socket, parentSession, userId);
+      if ('error' in localTarget) {
+        this.deps.registry.send(userId, wsEvent('error', parentSessionId, sideRejection(localTarget.error)));
+        return;
+      }
+      const reachable = localTarget.deviceId != null
+        ? this.deps.registry.hasDeviceConnection(userId, localTarget.deviceId)
+        : this.deps.registry.hasLocalClientConnection(userId);
+      if (!reachable) {
+        this.deps.registry.send(userId, wsEvent('error', parentSessionId, sideRejection('Local client is not connected. Please ensure the desktop app is running.')));
+        return;
+      }
+      sideTarget = localTarget;
     }
     const resolvedModelId = modelId ?? parentSession.modelId ?? null;
     if (images.length > 0) {
@@ -1219,6 +1260,9 @@ export class StreamingWsHandler {
       parentSessionId, sessionType: 'SIDE_TASK', title: '任务',
       // 边路任务继承父会话来源：admin 按来源筛「桌面端任务」时不应漏掉整棵子树（D8）。
       source: parentSession.source,
+      // 边路任务继承父会话执行端绑定（技术方案 2026-11-05 §4.1-4）：认领结果优先，其次父会话快照。
+      targetDeviceId: sideTarget?.deviceId ?? parentSession.targetDeviceId ?? null,
+      targetDeviceName: sideTarget?.deviceName ?? parentSession.targetDeviceName ?? null,
     };
     await this.deps.sessionService.save(sideSession);
     const sideSessionId = sideSession.id!;
@@ -1236,7 +1280,7 @@ export class StreamingWsHandler {
     }
     const sideRunMode = contextMode === 'fork' ? 'none' : contextMode;
     if (sideSession.executionMode === 'LOCAL') {
-      this.deps.localToolSessionRegistry.setUserForSession(sideSessionId, userId);
+      this.deps.localToolSessionRegistry.setTargetForSession(sideSessionId, userId, sideSession.targetDeviceId);
       this.deps.localSkillRegistry.report(sideSessionId, this.parseLocalSkills(data.localSkills));
       this.deps.localAgentsMdRegistry.report(sideSessionId, typeof data.agentsMdContent === 'string' ? data.agentsMdContent : null);
     }
@@ -1354,7 +1398,7 @@ export class StreamingWsHandler {
    * 处理用户点击「重试」按钮的请求。
    * 以宕机恢复语义重新执行：清理未完成尾巴消息 → 基于已有会话历史续跑，不插入新 user message。
    */
-  private async handleRetryExecution(userId: number, root: Record<string, unknown>): Promise<void> {
+  private async handleRetryExecution(socket: WsSocket | undefined, userId: number, root: Record<string, unknown>): Promise<void> {
     const sessionId = this.getLong(root, 'sessionId');
     if (sessionId == null) return;
     const session = await this.requireOwnedSession(userId, sessionId);
@@ -1411,7 +1455,13 @@ export class StreamingWsHandler {
       this.deps.registry.subscribe(userId, sessionId);
       // LOCAL 模式：注册会话到用户映射并检查桌面端连接
       if (session.executionMode === 'LOCAL') {
-        this.deps.localToolSessionRegistry.setUserForSession(sessionId, userId);
+        const localTarget = await this.prepareLocalTarget(socket, session, userId);
+        if ('error' in localTarget) {
+          this.executionClaims.delete(sessionId);
+          await this.rollbackSubagentRetry(session, retryTaskId);
+          this.deps.registry.send(userId, wsEvent('error', sessionId, { message: localTarget.error }));
+          return;
+        }
         if (!(await this.deps.localToolSessionRegistry.isConnected(sessionId))) {
           this.executionClaims.delete(sessionId);
           await this.rollbackSubagentRetry(session, retryTaskId);
@@ -1838,7 +1888,7 @@ export class StreamingWsHandler {
             this.deps.registry.send(userId, wsEvent('queue_message_consumed', sessionId, consumed));
             this.autoConsumingSessionIds.add(sessionId);
             this.suppressAutoConsumeSend.delete(sessionId);
-            await this.handleSendMessage(userId, {
+            await this.handleSendMessage(undefined, userId, {
               sessionId,
               data: {
                 content, eventId: randomUUID(), clearTodos: false, replaceExecution: true, executionClaimHeld: true,
@@ -2082,7 +2132,7 @@ export class StreamingWsHandler {
         this.autoConsumingSessionIds.add(sessionId);
         this.deps.agentExecutor(async () => {
           await new Promise((r) => setTimeout(r, 500));
-          await this.handleSendMessage(userId, {
+          await this.handleSendMessage(undefined, userId, {
             sessionId,
             data: {
               content, eventId: randomUUID(), images: imageList, executionClaimHeld: true,
@@ -2193,9 +2243,18 @@ export class StreamingWsHandler {
     const done = new Promise<void>((resolve, reject) => {
       this.pendingSkillSyncs.set(sessionId, { syncId, resolve, reject });
     });
-    this.deps.registry.sendToLocalClients(userId, wsEvent('skill_sync_required', sessionId, {
+    const skillSyncEvent = wsEvent('skill_sync_required', sessionId, {
       syncUrl, removed, workspace: session.workspace ?? '', syncId,
-    }));
+    });
+    // 绑定值以 registry（认领/登记的最新值）为准，session 快照兜底：惰性认领过的会话
+    // 入参 session 可能还是旧 NULL，直接按快照判断会误走广播。
+    const targetDeviceId = (await this.deps.localToolSessionRegistry.resolveTarget(sessionId))?.deviceId
+      ?? session.targetDeviceId ?? null;
+    if (targetDeviceId != null && targetDeviceId !== '') {
+      this.deps.registry.sendToDevice(userId, targetDeviceId, skillSyncEvent);
+    } else {
+      this.deps.registry.sendToLocalClients(userId, skillSyncEvent);
+    }
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
@@ -2232,7 +2291,14 @@ export class StreamingWsHandler {
       const done = new Promise<void>((resolve, reject) => {
         this.pendingMcpSyncs.set(sessionId, { syncId, resolve, reject });
       });
-      this.deps.registry.sendToLocalClients(userId, wsEvent('mcp_sync_required', sessionId, payload));
+      const mcpSyncEvent = wsEvent('mcp_sync_required', sessionId, payload);
+      const targetDeviceId = (await this.deps.localToolSessionRegistry.resolveTarget(sessionId))?.deviceId
+        ?? _session.targetDeviceId ?? null;
+      if (targetDeviceId != null && targetDeviceId !== '') {
+        this.deps.registry.sendToDevice(userId, targetDeviceId, mcpSyncEvent);
+      } else {
+        this.deps.registry.sendToLocalClients(userId, mcpSyncEvent);
+      }
       await Promise.race([
         done,
         new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), this.mcpSyncTimeoutSeconds * 1000)),
@@ -2489,6 +2555,100 @@ export class StreamingWsHandler {
     if (client?.toLowerCase() === 'cli') return 'cli';
     if (client?.toLowerCase() === 'embed') return 'embed';
     return 'browser';
+  }
+
+  /**
+   * LOCAL 发送 / 触发前置（技术方案 2026-11-05 §4.1-8）：
+   * 1) 已绑定（内存或 DB）→ 刷新登记并返回绑定值；
+   * 2) 未绑定 + 入站连接带设备身份（桌面 / CLI）→ 条件认领给它；
+   * 3) 未绑定 + 唯一在线设备且平台一致 → 条件认领；
+   * 4) 未绑定 + 多台在线 / 平台不符 → 返回引导文案（调用方决定如何报错）；
+   * 5) 未绑定 + 无任何带设备身份的连接（纯旧端环境）→ 返回 null，保持广播回退。
+   * 队列消费 / 内部执行入口（socket 为 undefined）不认领、不拒绝，只沿用已绑定值。
+   */
+  private async prepareLocalTarget(
+    socket: WsSocket | undefined,
+    session: Session,
+    userId: number,
+  ): Promise<{ deviceId: string | null; deviceName: string | null } | { error: string }> {
+    const sessionId = session.id;
+    if (sessionId == null) return { deviceId: null, deviceName: null };
+    const current = await this.deps.localToolSessionRegistry.resolveTarget(sessionId);
+    const boundDeviceId = current?.deviceId ?? null;
+    if (boundDeviceId != null) {
+      const deviceName = this.deps.registry.getDevice(userId, boundDeviceId)?.name ?? session.targetDeviceName ?? null;
+      this.deps.localToolSessionRegistry.setTargetForSession(sessionId, userId, boundDeviceId);
+      return { deviceId: boundDeviceId, deviceName };
+    }
+    if (socket == null) {
+      // 内部执行入口不参与认领（认领主路径是 WS 入站：消息入队前已完成）
+      this.deps.localToolSessionRegistry.setTargetForSession(sessionId, userId, null);
+      return { deviceId: null, deviceName: null };
+    }
+    // ① 发起连接自带设备身份（Electron / CLI）：认领给它
+    const inboundDevice = this.deps.registry.getDeviceInfo(socket);
+    if (inboundDevice != null) {
+      const claimed = await this.deps.sessionService.claimTargetDevice(sessionId, inboundDevice.id, inboundDevice.name);
+      const deviceId = claimed?.targetDeviceId ?? inboundDevice.id;
+      const deviceName = claimed?.targetDeviceName ?? inboundDevice.name;
+      this.deps.localToolSessionRegistry.setTargetForSession(sessionId, userId, deviceId);
+      return { deviceId, deviceName };
+    }
+    // ② 浏览器等无设备身份的连接：唯一在线设备 + 平台一致才认领
+    const onlineDeviceIds = this.deps.registry.getOnlineDeviceIds(userId);
+    if (onlineDeviceIds.length === 1) {
+      const device = this.deps.registry.getDevice(userId, onlineDeviceIds[0]);
+      if (device != null && this.isDevicePlatformCompatible(session, device)) {
+        const claimed = await this.deps.sessionService.claimTargetDevice(sessionId, device.id, device.name);
+        const deviceId = claimed?.targetDeviceId ?? device.id;
+        const deviceName = claimed?.targetDeviceName ?? device.name;
+        this.deps.localToolSessionRegistry.setTargetForSession(sessionId, userId, deviceId);
+        return { deviceId, deviceName };
+      }
+      return { error: this.localTargetUnboundMessage(session) };
+    }
+    if (onlineDeviceIds.length > 1) {
+      return { error: this.localTargetUnboundMessage(session) };
+    }
+    // ③ 纯旧客户端环境：保持广播回退（现状兼容）
+    this.deps.localToolSessionRegistry.setTargetForSession(sessionId, userId, null);
+    return { deviceId: null, deviceName: null };
+  }
+
+  /** 历史会话平台一致性：session.platform 缺省时跳过校验（旧数据 / 未上报平台的客户端）。 */
+  private isDevicePlatformCompatible(session: Session, device: WsDeviceInfo): boolean {
+    const expected = session.platform;
+    if (expected == null || expected === '') return true;
+    return expected === device.platform;
+  }
+
+  /** 未登记执行端的引导文案：按历史会话的平台点名，避免用户去平台不符的机器上反复失败。 */
+  private localTargetUnboundMessage(session: Session): string {
+    const platformLabel = session.platform === 'darwin'
+      ? 'macOS'
+      : session.platform === 'win32'
+        ? 'Windows'
+        : session.platform === 'linux'
+          ? 'Linux'
+          : '';
+    if (platformLabel === '') return '该历史本地任务未登记执行端，请在桌面客户端打开一次完成登记';
+    return `该历史任务创建于 ${platformLabel} 设备，请在 ${platformLabel} 桌面客户端打开一次完成登记`;
+  }
+
+  /**
+   * 解析 WS auth 帧自报的执行端设备身份。三字段必须均为非空字符串且长度在列宽内；
+   * 缺省 / 非法一律按旧客户端处理（不进入设备索引，LOCAL 走用户级广播回退）。
+   */
+  private parseDevice(root: Record<string, unknown>): WsDeviceInfo | null {
+    const node = root.device;
+    if (!node || typeof node !== 'object') return null;
+    const device = node as Record<string, unknown>;
+    const id = typeof device.id === 'string' ? device.id.trim() : '';
+    const name = typeof device.name === 'string' ? device.name.trim() : '';
+    const platform = typeof device.platform === 'string' ? device.platform.trim() : '';
+    if (!id || !name || !platform) return null;
+    if (id.length > 64 || name.length > 128 || platform.length > 32) return null;
+    return { id, name, platform };
   }
 
   private async withLock(map: Map<number, Promise<void>>, id: number, fn: () => Promise<void>): Promise<void> {

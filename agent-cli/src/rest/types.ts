@@ -106,6 +106,10 @@ export interface CreateSessionRequest {
   osVersion?: string | null;
   /** 客户端形态来源：终端 CLI 固定自报 'cli'（管理后台按来源筛选）。 */
   source?: 'cli';
+  /** LOCAL 会话绑定的执行端设备（技术方案 2026-11-05）：创建时绑定，不可改绑。 */
+  targetDeviceId?: string | null;
+  /** 执行端设备名快照（hostname），服务端仅用于离线展示。 */
+  targetDeviceName?: string | null;
 }
 
 export interface CloudProject {
