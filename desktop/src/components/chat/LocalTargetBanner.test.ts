@@ -56,7 +56,7 @@ describe('LocalTargetBanner', () => {
       targetDeviceOnline: false,
     })
     expect(html).toContain('local-target-banner warning')
-    expect(html).toContain('执行端「MyMac」不在线，发送前请在该设备上打开 Mao')
+    expect(html).toContain('执行端 MyMac 不在线，发送前请在该设备上打开 Mao')
   })
 
   it('绑定他端在线时信息态提示', async () => {
@@ -67,7 +67,18 @@ describe('LocalTargetBanner', () => {
       targetDeviceOnline: true,
     })
     expect(html).toContain('local-target-banner info')
-    expect(html).toContain('该任务在「MyMac」上执行')
+    expect(html).toContain('该任务在 MyMac 上执行')
+  })
+
+  it('展示名剥离 mDNS 的 .local 尾巴', async () => {
+    const html = await renderBanner({
+      targetDeviceId: 'dev-1',
+      currentDeviceId: 'dev-2',
+      targetDeviceName: 'MyMac.local',
+      targetDeviceOnline: true,
+    })
+    expect(html).toContain('该任务在 MyMac 上执行')
+    expect(html).not.toContain('MyMac.local')
   })
 
   it('浏览器（无当前设备身份）时照常提示', async () => {
@@ -77,6 +88,6 @@ describe('LocalTargetBanner', () => {
       targetDeviceName: 'MyMac',
       targetDeviceOnline: true,
     })
-    expect(html).toContain('该任务在「MyMac」上执行')
+    expect(html).toContain('该任务在 MyMac 上执行')
   })
 })
