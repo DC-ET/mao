@@ -82,6 +82,7 @@ async function newManager(overrides: Partial<TerminalManagerConfig> = {}, extra:
   ecpInjector?: { injectForUser: (userId: number) => Promise<string | null> };
   larkUatInjector?: { injectForUser: (userId: number) => Promise<{ uat: string; appId: string } | null> };
   envVariableService?: { resolveForSession: (userId: number, workspace: string | null) => Promise<Record<string, string>> };
+  baseUrlProvider?: { getSiteBaseUrl: () => Promise<string | null> };
 } = {}): Promise<{ manager: TerminalManager; root: string }> {
   const root = useTmpDir('mao-term-');
   const sandbox = new PathSandbox(root);
@@ -93,6 +94,7 @@ async function newManager(overrides: Partial<TerminalManagerConfig> = {}, extra:
     userLookup: { findById: async (id) => ({ id, username: `user${id}` }) },
     ecpInjector: extra.ecpInjector,
     larkUatInjector: extra.larkUatInjector,
+    baseUrlProvider: extra.baseUrlProvider,
     envVariableService: extra.envVariableService,
     config: config(overrides),
     ptyFactory: extra.ptyFactory ?? fakeFactory,
@@ -178,6 +180,20 @@ describe('TerminalManager', () => {
     });
     await manager.create({ sessionId: 8, userId: 5, workspace: root });
     expect(FakePty.instances[0].options.env.ECP_TOKEN).toBe('ecp-session-token');
+  });
+
+  it('injects MAO_BASE_URL from the site setting', async () => {
+    const { manager, root } = await newManager({}, {
+      baseUrlProvider: { getSiteBaseUrl: async () => 'https://mao.example.com' },
+    });
+    await manager.create({ sessionId: 10, userId: 7, workspace: root });
+    expect(FakePty.instances[0].options.env.MAO_BASE_URL).toBe('https://mao.example.com');
+  });
+
+  it('leaves MAO_BASE_URL unset when the site address is not configured', async () => {
+    const { manager, root } = await newManager();
+    await manager.create({ sessionId: 10, userId: 7, workspace: root });
+    expect(FakePty.instances[0].options.env.MAO_BASE_URL).toBeUndefined();
   });
 
   it('injects three-layer env vars resolved for the session workspace', async () => {

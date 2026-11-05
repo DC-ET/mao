@@ -21,6 +21,11 @@ export interface EnvVarsLookup {
   resolveForSession(userId: number, workspace: string | null): Promise<Record<string, string>>;
 }
 
+/** 站点地址查询（注入 envelope.maoBaseUrl；口径同宿主机 ShellBaseUrlProvider）。 */
+export interface SiteBaseUrlLookup {
+  getSiteBaseUrl(): Promise<string | null>;
+}
+
 export class SessionEnvelopeBuilder {
   constructor(
     private readonly deps: {
@@ -32,6 +37,8 @@ export class SessionEnvelopeBuilder {
       larkUatInjector?: ShellLarkUatInjector | null;
       /** 三级环境变量解析（宿主机侧查库 + 解密），容器内只消费 envelope.envVars。 */
       envVariableService?: EnvVarsLookup | null;
+      /** 站点地址（注入 envelope.maoBaseUrl）：容器内 mao / mao-agent 不再有内置默认。 */
+      siteBaseUrlProvider?: SiteBaseUrlLookup | null;
     },
     private readonly depsRoot: string,
   ) {}
@@ -69,6 +76,15 @@ export class SessionEnvelopeBuilder {
       }
     }
 
+    let maoBaseUrl: string | null = null;
+    if (this.deps.siteBaseUrlProvider) {
+      try {
+        maoBaseUrl = await this.deps.siteBaseUrlProvider.getSiteBaseUrl();
+      } catch (e) {
+        harnessLog('warn', `[envelope] site baseUrl lookup failed: ${(e as Error).message}`);
+      }
+    }
+
     let larkUat: RuntimeEnvelope['larkUat'] = null;
     if (this.deps.larkUatInjector) {
       try {
@@ -98,6 +114,7 @@ export class SessionEnvelopeBuilder {
         : this.deps.runtimeResolver.resolveUserRuntimeDir(userId),
       gitTokens,
       maoToken,
+      maoBaseUrl,
       ecpToken,
       larkUat,
       depsEnv: this.buildDepsEnv(userId),

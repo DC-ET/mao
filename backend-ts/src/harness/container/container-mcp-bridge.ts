@@ -111,6 +111,7 @@ export function containerMcpEnv(serverEnv: Record<string, string>, envelope?: Ru
       userCreds[gitTokenEnvKey(domain)] = token;
     }
     if (envelope.maoToken) userCreds.MAO_TOKEN = envelope.maoToken;
+    if (envelope.maoBaseUrl) userCreds.MAO_BASE_URL = envelope.maoBaseUrl;
     if (envelope.ecpToken) userCreds.ECP_TOKEN = envelope.ecpToken;
     if (envelope.larkUat) {
       userCreds.LARKSUITE_CLI_USER_ACCESS_TOKEN = envelope.larkUat.uat;

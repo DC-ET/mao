@@ -12,6 +12,24 @@ function newBuilder(envVariableService?: { resolveForSession: (userId: number, w
   }, join(root, 'deps'));
 }
 
+describe('SessionEnvelopeBuilder site baseUrl', () => {
+  it('carries the site baseUrl for shell/MCP MAO_BASE_URL injection', async () => {
+    const root = useTmpDir('mao-envelope-');
+    const builder = new SessionEnvelopeBuilder({
+      runtimeResolver: RuntimeDataResolver.forTest(join(root, 'runtime'), join(root, 'users')),
+      siteBaseUrlProvider: { getSiteBaseUrl: async () => 'https://mao.example.com' },
+    }, join(root, 'deps'));
+    const envelope = await builder.build({ userId: 7, sessionId: 9, workspace: null });
+    expect(envelope.maoBaseUrl).toBe('https://mao.example.com');
+  });
+
+  it('keeps null when the site address is not configured', async () => {
+    const builder = newBuilder();
+    const envelope = await builder.build({ userId: 7, sessionId: 9, workspace: null });
+    expect(envelope.maoBaseUrl).toBeNull();
+  });
+});
+
 describe('SessionEnvelopeBuilder env vars', () => {
   it('carries the merged three-layer env vars into the envelope', async () => {
     const resolveForSession = vi.fn(async () => ({ NPM_REGISTRY: 'https://mirror.internal' }));

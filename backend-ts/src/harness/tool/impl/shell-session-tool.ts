@@ -18,6 +18,8 @@ const DEFAULT_STDIN_YIELD_MS = 5000;
 const DEFAULT_AWAIT_YIELD_MS = 60_000;
 /** wait_for 由模型给出并在服务端执行匹配，限制长度以压缩灾难性回溯的空间。 */
 const MAX_WAIT_FOR_LENGTH = 200;
+/** MAO_BASE_URL 注入的站点地址缓存：避免每条命令都查一次系统设置。 */
+const SITE_BASE_URL_CACHE_TTL_MS = 60_000;
 
 /** 为 CLOUD shell 签发短效 token 所需的最小依赖。 */
 export interface ShellTokenIssuer {
@@ -41,12 +43,20 @@ export interface ShellLarkUatInjector {
   injectForUser(userId: number): Promise<ShellLarkUatCredentials | null>;
 }
 
+/** 站点地址提供者：用于向 shell 注入 MAO_BASE_URL（mao / mao-agent 不再内置默认地址）。 */
+export interface ShellBaseUrlProvider {
+  getSiteBaseUrl(): Promise<string | null>;
+}
+
 /** bash 单引号转义，避免 JWT 等特殊字符破坏命令 */
 export function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 export class ShellSessionTool extends BaseTool {
+  /** 注入 MAO_BASE_URL 的站点地址缓存（60s TTL，避免每条命令都查系统设置）。 */
+  private siteBaseUrlCache: { value: string | null; at: number } | null = null;
+
   constructor(
     private readonly pathSandbox: PathSandbox,
     private readonly sessionManager: ShellSessionManager,
@@ -57,6 +67,7 @@ export class ShellSessionTool extends BaseTool {
     private readonly userLookup?: ShellUserLookup | null,
     private readonly ecpInjector?: ShellEcpInjector | null,
     private readonly larkUatInjector?: ShellLarkUatInjector | null,
+    private readonly baseUrlProvider?: ShellBaseUrlProvider | null,
   ) { super(); }
 
   getName(): string { return 'shell'; }
@@ -436,8 +447,9 @@ export class ShellSessionTool extends BaseTool {
     return this.outputManager.readUntilMarker(session, marker, timeoutMs);
   }
 
-  /** 为 CLOUD shell 注入短效 JWT，供 mao-*-cli 使用。必须在写入命令前完成，否则 export 会排到命令之后。 */
+  /** 为 CLOUD shell 注入站点地址与短效 JWT，供 mao / mao-agent CLI 使用。必须在写入命令前完成，否则 export 会排到命令之后。 */
   private async injectMaoToken(session: ShellSession, userId: number | null): Promise<void> {
+    await this.injectMaoBaseUrl(session);
     if (userId == null) return;
     if (this.ecpInjector) {
       try {
@@ -472,6 +484,26 @@ export class ShellSessionTool extends BaseTool {
       session.writeStdin('export MAO_TOKEN=' + shellSingleQuote(token) + '\n');
     } catch (e) {
       harnessLog('warn', `Failed to inject MAO_TOKEN for userId=${userId}: ${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * 注入 MAO_BASE_URL：shell 内的 mao / mao-agent 显式指向本站，不再依赖代码内置默认地址。
+   * 站点地址取系统设置（site.baseUrl → upload.baseUrl 回落）；未配置时不注入。
+   */
+  private async injectMaoBaseUrl(session: ShellSession): Promise<void> {
+    if (!this.baseUrlProvider) return;
+    try {
+      const now = Date.now();
+      if (!this.siteBaseUrlCache || now - this.siteBaseUrlCache.at > SITE_BASE_URL_CACHE_TTL_MS) {
+        this.siteBaseUrlCache = { value: await this.baseUrlProvider.getSiteBaseUrl(), at: now };
+      }
+      const baseUrl = this.siteBaseUrlCache.value;
+      if (baseUrl) {
+        session.writeStdin('export MAO_BASE_URL=' + shellSingleQuote(baseUrl) + '\n');
+      }
+    } catch (e) {
+      harnessLog('warn', `Failed to inject MAO_BASE_URL: ${(e as Error).message}`);
     }
   }
 

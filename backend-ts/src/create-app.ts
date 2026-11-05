@@ -636,6 +636,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     userLookup: { findById: (id: number) => userRepo.findById(id) as Promise<{ username: string } | null> },
     ecpInjector,
     larkUatInjector,
+    baseUrlProvider: settingService,
     // §5.13：仅容器用户注入 deps env（npm/pip 安装落到每用户 /deps 挂载），host 用户零变化
     depsEnvProvider: async (userId) =>
       (await dockerRouter.enabledFor(userId)) ? buildDepsEnv(cloudRuntimeCfg.container.depsDir, userId) : null,

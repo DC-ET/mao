@@ -21,6 +21,7 @@ function envelopeOf(
     runtimeDir: '/tmp/rt',
     gitTokens: {},
     maoToken: null,
+    maoBaseUrl: null,
     ecpToken: null,
     larkUat: null,
     depsEnv,
