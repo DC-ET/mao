@@ -32,7 +32,21 @@
     <div v-if="isExpanded && hasExpandableBody" class="tool-body">
       <div v-if="formattedInput" class="tool-result">
         <div class="result-label">输入</div>
-        <div class="code-block-wrapper">
+        <template v-if="editDiff">
+          <ToolCallDiffView :blocks="editDiff.blocks" />
+          <div class="raw-toggle-row">
+            <button class="expand-result-btn" @click="showRawInput = !showRawInput">
+              {{ showRawInput ? '收起原始参数' : '查看原始参数' }}
+            </button>
+          </div>
+          <div v-if="showRawInput" class="code-block-wrapper">
+            <pre class="result-content"><code>{{ formattedInput }}</code></pre>
+            <button class="copy-btn" title="复制" @click="copyText(formattedInput)">
+              <el-icon :size="14"><CopyDocument /></el-icon>
+            </button>
+          </div>
+        </template>
+        <div v-else class="code-block-wrapper">
           <pre class="result-content"><code>{{ formattedInput }}</code></pre>
           <button class="copy-btn" title="复制" @click="copyText(formattedInput)">
             <el-icon :size="14"><CopyDocument /></el-icon>
@@ -51,17 +65,33 @@
           :preview-teleported="true"
           @click.stop
         />
-        <div v-if="displayResultText" class="code-block-wrapper">
-          <pre class="result-content"><code>{{ displayResultText }}</code></pre>
-          <button class="copy-btn" title="复制完整输出" @click="copyText(fullResultText)">
-            <el-icon :size="14"><CopyDocument /></el-icon>
-          </button>
-        </div>
-        <div v-if="isResultTruncated" class="result-expand-row">
-          <button class="expand-result-btn" @click="showFullResult = !showFullResult">
-            {{ showFullResult ? '收起完整输出' : '展开完整输出' }}
-          </button>
-        </div>
+        <template v-if="editResultSummary">
+          <div class="edit-summary">{{ editResultSummary }}</div>
+          <div class="raw-toggle-row">
+            <button class="expand-result-btn" @click="showRawOutput = !showRawOutput">
+              {{ showRawOutput ? '收起原始输出' : '查看原始输出' }}
+            </button>
+          </div>
+          <div v-if="showRawOutput" class="code-block-wrapper">
+            <pre class="result-content"><code>{{ displayResultText }}</code></pre>
+            <button class="copy-btn" title="复制完整输出" @click="copyText(fullResultText)">
+              <el-icon :size="14"><CopyDocument /></el-icon>
+            </button>
+          </div>
+        </template>
+        <template v-else>
+          <div v-if="displayResultText" class="code-block-wrapper">
+            <pre class="result-content"><code>{{ displayResultText }}</code></pre>
+            <button class="copy-btn" title="复制完整输出" @click="copyText(fullResultText)">
+              <el-icon :size="14"><CopyDocument /></el-icon>
+            </button>
+          </div>
+          <div v-if="isResultTruncated" class="result-expand-row">
+            <button class="expand-result-btn" @click="showFullResult = !showFullResult">
+              {{ showFullResult ? '收起完整输出' : '展开完整输出' }}
+            </button>
+          </div>
+        </template>
       </div>
     </div>
   </div>
@@ -75,6 +105,8 @@ import type { ToolCall } from '../../composables/useChat'
 import { useSessionStore } from '../../stores/session'
 import { copyText as copyToClipboard } from '../../utils/clipboard'
 import { getToolDisplayName, getToolInputPreview } from '../../utils/toolDisplay'
+import { buildEditDiff } from '../../utils/toolDiff'
+import ToolCallDiffView from './ToolCallDiffView.vue'
 
 const props = withDefaults(defineProps<{
   toolCall: ToolCall
@@ -174,6 +206,53 @@ const formattedInput = computed(() => {
     return ''
   }
 })
+
+/**
+ * edit_file 的替换片段 diff：入参自带完整 old/new_string，无需等 file_change 事件，
+ * 实时流式与历史回放同源（后端落库前只剥 file_change_diff，不动入参）。
+ * 无变化或参数缺失时返回 null，卡片回退原始 JSON 展示。
+ */
+const editDiff = computed(() => {
+  if (props.toolCall.name !== 'edit_file') return null
+  const input = props.toolCall.input
+  if (!input) return null
+  const oldStr = typeof input.old_string === 'string' ? input.old_string : ''
+  const newStr = typeof input.new_string === 'string' ? input.new_string : ''
+  if (oldStr === '' && newStr === '') return null
+  const diff = buildEditDiff(oldStr, newStr)
+  return diff.blocks.length > 0 ? diff : null
+})
+
+/**
+ * edit_file 结果摘要：成功时一行「替换 N 处 · +a -d」（行数取后端 file_change 口径，
+ * 缺失时回退 diff 片段自算）；失败时直显 error 文案。解析不出 JSON 时返回 null 走原始输出。
+ */
+const editResultSummary = computed(() => {
+  if (!editDiff.value) return null
+  const raw = props.toolCall.result
+  if (!raw) return null
+  try {
+    const node = JSON.parse(raw) as Record<string, unknown>
+    if (node.success === true) {
+      const fc = (node.file_change ?? {}) as Record<string, unknown>
+      const added = Number(fc.lines_added ?? editDiff.value.added)
+      const deleted = Number(fc.lines_deleted ?? editDiff.value.deleted)
+      const parts: string[] = []
+      const replacements = Number(node.replacements)
+      if (Number.isFinite(replacements) && replacements > 0) parts.push(`替换 ${replacements} 处`)
+      parts.push(`+${added} -${deleted}`)
+      return parts.join(' · ')
+    }
+    const error = node.error
+    if (typeof error === 'string' && error) return error
+  } catch {
+    // not json
+  }
+  return null
+})
+
+const showRawInput = ref(false)
+const showRawOutput = ref(false)
 
 const hasExpandableBody = computed(
   () => !!(formattedInput.value || props.toolCall.result || imagePreviewUrl.value)
@@ -418,6 +497,22 @@ function toggleExpand() {
 
 .result-expand-row {
   margin-top: 2px;
+}
+
+.raw-toggle-row {
+  margin-top: 2px;
+}
+
+.edit-summary {
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  background: var(--aw-surface-code);
+  border-radius: var(--aw-radius-sm);
+  font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-caption);
+  color: var(--aw-text-code);
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .expand-result-btn {
