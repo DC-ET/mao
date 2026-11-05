@@ -3,8 +3,8 @@
   <div class="toolbar">
     <div class="toolbar-left">
       <label class="add-btn" title="上传图片或文件" :class="{ disabled: disabled }">
-        <!-- LOCAL 模式不支持非图片文件上传，收窄 accept 避免选完才被拒 -->
-        <input type="file" multiple :accept="executionMode === 'LOCAL' ? 'image/*' : ''" :disabled="disabled" @change="handleFileSelect" style="display: none" />
+        <!-- 图片与文件均可选：CLOUD 发送时上传服务端；LOCAL+Electron 发送时拷贝到本机 ~/.mao/attachments；浏览器端 LOCAL 附件由 addPendingFile 提示改用桌面客户端 -->
+        <input type="file" multiple :disabled="disabled" @change="handleFileSelect" style="display: none" />
         <el-icon :size="16"><Plus /></el-icon>
       </label>
 

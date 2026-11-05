@@ -2,8 +2,9 @@
   <div class="tool-call-card" :class="[`status-${toolCall.status}`, { standalone }]">
     <div class="tool-header" @click="toggleExpand">
       <div class="tool-info">
-        <!-- 工具类型图标：单工具组省掉组头后靠它辨识工具（与组头同口径，见 utils/toolIcons） -->
-        <el-icon class="tool-icon" :size="14"><component :is="toolIcon" /></el-icon>
+        <!-- 工具类型图标：仅在单独渲染（无组头）时挂，充当组壳的一部分。组内每行都挂会与
+             组头图标重复（组头已表达「这一类工具」），故多调用组内不显示。 -->
+        <el-icon v-if="standalone" class="tool-icon" :size="14"><component :is="toolIcon" /></el-icon>
         <span class="tool-summary">{{ displaySummary }}</span>
       </div>
       <div class="tool-status">
@@ -671,6 +672,7 @@ function toggleExpand() {
 .tool-icon {
   color: var(--aw-ink-muted-48);
   flex-shrink: 0;
+  display: inline-flex;
 }
 
 .tool-status {

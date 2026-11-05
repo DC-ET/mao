@@ -55,6 +55,11 @@ function toolBodyVisible(): boolean {
   return !!document.querySelector('.tool-body')
 }
 
+/** 卡片行上的工具图标（.tool-icon）：只有充当组壳的 standalone 卡片才挂 */
+function cardIconCount(): number {
+  return document.querySelectorAll('.tool-call-card .tool-icon').length
+}
+
 describe('ToolCallGroup', () => {
   it('单工具组不渲染组头：一次点击卡片头即展开内容', async () => {
     const m = mountGroup([makeCall('tc-1', { summary: '执行 npm run build (2 行输出)' })])
@@ -65,6 +70,8 @@ describe('ToolCallGroup', () => {
     expect(document.querySelector('.tool-header')).not.toBeNull()
     // 但组壳的点击热区/悬停反馈不能丢：卡片头带 standalone 样式充当组壳
     expect(document.querySelector('.tool-call-card')?.classList.contains('standalone')).toBe(true)
+    // 组头没了，工具类型图标由卡片头补上（否则看不出是哪类工具）
+    expect(cardIconCount()).toBe(1)
     expect(toolBodyVisible()).toBe(false)
 
     const header = document.querySelector('.tool-header') as HTMLElement
@@ -91,6 +98,9 @@ describe('ToolCallGroup', () => {
     expect(document.querySelectorAll('.tool-header')).toHaveLength(2)
     // 多调用组内的卡片不带 standalone（热区/悬停由组壳负责，避免每行都一片底色）
     expect(document.querySelector('.tool-call-card')?.classList.contains('standalone')).toBe(false)
+    // 组头已带工具类型图标，组内每行不再重复挂（否则一个组里出现 N+1 个图标）
+    expect(cardIconCount()).toBe(0)
+    expect(document.querySelectorAll('.tool-group-header .tool-group-icon')).toHaveLength(1)
     expect(toolBodyVisible()).toBe(false)
 
     const cardHeader = document.querySelector('.tool-header') as HTMLElement
