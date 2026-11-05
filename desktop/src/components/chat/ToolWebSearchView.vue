@@ -60,8 +60,9 @@ function hostOf(url: string): string {
   font-size: var(--aw-text-caption);
 }
 
+/* 查询词不用主色（蓝）：与 shell 命令同口径取墨色，蓝色只留给交互态底纹 */
 .query-pattern {
-  color: var(--aw-primary);
+  color: var(--aw-ink);
   word-break: break-all;
 }
 
@@ -88,13 +89,18 @@ function hostOf(url: string): string {
   background: color-mix(in srgb, var(--aw-primary) 8%, transparent);
 }
 
+/* 标题不用主色（蓝）：取墨色 + 悬停下划线表明可点，蓝色只留给整行交互态底纹 */
 .result-title {
   font-size: var(--aw-text-caption);
   font-weight: 600;
-  color: var(--aw-primary);
+  color: var(--aw-ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.result-row:hover .result-title {
+  text-decoration: underline;
 }
 
 .result-host {

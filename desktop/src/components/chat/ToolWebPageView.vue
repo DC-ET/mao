@@ -59,11 +59,12 @@ const emit = defineEmits<{
   white-space: nowrap;
 }
 
+/* url 不用主色（蓝）：中性灰 + 悬停下划线表明可点，蓝色只留给 markdown 内的链接 */
 .page-url {
   display: block;
   margin-top: 1px;
   font-size: var(--aw-text-fine);
-  color: var(--aw-primary);
+  color: var(--aw-ink-muted-64);
   text-decoration: none;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -63,8 +63,9 @@ function dirOf(file: string): string {
   font-size: var(--aw-text-caption);
 }
 
+/* 查询词不用主色（蓝）：与 shell 命令同口径取墨色，蓝色只留给交互态底纹 */
 .query-pattern {
-  color: var(--aw-primary);
+  color: var(--aw-ink);
   word-break: break-all;
 }
 
