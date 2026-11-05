@@ -34,7 +34,16 @@
         <div v-for="cmd in displayedCommands" :key="cmd.id" class="command-card">
           <div class="command-card-header">
             <div class="command-name">{{ cmd.name }}</div>
-            <div v-if="activeTab === 'personal'" class="command-actions">
+            <div v-if="activeTab === 'system'" class="command-actions">
+              <el-tooltip content="复制指令内容" :show-after="300" placement="top">
+                <button class="cmd-btn" @click="copyContent(cmd)">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                  </svg>
+                </button>
+              </el-tooltip>
+            </div>
+            <div v-else class="command-actions">
               <template v-if="deletingId === cmd.id">
                 <button class="cmd-btn cmd-btn-confirm-delete" @click="confirmDelete(cmd)">
                   <el-icon :size="14"><Check /></el-icon>
