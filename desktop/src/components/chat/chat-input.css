@@ -349,22 +349,6 @@
   white-space: nowrap;
 }
 
-/* 已有 LOCAL 会话的执行端设备标识（技术方案 2026-11-05 §4.1-3）：快照名 + 在线态 */
-.workspace-indicator .device-badge {
-  max-width: 220px;
-  padding: 0 6px;
-  border-radius: var(--aw-radius-pill);
-  border: 1px solid var(--aw-hairline);
-  color: var(--aw-ink-muted-48);
-  font-size: var(--aw-text-micro);
-  line-height: 18px;
-}
-
-.workspace-indicator .device-badge.offline {
-  border-color: var(--aw-warning);
-  color: var(--aw-warning);
-}
-
 .model-name {
   font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-80);

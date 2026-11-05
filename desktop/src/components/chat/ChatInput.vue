@@ -95,8 +95,6 @@
       :cloud-projects="cloudProjects"
       :cloud-indicator-label="cloudIndicatorLabel"
       :dir-name="dirName"
-      :target-device-name="targetDeviceName"
-      :target-device-online="targetDeviceOnline"
       :permission-level="permissionLevel"
       :model-id="modelId"
       :waiting-for-save="waitingForSave"

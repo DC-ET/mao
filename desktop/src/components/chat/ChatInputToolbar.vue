@@ -54,13 +54,6 @@
             <FolderOpened v-else />
           </el-icon>
           <span>{{ dirName || 'No workspace' }}</span>
-          <!-- 已有 LOCAL 会话：执行端设备标识（快照名 + 在线态）；浏览器接管对话时唯一可见的执行端信息 -->
-          <span
-            v-if="!isNewTask"
-            class="device-badge"
-            :class="{ offline: targetDeviceOnline === false }"
-            :title="deviceBadgeTitle"
-          >{{ deviceBadgeLabel }}</span>
         </template>
       </div>
       <PermissionLevelSwitcher
@@ -121,7 +114,6 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
 import { Plus, WarningFilled, FolderOpened, Cloudy, Loading } from '@element-plus/icons-vue'
 import PermissionLevelSwitcher from './PermissionLevelSwitcher.vue'
 import AgentChip from './AgentChip.vue'
@@ -145,10 +137,6 @@ const props = defineProps<{
   cloudProjects: CloudProject[]
   cloudIndicatorLabel: string
   dirName: string
-  /** LOCAL 会话绑定的执行端设备名（快照）；已登记 / 未登记决定文案 */
-  targetDeviceName?: string | null
-  /** 请求时快照：true=在线 / false=离线 / null=未知（未绑定或非 WS 装配） */
-  targetDeviceOnline?: boolean | null
   permissionLevel: string
   modelId?: number
   waitingForSave: boolean
@@ -176,18 +164,4 @@ const emit = defineEmits<{
   'select:model': [modelId: number, modelIdStr: string]
 }>()
 
-const deviceName = computed(() => (props.targetDeviceName ?? '').trim())
-
-/** 「本地任务 · 设备名（在线/离线）」；历史会话未登记执行端时明确提示（技术方案 2026-11-05 §4.1-3）。 */
-const deviceBadgeLabel = computed(() => {
-  if (!deviceName.value) return '本地任务 · 未登记执行端'
-  const status = props.targetDeviceOnline === true ? '在线' : props.targetDeviceOnline === false ? '离线' : ''
-  return `本地任务 · ${deviceName.value}${status ? `（${status}）` : ''}`
-})
-
-const deviceBadgeTitle = computed(() => {
-  if (!deviceName.value) return '该历史本地任务还未登记执行端，请在桌面客户端打开一次完成登记'
-  if (props.targetDeviceOnline === false) return '绑定的执行端设备当前不在线，发送前请先在该设备上打开 Mao'
-  return `该任务在本机「${deviceName.value}」上执行`
-})
 </script>

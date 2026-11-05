@@ -71,6 +71,15 @@
         <div class="messages" ref="messagesContainer" :aria-busy="historyLoading"
         @touchstart.passive="handleTouchStart" @touchmove.passive="handleTouchMove"
         @pointerdown="handlePointerDown">
+        <!-- LOCAL 会话执行端提示（技术方案 2026-11-05 §4.1-3）：当前设备即绑定执行端时组件内部不渲染 -->
+        <LocalTargetBanner
+          v-if="sessionId && !isNewTaskMode && executionMode === 'LOCAL'"
+          :execution-mode="executionMode"
+          :target-device-id="currentSession?.targetDeviceId ?? null"
+          :target-device-name="currentSession?.targetDeviceName ?? null"
+          :target-device-online="currentSession?.targetDeviceOnline ?? null"
+          :current-device-id="currentDeviceId"
+        />
         <div v-if="historyLoading" class="history-loading"
           :class="{ 'empty-state': messages.length === 0 }" role="status" aria-live="polite">
           <el-icon :size="messages.length === 0 ? 28 : 16" class="is-loading" aria-hidden="true"><Loading /></el-icon>
@@ -223,6 +232,7 @@ import { ChatDotRound, Loading } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage, type PendingUploadFile } from '../../composables/useChat'
 import { useChatScroll } from '../../composables/useChatScroll'
 import { useChatQueue } from '../../composables/useChatQueue'
+import { useCurrentDevice } from '../../composables/useCurrentDevice'
 import { LOCATE_FLASH_KEY, useMessageLocate } from '../../composables/useMessageLocate'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
@@ -241,6 +251,7 @@ import QuestionPanel from './QuestionPanel.vue'
 import ExecutionErrorBanner from './ExecutionErrorBanner.vue'
 import StarterPrompts from './StarterPrompts.vue'
 import RoundDirectory from './RoundDirectory.vue'
+import LocalTargetBanner from './LocalTargetBanner.vue'
 import appIcon from '../../assets/app-icon-small.png'
 
 // Inject shared refs from TaskView
@@ -343,6 +354,9 @@ const isMobileViewport = ref(typeof window !== 'undefined' ? window.innerWidth <
 function syncMobileViewport() {
   isMobileViewport.value = window.innerWidth <= 768
 }
+
+/** 当前 Electron 设备 id（浏览器为 null）：LOCAL 会话执行端提示条据此在「本机即执行端」时隐藏 */
+const { deviceId: currentDeviceId } = useCurrentDevice()
 
 /** 软键盘弹出（visualViewport 明显矮于布局视口）时关闭几何居中，避免发送键被遮挡 */
 const keyboardOpen = ref(false)
