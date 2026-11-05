@@ -1,6 +1,7 @@
 # 本地任务跨设备委托技术方案（桌面端 / CLI 创建，浏览器可接管对话）
 
 - 状态：草案（2026-11-05；§3 决策为拟定口径，评审通过后定案）
+- 评审记录：2026-11-05 完成可行性评审，结论「**可行**」（委托链路已通、服务端本就允许浏览器对 LOCAL 会话发消息，主体确为「加设备维度」）。本版已按评审意见补齐若干不完善点（各处标注「**评审补充**」：派生继承第 3 站点、delegate 侧调用点、desktopPrefs 白名单坑、D15-② 平台校验、孤立绑定恢复、契约与类型落点、POST 校验为新增、removeSession 清理、enrichSessions 唯一装配点）。**本轮不进入功能开发。**
 - 日期：2026-11-05
 - 关联方案：
   - [2026-11-03-session-source-client-form-technical-design.md](./2026-11-03-session-source-client-form-technical-design.md)（客户端形态来源 `desktop / cli / android / web`，本方案依赖其 WS `client` 词表，不修改来源体系）
@@ -124,24 +125,25 @@
    - 解析 `root.device`：`id/name/platform` 三者均为非空字符串才生效；缺省或非法 → 按旧客户端处理（只注册连接，不进入设备索引）。
    - `registry.register(...)` 透传设备信息；日志补 `deviceId`。
 3. **委托目标绑定**（`harness/local/local-tool-session-registry.ts`）
-   - `sessionToUser` 旁新增 `sessionToDevice: Map<sessionId, string | null>`；`setUserForSession(sessionId, userId)` 直接改名为 `setTargetForSession(sessionId, userId, deviceId | null)`（调用点只有发送 / 重试 / 边路 / 子代理约 5 处 + spec，重命名成本可控、语义更清晰）。
+   - `sessionToUser` 旁新增 `sessionToDevice: Map<sessionId, string | null>`；`setUserForSession(sessionId, userId)` 直接改名为 `setTargetForSession(sessionId, userId, deviceId | null)`。**评审补充**：调用点不止「约 5 处」——`streaming-ws-handler.ts` 内 6 处（订阅 `handleSubscribe` `:566`、发送 `:713`、持久化提示词 `:931`、编辑重发 `:1034`、边路 `:1239`、重试 `:1414`），外加 delegate 侧 3 处（`subagent-execution-recovery.service.ts:79/80`、`background-subagent-manager.ts:570`）与各处 spec；改名后编译期会强制暴露这些点，需一并带 `session.targetDeviceId`。另 `removeSession` 删 `sessionToUser` 时须同步删 `sessionToDevice`，否则设备绑定内存泄漏。
    - `isConnected(sessionId)`：有绑定设备 → `hasDeviceConnection(userId, deviceId)`；无绑定 → `hasLocalClientConnection(userId)`（现状）。
    - 设备解析兜底：内存 `sessionToDevice` 无记录时（服务重启、崩溃恢复、边路 / 子代理新建）从 `session` 表读 `target_device_id`，与 `resolveUserId` 共用一次查询。
    - `sendToolRequest`：有绑定 → `sendToDevice`；无绑定 → `sendToLocalClients`（现状）；目标不存在时返回 `{ error: 'Local client is not connected' }`（保持既有文案，前端按设备名补提示）。
 4. **统一 LOCAL 检查点**（`streaming-ws-handler.ts`）
    - 发送（约 `:714`）、重试（约 `:932` / `:1035`）、边路（约 `:1188`）、后台子代理（约 `:1415`）等所有 `localToolSessionRegistry.isConnected(sessionId)` 前的 `setUserForSession` 调用，改为带 `session.targetDeviceId`。检查逻辑本身不改——设备级语义已在 `isConnected` 内收敛。
    - **设备断线清理**：`afterConnectionClosed` 若关闭的连接带 `deviceId` 且该设备已无执行连接，调用新增的 `localToolSessionRegistry.failAllForDevice(userId, deviceId)`（失败该设备绑定会话的全部 pending 工具请求）；现有 `!hasLocalClientConnection(userId)` 的 `failAllForUser` 保留给无 deviceId 的旧连接。避免「目标设备掉线、但同用户另一台设备在线」时 pending 永久悬挂。
-   - **派生会话继承**：边路任务（`handleCreateSideSession` 的 `sideSession`）与子代理（`subagent-invocation.service.ts` 的 `child`）创建时补 `targetDeviceId: parent.targetDeviceId`，与 `executionMode` / `workspace` 同源；否则 LOCAL 子会话会退回广播。
+   - **派生会话继承**：共 **3 处**会话字面量需补 `targetDeviceId`（与 `executionMode` / `workspace` 同源，否则 LOCAL 子会话退回广播）：① 边路任务 `handleCreateSideSession` 的 `sideSession`（`streaming-ws-handler.ts:1213`）；② 子代理 `subagent-invocation.service.ts` 的 `child`（`:26`）；③ **评审补充**：边路提升 `promoteSideTaskToMainSession`（`session.service.ts:684`，原方案遗漏）——它同样复制 `executionMode`/`workspace`，且提升后的会话会再次走 `enrichSessions`（`session.routes.ts:320`）返回 VO，若不继承则设备名 / 在线态丢失。三者都不经过 `createSession`，而是各自 `insert`，故落库要保证 `sessionRepo.insert`（`session.repository.ts:281`）透传两列（见 §4.1-6）。
+   - **评审补充**：delegate 侧另有 `isConnected` / `setUserForSession` 调用点**不在** `streaming-ws-handler.ts` 内——`subagent-execution-recovery.service.ts`（`isConnected:153`、`setUserForSession:79/80`、`removeSession:118`）与 `background-subagent-manager.ts`（`setUserForSession:570`、`removeSession:740`）。改名 / 改签名后必须同步改造并按 §7 补测，否则后台子代理恢复路径会退回用户级在线判定。
 5. **技能 / MCP 同步定向**（`streaming-ws-handler.ts:2196` / `:2235`）
    - 取 `session.targetDeviceId`：有 → `sendToDevice`；无 → `sendToLocalClients`（现状）。`skill_sync_complete` / `mcp_tools_report` 的回包按 `requestId`/`syncId` 匹配，无来源连接校验（同用户设备间串扰风险由定向发送本身消除）。
 6. **会话字段与接口**
    - `session.service.ts` 的 `createSession` 增参 `targetDeviceId` + `targetDeviceName`，仅 LOCAL 落库（CLOUD 忽略）；`sessionRepo.insert` 带两列；`session-vo.ts` 输出 `targetDeviceId / targetDeviceName`。
-   - `session.routes.ts` 的 POST body 增 `targetDeviceId?: string`（长度 ≤64）与 `targetDeviceName?: string`（长度 ≤128），超长 400；**不强制必填**（兼容旧桌面端 / CLI 版本，缺省走广播回退）；创建时**不硬校验在线**（设备刚断线重连窗口内允许保存），发送时由 `isConnected` 硬校验；`PATCH /v1/sessions/:id` **不提供改绑**（用户已定）。
-7. **设备在线状态**：`enrichSessions` 处注入 registry，对 `targetDeviceId` 非空的会话计算 `targetDeviceOnline = registry.hasDeviceConnection(userId, targetDeviceId)`；无绑定返回 null。
+   - `session.routes.ts` 的 POST body 增 `targetDeviceId?: string`（长度 ≤64）与 `targetDeviceName?: string`（长度 ≤128），超长 400；**不强制必填**（兼容旧桌面端 / CLI 版本，缺省走广播回退）；创建时**不硬校验在线**（设备刚断线重连窗口内允许保存），发送时由 `isConnected` 硬校验；`PATCH /v1/sessions/:id` **不提供改绑**（用户已定）。**评审补充**：`bodyOf`（`common/request.ts`）是裸转换、POST 现无任何 body schema 校验，故上述长度 400 是**新增**校验而非扩展既有逻辑，需显式实现；并对 `targetDeviceName` 去首尾空白、`targetDeviceId` 限 UUID 形状（`[0-9a-f-]{36}` 量级），避免把任意串写进快照列。`createSession` 亦无 `executionMode` 白名单校验（`:137` 仅把空值归一为 `CLOUD`），本功能只依赖字面量 `'LOCAL'`，无需扩大校验面。
+7. **设备在线状态**：`enrichSessions` 处注入 registry，对 `targetDeviceId` 非空的会话计算 `targetDeviceOnline = registry.hasDeviceConnection(userId, targetDeviceId)`；无绑定返回 null。**评审补充（好事实证）**：`enrichSessions`（`session.routes.ts:138`）是列表 / 详情（`:302`）/ 分组 / 仪表盘 / 分页 / 提升后（`:320`）等约 11 处 VO 的**唯一**装配点，注入一次即全端点一致，无需逐端点补；`toSessionVO`（`session-vo.ts:182`）需增补 `targetDeviceId / targetDeviceName / targetDeviceOnline` 三个输出字段。注意 `SessionRouteDeps`（`session.routes.ts:48`）当前无 registry 依赖，需新增注入字段；单列表页约 20 会话即约 20 次 map 查找，可接受。
 8. **历史会话惰性认领**（`streaming-ws-handler.ts` + `session.service.ts`）
    - 触发点：LOCAL 会话进入执行前（发送 / 重试 / 边路 / 子代理统一入口），若 `session.targetDeviceId` 为空，先尝试认领：
      - ① 当前 WS 连接带 deviceId（Electron / CLI）→ 用它（`registry.getDeviceId(socket)`，沿 `handleUserMessage` 透传到执行入口）；无 socket 上下文（定时任务 / 内部入口，且 LOCAL 本就被这类入口排除）不参与。
-     - ② 否则取 `registry.getOnlineDeviceIds(userId)`（仅统计带 deviceId 的连接）：唯一 → 认领给它；多台 → 返回错误帧「该历史本地任务未登记执行端，请在桌面客户端打开一次完成登记」，不执行。
+     - ② 否则取 `registry.getOnlineDeviceIds(userId)`（**去重后的 deviceId 集合**，非 socket 数；仅统计带 deviceId 的连接）：唯一 → **评审补充**再校验 `device.platform === session.platform`（创建端 `process.platform` 与设备上报一致，`darwin / win32 / linux`；`session.platform` 为空则跳过该校验）——一致才认领，**不一致视同多设备拒绝**，避免把 Mac 会话认领到唯一在线的 Windows 机器；多台或平台不符 → 返回错误帧「该历史本地任务未登记执行端，请在桌面客户端打开一次完成登记」，不执行。
      - ③ 一条带 deviceId 的连接都没有（纯旧客户端环境）→ 不认领，保持现状广播（兼容）。
    - 写回：`sessionService.claimTargetDevice(id, deviceId, deviceName)` → `UPDATE session SET target_device_id=?, target_device_name=? WHERE id=? AND target_device_id IS NULL`；影响行数为 0 表示已被其他连接认领，读回现有值并按它定向（不覆盖）。
    - 认领成功后立即 `setTargetForSession(...)` 走定向；前端在发送完成后的现有 `fetchSession` 刷新即可看到设备名，无需新增推送。
@@ -149,12 +151,12 @@
 
 ### 4.2 契约（shared/contracts）
 
-- `shared/contracts/src/session.ts`：`Session` 增 `targetDeviceId?: string | null`、`targetDeviceName?: string | null`、`targetDeviceOnline?: boolean | null`。
+- **落点修正（评审补充）**：`shared/contracts/src/session.ts` 目前**没有** `Session` 类型（该文件只导出 `SessionSource` 与消息检索相关类型；前端 `desktop/src/stores/session/types.ts` 亦只从 contracts 引 `WsTaskPhase`）。故三字段应加到：后端 `session/types.ts` 的 `Session`（`:4`）、后端 `session-vo.ts` 的 `SessionVO`（`:24`，wire 实际结构）、前端 `desktop/src/stores/session/types.ts` 的 `Session`（`:38`）。三处均为 `targetDeviceId?: string | null`、`targetDeviceName?: string | null`、`targetDeviceOnline?: boolean | null`。设备字段非枚举，不触发 AGENTS.md 的 contracts 枚举收口规则；不新增 contracts 类型。
 - 不新增设备列表类型（无设备列表接口）。
 
 ### 4.3 桌面端（desktop，Electron 与浏览器同 dist）
 
-1. **设备身份持久化**（`electron/desktopPrefs.cjs`）：`normalizeDesktopPrefs` 增 `deviceId` 字段——已有非空字符串沿用，缺失时在读取路径用 `crypto.randomUUID()` 生成一次并随偏好原子写回（不在默认值函数里生成，避免每次读取都变）。
+1. **设备身份持久化**（`electron/desktopPrefs.cjs`）：`normalizeDesktopPrefs` 增 `deviceId` 字段——已有非空字符串沿用，缺失时在读取路径用 `crypto.randomUUID()` 生成一次并随偏好原子写回（不在默认值函数里生成，避免每次读取都变）。**评审补充（坑）**：`normalizeDesktopPrefs`（`desktopPrefs.cjs:35`）是白名单式归一、**不透传未知字段**，且 `writeDesktopPrefs`（`:84`）写盘前会再跑一次归一——因此 `deviceId` 必须同时进 `defaultDesktopPrefs()` 与 `normalizeDesktopPrefs` 的返回对象，否则「读取时生成并写回」会在下一次写盘被静默清掉；务必补「生成→写盘→重读仍为非空」的单测（§7-11）。
 2. **设备信息 IPC**（`electron/main.cjs` + `electron/preload.cjs`）：新增 `ipcMain.handle('device-info-get')` 返回 `{ id, name: os.hostname(), platform: process.platform }`；preload 暴露 `getDeviceInfo()`。
 3. **握手上报**（`composables/useStreamWS.ts`）：`auth` 帧追加 `device: await electronAPI.getDeviceInfo()`（仅 Electron；浏览器无 `electronAPI`，不上报）。
 4. **浏览器端交互边界**（`components/chat/WorkspaceChip.vue`、`ChatNewTaskConfigBar.vue`）
@@ -193,9 +195,9 @@ ALTER TABLE `session`
 
 | 端 / 文档 | 项 |
 |---|---|
-| backend-ts | `session/ws/streaming-ws-registry.ts`（设备索引 / `sendToDevice` / `hasDeviceConnection` / `getDeviceId` / `getOnlineDeviceIds`）、`session/ws/streaming-ws-handler.ts`（auth 解析 device、LOCAL 检查点带 targetDeviceId、设备断线清理、边路继承、技能/MCP 同步定向、历史会话惰性认领触发）、`harness/local/local-tool-session-registry.ts`（目标绑定 / 定向 / 回退 / 按设备清理）、`harness/delegate/subagent-invocation.service.ts`（子代理继承 targetDeviceId）、`harness/tool/tool-dispatcher.ts`（不改，仅验证 LOCAL 分支）、`session/session.service.ts`（createSession 落两列 + `claimTargetDevice` 条件更新）、`session/session.routes.ts`（POST 字段校验 + VO 在线态）、`session/session-vo.ts`（VO） |
-| contracts | `shared/contracts/src/session.ts`（`targetDeviceId` / `targetDeviceName` / `targetDeviceOnline`） |
-| desktop | `electron/desktopPrefs.cjs`（deviceId）、`electron/main.cjs` + `preload.cjs`（getDeviceInfo）、`composables/useStreamWS.ts`（握手上报）、`components/chat/WorkspaceChip.vue`（已有会话设备标识 / 边界展示）、`ChatInput.vue`（既有会话放行、附件提示）、`useChat.ts`（guard 按新建态区分、创建会话带设备）、`stores/session/list.ts`（payload）、`views/task/TaskView.vue`（读设备字段 + 展示） |
+| backend-ts | `session/ws/streaming-ws-registry.ts`（设备索引 / `sendToDevice` / `hasDeviceConnection` / `getDeviceId` / `getOnlineDeviceIds`）、`session/ws/streaming-ws-handler.ts`（auth 解析 device、LOCAL 检查点带 targetDeviceId、设备断线清理、边路继承、技能/MCP 同步定向、历史会话惰性认领触发）、`harness/local/local-tool-session-registry.ts`（目标绑定 / 定向 / 回退 / 按设备清理 / removeSession 清理 sessionToDevice）、`harness/delegate/subagent-invocation.service.ts`（子代理继承 targetDeviceId）、**评审补充**：`harness/delegate/subagent-execution-recovery.service.ts` + `harness/delegate/background-subagent-manager.ts`（isConnected / setUserForSession 设备化 + removeSession 清理）、`harness/tool/tool-dispatcher.ts`（不改，仅验证 LOCAL 分支）、`session/session.service.ts`（createSession 落两列 + `claimTargetDevice` 条件更新 + **评审补充**：`promoteSideTaskToMainSession` 继承两列）、`session/session.repository.ts`（insert 透传两列）、`session/session.routes.ts`（POST 字段校验 + enrichSessions 注入 registry + VO 在线态）、`session/session-vo.ts`（VO 三字段）、`session/types.ts`（Session 三字段） |
+| contracts | **无变更**（设备字段非枚举、不新增类型；三字段落点见 §4.2 修正：后端 `session/types.ts` + `session-vo.ts` + 前端 `desktop/src/stores/session/types.ts`） |
+| desktop | `electron/desktopPrefs.cjs`（deviceId + normalize 白名单）、`electron/main.cjs` + `preload.cjs`（getDeviceInfo）、`composables/useStreamWS.ts`（握手上报）、`components/chat/WorkspaceChip.vue`（已有会话设备标识 / 边界展示）、`ChatInput.vue`（既有会话放行、附件提示）、`useChat.ts`（guard 按新建态区分、创建会话带设备）、`stores/session/list.ts`（payload）、`stores/session/types.ts`（Session 增三字段）、`views/task/TaskView.vue`（读设备字段 + 展示） |
 | agent-cli | `src/ws/` 握手带 device、`~/.mao/` 持久化 deviceId、LOCAL 建会话带 `deviceId` + `deviceName` |
 | 迁移 | `V186__add_session_target_device_binding.sql`（`target_device_id` + `target_device_name`，存量不回填） |
 | 测试 | 见 §7 |
@@ -208,7 +210,8 @@ ALTER TABLE `session`
 | **发布顺序敏感**：新桌面端先于后端上线时，`targetDeviceId` 被旧后端忽略 → 会话未绑定、实际走广播，用户以为已定向 | §8 规定「先部署 backend-ts，再部署 desktop/dist」；后端先上线时旧客户端无 device 字段，走回退分支，双方安全；错过的会话在后端上线后首次执行时会按 D15 补登记 |
 | 旧桌面端 / CLI 创建 LOCAL 不带绑定 | 服务端不强制校验（避免旧端 400）；未认领前保持广播；新端创建即绑定，UI 对未绑定会话不展示在线态 |
 | 同一账号两台机器在线时误在错机器执行 | 新会话一律绑定创建端 `deviceId`；历史会话按 D15 惰性认领（① / ② 有唯一性判据，③ 拒绝不猜）；执行前按 `targetDeviceOnline` 校验 |
-| 历史会话认领到错误的唯一设备（另一台机器在线、workspace 不匹配） | ② 只在「带 deviceId 的在线设备唯一」时触发（唯一性证据）；路径不存在由工具层报错，且不可改绑（用户已定）——风险已明示、接受；后续如需要可另议「解除认领」 |
+| 历史会话认领到错误的唯一设备（另一台机器在线、workspace 不匹配） | ② 只在「带 deviceId 的在线设备唯一」时触发（唯一性证据）+ **评审补充**平台一致性校验（§4.1-8）压低误判；路径不存在由工具层报错，且不可改绑（用户已定）——风险已明示、接受；后续如需要可另议「解除认领」 |
+| **评审补充**：② 同平台仍可能误判（如两台 Mac、workspace 不匹配），以及**设备重装 / 换机**后 deviceId 变（desktopPrefs 在 userData、`~/.mao/` 随机器走，重装即新 UUID），旧 `target_device_id` 永久失配、又不可改绑 | 上述两种都会留下**孤立绑定**（会话显示离线、浏览器无法接管）。因「不可改绑 / 不做解除认领」为用户既定，恢复路径明确为**重建会话**；需在 UI（未登记/离线态旁）与 CHANGELOG 写清「本地任务绑定创建它的那台设备，重装应用或换机后旧任务需重新创建」，避免用户误判为 bug |
 | 多设备 + 未绑定历史会话在浏览器发起被拒 | 错误文案明确引导「在桌面客户端打开一次完成登记」；桌面端打开并发送一次即完成认领，后续不再触发 |
 | 纯旧客户端环境被认领逻辑误拦 | ③ 明确：无任何带 deviceId 的连接时保持现状广播，不触发拒绝 |
 | 同一 deviceId 多窗口/多实例重复执行 | D4：执行连接覆盖为最新一条；`sendToDevice` 只投一个 socket；同设备旧窗口仍收流式消息但不收 `tool_execute` |
@@ -228,13 +231,13 @@ ALTER TABLE `session`
 1. `streaming-ws-registry.spec.ts`：设备注册 → `hasDeviceConnection`；同 deviceId 二次注册覆盖执行连接；旧连接 `unregister` 不清掉新连接；`sendToDevice` 只命中目标 socket；无设备时返回全零；browser 连接不进入设备索引。
 2. `streaming-ws-handler` 鉴权 spec：auth 帧带合法 `device` → `register` 收到设备；`device` 缺字段/非字符串 → 按无设备注册（连接仍可用）；非法 token 仍 1003。
 3. `local-tool-session-registry.spec.ts`：有绑定设备 → `sendToolRequest` 走 `sendToDevice`；无绑定 → 走 `sendToLocalClients`；目标设备离线 → 返回 `Local client is not connected`；`isConnected` 设备级 vs 用户级两种口径。
-4. `streaming-ws-handler` LOCAL 发送/重试/边路 spec：带 `targetDeviceId` 的会话在目标设备离线时被拒，错误帧与现有 `Local client is not connected` 口径一致。
+4. `streaming-ws-handler` LOCAL 发送/重试/边路 spec：带 `targetDeviceId` 的会话在目标设备离线时被拒，错误帧与现有 `Local client is not connected` 口径一致。**评审补充**：补 delegate 侧恢复路径（`subagent-execution-recovery.service.ts` / `background-subagent-manager.ts`）的 `isConnected` 设备级用例。
 5. **断线清理**：绑定设备掉线、同用户另一台设备仍在线 → 该设备 pending 工具请求全部失败（`failAllForDevice`），另一台设备不受影响；无 deviceId 旧连接的 `failAllForUser` 既有行为不回退。
-6. **派生继承**：边路任务 / 子代理会话的 `targetDeviceId` 等于父会话，且 workspace / executionMode 不串位。
+6. **派生继承**：边路任务 / 子代理 / **边路提升**（`promoteSideTaskToMainSession`，共 3 处）会话的 `targetDeviceId` 等于父（源）会话，且 workspace / executionMode 不串位。
 7. 技能 / MCP 同步：有绑定设备 → 只发目标设备；无绑定 → 广播（既有断言不回退）。
 8. 路由：POST `targetDeviceId` / `targetDeviceName` 合法落库、超长 400、CLOUD 会话忽略、缺省（旧端）不报错；会话 VO 的 `targetDeviceOnline`：有设备连接 true、无连接 false、未绑定 null。
 9. Flyway：`V186` 走既有良构校验（文件名/非空/checksum）。
-10. **惰性认领**：未绑定会话 + Electron 发起 → 认领给发起设备；浏览器发起 + 唯一带 deviceId 设备 → 认领给该设备；浏览器 + 多台 → 拒绝并返回引导文案、不执行；条件更新幂等（并发二次认领不覆盖、读回先到值）；纯旧客户端环境 → 保持广播不拒单；认领后 `targetDeviceName` 快照正确。
+10. **惰性认领**：未绑定会话 + Electron 发起 → 认领给发起设备；浏览器发起 + 唯一带 deviceId 设备且**平台一致** → 认领给该设备；浏览器 + 多台、或唯一但平台不符 → 拒绝并返回引导文案、不执行；`getOnlineDeviceIds` 按去重 deviceId 判定；条件更新幂等（并发二次认领不覆盖、读回先到值）；纯旧客户端环境 → 保持广播不拒单；认领后 `targetDeviceName` 快照正确。
 
 **前端 / CLI**
 
