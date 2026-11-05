@@ -99,7 +99,7 @@ const props = defineProps<{ payload: UsersPayload | null; loading?: boolean }>()
 const router = useRouter()
 
 const userRows = computed(() => props.payload?.userActivity || [])
-// Token 排行用后端独立截断的 tokenTop：userActivity 按消息数截断，直接重排会遗漏消息少但 Token 重的用户
+// Token 排行用后端独立截断的 tokenTop：userActivity 按消息数截断，直接重排会遗漏消息少但 Token 重的用户（两者均 llm_call 口径）
 const tokenSource = computed(() =>
   (props.payload?.tokenTop || []).map((row) => ({
     name: row.displayName || row.username || '未知',

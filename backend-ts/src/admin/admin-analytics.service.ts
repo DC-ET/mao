@@ -977,7 +977,7 @@ export class AdminAnalyticsService {
       this.trends(range, callOpts),
       this.store.selectLlmCallSceneStats(range, { ...callOpts, modelId: sceneModelId }),
       this.store.selectLlmCallProtocolStats(range, callOpts),
-      this.userTokenTop(range, MAX_SCOPE_LIMIT),
+      this.userTokenTop(range, MAX_SCOPE_LIMIT, callOpts),
     ]);
     return {
       period: this.periodMeta(range, previous),
@@ -991,7 +991,7 @@ export class AdminAnalyticsService {
       protocolStats: namedCountRows(protocolRows),
       sceneModelId,
       excludeConnectivity: callOpts.excludeConnectivity,
-      // 模型页并排展示「用户 Token 占比」：与用户 Tab tokenTop 同源，按 Token 截断
+      // 模型页并排展示「用户 Token 占比」：与用户 Tab tokenTop 同源（llm_call 口径），按 Token 截断
       userTokenTop,
     };
   }
@@ -1008,7 +1008,7 @@ export class AdminAnalyticsService {
     const callOpts = { excludeConnectivity: opts?.excludeConnectivity !== false };
     const [userActivity, tokenTop, activeUsers, previousTotals] = await Promise.all([
       this.userActivity(range, safeLimit, callOpts),
-      this.userTokenTop(range, safeLimit),
+      this.userTokenTop(range, safeLimit, callOpts),
       this.store.countActiveUsers(range),
       this.previousTotals(previous, callOpts),
     ]);
@@ -1426,6 +1426,11 @@ export class AdminAnalyticsService {
     return rows.slice(0, clampLimit(limit));
   }
 
+  /**
+   * 用户：窗口内活跃用户排行/明细，默认 Top 20，附带 llm_call 消耗与失败。
+   * Token 取 llm_call.total_tokens（与调用/成本同源，0.0.440 起）——不取 message.token_count：
+   * 群聊等「执行人 ≠ 会话归属人」场景下，会话归属人拿不到调用人的 Token、反之亦然。
+   */
   private async userActivity(
     range: AnalyticsRange,
     limit = RANK_LIMIT,
@@ -1440,7 +1445,6 @@ export class AdminAnalyticsService {
     ]);
     const sessionCounts = idMap(sessionRows, (r) => r.sessionCount);
     const messageCounts = idMap(messageRows, (r) => r.messageCount);
-    const tokens = idMap(messageRows, (r) => r.totalTokens);
     const callCounts = idMap(callRows, (r) => r.callCount);
     const failCounts = idMap(callRows, (r) => r.failCount);
     const cancelledCounts = idMap(callRows, (r) => r.cancelledCount);
@@ -1462,7 +1466,7 @@ export class AdminAnalyticsService {
         displayName: user.displayName,
         sessionCount,
         messageCount,
-        totalTokens: tokens.get(uid) ?? 0,
+        totalTokens: callTokens.get(uid) ?? 0,
         lastLoginAt: user.lastLoginAt != null ? String(user.lastLoginAt) : null,
         callCount: calls,
         callFailCount: fails,
@@ -1475,16 +1479,21 @@ export class AdminAnalyticsService {
     return rows.slice(0, clampLimit(limit));
   }
 
-  /** Token 排行独立按 totalTokens 排序截断，避免依赖消息数截断的明细集而遗漏重消耗用户。 */
+  /**
+   * Token 排行独立按 totalTokens 排序截断，避免依赖消息数截断的明细集而遗漏重消耗用户。
+   * Token 取 llm_call.total_tokens（与明细/调用/成本同源，0.0.440 起）。
+   */
   private async userTokenTop(
     range: AnalyticsRange,
     limit: number,
+    callOpts?: { excludeConnectivity?: boolean },
   ): Promise<Array<Record<string, unknown>>> {
-    const [users, messageRows] = await Promise.all([
+    const opts = { excludeConnectivity: callOpts?.excludeConnectivity !== false };
+    const [users, callRows] = await Promise.all([
       this.store.listUsers(),
-      this.store.selectMessageStatsByUser(range),
+      this.store.selectLlmCallStatsByUser(range, opts),
     ]);
-    const tokens = idMap(messageRows, (r) => r.totalTokens);
+    const tokens = idMap(callRows, (r) => r.callTokens);
     const meta = new Map(users.filter((u) => u.id != null).map((u) => [u.id!, u]));
     const rows: Array<Record<string, unknown>> = [];
     for (const [userId, totalTokens] of tokens) {

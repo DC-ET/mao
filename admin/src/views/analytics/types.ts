@@ -249,6 +249,7 @@ export interface UserActivityRow {
   displayName?: string
   sessionCount: number
   messageCount: number
+  /** 窗口内调用 Token 合计（llm_call 口径，与 callCount / callFailCount / cost 同源） */
   totalTokens: number
   lastLoginAt?: string | null
   callCount?: number
@@ -262,7 +263,7 @@ export interface UserActivityRow {
 export interface UsersPayload {
   period: AnalyticsPeriodMeta
   userActivity: UserActivityRow[]
-  /** 独立按 Token 排序截断的排行（与按消息数截断的 userActivity 互不影响） */
+  /** 独立按 Token 排序截断的排行（llm_call 口径，与明细同源；与按消息数截断的 userActivity 互不影响） */
   tokenTop?: Array<{ userId: number; username?: string; displayName?: string; totalTokens: number }>
   periodTotals: { activeUsers: number }
   previousTotals: PreviousTotals
