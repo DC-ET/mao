@@ -2,6 +2,8 @@
   <div class="tool-call-card" :class="[`status-${toolCall.status}`]">
     <div class="tool-header" @click="toggleExpand">
       <div class="tool-info">
+        <!-- 工具类型图标：单工具组省掉组头后靠它辨识工具（与组头同口径，见 utils/toolIcons） -->
+        <el-icon class="tool-icon" :size="14"><component :is="toolIcon" /></el-icon>
         <span class="tool-summary">{{ displaySummary }}</span>
       </div>
       <div class="tool-status">
@@ -167,6 +169,7 @@ import { useSessionStore } from '../../stores/session'
 import { useCenterTabs } from '../../composables/useCenterTabs'
 import { copyText as copyToClipboard } from '../../utils/clipboard'
 import { getToolDisplayName, getToolInputPreview } from '../../utils/toolDisplay'
+import { getToolIcon } from '../../utils/toolIcons'
 import { buildEditDiff } from '../../utils/toolDiff'
 import ToolCallDiffView from './ToolCallDiffView.vue'
 import ToolFileContent from './ToolFileContent.vue'
@@ -314,6 +317,8 @@ const displaySummary = computed(() => {
 })
 
 const inputPreview = computed(() => getToolInputPreview(props.toolCall.name, props.toolCall.input))
+
+const toolIcon = computed(() => getToolIcon(props.toolCall.name))
 
 const formattedInput = computed(() => {
   const input = props.toolCall.input
@@ -635,6 +640,11 @@ function toggleExpand() {
   text-overflow: ellipsis;
   white-space: nowrap;
   letter-spacing: -0.12px;
+}
+
+.tool-icon {
+  color: var(--aw-ink-muted-48);
+  flex-shrink: 0;
 }
 
 .tool-status {

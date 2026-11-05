@@ -1,5 +1,11 @@
 <template>
-  <div class="tool-call-group">
+  <!-- 单工具组：组头与卡片头信息完全重复（同一 summary、同一个收起箭头），留着只会让
+       「看内容」多点一下。直接渲染卡片，一次点击即展开；卡片头自带工具图标与状态徽标，
+       信息不比组头少（图标取自 toolIcons，与组头同口径）。 -->
+  <div v-if="toolCalls.length === 1" class="tool-call-group">
+    <ToolCallCard :tool-call="toolCalls[0]" :hide-process="hideProcess" />
+  </div>
+  <div v-else class="tool-call-group">
     <div class="tool-group-header" @click="toggleExpand">
       <div class="group-info">
         <el-icon class="tool-group-icon" :size="14"><component :is="groupIcon" /></el-icon>
@@ -25,30 +31,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, type Component } from 'vue'
-import {
-  ArrowDown,
-  Calendar,
-  ChatLineRound,
-  CirclePlus,
-  Connection,
-  Delete,
-  Document,
-  DocumentAdd,
-  Download,
-  EditPen,
-  FolderOpened,
-  Link,
-  List,
-  Monitor,
-  Picture,
-  Refresh,
-  Search,
-  Timer,
-  Tools,
-} from '@element-plus/icons-vue'
+import { ref, computed } from 'vue'
+import { ArrowDown } from '@element-plus/icons-vue'
 import type { ToolCall } from '../../composables/useChat'
 import { getToolDisplayName } from '../../utils/toolDisplay'
+import { getToolIcon } from '../../utils/toolIcons'
 import ToolCallCard from './ToolCallCard.vue'
 
 const props = withDefaults(defineProps<{
@@ -60,46 +47,11 @@ const props = withDefaults(defineProps<{
 
 const isExpanded = ref(false)
 
-const toolIconMap: Record<string, Component> = {
-  glob_search: FolderOpened,
-  grep_search: Search,
-  read_file: Document,
-  write_file: DocumentAdd,
-  edit_file: EditPen,
-  shell: Monitor,
-  dump_user_messages: Download,
-  ask_user_questions: ChatLineRound,
-  task_create: CirclePlus,
-  task_update: Refresh,
-  task_list: List,
-  task_delete: Delete,
-  delegate: Connection,
-  delegate_followup: Connection,
-  spawn_subagent: Connection,
-  subagent_followup: Connection,
-  check_subagent: Search,
-  cancel_subagent: Delete,
-  wait_subagents: Timer,
-  web_search: Search,
-  open_web_page: Link,
-  generate_image: Picture,
-  edit_image: Picture,
-  send_wechat_image: Picture,
-  send_wechat_file: Document,
-  create_scheduled_task: Calendar,
-  update_scheduled_task: Timer,
-  delete_scheduled_task: Delete,
-  list_scheduled_tasks: List,
-}
-
 const hasRunning = computed(() =>
   props.toolCalls.some(tc => tc.status === 'running' || tc.status === 'pending')
 )
 
-const groupIcon = computed<Component>(() => {
-  const primaryTool = props.toolCalls[0]
-  return primaryTool ? toolIconMap[primaryTool.name] ?? Tools : Tools
-})
+const groupIcon = computed(() => getToolIcon(props.toolCalls[0]?.name ?? ''))
 
 const groupSummary = computed(() => {
   const tools = props.toolCalls
