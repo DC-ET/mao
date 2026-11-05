@@ -66,9 +66,11 @@
 }
 
 /* 新建会话宽按钮：取代原先头部的「+」图标入口（目标小、窄面板更难命中）。
-   羊皮纸底 + 细边框 + 灰字，与 ChatPanel 的 .side-task-btn 完全同口径：侧栏本身
-   是羊皮纸底，实底或描边的彩色按钮都会从列表里跳出来；灰字 + 细边框在静止时
-   不抢列表视觉，hover 加深底色提示可点。
+   羊皮纸底 + 细边框 + 灰字，气质与侧栏一致；但底色比侧栏亮一档
+   （--aw-surface-pearl #fafafc）、边框用 --aw-hairline（#e0e0e0）而非
+   --aw-divider-soft（#f0f0f0）——后者与羊皮纸 #f5f5f7 几乎同色，按钮会与
+   背景融在一起看不出边界。
+   hover 加深底色、文字转墨色，反馈明确。
    左右 8px 与下方 .panel-content 对齐，顶部不额外留白（header 已有 12px 下内边距）。 */
 .task-index-panel .new-session-btn {
   display: flex;
@@ -79,9 +81,9 @@
   margin: 0 8px 8px;
   height: var(--aw-btn-height);
   padding: var(--aw-btn-padding);
-  border: 1px solid var(--aw-divider-soft);
+  border: 1px solid var(--aw-hairline);
   border-radius: var(--aw-radius-xs);
-  background: var(--aw-canvas-parchment);
+  background: var(--aw-surface-pearl);
   color: var(--aw-ink-muted-48);
   font-size: var(--aw-text-fine);
   font-weight: 500;
@@ -90,9 +92,9 @@
 }
 
 .task-index-panel .new-session-btn:hover {
-  background: var(--aw-divider-soft);
+  background: var(--aw-surface-hover);
   color: var(--aw-ink);
-  border-color: var(--aw-hairline);
+  border-color: var(--aw-border);
 }
 
 .task-index-panel .new-session-btn .new-session-label {
