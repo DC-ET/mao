@@ -66,8 +66,9 @@
 }
 
 /* 新建会话宽按钮：取代原先头部的「+」图标入口（目标小、窄面板更难命中）。
-   主色描边而非实底：侧栏是羊皮纸底，一整块高饱和蓝实底过于突兀；描边保留
-   「新建」的语义色，同时与侧栏其他细边框按钮同一气质。
+   羊皮纸底 + 细边框 + 灰字，与 ChatPanel 的 .side-task-btn 完全同口径：侧栏本身
+   是羊皮纸底，实底或描边的彩色按钮都会从列表里跳出来；灰字 + 细边框在静止时
+   不抢列表视觉，hover 加深底色提示可点。
    左右 8px 与下方 .panel-content 对齐，顶部不额外留白（header 已有 12px 下内边距）。 */
 .task-index-panel .new-session-btn {
   display: flex;
@@ -78,18 +79,20 @@
   margin: 0 8px 8px;
   height: var(--aw-btn-height);
   padding: var(--aw-btn-padding);
-  border: 1px solid var(--aw-primary);
+  border: 1px solid var(--aw-divider-soft);
   border-radius: var(--aw-radius-xs);
-  background: transparent;
-  color: var(--aw-primary);
+  background: var(--aw-canvas-parchment);
+  color: var(--aw-ink-muted-48);
   font-size: var(--aw-text-fine);
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
 .task-index-panel .new-session-btn:hover {
-  background: var(--aw-primary-soft);
+  background: var(--aw-divider-soft);
+  color: var(--aw-ink);
+  border-color: var(--aw-hairline);
 }
 
 .task-index-panel .new-session-btn .new-session-label {
