@@ -444,15 +444,14 @@ export class StreamingWsRegistry {
   }
 
   /**
-   * 该连接是否是指定设备当前的执行连接（断线清理用）。
-   * 工具请求只投给执行连接：执行连接断开时，即使同设备还有其它连接可回落，
-   * 已下发的 pending 请求也不可能被接手，必须立即失败而不是等超时。
+   * 指定设备当前可用的执行连接（工具请求下发时记录归属）：断线清理按「请求 → 下发连接」
+   * 精确失败，执行连接交接后旧连接上的在途请求不会被误杀。
    */
-  isDeviceExecutor(session: WsSocket, deviceId: string | null | undefined): boolean {
-    if (deviceId == null || deviceId === '') return false;
-    const userId = this.sessionToUser.get(session.id);
-    if (userId == null) return false;
-    return this.deviceExecutors.get(userId)?.get(deviceId) === session;
+  getDeviceExecutorSocket(userId: number, deviceId: string | null | undefined): WsSocket | null {
+    if (deviceId == null || deviceId === '') return null;
+    const socket = this.deviceExecutors.get(userId)?.get(deviceId);
+    if (socket == null || socket.readyState !== WS_OPEN || !this.isConnectionAuthorized(socket)) return null;
+    return socket;
   }
 
   /** 当前用户在线执行设备的 deviceId 集合（Map key 天然去重；仅统计带设备身份的 local 连接）。 */

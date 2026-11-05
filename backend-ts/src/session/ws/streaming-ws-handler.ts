@@ -130,6 +130,8 @@ export interface WsHandlerDeps {
     failAllForSession(sessionId: number): void;
     failAllForUser(userId: number): void;
     failAllForDevice(userId: number, deviceId: string): void;
+    /** 连接断开清理：只失败实际下发到该连接的 pending 请求（技术方案 2026-11-05：执行连接可交接）。 */
+    failAllForSocket(socket: { id: string } | null | undefined): void;
     completeToolRequest(sessionId: number, requestId: string, result: string): void;
     completeToolRequestError(sessionId: number, requestId: string, error: string): void;
   };
@@ -429,17 +431,19 @@ export class StreamingWsHandler {
 
   afterConnectionClosed(session: WsSocket): void {
     const userId = this.deps.registry.getUserId(session);
-    // 设备身份与执行连接身份必须在 unregister 前取：unregister 会清理 connectionDevice / deviceExecutors
+    // 设备身份必须在 unregister 前取：unregister 会清理 connectionDevice / deviceExecutors
     const deviceId = this.deps.registry.getDeviceId(session);
-    const wasDeviceExecutor = deviceId != null && this.deps.registry.isDeviceExecutor(session, deviceId);
+    // 只失败实际下发到本连接的 pending 工具请求（按「请求 → 下发连接」精确失败）：
+    // 执行连接可能已交接给同设备新连接，那些连接上在途的请求仍会正常返回，不能被误杀；
+    // 本连接上的请求（含接管前已下发的）自身断开后不可能被接手，必须立即失败。
+    this.deps.localToolSessionRegistry.failAllForSocket(session);
     // 页面连接断开：先让该连接上所有等待中的页面工具立即失败，再注销连接与绑定。
     for (const boundSessionId of this.deps.registry.getEmbedSessionsForConnection(session)) {
       this.deps.embedPageToolRegistry.failSession(boundSessionId, '页面连接已断开，页面操作已取消', 'embed_client_not_connected');
     }
     this.deps.registry.unregister(session);
-    if (userId != null && deviceId != null && wasDeviceExecutor) {
-      // 工具请求只投给执行连接：执行连接断开时即使同设备还有可回落连接（同机多窗口/多进程），
-      // 已下发到本条连接的 pending 请求也无法被接手，必须立即失败（否则要等 900s 超时）。
+    if (userId != null && deviceId != null && !this.deps.registry.hasDeviceConnection(userId, deviceId)) {
+      // 设备已无任何可用连接：兜底失败该设备绑定会话的 pending（覆盖广播下发等无法归属连接的请求）；
       // 绑定本身保留，设备闪断重连后可继续使用。
       this.deps.localToolSessionRegistry.failAllForDevice(userId, deviceId);
     }

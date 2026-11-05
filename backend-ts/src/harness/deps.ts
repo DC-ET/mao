@@ -287,6 +287,11 @@ export interface StreamingWsRegistry {
   sendToLocalClients(userId: number, event: WsEvent): void;
   /** 定向投递到指定设备（技术方案 2026-11-05）：连接不存在 / 非 OPEN 时返回全零结果。 */
   sendToDevice(userId: number, deviceId: string, event: WsEvent): { targetCount: number; successCount: number; failureCount: number };
+  /**
+   * 指定设备当前可用的执行连接（工具请求下发时记录归属，断线清理按「请求 → 下发连接」精确失败）；
+   * 缺省 / 无可用连接返回 null。
+   */
+  getDeviceExecutorSocket?(userId: number, deviceId: string): { id: string } | null;
   /** 指定设备当前是否有可用执行连接。 */
   hasDeviceConnection(userId: number, deviceId: string): boolean;
   subscribe?(userId: number, sessionId: number): void;

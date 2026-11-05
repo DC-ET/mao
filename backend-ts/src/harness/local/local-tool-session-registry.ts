@@ -26,7 +26,7 @@ export interface LocalToolTarget {
 export class LocalToolSessionRegistry {
   private readonly sessionToUser = new Map<number, number>();
   private readonly sessionToDevice = new Map<number, string | null>();
-  private readonly pendingRequests = new Map<number, Map<string, { resolve: (v: string) => void }>>();
+  private readonly pendingRequests = new Map<number, Map<string, { resolve: (v: string) => void; socket: { id: string } | null }>>();
 
   constructor(
     private readonly streamingWsRegistry: StreamingWsRegistry,
@@ -68,6 +68,23 @@ export class LocalToolSessionRegistry {
       this.sessionToUser.delete(sid);
       this.sessionToDevice.delete(sid);
       this.failAllPending(sid, 'User disconnected');
+    }
+  }
+
+  /**
+   * 连接断开清理：只失败实际下发到该连接的 pending 请求。
+   * 工具请求只投给当时的执行连接——同设备多连接时执行连接可能已交接，
+   * 不能按「设备」一把失败（会把仍在旧连接上执行的结果误杀）。
+   */
+  failAllForSocket(socket: { id: string } | null | undefined): void {
+    if (socket == null) return;
+    for (const [sessionId, map] of [...this.pendingRequests]) {
+      for (const [requestId, entry] of [...map]) {
+        if (entry.socket !== socket) continue;
+        map.delete(requestId);
+        entry.resolve(JSON.stringify({ error: 'Device disconnected' }));
+      }
+      if (map.size === 0) this.pendingRequests.delete(sessionId);
     }
   }
 
@@ -156,13 +173,18 @@ export class LocalToolSessionRegistry {
     const requestId = randomUUID();
     let resolve!: (v: string) => void;
     const future = new Promise<string>((r) => { resolve = r; });
+    // 记录请求实际下发到的连接（定向投递时为当前执行连接）：连接断开时只失败它收到的请求；
+    // 同设备其它连接上在途的请求不受影响（执行连接可能已交接给新连接，见 failAllForSocket）。
+    const dispatchedSocket = deviceId != null
+      ? this.streamingWsRegistry.getDeviceExecutorSocket?.(userId, deviceId) ?? null
+      : null;
     if (sessionId != null) {
       let map = this.pendingRequests.get(sessionId);
       if (!map) {
         map = new Map();
         this.pendingRequests.set(sessionId, map);
       }
-      map.set(requestId, { resolve });
+      map.set(requestId, { resolve, socket: dispatchedSocket });
     }
     const payload: Record<string, unknown> = {
       requestId,

@@ -170,6 +170,38 @@ describe('LocalToolSessionRegistry', () => {
     expect(await b.future).toBe('{"ok":true}');
   });
 
+  it('failsOnlyRequestsDispatchedToTheClosingSocket', async () => {
+    const socketA = { id: 'ws-a' };
+    const socketB = { id: 'ws-b' };
+    let executor: { id: string } | null = socketA;
+    const wsRegistry = {
+      hasLocalClientConnection: vi.fn(() => true),
+      hasDeviceConnection: vi.fn(() => true),
+      sendToLocalClients: vi.fn(),
+      sendToDevice: vi.fn(),
+      getDeviceExecutorSocket: vi.fn(() => executor),
+    } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
+    const registry = new LocalToolSessionRegistry(wsRegistry, { selectById: vi.fn() } as unknown as SessionMapper);
+    registry.setTargetForSession(10, 7, 'dev-a');
+
+    const onA = await registry.sendToolRequest(10, 'read_file', '{}', '/repo', false, null);
+    // 执行连接交接给同设备新连接 B：之后的请求下发到 B
+    executor = socketB;
+    const onB = await registry.sendToolRequest(10, 'shell', '{}', '/repo', false, null);
+
+    // B 断开只失败 B 上的请求；A 上在途的请求仍在执行，不能被误杀
+    registry.failAllForSocket(socketB);
+    expect(await onB.future).toContain('Device disconnected');
+    let aDone = false;
+    void onA.future.then(() => { aDone = true; });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(aDone).toBe(false);
+
+    // A 断开后其请求才失败
+    registry.failAllForSocket(socketA);
+    expect(await onA.future).toContain('Device disconnected');
+  });
+
   it('resolvesBoundDeviceFromDbWhenMemoryIsEmpty', async () => {
     const wsRegistry = {
       hasLocalClientConnection: vi.fn(() => false),

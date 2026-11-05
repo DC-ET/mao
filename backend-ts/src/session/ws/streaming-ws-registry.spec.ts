@@ -219,12 +219,11 @@ describe('StreamingWsRegistry', () => {
     const second = mockSocket('ws-2');
     registry.register(first, 7, 'cli', undefined, true, { id: 'dev-a', name: 'Host', platform: 'linux' });
     registry.register(second, 7, 'cli', undefined, true, { id: 'dev-a', name: 'Host', platform: 'linux' });
-    expect(registry.isDeviceExecutor(second, 'dev-a')).toBe(true);
-    expect(registry.isDeviceExecutor(first, 'dev-a')).toBe(false);
+    expect(registry.getDeviceExecutorSocket(7, 'dev-a')).toBe(second);
 
     registry.unregister(second);
     expect(registry.hasDeviceConnection(7, 'dev-a')).toBe(true);
-    expect(registry.isDeviceExecutor(first, 'dev-a')).toBe(true);
+    expect(registry.getDeviceExecutorSocket(7, 'dev-a')).toBe(first);
     expect(registry.getOnlineDeviceIds(7)).toEqual(['dev-a']);
     const result = registry.sendToDevice(7, 'dev-a', wsEvent('tool_execute', 10, { requestId: 'r1' }));
     expect(result).toMatchObject({ targetCount: 1, successCount: 1 });
