@@ -159,7 +159,8 @@ export function assembleWsHandler(deps: WsHandlerDeps): StreamingWsHandler {
   } as never);
 
   scheduledService.setLiveExecution(createScheduledLiveExecution(wsHandler));
-  scheduledService.setSessionBusyCheck((sessionId) => wsHandler.hasExecutionClaim(sessionId));
+  // busy 判定含 IM 通道占用（0.0.434）：IM 执行期间触发的任务走「排队」，由 IM 收尾接力消费。
+  scheduledService.setSessionBusyCheck((sessionId) => wsHandler.hasCrossChannelBusy(sessionId));
   scheduledService.setBudgetCheck(async (target) => {
     const block = await budgetService.checkAdmission(target);
     return block == null ? null : { message: budgetBlockMessage(block) };

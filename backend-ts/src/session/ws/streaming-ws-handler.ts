@@ -330,6 +330,15 @@ export class StreamingWsHandler {
   private readonly pendingSkillSyncs = new Map<number, { syncId: string; resolve: () => void; reject: (e: Error) => void }>();
   private readonly pendingMcpSyncs = new Map<number, { syncId: string; resolve: () => void; reject: (e: Error) => void }>();
   private readonly autoConsumingSessionIds = new Set<number>();
+  /**
+   * autoConsume 函数级重入保护：并发触发（WS 收尾 / IM 收尾接力 / 崩溃恢复）只放一个进入。
+   * 没有它，两个调用可能都在「listPending → 占位」窗口内判定空闲、都出队造成双执行。
+   */
+  private readonly autoConsumeDispatching = new Set<number>();
+  /** 跨通道忙检查（飞书/钉钉/微信 handler 的 busy 内存集）：消费出队前确认 IM 无执行，避免双跑。 */
+  private readonly externalBusyChecks: Array<(sessionId: number) => boolean> = [];
+  /** message_queue 排空且会话空闲时的接力出口：消费飞书/钉钉等 IM 入站队列里的 busy 入队消息。 */
+  private readonly imQueueDrainHandlers: Array<(sessionId: number) => void> = [];
   private readonly suppressAutoConsumeSend = new Set<number>();
   /** 用户已点「停止」但 cancel flag 尚未注册（执行提交前的窗口期）的会话 → 登记时间戳；注册标志时按时间判定消费。 */
   private readonly pendingCancels = new Map<number, number>();
@@ -364,6 +373,49 @@ export class StreamingWsHandler {
 
   hasExecutionClaim(sessionId: number): boolean {
     return this.executionClaims.has(sessionId) || this.runningTasks.has(sessionId);
+  }
+
+  /**
+   * 合并忙判定：WS 侧执行（claims/runningTasks）或 IM 通道执行（飞书/钉钉/微信 busy）占用。
+   * 供定时任务 busy 判定与开放接口直跑共用（0.0.434）；单侧入口的手动占位另有同步复检。
+   */
+  hasCrossChannelBusy(sessionId: number): boolean {
+    return this.hasExecutionClaim(sessionId) || this.isExternalSessionBusy(sessionId);
+  }
+
+  /**
+   * 注册跨通道忙检查（IM handler 的 busy 集）：WS 消费出队前需确认 IM 无执行。
+   * 装配层在 IM handler 创建后调用；检查须为同步、无副作用。
+   */
+  registerExternalBusyCheck(check: (sessionId: number) => boolean): void {
+    this.externalBusyChecks.push(check);
+  }
+
+  /**
+   * 注册 IM 入站队列接力（飞书/钉钉 drainNextIfPending）：message_queue 排空且会话空闲时调用。
+   * 覆盖「定时任务 busy 入队 → 该会话后续只有 IM 通道执行」的滞留场景。
+   */
+  registerImQueueDrainHandler(handler: (sessionId: number) => void): void {
+    this.imQueueDrainHandlers.push(handler);
+  }
+
+  private isExternalSessionBusy(sessionId: number): boolean {
+    for (const check of this.externalBusyChecks) {
+      try {
+        if (check(sessionId) === true) return true;
+      } catch { /* 单个检查异常不阻塞消费判定 */ }
+    }
+    return false;
+  }
+
+  private relayToImQueues(sessionId: number): void {
+    for (const handler of this.imQueueDrainHandlers) {
+      try {
+        handler(sessionId);
+      } catch (e) {
+        console.warn(`IM 队列接力调用失败, sessionId=${sessionId}`, e);
+      }
+    }
   }
 
   /** 本实例当前在途执行的会话（蓝绿排空前据此等待收尾，并标记被中断的会话）。 */
@@ -647,6 +699,12 @@ export class StreamingWsHandler {
       this.releaseExecutionBookkeeping(sessionId);
     }
     if (!claimAlreadyHeld && this.executionClaims.has(sessionId)) {
+      this.sendSessionAlreadyRunning(userId, sessionId);
+      return;
+    }
+    // 跨通道忙复检（IM 通道执行占用）：与占位同一同步段——飞书/钉钉执行刚开始、
+    // DB phase 尚未置 RUNNING 的窗口内，防止 WS 手动发送占位造成双跑。
+    if (!claimAlreadyHeld && this.isExternalSessionBusy(sessionId)) {
       this.sendSessionAlreadyRunning(userId, sessionId);
       return;
     }
@@ -950,6 +1008,11 @@ export class StreamingWsHandler {
       this.releaseExecutionBookkeeping(sessionId);
     }
     if (this.executionClaims.has(sessionId)) {
+      this.sendSessionAlreadyRunning(userId, sessionId);
+      return;
+    }
+    // 跨通道忙复检（同 handleSendMessage）：IM 通道执行占用时与占位同段拒绝。
+    if (this.isExternalSessionBusy(sessionId)) {
       this.sendSessionAlreadyRunning(userId, sessionId);
       return;
     }
@@ -1316,6 +1379,11 @@ export class StreamingWsHandler {
       this.sendSessionAlreadyRunning(userId, sessionId);
       return;
     }
+    // 跨通道忙复检（同 handleSendMessage）：IM 通道执行占用时拒绝重试。
+    if (this.isExternalSessionBusy(sessionId)) {
+      this.sendSessionAlreadyRunning(userId, sessionId);
+      return;
+    }
     this.executionClaims.add(sessionId);
     let phaseAdvanced = false;
     // beginRetry 成功后 execution 已置 RUNNING 并纳入跟踪；此后任何失败出口
@@ -1625,8 +1693,8 @@ export class StreamingWsHandler {
     if (sessionId == null) return;
     if (!(await this.requireOwnedSession(userId, sessionId))) return;
 
-    // 运行中路径：已有 claim/在途执行 → 排队信号，交由 AgentLoop 工具轮边界消费。
-    if (this.hasExecutionClaim(sessionId)) {
+    // 运行中路径：已有 claim/在途执行 / IM 通道执行 → 排队信号，交由 AgentLoop 工具轮边界消费。
+    if (this.hasCrossChannelBusy(sessionId)) {
       if (!this.deps.compactionSignalBus) {
         // 手动整理的失败必须走压缩通道（compaction_result），不能用通用 error——
         // error 语义是"执行失败"，前端据此把整条会话标 FAILED。整理上下文失败只是维护动作失败。
@@ -1668,6 +1736,9 @@ export class StreamingWsHandler {
       listener?.dispose();
       // 仅回收本次自行占的 claim；runningTasks/cancelFlags/registry 在途簿记未触碰，勿用 releaseExecutionBookkeeping。
       this.executionClaims.delete(sessionId);
+      // 压缩期间会让 IM 通道让行：释放占位后接力消费平台排队消息（含 IM 队列），
+      // 否则压缩窗口内入队的消息要等下一次执行收尾才被消费。
+      void this.autoConsumeQueue(sessionId, userId);
     }
   }
 
@@ -1877,14 +1948,59 @@ export class StreamingWsHandler {
     this.deps.registry.send(userId, wsEvent('queue_updated', sessionId, { queue: queueData }));
   }
 
-  async autoConsumeQueue(sessionId: number, userId: number): Promise<void> {
+  /**
+   * 消费 message_queue 的排队消息（定时任务/Webhook/开放接口 busy 入队 / 插队）。
+   *
+   * `options.relayToIm`（默认 true）控制「message_queue 排空且会话空闲」时是否接力
+   * 消费 IM 入站队列（飞书/钉钉）。IM 侧收尾接力进来的调用传 false，避免两条链
+   * 互相无限传递；WS 收尾 / 崩溃恢复调用保持默认，让 IM 队列里的排队消息也被推进。
+   */
+  async autoConsumeQueue(sessionId: number, userId: number, options: { relayToIm?: boolean } = {}): Promise<void> {
+    // 函数级重入保护：并发触发（WS 收尾 / IM 收尾接力 / 崩溃恢复）只放一个进入，
+    // 避免两个调用在「listPending → 占位」窗口内都判定空闲、都出队造成双执行。
+    if (this.autoConsumeDispatching.has(sessionId)) return;
+    this.autoConsumeDispatching.add(sessionId);
     try {
-      const queue = await this.deps.messageQueueService.listPending(sessionId);
-      if (queue.length === 0) return;
+      await this.autoConsumeQueueInner(sessionId, userId, options);
+    } finally {
+      this.autoConsumeDispatching.delete(sessionId);
+    }
+  }
+
+  private async autoConsumeQueueInner(sessionId: number, userId: number, options: { relayToIm?: boolean }): Promise<void> {
+    try {
+      // 插队进行中（handleInsertMessage 已抑制自动消费）：整链静默——既不消费队列，
+      // 也不接力 IM 队列，避免与插队流程抢跑（插队自身收尾会继续消费）。
       if (this.suppressAutoConsumeSend.has(sessionId)) return;
+      const queue = await this.deps.messageQueueService.listPending(sessionId);
+      if (queue.length === 0) {
+        // 平台队列排空且会话空闲：接力消费 IM 入站队列（飞书/钉钉 busy 入队的消息）。
+        if (options.relayToIm !== false) this.relayToImQueues(sessionId);
+        return;
+      }
       // 先查占用再出队：若会话仍被占用则原位保留队头，
       // 避免先 dequeue 再 enqueue 把队头消息搬到队尾破坏 FIFO
       if (this.executionClaims.has(sessionId) || this.runningTasks.has(sessionId)) {
+        await this.sendQueueUpdated(sessionId, userId);
+        return;
+      }
+      // 跨通道忙检查：IM（飞书/钉钉/微信）有执行在跑，等该执行收尾时接力，避免双跑。
+      if (this.isExternalSessionBusy(sessionId)) {
+        await this.sendQueueUpdated(sessionId, userId);
+        return;
+      }
+      // DB phase 复查：phase 活跃说明已有执行（含 IM 通道）在跑——排队消息等执行收尾接力；
+      // phase=FAILED 时遵守「失败不自动消费下一条」门禁（与 runExecution finally 同口径，
+      // 压缩收尾等新入口一并通过这里兜底）。查询失败 / 会话已删按「等」保守处理；
+      // 查询后的同步复检与占位在同一同步段，堵住并发窗口。
+      let phaseBlocked = true;
+      try {
+        const session = await this.deps.sessionService.getSession(sessionId);
+        phaseBlocked = session == null || this.isSessionActive(session.phase) || session.phase === 'FAILED';
+      } catch { /* 查询失败保守跳过，等下一次执行收尾接力 */ }
+      if (phaseBlocked
+        || this.executionClaims.has(sessionId) || this.runningTasks.has(sessionId)
+        || this.isExternalSessionBusy(sessionId)) {
         await this.sendQueueUpdated(sessionId, userId);
         return;
       }
@@ -2240,10 +2356,14 @@ export class StreamingWsHandler {
 
   private async awaitExecutionRelease(sessionId: number, timeoutMillis: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMillis;
-    while ((this.executionClaims.has(sessionId) || this.runningTasks.has(sessionId)) && Date.now() < deadline) {
+    // 跨通道：IM 通道在途执行（飞书/钉钉/微信）也要等——插队流程会先 requestCancel 再调用本方法，
+    // 只等 WS 簿记会让插队执行与 IM 收尾并存，IM 迟到的 CANCELLED 可能覆盖插队执行刚写的 RUNNING。
+    while ((this.executionClaims.has(sessionId) || this.runningTasks.has(sessionId)
+      || this.isExternalSessionBusy(sessionId)) && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 100));
     }
-    return !this.executionClaims.has(sessionId) && !this.runningTasks.has(sessionId);
+    return !this.executionClaims.has(sessionId) && !this.runningTasks.has(sessionId)
+      && !this.isExternalSessionBusy(sessionId);
   }
 
   /**

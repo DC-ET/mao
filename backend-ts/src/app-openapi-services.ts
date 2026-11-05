@@ -75,7 +75,7 @@ export function assembleOpenApiServices(deps: OpenApiServicesDeps): OpenApiServi
     harnessService: { executeFromEvent: (sessionId, executionId, listener) => holder.harness!.executeFromEvent(sessionId, executionId, listener as never) },
     taskTerminalService: taskTerminal,
     agentLookup: { findById: (id: number) => agentRepo.findById(id) },
-    isSessionBusy: (sessionId) => wsHandler.hasExecutionClaim(sessionId),
+    isSessionBusy: (sessionId) => wsHandler.hasCrossChannelBusy(sessionId),
     budgetCheck: async (target) => {
       const block = await budgetService.checkAdmission(target);
       return block == null ? null : { message: budgetBlockMessage(block) };

@@ -69,6 +69,16 @@ export interface AgentWeixinInboundHandlerDeps {
   modelService: { getModel(id: number): Promise<{ supportsVision?: number | null } | null> };
   weixinFileStorageService: WeixinFileStorageService;
   agentExecutor?: (fn: () => Promise<void>) => void;
+  /**
+   * 本轮执行成功/取消、会话空闲后，接力消费平台排队消息（message_queue：定时任务/Webhook/插队）。
+   * 覆盖「定时任务在会话忙时入队 → 该会话后续只有微信执行」导致的永久排队。
+   */
+  onQueuesDrained?: (sessionId: number) => void;
+  /**
+   * 跨通道忙判定：WS/桌面端（含 autoConsume 消费 message_queue）正在执行本会话时，
+   * 微信入站必须等它收尾（waitForForeignLoop）并在占位前复检——两套执行簿记互不可见。
+   */
+  isSessionExecuting?: (sessionId: number) => boolean;
 }
 
 export function appendDownloadErrorNotice(body: string | null | undefined, failedNames: string[] | null | undefined): string {
@@ -88,10 +98,31 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
   private readonly generations = new Map<number, number>();
   private readonly sessionLocks = new Map<number, Promise<void>>();
   private readonly agentExecutor: (fn: () => Promise<void>) => void;
+  /** 平台队列接力出口：微信装配早于 wsHandler，由装配层在 wsHandler 就绪后 set 注入。 */
+  private onQueuesDrained: ((sessionId: number) => void) | null = null;
+  /** 跨通道忙判定（WS 侧执行占用）；装配层在 wsHandler 就绪后 set 注入。 */
+  private isSessionExecuting: ((sessionId: number) => boolean) | null = null;
   private stopped = false;
 
   constructor(private readonly deps: Partial<AgentWeixinInboundHandlerDeps> = {}) {
     this.agentExecutor = deps.agentExecutor ?? ((fn) => { void fn(); });
+    this.onQueuesDrained = deps.onQueuesDrained ?? null;
+    this.isSessionExecuting = deps.isSessionExecuting ?? null;
+  }
+
+  /** 装配层在 wsHandler 就绪后注入平台队列接力出口（微信装配顺序早于 wsHandler）。 */
+  setOnQueuesDrained(fn: ((sessionId: number) => void) | null): void {
+    this.onQueuesDrained = fn;
+  }
+
+  /** 装配层在 wsHandler 就绪后注入跨通道忙判定（会话是否被 WS 侧执行占用）。 */
+  setIsSessionExecuting(fn: ((sessionId: number) => boolean) | null): void {
+    this.isSessionExecuting = fn;
+  }
+
+  /** IM 侧是否正在执行（供 WS 跨通道忙检查；同步、无副作用）。 */
+  hasRunningSession(sessionId: number): boolean {
+    return this.cancelFlags.has(sessionId);
   }
 
   shutdown(): void {
@@ -163,6 +194,9 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
     resolve: (reply: WeixinReply | null) => void,
   ): Promise<void> {
     const sessionId = session.id!;
+    // 平台队列接力（0.0.434）：只在成功/取消终态后置位，等会话锁与执行旗标都释放后再接力——
+    // 否则 WS 侧跨通道忙检查（hasRunningSession 基于 cancelFlags）会挡住自己的接力请求。
+    let shouldRelayQueue = false;
     await this.withSessionLock(sessionId, async () => {
       if (this.stopped || !this.isCurrentGeneration(sessionId, generation)) {
         console.info(`微信消息已被更新消息取代, sessionId=${sessionId}, gen=${generation}`);
@@ -180,6 +214,13 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
       }
       if (!released) {
         console.warn(`微信消息放弃执行：桌面端循环未在等待期内结束, sessionId=${sessionId}`);
+        await this.rollbackSupersededUserMessage(sessionId, savedMessageId);
+        resolve({ text: '当前会话仍在执行，请稍后再发。' });
+        return;
+      }
+      // 同步复检 WS 占位（同飞书/钉钉）：waitForForeignLoop 最后一个 await 之后、注册旗标之前，
+      // 关闭「WS 消费刚占位、phase/旗标尚未就绪」的窗口。
+      if (this.isSessionExecuting?.(sessionId) === true) {
         await this.rollbackSupersededUserMessage(sessionId, savedMessageId);
         resolve({ text: '当前会话仍在执行，请稍后再发。' });
         return;
@@ -209,16 +250,21 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
         if (cancelFlag.get() || !this.isCurrentGeneration(sessionId, generation)) {
           console.info(`微信 Agent 执行已取消, sessionId=${sessionId}, gen=${generation}`);
           await this.finishCancelledSession(sessionId, userId, executionId);
+          // 会话已空闲：置接力标记，锁与旗标释放后消费平台排队消息
+          // （定时任务/Webhook/插队），否则「会话忙时入队、之后只有微信执行」的消息会永远停在 QUEUED。
+          shouldRelayQueue = true;
           resolve(null);
           return;
         }
         await this.deps.taskTerminalService!.finishExecution(sessionId, userId, 'COMPLETED', executionId);
+        shouldRelayQueue = true;
         const messages = await this.deps.sessionService!.getMessages(sessionId);
         resolve({ text: this.getLatestAssistantReply(messages) });
       } catch (e) {
         if (cancelFlag.get() || !this.isCurrentGeneration(sessionId, generation)) {
           console.info(`微信 Agent 执行异常但已取消, sessionId=${sessionId}, gen=${generation}`);
           try { await this.finishCancelledSession(sessionId, userId, executionId); } catch { /* ignore */ }
+          shouldRelayQueue = true;
           resolve(null);
           return;
         }
@@ -245,6 +291,8 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
         this.releaseOwnLoopFlag(sessionId, cancelFlag);
       }
     });
+    // 锁与执行旗标均已释放：此刻接力，WS 侧的跨通道忙检查不会挡住自己。
+    if (shouldRelayQueue && !this.stopped) this.relayPlatformQueues(sessionId);
   }
 
   private abortRunningExecution(sessionId: number, userId: number): void {
@@ -287,8 +335,10 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
       if (this.stopped) return false;
       const current = loop.getCancelFlag(sessionId);
       const phase = await this.readPhase(sessionId);
-      // 仍有别人的旗标，或阶段仍活跃：继续等。读失败不算空闲。
-      if ((current != null && current !== own) || phase === 'active' || phase === 'unknown') {
+      // 仍有别人的旗标、阶段仍活跃、或 WS 侧执行占位（含 autoConsume 的 500ms 启动窗口）：
+      // 继续等。读失败不算空闲。
+      if ((current != null && current !== own) || phase === 'active' || phase === 'unknown'
+        || this.isSessionExecuting?.(sessionId) === true) {
         quietSince = null;
         await new Promise((resolve) => setTimeout(resolve, 50));
         continue;
@@ -336,6 +386,15 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
       await this.deps.sessionService?.deleteMessageById?.(sessionId, savedMessageId);
     } catch (e) {
       console.warn(`回滚被取代的微信用户消息失败, sessionId=${sessionId}, messageId=${savedMessageId}`, e);
+    }
+  }
+
+  /** 本轮执行成功/取消、会话已空闲：接力消费平台排队消息（message_queue）。失败不外抛。 */
+  private relayPlatformQueues(sessionId: number): void {
+    try {
+      this.onQueuesDrained?.(sessionId);
+    } catch (e) {
+      console.warn(`微信执行收尾后接力消费平台队列失败, sessionId=${sessionId}`, e);
     }
   }
 

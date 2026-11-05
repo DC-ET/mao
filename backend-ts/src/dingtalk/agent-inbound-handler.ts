@@ -8,6 +8,7 @@ import type { StreamingWsRegistry } from '../session/ws/streaming-ws-registry.js
 import { isInboundFileMessage, isNewSessionCommand } from './event-normalizer.js';
 import { toWorkspaceRelative } from '../common/workspace-path.js';
 import { mapWithConcurrency } from '../common/concurrency.js';
+import { isActivePhase } from '../session/util/session-group-key.js';
 import { INBOUND_IMAGE_COMPRESS_CONCURRENCY, PromptImageResizer } from '../harness/tool/prompt-image-resizer.js';
 import type {
   CancelFlag, DingtalkHarnessService, DingtalkInboundContext, DingtalkInboundHandler,
@@ -93,6 +94,16 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
     resolveReplyContext?: (sessionId: number) => Promise<DingtalkInboundContext | null>;
     createProgressCard?: (context: DingtalkInboundContext, sessionId: number) => Promise<FeishuCardProgress | null>;
     queueService?: DingtalkTaskQueuePort;
+    /**
+     * 跨通道忙判定：WS/桌面端（含 autoConsume 消费 message_queue）正在执行本会话时，
+     * IM 收尾的排空与直接执行都必须让行——两套执行簿记互不可见，不让行会双跑。
+     */
+    isSessionExecuting?: (sessionId: number) => boolean;
+    /**
+     * 入站队列排空且会话空闲时，接力消费平台排队消息（message_queue：定时任务/Webhook/插队）。
+     * 覆盖「定时任务在会话忙时入队 → 该会话后续只有钉钉执行」导致的永久排队。
+     */
+    onQueuesDrained?: (sessionId: number) => void;
     createQueueCard?: (context: DingtalkInboundContext, queueId: number, sessionId: number) => Promise<string | null>;
     resolveBotId?: (accountId: string) => number;
     p2pSessionControl?: DingtalkP2pSessionControl;
@@ -117,6 +128,11 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
     return flag != null;
   }
 
+  /** IM 侧是否正在执行（供 WS autoConsume 的跨通道忙检查；同步、无副作用）。 */
+  hasRunningSession(sessionId: number): boolean {
+    return this.busy.has(sessionId);
+  }
+
   async retryExecution(
     sessionId: number,
     createProgress: () => Promise<FeishuCardProgress | null>,
@@ -127,6 +143,8 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
     let outcome: { ok: true } | { ok: false; reason: 'BUSY' | 'NOT_FAILED' | 'NO_PROGRESS' } = { ok: false, reason: 'BUSY' };
     await this.withLock(sessionId, async () => {
       if (await this.isBusyOrRecovering(sessionId)) return;
+      // 与 busy.add 同一同步段复检 WS 占位（同 executeWithSession 的说明）。
+      if (this.options.isSessionExecuting?.(sessionId) === true) return;
       this.busy.add(sessionId);
       const progress = await createProgress().catch(() => null);
       if (progress == null) {
@@ -232,6 +250,12 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
     let phase: 'COMPLETED' | 'CANCELLED' | 'FAILED' = 'FAILED';
     await this.withLock(session.id, async () => {
       if (await this.isBusyOrRecovering(session.id)) {
+        await this.enqueueMessage(session.id, context, built, session);
+        return;
+      }
+      // 与 busy.add 同一同步段复检 WS 占位：两套簿记的「检查-占位」必须是原子的，
+      // 否则 WS 恰在 isBusyOrRecovering 的 await 期间占位时会双跑。
+      if (this.options.isSessionExecuting?.(session.id) === true) {
         await this.enqueueMessage(session.id, context, built, session);
         return;
       }
@@ -401,20 +425,46 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
 
   private async drainNext(sessionId: number, executionUserId: number | null): Promise<'COMPLETED' | 'CANCELLED' | 'FAILED' | null> {
     const queueService = this.options.queueService;
-    return this.withLock(sessionId, async () => {
+    // 本次排空链确认「队列为空且会话空闲」时置位：链尾接力消费平台排队消息（message_queue）。
+    let drainedIdle = false;
+    const phase = await this.withLock(sessionId, async () => {
       if (await this.isBusyOrRecovering(sessionId)) return null;
       if (this.hasPendingAttachments(sessionId)) await this.persistPendingAttachments(sessionId, executionUserId);
-      if (queueService == null) return null;
-      const item = await queueService.claimNext(sessionId);
-      if (item == null) return null;
+      if (queueService == null) {
+        drainedIdle = true;
+        return null;
+      }
+      // 与 busy.add 同一同步段复检 WS 占位（同 executeWithSession 的说明），
+      // 占位提前到 claimNext 之前：WS 检查-占位若恰好插在 DB 往返期间，会看到本会话已忙而让行。
+      if (this.options.isSessionExecuting?.(sessionId) === true) return null;
       this.busy.add(sessionId);
       try {
+        const item = await queueService.claimNext(sessionId);
+        if (item == null) {
+          drainedIdle = true;
+          return null;
+        }
         return await this.executeQueued(sessionId, item);
       } finally {
         this.busy.delete(sessionId);
         this.interrupted.delete(sessionId);
       }
     });
+    if (drainedIdle) {
+      // 钉钉队列排空且会话空闲：接力消费平台排队消息（定时任务/Webhook/插队），
+      // 否则「会话忙时入队、之后只有钉钉执行」的消息会永远停在 QUEUED。
+      this.relayPlatformQueues(sessionId);
+    }
+    return phase;
+  }
+
+  /** 钉钉队列排空且会话空闲：接力消费平台排队消息（message_queue）。失败不外抛。 */
+  private relayPlatformQueues(sessionId: number): void {
+    try {
+      this.options.onQueuesDrained?.(sessionId);
+    } catch (e) {
+      console.warn(`钉钉队列排空后接力消费平台队列失败, sessionId=${sessionId}`, e);
+    }
   }
 
   private async flushAttachmentsAndDrain(sessionId: number, executionUserId: number | null, drain = true): Promise<void> {
@@ -463,8 +513,12 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
 
   private async isBusyOrRecovering(sessionId: number): Promise<boolean> {
     if (this.busy.has(sessionId)) return true;
+    // WS 侧执行（含 autoConsume 消费 message_queue）占用会话时同样视为忙：
+    // 两套执行簿记互不可见，必须靠本检查让 IM 通道让行。
+    if (this.options.isSessionExecuting?.(sessionId) === true) return true;
     const phase = this.options.sessionService.getPhase == null ? null : await this.options.sessionService.getPhase(sessionId).catch(() => null);
-    return phase === 'RUNNING' || phase === 'RESUMING';
+    // 口径与 isActivePhase 统一（含 WAITING_APPROVAL / CANCELLING），与 WS 侧忙判定一致。
+    return isActivePhase(phase);
   }
 
   private async buildMessage(context: DingtalkInboundContext, workspace: string | null): Promise<BuiltMessage> {

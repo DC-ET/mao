@@ -191,6 +191,33 @@ export function createPersistCancelledHelper(deps: PersistCancelledDeps) {
   };
 }
 
+// ========== 平台队列接力 ==========
+
+export interface PlatformQueueRelayDeps {
+  sessionService: { getSession(sessionId: number): Promise<{ userId?: number | null } | null> };
+  /** WS 侧排队消息消费入口（streaming-ws-handler 的 autoConsumeQueue）。 */
+  wsHandler: { autoConsumeQueue(sessionId: number, userId: number, options?: { relayToIm?: boolean }): Promise<void> };
+}
+
+/**
+ * IM （飞书/钉钉/微信）执行收尾、入站队列排空且会话空闲后的接力消费：
+ * 按会话归属者消费 message_queue（定时任务/Webhook/插队）——否则「定时任务在会话忙时入队、
+ * 之后该会话只有 IM 通道执行」的消息会永远停在 QUEUED（管理后台显示「排队中」）。
+ * relayToIm=false 防止「IM 链 → 平台链 → IM 链」互相无限传递。失败静默留日志，不外抛。
+ */
+export function createPlatformQueueRelay(deps: PlatformQueueRelayDeps): (sessionId: number) => void {
+  const { sessionService, wsHandler } = deps;
+  return (sessionId: number): void => {
+    void (async () => {
+      const session = await sessionService.getSession(sessionId).catch(() => null);
+      if (session?.userId == null) return;
+      await wsHandler.autoConsumeQueue(sessionId, session.userId, { relayToIm: false });
+    })().catch((error: unknown) => {
+      console.warn(`IM 队列排空后接力消费平台队列失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  };
+}
+
 // ========== 排队位置 ==========
 
 export interface QueuePositionDeps {

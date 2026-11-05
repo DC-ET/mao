@@ -1766,3 +1766,82 @@ describe('AgentFeishuInboundHandler p2p multi-session', () => {
     expect(harness.execute).toHaveBeenCalledWith(7, 'e', expect.anything(), expect.anything(), 42);
   });
 });
+
+describe('AgentFeishuInboundHandler 平台队列接力（0.0.434）', () => {
+  it('relays the platform queue after the feishu queue is exhausted and the session is idle', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const queueService = makeQueueService();
+    const onQueuesDrained = vi.fn();
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      queueService,
+      onQueuesDrained,
+    });
+    await handler.drainNextIfPending(7);
+    // drainNextIfPending 为 fire-and-forget，等待其异步排空
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(queueService.claimNext).toHaveBeenCalled();
+    expect(onQueuesDrained).toHaveBeenCalledWith(7);
+  });
+
+  it('does not relay the platform queue when the WS side holds the session claim', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const queueService = makeQueueService();
+    const onQueuesDrained = vi.fn();
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      queueService,
+      onQueuesDrained,
+      isSessionExecuting: () => true,
+    });
+    await handler.drainNextIfPending(7);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    // WS 占用（含 autoConsume 消费 message_queue）→ 不领取飞书队列、不接力，等对方收尾
+    expect(queueService.claimNext).not.toHaveBeenCalled();
+    expect(onQueuesDrained).not.toHaveBeenCalled();
+  });
+
+  it('enqueues a new message instead of executing when the WS side holds the session claim', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const queueService = makeQueueService();
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      queueService,
+      isSessionExecuting: () => true,
+    });
+    await handler.onMessage(makeContext({ text: 'hi', maoUserId: 42 }));
+    expect(queueService.enqueue).toHaveBeenCalledTimes(1);
+    expect(harness.execute).not.toHaveBeenCalled();
+  });
+
+  it('does not relay the platform queue when the direct execution fails', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => { throw new Error('boom'); }) };
+    const queueService = makeQueueService();
+    const onQueuesDrained = vi.fn();
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      queueService,
+      onQueuesDrained,
+    });
+    await handler.onMessage(makeContext({ text: 'hi', maoUserId: 42 }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    // 失败不自动消费下一条的契约同样适用于平台队列接力
+    expect(onQueuesDrained).not.toHaveBeenCalled();
+  });
+});

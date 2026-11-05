@@ -66,6 +66,10 @@ export interface DingtalkRuntime {
   recoverProgress(sessionId: number): Promise<{ progress: FeishuCardProgress; roundOffset: number } | null>;
   onCrashFinished(sessionId: number, phase: string): Promise<void>;
   hydrate(): Promise<void>;
+  /** WS 侧 message_queue 排空接力：消费钉钉入站队列（busy 入队消息）。 */
+  drainNextIfPending(sessionId: number): Promise<void>;
+  /** 供 WS autoConsume 的跨通道忙检查（同步、无副作用）。 */
+  hasRunningSession(sessionId: number): boolean;
 }
 
 type StreamCtor = new (options: { clientId: string; clientSecret: string; keepAlive?: boolean }) => DingtalkStreamClient;
@@ -90,6 +94,10 @@ export function createDingtalkRuntime(deps: {
   activityHeartbeat: unknown;
   todoMapper: unknown;
   shellManager: { closeByConversation(sessionId: number): void };
+  /** 跨通道忙判定（WS 侧执行占用会话），透传给入站 handler 的 isSessionExecuting。 */
+  isSessionExecuting?: (sessionId: number) => boolean;
+  /** 入站队列排空且会话空闲时接力消费平台排队消息（message_queue），由装配层实现。 */
+  onQueuesDrained?: (sessionId: number) => void;
   fetchImpl?: typeof fetch;
 }): DingtalkRuntime {
   const fetchImpl = deps.fetchImpl ?? fetch;
@@ -215,6 +223,8 @@ export function createDingtalkRuntime(deps: {
   const handlerBox: { current: AgentDingtalkInboundHandler | null } = { current: null };
   const handler = new AgentDingtalkInboundHandler({
     registry: deps.wsRegistry as never,
+    isSessionExecuting: deps.isSessionExecuting,
+    onQueuesDrained: deps.onQueuesDrained,
     resolveStreamUserId: async (sessionId) => (await deps.sessionService.getSession(sessionId).catch(() => null))?.userId ?? null,
     sessionService: {
       getOrCreateSession: async (accountId, context) => {
@@ -511,6 +521,10 @@ export function createDingtalkRuntime(deps: {
       const sessionIds = await queue.hydrate();
       for (const sessionId of sessionIds) await handler.drainNextIfPending(sessionId);
     },
+    /** WS 侧 message_queue 排空接力：消费钉钉入站队列（busy 入队消息）。 */
+    drainNextIfPending: (sessionId: number) => handler.drainNextIfPending(sessionId),
+    /** 供 WS autoConsume 的跨通道忙检查（同步、无副作用）。 */
+    hasRunningSession: (sessionId: number) => handler.hasRunningSession(sessionId),
   };
 
   async function applyBotConfig(sessionId: number, botId: number): Promise<void> {

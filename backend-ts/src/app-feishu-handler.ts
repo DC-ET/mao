@@ -10,6 +10,7 @@ import type { FeishuMessageService } from './feishu/message.service.js';
 import type { FeishuClientHelper } from './feishu-client.js';
 import type { HarnessService } from './harness/core/harness-service.js';
 import type { AgentLoop } from './harness/core/agent-loop.js';
+import type { StreamingWsHandler } from './session/ws/streaming-ws-handler.js';
 
 import { createFeishuSessionHelper } from './feishu-session.js';
 import { FEISHU_ECP_IDENTITY_MISMATCH_TEXT } from './feishu/ecp-inbound-gate.js';
@@ -26,6 +27,7 @@ import { FeishuInboundQueueRepository } from './feishu/inbound-queue.repository.
 import { FeishuTaskQueueService } from './feishu/inbound-queue.service.js';
 import { createQueuePositionHelper } from './app-utils.js';
 import { createPersistCancelledHelper } from './app-utils.js';
+import { createPlatformQueueRelay } from './app-utils.js';
 import { AgentFeishuInboundHandler } from './feishu/agent-inbound-handler.js';
 import { channelAssistantReply } from './session/util/citation-markers.js';
 import { wsEvent } from './session/ws/ws-event.js';
@@ -70,6 +72,8 @@ export interface FeishuHandlerDeps {
   /** harness/agentLoop 已于本模块之前装配完成（钉钉运行时需要真实实例）。 */
   harness: HarnessService;
   agentLoop: AgentLoop;
+  /** WS handler（0.0.434 跨通道队列接力/忙检查）：装配在 create-app 传入，漏传编译期报错。 */
+  wsHandler: Pick<StreamingWsHandler, 'hasExecutionClaim' | 'hasCrossChannelBusy' | 'autoConsumeQueue'>;
   // 其余依赖仍以 any 透传，避免逐个下沉类型
   [key: string]: any;
 }
@@ -125,6 +129,9 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
   const persistCancelledIfActive = createPersistCancelledHelper({ sessionService: d.sessionService, taskTerminal: d.taskTerminal, feishuProgressCardRepo });
   const feishuInboundHandler = new AgentFeishuInboundHandler({
     registry: d.wsRegistry,
+    // 跨通道队列接力（0.0.434）：WS 侧执行占用时让行；飞书队列排空后消费平台排队消息。
+    isSessionExecuting: (sessionId: number) => d.wsHandler?.hasExecutionClaim(sessionId) === true,
+    onQueuesDrained: createPlatformQueueRelay({ sessionService: d.sessionService, wsHandler: d.wsHandler }),
     resolveStreamUserId: async (sessionId: number) => {
       const session = await d.sessionService.getSession(sessionId).catch(() => null);
       return session?.userId ?? null;
@@ -528,6 +535,9 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
     activityHeartbeat: d.activityHeartbeat,
     todoMapper: d.todoMapper,
     shellManager: d.shellManager,
+    // 跨通道队列接力（0.0.434）：同飞书 handler —— WS 侧占用让行 + 队列排空后消费平台排队消息。
+    isSessionExecuting: (sessionId: number) => d.wsHandler?.hasExecutionClaim(sessionId) === true,
+    onQueuesDrained: createPlatformQueueRelay({ sessionService: d.sessionService, wsHandler: d.wsHandler }),
   });
   d.dingtalkMediaHolder.current = dingtalk.mediaSend;
   const feishuMonitor = new FeishuMonitorService(cfg.feishu.bot, d.feishuBots, feishuInboundProcessor, async (data: any) => feishuCardActionService.handle(data, ''));

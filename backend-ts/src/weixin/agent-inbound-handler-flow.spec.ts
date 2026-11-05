@@ -392,3 +392,74 @@ describe('AgentWeixinInboundHandler file error', () => {
     handler.shutdown();
   });
 });
+
+describe('AgentWeixinInboundHandler 平台队列接力（0.0.434）', () => {
+  function makeHandler(extra: Partial<AgentWeixinInboundHandlerDeps> = {}) {
+    return new AgentWeixinInboundHandler({
+      weixinSessionService: { getOrCreateWeixinSession: vi.fn(async () => ({ id: 100, userId: 1 })) },
+      harnessService: { prepareMessage: vi.fn(async () => 'exec-1'), execute: vi.fn(async () => undefined) },
+      sessionService: {
+        saveMessage: vi.fn(async () => ({ id: 10, content: 'msg' })),
+        updatePhase: vi.fn(),
+        getMessages: vi.fn(async () => [{ role: 'ASSISTANT', content: 'wx-reply' }]),
+        cleanupIncompleteTail: vi.fn(async () => 0),
+        updateContextTokens: vi.fn(),
+        deleteMessageById: vi.fn(async () => undefined),
+        getSession: vi.fn(async () => ({ phase: 'COMPLETED' })),
+      },
+      accountRepository: { findByAccountId: vi.fn(async () => ({ userId: 1 })) },
+      agentLoop: { registerCancelFlag: vi.fn(() => new AtomicBoolean(false)) },
+      shellSessionManager: { closeByConversation: vi.fn() },
+      registry: { send: vi.fn() },
+      taskTerminalService: { finishExecution: vi.fn() },
+      activityService: { record: vi.fn(async () => ({ id: 1 })) },
+      activityHeartbeat: { touch: vi.fn() },
+      sessionTodoMapper: { deleteBySessionId: vi.fn(), selectBySessionId: vi.fn(async () => []) },
+      modelService: { getModel: vi.fn(async () => ({ supportsVision: 0 })) },
+      weixinFileStorageService: { saveFile: vi.fn() },
+      ...extra,
+    } as unknown as AgentWeixinInboundHandlerDeps);
+  }
+
+  it('执行成功后接力消费平台排队消息', async () => {
+    const onQueuesDrained = vi.fn();
+    const handler = makeHandler({ onQueuesDrained });
+    const reply = await handler.onMessage({ accountId: 'acc-1', fromUserId: 'wx-1', body: 'msg-1' });
+    expect(reply?.text).toBe('wx-reply');
+    // 接力在 runAgent 返回（执行旗标释放）后异步触发
+    await vi.waitFor(() => expect(onQueuesDrained).toHaveBeenCalledWith(100));
+    handler.shutdown();
+  });
+
+  it('setter 注入生效；执行失败时不接力', async () => {
+    const onQueuesDrained = vi.fn();
+    const handler = makeHandler({
+      harnessService: { prepareMessage: vi.fn(async () => 'exec-1'), execute: vi.fn(async () => { throw new Error('boom'); }) },
+    });
+    handler.setOnQueuesDrained(onQueuesDrained);
+    const reply = await handler.onMessage({ accountId: 'acc-1', fromUserId: 'wx-1', body: 'msg-1' });
+    expect(String(reply?.text ?? '')).toContain('抱歉');
+    expect(onQueuesDrained).not.toHaveBeenCalled();
+    handler.shutdown();
+  });
+
+  it('接力发生在执行旗标释放之后（WS 跨通道忙检查不会挡住自己）', async () => {
+    let handlerRef!: AgentWeixinInboundHandler;
+    let runningAtRelay: boolean | null = null;
+    const onQueuesDrained = vi.fn(() => {
+      runningAtRelay = handlerRef.hasRunningSession(100);
+    });
+    handlerRef = makeHandler({ onQueuesDrained });
+    await handlerRef.onMessage({ accountId: 'acc-1', fromUserId: 'wx-1', body: 'msg-1' });
+    await vi.waitFor(() => expect(onQueuesDrained).toHaveBeenCalled());
+    expect(runningAtRelay).toBe(false);
+    handlerRef.shutdown();
+  });
+
+  it('WS 侧执行占位时放弃执行并提示稍后再发', async () => {
+    const handler = makeHandler({ isSessionExecuting: () => true });
+    const reply = await handler.onMessage({ accountId: 'acc-1', fromUserId: 'wx-1', body: 'msg-1' });
+    expect(reply?.text).toBe('当前会话仍在执行，请稍后再发。');
+    handler.shutdown();
+  });
+});

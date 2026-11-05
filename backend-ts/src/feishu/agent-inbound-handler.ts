@@ -9,6 +9,7 @@ import { FeishuCardProgressListener, countCompletedAgentRounds, type FeishuCardP
 import { isInboundFileMessage } from './event-normalizer.js';
 import { toWorkspaceRelative } from '../common/workspace-path.js';
 import { mapWithConcurrency } from '../common/concurrency.js';
+import { isActivePhase } from '../session/util/session-group-key.js';
 import { INBOUND_IMAGE_COMPRESS_CONCURRENCY, PromptImageResizer } from '../harness/tool/prompt-image-resizer.js';
 
 export interface FeishuSessionAdapter {
@@ -198,6 +199,16 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     createProgressCard?: (context: FeishuInboundContext, sessionId: number) => Promise<FeishuCardProgress | null>;
     // 队列支持
     queueService?: FeishuTaskQueuePort;
+    /**
+     * 跨通道忙判定：WS/桌面端（含 autoConsume 消费 message_queue）正在执行本会话时，
+     * IM 收尾的排空与直接执行都必须让行——两套执行簿记互不可见，不让行会双跑。
+     */
+    isSessionExecuting?: (sessionId: number) => boolean;
+    /**
+     * 入站队列排空且会话空闲时，接力消费平台排队消息（message_queue：定时任务/Webhook/插队）。
+     * 覆盖「定时任务在会话忙时入队 → 该会话后续只有飞书执行」导致的永久排队。
+     */
+    onQueuesDrained?: (sessionId: number) => void;
     /** 发送排队交互卡片并返回其 message_id（null=发送失败，降级为文本提示）。 */
     createQueueCard?: (context: FeishuInboundContext, queueId: number, sessionId: number) => Promise<string | null>;
     /** botId 解析（accountId → feishu_bot.id）。 */
@@ -213,6 +224,11 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
   }) {}
 
   authorizeDirectMessage(): boolean { return true; }
+
+  /** IM 侧是否正在执行（供 WS autoConsume 的跨通道忙检查；同步、无副作用）。 */
+  hasRunningSession(sessionId: number): boolean {
+    return this.busy.has(sessionId);
+  }
 
   /** 中断指定会话的当前执行（由卡片动作服务在「立即发送」时调用）。返回是否命中本 handler 的执行。 */
   interrupt(sessionId: number): boolean {
@@ -252,6 +268,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     let outcome: { ok: true } | { ok: false; reason: 'BUSY' | 'NOT_FAILED' | 'NO_PROGRESS' } = { ok: false, reason: 'BUSY' };
     await this.withLock(sessionId, async () => {
       if (await this.isBusyOrRecovering(sessionId)) return;
+      if (this.options.isSessionExecuting?.(sessionId) === true) return;
       this.busy.add(sessionId);
       let progress: FeishuCardProgress | null = null;
       try {
@@ -542,6 +559,12 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
         await this.enqueueMessage(sessionId, context, message, session);
         return;
       }
+      // 与 busy.add 同一同步段复检 WS 占位：两套簿记的「检查-占位」必须是原子的，
+      // 否则 WS 恰在 isBusyOrRecovering 的 await 期间占位时会双跑。
+      if (this.options.isSessionExecuting?.(sessionId) === true) {
+        await this.enqueueMessage(sessionId, context, message, session);
+        return;
+      }
       this.busy.add(sessionId);
       executed = true;
       // 时序契约：busy.add 必须先于 runExecution 内的 updatePhase(RUNNING)，否则会出现
@@ -613,17 +636,28 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
 
   private async drainNext(sessionId: number, executionUserId: number | null = null): Promise<void> {
     const queueService = this.options.queueService;
+    // 本次排空链确认「队列为空且会话空闲」时置位：链尾接力消费平台排队消息（message_queue）。
+    let drainedIdle = false;
     const phase = await this.withLock(sessionId, async () => {
       if (await this.isBusyOrRecovering(sessionId)) return null;
       // 忙碌期间暂存的文件必须在会话锁内落库，避免与 execute / 下一次 ingest 交错丢附件或插进执行中的消息流。
       if (this.hasPendingAttachments(sessionId)) {
         await this.persistPendingAttachments(sessionId, executionUserId);
       }
-      if (queueService == null) return null;
-      const item = await queueService.claimNext(sessionId);
-      if (item == null) return null;
+      if (queueService == null) {
+        drainedIdle = true;
+        return null;
+      }
+      // 与 busy.add 同一同步段复检 WS 占位（同 executeWithSession 的说明），
+      // 占位提前到 claimNext 之前：WS 检查-占位若恰好插在 DB 往返期间，会看到本会话已忙而让行。
+      if (this.options.isSessionExecuting?.(sessionId) === true) return null;
       this.busy.add(sessionId);
       try {
+        const item = await queueService.claimNext(sessionId);
+        if (item == null) {
+          drainedIdle = true;
+          return null;
+        }
         return await this.executeQueued(sessionId, item);
       } finally {
         this.busy.delete(sessionId);
@@ -636,16 +670,32 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       void this.drainNext(sessionId).catch((error) => {
         console.error(`飞书队列消费接力异常, sessionId=${sessionId}`, error);
       });
+    } else if (drainedIdle) {
+      // 飞书队列排空且会话空闲：接力消费平台排队消息（定时任务/Webhook/插队），
+      // 否则「会话忙时入队、之后只有飞书执行」的消息会永远停在 QUEUED。
+      this.relayPlatformQueues(sessionId);
     }
   }
 
-  /** 判断会话是否繁忙（内存 busy 或 DB phase 处于 RUNNING/RESUMING，含崩溃恢复中）。 */
+  /** 飞书队列排空且会话空闲：接力消费平台排队消息（message_queue）。失败不外抛。 */
+  private relayPlatformQueues(sessionId: number): void {
+    try {
+      this.options.onQueuesDrained?.(sessionId);
+    } catch (e) {
+      console.warn(`飞书队列排空后接力消费平台队列失败, sessionId=${sessionId}`, e);
+    }
+  }
+
+  /** 判断会话是否繁忙（内存 busy、WS 侧执行占用、或 DB phase 活跃——口径与 isActivePhase 统一，含崩溃恢复中）。 */
   private async isBusyOrRecovering(sessionId: number): Promise<boolean> {
     if (this.busy.has(sessionId)) return true;
+    // WS 侧执行（含 autoConsume 消费 message_queue）占用会话时同样视为忙：
+    // 两套执行簿记互不可见，必须靠本检查让 IM 通道让行。
+    if (this.options.isSessionExecuting?.(sessionId) === true) return true;
     const phase = this.options.sessionService.getPhase == null
       ? null
       : await this.options.sessionService.getPhase(sessionId).catch(() => null);
-    return phase === 'RUNNING' || phase === 'RESUMING';
+    return isActivePhase(phase);
   }
 
   private async executeQueued(sessionId: number, row: FeishuInboundQueueRow): Promise<'COMPLETED' | 'CANCELLED' | 'FAILED'> {

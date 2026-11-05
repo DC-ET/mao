@@ -148,3 +148,49 @@ describe('AgentDingtalkInboundHandler retry identity', () => {
     });
   });
 });
+
+describe('AgentDingtalkInboundHandler 平台队列接力（0.0.434）', () => {
+  function makeQueue() {
+    return {
+      enqueue: vi.fn(async () => 1),
+      setOutTrackId: vi.fn(async () => undefined),
+      claimNext: vi.fn(async () => null),
+      complete: vi.fn(async () => undefined),
+      hasPending: vi.fn(async () => false),
+    };
+  }
+
+  it('钉钉队列排空且会话空闲时接力消费平台排队消息', async () => {
+    const queueService = makeQueue();
+    const onQueuesDrained = vi.fn();
+    const { handler: inbound } = handler({ queueService: queueService as never, onQueuesDrained });
+    await inbound.drainNextIfPending(20);
+    await vi.waitFor(() => expect(onQueuesDrained).toHaveBeenCalledWith(20));
+    expect(queueService.claimNext).toHaveBeenCalled();
+  });
+
+  it('WS 侧占用会话时不领取队列、不接力', async () => {
+    const queueService = makeQueue();
+    const onQueuesDrained = vi.fn();
+    const { handler: inbound } = handler({
+      queueService: queueService as never,
+      onQueuesDrained,
+      isSessionExecuting: () => true,
+    });
+    await inbound.drainNextIfPending(20);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(queueService.claimNext).not.toHaveBeenCalled();
+    expect(onQueuesDrained).not.toHaveBeenCalled();
+  });
+
+  it('WS 侧占用会话时新消息入队而非直接执行', async () => {
+    const queueService = makeQueue();
+    const { handler: inbound, execute } = handler({
+      queueService: queueService as never,
+      isSessionExecuting: () => true,
+    });
+    await inbound.onMessage(context({ text: '你好', maoUserId: 9 }));
+    expect(queueService.enqueue).toHaveBeenCalledTimes(1);
+    expect(execute).not.toHaveBeenCalled();
+  });
+});

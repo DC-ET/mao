@@ -168,7 +168,7 @@ import { chatFilesDirOf, resolveChatFileTarget } from './feishu/chat-files.js';
 import { createFeishuMediaHelper, IMAGE_EXT_BY_CONTENT_TYPE, createResolveMessageTextHelper } from './feishu-media.js';
 import { createFeishuQueueCardHelper, createPatchedProgressHelper, createFeishuProgressCardHelper, createFeishuRecoveryProgressHelper, createSendUnauthorizedCardHelper, createUnauthorizedTextHelper } from './feishu-cards.js';
 import { createFeishuSessionUrlHelper, createFeishuUserIdHelper, createResolveUserIdHelper, createAuthorizeSenderHelper, createResolveQuotedMessageHelper, createThreadSessionHelper } from './feishu-session.js';
-import { createPersistCancelledHelper, createQueuePositionHelper, registerUploadStatic, createContainerPtyFactory, createTerminalAudit } from './app-utils.js';
+import { createPersistCancelledHelper, createQueuePositionHelper, createPlatformQueueRelay, registerUploadStatic, createContainerPtyFactory, createTerminalAudit } from './app-utils.js';
 import type { FeishuNormalizedMessage } from './feishu/types.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
 import { ApiTokenService } from './openapi/api-token.service.js';
@@ -891,7 +891,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const feishuHandler = assembleFeishuHandler({
     db, cfg, ctx,
     feishuBots, feishuBinding, userRepo, agentService, modelService, settingService,
-    sessionService, sessionRepo, wsRegistry, harness, agentLoop, shellManager,
+    sessionService, sessionRepo, wsRegistry, wsHandler, harness, agentLoop, shellManager,
     feishuMessageRepository, feishuMessageService, getFeishuClient, getFeishuChatTitle, sendFeishuText,
     taskTerminal, scheduledService, feedbackService, feedbackMessageLookup,
     backgroundSubagentManager, localToolSessions, treeSignalPublisher, askUserQuestionsRegistry,
@@ -901,6 +901,18 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     jwt,
   });
   const { feishuInboundHandler, feishuInboundProcessor, feishuCardActionService, feishuMonitor, dingtalk, feishuTaskQueue, feishuProgressCardRepo, createFeishuRecoveryProgress, analyticsService, statisticsService, adminAnalytics, httpToolStatsStore, mcpValidator } = feishuHandler;
+
+  // 跨通道队列接力（0.0.434）：IM（飞书/钉钉/微信）执行收尾且队列排空后消费平台排队消息
+  // （message_queue：定时任务/Webhook/插队）；WS 侧执行收尾且平台队列排空后消费 IM 入站队列。
+  // 两侧忙检查互可见（isSessionExecuting / registerExternalBusyCheck），避免两套执行簿记双跑。
+  const platformQueueRelay = createPlatformQueueRelay({ sessionService, wsHandler });
+  weixinInboundHandler.setOnQueuesDrained(platformQueueRelay);
+  weixinInboundHandler.setIsSessionExecuting((sessionId) => wsHandler.hasExecutionClaim(sessionId));
+  wsHandler.registerExternalBusyCheck((sessionId) => feishuInboundHandler.hasRunningSession(sessionId));
+  wsHandler.registerExternalBusyCheck((sessionId) => dingtalk.hasRunningSession(sessionId) === true);
+  wsHandler.registerExternalBusyCheck((sessionId) => weixinInboundHandler.hasRunningSession(sessionId));
+  wsHandler.registerImQueueDrainHandler((sessionId) => { void feishuInboundHandler.drainNextIfPending(sessionId); });
+  wsHandler.registerImQueueDrainHandler((sessionId) => { void dingtalk.drainNextIfPending(sessionId); });
 
   await registerAllRoutes({
     app, db, cfg, apiPrefix, jwt, agentRuntimeCfg,
