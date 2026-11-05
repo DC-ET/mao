@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DEFAULT_BASE_URL, type OutputFormat, type PermissionLevel } from '../args';
+import { type OutputFormat, type PermissionLevel } from '../args';
 
 export interface AgentCliConfigFile {
   baseUrl?: string;
@@ -104,7 +104,8 @@ export interface ResolvedUi {
 }
 
 export interface ResolvedConfig {
-  baseUrl: string;
+  /** 未配置（命令行/环境变量/项目/用户配置都没有）时为 undefined，不再回落内置默认。 */
+  baseUrl?: string;
   defaultAgentId?: number;
   defaultModelId?: number;
   permissionLevel: PermissionLevel;
@@ -132,7 +133,7 @@ export function resolveConfig(cli: {
   const envFormatRaw = process.env.MAO_AGENT_OUTPUT_FORMAT?.trim();
   const envFormat = envFormatRaw ? (envFormatRaw as OutputFormat) : undefined;
   const envVerbose = envBool(process.env.MAO_AGENT_VERBOSE);
-  const baseUrl = cli.baseUrl || envBase || project.baseUrl || user.baseUrl || DEFAULT_BASE_URL;
+  const baseUrl = cli.baseUrl || envBase || project.baseUrl || user.baseUrl;
   return {
     baseUrl,
     defaultAgentId: project.defaultAgentId ?? user.defaultAgentId ?? undefined,

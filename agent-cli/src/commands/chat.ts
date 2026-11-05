@@ -1,5 +1,4 @@
 import type { CliConfig } from '../args';
-import { normalizeBaseUrl } from '../args';
 import { rememberLastSession, resolveConfig, type ResolvedConfig } from '../config/config-store';
 import type { RestClient } from '../rest/rest-client';
 import type { CreateSessionRequest, SessionVO } from '../rest/types';
@@ -29,6 +28,8 @@ export interface ChatContext {
   rest: RestClient;
   cfg: CliConfig;
   resolved: ResolvedConfig;
+  /** 最终生效的站点地址（main 已保证非空并归一化）。 */
+  baseUrl: string;
   getToken: () => Promise<string | null>;
   logger: Logger;
 }
@@ -57,7 +58,7 @@ class TraceRenderer implements Renderer {
 }
 
 export async function cmdChat(ctx: ChatContext): Promise<number> {
-  const { rest, cfg, resolved, logger } = ctx;
+  const { rest, cfg, resolved, baseUrl, logger } = ctx;
   const session = await resolveTargetSession(ctx);
   rememberLastSession(session.id!);
 
@@ -84,7 +85,7 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
 
   const localMode = session.executionMode === 'LOCAL' || (cfg.local && session.executionMode !== 'CLOUD');
   const ws = new WsClient({
-    baseUrl: normalizeBaseUrl(resolved.baseUrl),
+    baseUrl,
     getToken: ctx.getToken,
     debug: cfg.debug ? (m, extra) => logger.debug(m, extra) : undefined,
     onConsecutiveReconnectFailures: (n) => {
@@ -129,7 +130,7 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
     localExecutor = new LocalExecutor({
       ws,
       getToken: ctx.getToken,
-      baseUrl: normalizeBaseUrl(resolved.baseUrl),
+      baseUrl,
       workspace: localWorkspace,
       policy,
       askApproval: cfg.onApproval === 'ask' && cfg.stdoutIsTty

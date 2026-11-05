@@ -16,7 +16,6 @@ export type CommandName =
   | 'help'
   | 'version';
 
-export const DEFAULT_BASE_URL = 'https://mao.etarch.cn/api';
 export const DEFAULT_TIMEOUT_MS = 30000;
 
 const SUBCOMMANDS: readonly CommandName[] = ['login', 'logout', 'status', 'ls', 'resume', 'update', 'help'];
@@ -76,7 +75,7 @@ export const FLAG_SPECS: readonly FlagSpec[] = [
   { name: 'replay-full', kind: 'boolean', group: '输出与诊断', desc: 'resume 时完整打印历史消息，默认只摘要最后 3 轮' },
   { name: 'debug', kind: 'boolean', group: '输出与诊断', desc: '打印 WS 收发帧与 REST 摘要到 stderr（已脱敏）' },
   { name: 'trace-file', kind: 'value', arg: '<path>', group: '输出与诊断', desc: '完整事件流落盘为 NDJSON' },
-  { name: 'base-url', kind: 'value', arg: '<url>', group: '输出与诊断', desc: '站点地址（接受站点根 /api /api/v1；优先于 MAO_BASE_URL）' },
+  { name: 'base-url', kind: 'value', arg: '<url>', group: '输出与诊断', desc: '站点地址（接受站点根 /api /api/v1；优先于 MAO_BASE_URL；未设置时 login 会要求先设置）' },
   { name: 'token', kind: 'value', arg: '<jwt>', group: '输出与诊断', desc: '一次性覆盖本地 token（更推荐环境变量 MAO_TOKEN）' },
   { name: 'timeout-ms', kind: 'value', arg: '<n>', group: '输出与诊断', desc: `单次 REST 请求超时，默认 ${DEFAULT_TIMEOUT_MS}` },
 
@@ -495,14 +494,14 @@ const USAGE = `用法:
   mao-agent update [--check]         拉取最新源码并重装；--check 仅检查新版本`;
 
 const REFERENCE = `环境变量:
-  MAO_BASE_URL                       私有化请设为自己的站点，如 https://mao.example.com（兼容 /api 与 /api/v1）
+  MAO_BASE_URL                       站点地址，如 https://mao.example.com（兼容 /api 与 /api/v1）；未设置时 login 会要求先设置
   MAO_TOKEN / MAO_REFRESH_TOKEN      与 mao CLI 同名（兼容 MAO_ADMIN_* / MAO_USER_*）
   MAO_AGENT_OUTPUT_FORMAT            默认输出格式
   MAO_AGENT_VERBOSE                  1/true 默认展开工具输出，0/false 强制折叠
   MAO_AGENT_REPO / MAO_AGENT_REF     update 默认仓库与分支（等价 --repo / --ref）
   NO_COLOR                           禁用颜色
 
-配置文件（优先级：命令行 > 环境变量 > 项目配置 > 用户配置 > 内置默认）:
+配置文件（优先级：命令行 > 环境变量 > 项目配置 > 用户配置；无内置默认站点地址）:
   ~/.mao/auth.json                   JWT，与 mao CLI 共用（0600）
   ~/.mao/agent-cli/config.json       用户配置与 trustedWorkspaces（0600）
   ~/.mao/agent-cli/history           输入历史，最近 200 条（0600）

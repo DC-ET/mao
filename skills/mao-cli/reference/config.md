@@ -6,7 +6,9 @@
 
 文档与命令示例统一用 `https://mao.example.com` 表示**你部署后的对外站点**（把主机名换成自己的域名）。路径约定见 [deploy.md](deploy.md)：桌面 `/`、管理后台 `/admin/`、API `/api/`、上传 `/uploads/`。
 
-`mao-cli` / `mao-agent` 共用 `MAO_BASE_URL`（或 `--base-url`）。推荐写成站点根，例如 `https://mao.example.com`；也接受 `https://mao.example.com/api` 与 `https://mao.example.com/api/v1`，工具会自己归一化。未设置时回落到开源仓库内置的示例域名（`https://mao.etarch.cn`，最低优先级）。**私有化部署后该地址通常不可达**，必须改成自己的实例。
+`mao-cli` / `mao-agent` 共用 `MAO_BASE_URL`（或 `--base-url`）。推荐写成站点根，例如 `https://mao.example.com`；也接受 `https://mao.example.com/api` 与 `https://mao.example.com/api/v1`，工具会自己归一化。
+
+`mao-agent` **不再内置默认站点地址**：未设置时首次 `mao-agent login` 会在交互终端要求输入并保存到 `~/.mao/agent-cli/config.json`；非交互场景与其它需要连接服务器的命令直接报错并给出设置方式。`mao-cli` 仍回落到开源示例域名（`https://mao.etarch.cn`，最低优先级）——**私有化部署后该地址通常不可达**，请显式设置 `MAO_BASE_URL` 指向自己的实例。
 
 ## 默认账号
 

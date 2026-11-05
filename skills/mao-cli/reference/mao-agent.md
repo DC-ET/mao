@@ -35,6 +35,10 @@ cd agent-cli && npm ci && npm run build && npm link
 
 维护者发布后可 `npm install -g mao-agent`（包名 `mao-agent`）。
 
+## 站点地址（baseUrl）
+
+`mao-agent` 不再内置默认站点地址，首次使用必须先设置。首次 `mao-agent login` 时若发现未配置（`--base-url` / `MAO_BASE_URL` / 项目配置 / 用户配置都没有），会在交互终端要求输入：需以 `https://` 或 `http://` 开头，只填站点根（可带 `/api`、`/api/v1`），校验通过后保存到 `~/.mao/agent-cli/config.json` 再继续登录。非交互场景（CI / 管道）与其它需要连接服务器的命令（`ls` / `resume` / chat）未配置时直接报错并给出设置方式；`logout` 不受影响（跳过服务端调用、仅本地清理），`status` 显示「(未设置)」，`update` 不依赖站点、不受影响。登录成功时若地址仅来自 `--base-url` / `MAO_BASE_URL`，会提示写入配置以便下次沿用。
+
 ## 基本用法
 
 ```bash
@@ -63,7 +67,7 @@ mao-agent -p "检查本次 PR 是否有明显的安全问题" \
 | 变量 | 说明 |
 |------|------|
 | `MAO_TOKEN` / `MAO_REFRESH_TOKEN` | JWT（兼容旧名 `MAO_ADMIN_TOKEN` / `MAO_USER_TOKEN` / `MAO_ADMIN_REFRESH_TOKEN` / `MAO_USER_REFRESH_TOKEN`） |
-| `MAO_BASE_URL` | 站点地址，如 `https://mao.example.com`（也接受 `/api` 与 `/api/v1`）。未配置时的回落见 [config.md](config.md#站点域名) |
+| `MAO_BASE_URL` | 站点地址，如 `https://mao.example.com`（也接受 `/api` 与 `/api/v1`）；未配置时登录会要求先设置，见 [config.md](config.md#站点域名) |
 | `MAO_AGENT_OUTPUT_FORMAT` | 默认输出格式 |
 | `MAO_AGENT_VERBOSE` | `1`/`true` 默认展开工具输出，`0`/`false` 强制折叠 |
 | `MAO_AGENT_REPO` / `MAO_AGENT_REF` | `update` 默认仓库与分支/标签（等价于 `--repo` / `--ref`） |
@@ -183,7 +187,7 @@ emoji / CJK 按整字符删除；粘贴多行文本原样进入草稿。
 | `--replay-full` | resume 时完整打印历史消息（默认只摘要最后 3 轮） |
 | `--debug` | WS 收发帧与 REST 摘要打到 stderr（已脱敏） |
 | `--trace-file <path>` | 完整事件流落盘为 NDJSON |
-| `--base-url <url>` | 站点地址（接受站点根 / `/api` / `/api/v1`）；未设时同 `MAO_BASE_URL` |
+| `--base-url <url>` | 站点地址（接受站点根 / `/api` / `/api/v1`）；未设置时登录会要求先设置 |
 | `--token <jwt>` | 一次性覆盖本地 token（更推荐 `MAO_TOKEN`） |
 | `--timeout-ms <n>` | 单次 REST 请求超时，默认 30000 |
 
@@ -207,7 +211,7 @@ emoji / CJK 按整字符删除；粘贴多行文本原样进入草稿。
 | `~/.mao/agent-cli/runtime/` | 每会话运行期文件（超 900KB 的工具结果、`userMessages/` 下 dump 出的用户消息原文等，0600），保留最近 20 个会话、7 天 |
 | `<项目>/.mao/agent.json` | 项目级配置，向上找到 git 根为止 |
 
-配置优先级：命令行 > 环境变量 > 项目配置 > 用户配置 > 内置默认。旧版 `~/.mao-cli` / `~/.mao-user-cli` / `~/.mao-admin-cli` 下的 `auth.json` 首次使用时自动迁移到 `~/.mao/auth.json`。
+配置优先级：命令行 > 环境变量 > 项目配置 > 用户配置；站点地址无内置默认值，未配置时登录会要求先设置。旧版 `~/.mao-cli` / `~/.mao-user-cli` / `~/.mao-admin-cli` 下的 `auth.json` 首次使用时自动迁移到 `~/.mao/auth.json`。
 
 ## LOCAL 运行前提与边界
 

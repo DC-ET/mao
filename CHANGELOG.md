@@ -1,3 +1,8 @@
+## 0.0.436 (2026-11-05)
+
+### 终端 CLI（mao-agent）
+- **不再内置默认站点地址（baseUrl），首次登录要求先设置**：此前未配置时静默回落到开源示例 `https://mao.etarch.cn`，私有化部署装完首次登录会打到不可达域名、报错难懂。现在 `mao-agent` 无内置默认：`login` 在 TTY 下发现未配置（`--base-url` / `MAO_BASE_URL` / 项目 `.mao/agent.json` / 用户 `~/.mao/agent-cli/config.json` 都没有）会提示输入站点地址——校验必须 `http(s)://`、只填站点根（可带 `/api`、`/api/v1`，不接受额外路径 / query / hash），通过后保存到用户配置再继续登录；非交互场景（CI / 管道）与其它需要连接服务器的命令（`ls` / `resume` / chat）直接报错并给出三种设置方式，`logout` 仅做本地清理不受影响；`status` 在 baseUrl 行显示 `(未设置)`，`update` 不依赖站点、不受影响。登录成功时若地址仅来自 `--base-url` / `MAO_BASE_URL`，追加提示如何写入配置以便下次沿用。`mao-cli` 行为不变（仍回落示例域名）。
+
 ## 0.0.435 (2026-11-05)
 
 ### 后端

@@ -2,7 +2,7 @@ import { loadAuth } from '../auth/auth-store';
 import { remainingMs, formatRemaining, currentTokenSource } from '../auth/token';
 import { getCliVersion } from '../util/version';
 
-export function cmdStatus(opts: { baseUrl: string; cliToken?: string }): void {
+export function cmdStatus(opts: { baseUrl?: string; cliToken?: string }): void {
   const src = currentTokenSource(opts.cliToken);
   const auth = loadAuth();
   const user = auth?.user;
@@ -10,7 +10,10 @@ export function cmdStatus(opts: { baseUrl: string; cliToken?: string }): void {
   const left = remainingMs(src.accessToken, auth?.savedAt, auth?.expiresIn);
   process.stdout.write(`mao-agent CLI ${getCliVersion()}\n`);
   process.stdout.write(`用户:        ${src.accessToken ? name : '未登录'}\n`);
-  process.stdout.write(`baseUrl:     ${opts.baseUrl}\n`);
+  process.stdout.write(`baseUrl:     ${opts.baseUrl ?? '(未设置)'}\n`);
+  if (!opts.baseUrl) {
+    process.stdout.write('提示:        未设置站点地址，运行 mao-agent login 按提示输入，或设置 MAO_BASE_URL / --base-url。\n');
+  }
   process.stdout.write(`token 剩余:  ${src.accessToken ? formatRemaining(left) : '—'}\n`);
   process.stdout.write(`token 来源:  ${src.fromCli ? '--token' : src.fromEnv ? 'MAO_TOKEN' : src.accessToken ? '~/.mao/auth.json' : '无'}\n`);
   process.stdout.write(`执行模式:    CLOUD / LOCAL（--local 在本机执行工具）\n`);

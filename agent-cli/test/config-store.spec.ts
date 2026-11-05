@@ -48,11 +48,10 @@ function writeUserConfig(content: unknown): void {
 }
 
 describe('resolveConfig precedence', () => {
-  it('falls back to the built-in default', async () => {
+  it('leaves baseUrl unset when nothing is configured (no built-in default)', async () => {
     const { resolveConfig } = await store();
-    const { DEFAULT_BASE_URL } = await import('../src/args');
     const cfg = resolveConfig({});
-    expect(cfg.baseUrl).toBe(DEFAULT_BASE_URL);
+    expect(cfg.baseUrl).toBeUndefined();
     expect(cfg.permissionLevel).toBe('READ_WRITE');
     expect(cfg.outputFormat).toBe('text');
     expect(cfg.ui).toEqual({
