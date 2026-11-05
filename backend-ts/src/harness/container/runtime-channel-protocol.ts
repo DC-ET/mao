@@ -19,6 +19,8 @@ export interface RuntimeEnvelope {
   runtimeDir: string | null;
   gitTokens: Record<string, string>;
   maoToken: string | null;
+  /** 站点地址（注入 shell / MCP 的 MAO_BASE_URL）：容器内 mao / mao-agent 不再有内置默认。 */
+  maoBaseUrl: string | null;
   ecpToken: string | null;
   larkUat: { appId: string; uat: string } | null;
   /** §5.13 依赖持久化 env（NPM_CONFIG_PREFIX / PIP_TARGET / PIP_BREAK_SYSTEM_PACKAGES / PATH 前缀）。 */

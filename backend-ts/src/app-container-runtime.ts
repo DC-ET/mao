@@ -146,6 +146,7 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
     ecpInjector,
     larkUatInjector,
     envVariableService,
+    siteBaseUrlProvider: settingService,
   }, cloudRuntimeCfg.container.depsDir);
   const dockerRouter = new DockerToolRouter({
     containerRegistry,

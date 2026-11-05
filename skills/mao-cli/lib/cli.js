@@ -39,7 +39,7 @@ const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
   mao <模块> <子命令> [选项]
 
 全局选项:
-  --base-url <url>     站点地址（优先于 MAO_BASE_URL；接受站点根 /api /api/v1）
+  --base-url <url>     站点地址（优先于 MAO_BASE_URL；接受站点根 /api /api/v1；未设置时命令会报错要求先设置）
   --token <jwt>        覆盖本地缓存的 accessToken
   --json               机器可读 JSON 输出
   --raw                输出完整 Result（含 code/message/data）
@@ -83,7 +83,7 @@ const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
   http-tool       自定义 HTTP 工具：管理员配置（清单 / 新建 / 编辑 / 启停 / 删除 / 试运行）与调用统计（需 http_tool:read / http_tool:write）
 
 环境变量:
-  MAO_BASE_URL         私有化请设为自己的站点，如 https://mao.example.com
+  MAO_BASE_URL         站点地址，如 https://mao.example.com；未设置时命令会报错要求先设置（云端 shell 由后端注入）
   MAO_USER_BASE_URL / MAO_ADMIN_BASE_URL   兼容旧名
   MAO_TOKEN
   MAO_REFRESH_TOKEN

@@ -124,7 +124,10 @@ describe('ShellSessionTool', () => {
 });
 
 describe('ShellSessionTool marker and environment handling', () => {
-  function harness(readResult: Partial<{ output: string; truncated: boolean; completed: boolean; exitCode: number | null; matched: string | null }> = {}) {
+  function harness(
+    readResult: Partial<{ output: string; truncated: boolean; completed: boolean; exitCode: number | null; matched: string | null }> = {},
+    baseUrlProvider?: { getSiteBaseUrl: () => Promise<string | null> },
+  ) {
     const shellSession = {
       sessionId: 'sh-1',
       conversationId: 11,
@@ -168,10 +171,27 @@ describe('ShellSessionTool marker and environment handling', () => {
       null,
       { generateShellToken: vi.fn(() => 'jwt-to"ken') },
       { findById: vi.fn(async () => ({ username: 'alice' })) },
+      null,
+      null,
+      baseUrlProvider,
     );
     const written = () => shellSession.writeStdin.mock.calls.map((c) => String(c[0])).join('');
     return { tool, shellSession, sessionManager, outputManager, written };
   }
+
+  it('injects MAO_BASE_URL before the command when the site address is configured', async () => {
+    const { tool, written } = harness({}, { getSiteBaseUrl: vi.fn(async () => 'https://mao.example.com') });
+    await tool.execute(JSON.stringify({ command: 'mao auth me' }), 11, 7, '/tmp');
+    const out = written();
+    expect(out).toContain("export MAO_BASE_URL='https://mao.example.com'");
+    expect(out.indexOf('export MAO_BASE_URL')).toBeLessThan(out.indexOf('mao auth me'));
+  });
+
+  it('skips MAO_BASE_URL when the site address is not configured', async () => {
+    const { tool, written } = harness({}, { getSiteBaseUrl: vi.fn(async () => null) });
+    await tool.execute(JSON.stringify({ command: 'echo hi' }), 11, 7, '/tmp');
+    expect(written()).not.toContain('MAO_BASE_URL');
+  });
 
   it('appends a completion marker to write_stdin so it does not wait for the timeout', async () => {
     const { tool, written } = harness();

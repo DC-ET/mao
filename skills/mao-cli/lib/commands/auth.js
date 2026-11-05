@@ -6,7 +6,7 @@ const {
   optionalString,
   hasHelp,
 } = require('../args');
-const { request } = require('../http');
+const { request, hasConfiguredBaseUrl } = require('../http');
 const { saveAuth, clearAuth, resolveRefreshToken, loadAuth } = require('../auth-store');
 const { outputResult } = require('../output');
 
@@ -78,6 +78,12 @@ async function handle(ctx) {
       return;
     }
     case 'logout': {
+      if (!hasConfiguredBaseUrl(common.baseUrl)) {
+        // 未配置站点地址时也要能退出：服务端 logout 无副作用，直接清理本地登录态。
+        clearAuth();
+        outputResult({ code: 0, message: 'ok', data: null }, globals);
+        return;
+      }
       try {
         const result = await request({
           ...common,

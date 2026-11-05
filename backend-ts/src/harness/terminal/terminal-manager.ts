@@ -133,6 +133,11 @@ export interface TerminalEnvVarsLookup {
   resolveForSession(userId: number, workspace: string | null): Promise<Record<string, string>>;
 }
 
+/** 站点地址（注入 MAO_BASE_URL）：mao / mao-agent 不再内置默认地址。 */
+export interface TerminalBaseUrlProvider {
+  getSiteBaseUrl(): Promise<string | null>;
+}
+
 export interface TerminalManagerDeps {
   pathSandbox: TerminalPathSandbox;
   runtimeResolver: TerminalRuntimeResolver;
@@ -141,6 +146,8 @@ export interface TerminalManagerDeps {
   userLookup?: TerminalUserLookup;
   ecpInjector?: TerminalEcpInjector;
   larkUatInjector?: TerminalLarkUatInjector;
+  /** 站点地址（注入 MAO_BASE_URL）：未注入时不写该变量，行为与改造前一致。 */
+  baseUrlProvider?: TerminalBaseUrlProvider;
   /**
    * §5.13 依赖持久化 env 提供者（仅容器用户装配层注入）：docker 用户的终端在容器内
    * spawn，pip/npm 安装位置须指向每用户 /deps 挂载。host 用户返回 null，行为零变化。
@@ -464,6 +471,14 @@ export class TerminalManager {
         if (username) env.MAO_TOKEN = this.deps.shellToken.generateShellToken(userId, username);
       } catch (e) {
         harnessLog('warn', `Failed to issue MAO_TOKEN for user ${userId}`, e);
+      }
+    }
+    if (this.deps.baseUrlProvider) {
+      try {
+        const siteBaseUrl = await this.deps.baseUrlProvider.getSiteBaseUrl();
+        if (siteBaseUrl) env.MAO_BASE_URL = siteBaseUrl;
+      } catch (e) {
+        harnessLog('warn', `Failed to inject MAO_BASE_URL for user ${userId}`, e);
       }
     }
     if (home) this.ensureDefaultRc(home);

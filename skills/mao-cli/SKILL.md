@@ -82,7 +82,7 @@ npm install . -g   # 在本 Skill 目录执行
 
 | 项 | 说明 |
 |----|------|
-| 未设置 baseUrl | `mao-agent` 不再内置默认：首次 `login` 在 TTY 下要求输入并保存到用户配置，非交互与其它联网命令直接报错（`logout` 除外，仅本地清理）；`mao-cli` 仍回落开源示例域名。请设 `MAO_BASE_URL` / `--base-url`，见 [config.md](reference/config.md#站点域名) |
+| 未设置 baseUrl | 两个 CLI 都不再内置默认值：`mao-agent` 首次 `login` 在 TTY 下要求输入并保存到用户配置，`mao-cli` 各联网命令直接报错并要求先设置；`logout` 仅本地清理不受影响。云端 shell / 终端与桌面 LOCAL shell 由平台自动注入 `MAO_BASE_URL`，本地请设 `MAO_BASE_URL` / `--base-url`，见 [config.md](reference/config.md#站点域名) |
 | 环境变量 | `MAO_BASE_URL`（优先）；兼容 `MAO_USER_BASE_URL`、`MAO_ADMIN_BASE_URL` |
 | 全局选项 | `--base-url`、`--token`、`--json`、`--raw`、`--timeout-ms`、`-h/--help` |
 | Token | `--token` > `MAO_TOKEN` > `~/.mao/auth.json` |

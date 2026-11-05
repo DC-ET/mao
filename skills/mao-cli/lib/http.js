@@ -5,8 +5,18 @@ const path = require('node:path');
 const { createCliError } = require('./args');
 const { resolveToken } = require('./auth-store');
 
-const DEFAULT_BASE_URL = 'https://mao.etarch.cn/api/v1';
 const DEFAULT_TIMEOUT_MS = 30000;
+
+/**
+ * 未配置站点地址时的统一指引。mao-cli 不再内置默认地址：未设置
+ * （--base-url / MAO_BASE_URL / MAO_USER_BASE_URL / MAO_ADMIN_BASE_URL 都没有）时，
+ * 任何需要连接服务器的命令都会报错要求先设置；云端 shell 由后端注入 MAO_BASE_URL。
+ */
+const BASE_URL_SETUP_HINT = [
+  '未配置站点地址（baseUrl），无法连接服务器。请先设置后重试：',
+  '  mao <命令> --base-url https://mao.example.com   # 仅本次使用',
+  '  export MAO_BASE_URL=https://mao.example.com      # 当前 shell 生效',
+].join('\n');
 
 /** 归一到 REST 根 `.../api/v1`。接受站点根、`/api` 或 `/api/v1`。 */
 function normalizeCliBaseUrl(raw) {
@@ -16,13 +26,26 @@ function normalizeCliBaseUrl(raw) {
   return `${url}/v1`;
 }
 
-function resolveBaseUrl(cliBaseUrl) {
+function resolveRawBaseUrl(cliBaseUrl) {
   const raw =
     cliBaseUrl ||
     process.env.MAO_BASE_URL ||
     process.env.MAO_USER_BASE_URL ||
-    process.env.MAO_ADMIN_BASE_URL ||
-    DEFAULT_BASE_URL;
+    process.env.MAO_ADMIN_BASE_URL;
+  const trimmed = raw == null ? '' : String(raw).trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/** 是否已配置站点地址（logout 等本地清理命令据此跳过联网）。 */
+function hasConfiguredBaseUrl(cliBaseUrl) {
+  return resolveRawBaseUrl(cliBaseUrl) !== null;
+}
+
+function resolveBaseUrl(cliBaseUrl) {
+  const raw = resolveRawBaseUrl(cliBaseUrl);
+  if (raw === null) {
+    throw createCliError(BASE_URL_SETUP_HINT);
+  }
   return normalizeCliBaseUrl(raw);
 }
 
@@ -312,9 +335,10 @@ async function downloadToFile(options) {
 }
 
 module.exports = {
-  DEFAULT_BASE_URL,
+  BASE_URL_SETUP_HINT,
   DEFAULT_TIMEOUT_MS,
   normalizeCliBaseUrl,
+  hasConfiguredBaseUrl,
   resolveBaseUrl,
   request,
   get,

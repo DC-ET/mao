@@ -191,6 +191,7 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     shellUserLookup: { findById: (id: number) => d.userRepo.findById(id) },
     shellEcpInjector: d.ecpInjector,
     shellLarkUatInjector: d.larkUatInjector,
+    shellBaseUrlProvider: { getSiteBaseUrl: () => d.settingService.getSiteBaseUrl() },
     webSearch: () => d.settingService.getWebSearchConfig(),
     webPage: harnessTuning.webPage,
     runtimeDataResolver: d.runtimeResolver,

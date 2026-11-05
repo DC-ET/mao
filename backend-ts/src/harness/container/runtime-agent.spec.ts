@@ -25,6 +25,7 @@ function envelopeOf(workspace: string): RuntimeEnvelope {
     runtimeDir: '/tmp/rt',
     gitTokens: { 'github.com': 'ghp_probe' },
     maoToken: 'eyJ-probe',
+    maoBaseUrl: 'https://mao.example.com',
     ecpToken: 'ecp-probe',
     larkUat: null,
     depsEnv: { NPM_CONFIG_PREFIX: '/deps/7/npm' },

@@ -1,3 +1,14 @@
+## 0.0.437 (2026-11-05)
+
+### 后端
+- **shell / 终端 / 容器注入 `MAO_BASE_URL`**：终端 CLI（`mao` / `mao-agent`）不再内置默认站点地址后，云端执行环境必须显式告知本站地址，否则 Agent 里的 `mao` 命令会报「未配置站点地址」（改造前静默连开源示例 `https://mao.etarch.cn`，与私有化站点不同源，实际一直 401）。现在：宿主 shell 每次执行命令前、终端 PTY 创建时注入 `MAO_BASE_URL`（取系统设置「站点根地址」`site.baseUrl`，留空回落 `upload.baseUrl`；未配置则不注入；shell 侧站点地址带 60s 缓存避免每条命令查库）；容器模式随 envelope 下发 `maoBaseUrl` 字段，容器 shell 与 MCP stdio 子进程 env 同口径注入；既有 `MAO_` 前缀保留键规则已覆盖，用户环境变量不能覆盖该值。
+
+### 终端 CLI（mao-cli）
+- **不再内置默认站点地址**：未设置（`--base-url` / `MAO_BASE_URL` / 兼容旧名都没有）时任何联网命令直接报错并给出两种设置方式，不再回落到开源示例域名；`auth logout` 未配置时跳过服务端调用、仅清理本地登录态，帮助文本同步更新。
+
+### 桌面 Electron
+- **LOCAL shell 注入 `MAO_BASE_URL`**：本地 shell（终端与 LOCAL 工具会话）除 `MAO_TOKEN` 外同时注入 `MAO_BASE_URL`，取桌面当前连接的服务器地址（未配置服务器时不注入，避免占位值被当成真实后端）；持久会话每次执行前刷新，切换服务器后下一条命令即生效。
+
 ## 0.0.436 (2026-11-05)
 
 ### 终端 CLI（mao-agent）

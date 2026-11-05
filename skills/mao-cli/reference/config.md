@@ -8,7 +8,7 @@
 
 `mao-cli` / `mao-agent` 共用 `MAO_BASE_URL`（或 `--base-url`）。推荐写成站点根，例如 `https://mao.example.com`；也接受 `https://mao.example.com/api` 与 `https://mao.example.com/api/v1`，工具会自己归一化。
 
-`mao-agent` **不再内置默认站点地址**：未设置时首次 `mao-agent login` 会在交互终端要求输入并保存到 `~/.mao/agent-cli/config.json`；非交互场景与其它需要连接服务器的命令直接报错并给出设置方式。`mao-cli` 仍回落到开源示例域名（`https://mao.etarch.cn`，最低优先级）——**私有化部署后该地址通常不可达**，请显式设置 `MAO_BASE_URL` 指向自己的实例。
+两个 CLI 都**不再内置默认站点地址**：`mao-agent` 首次 `login` 会在交互终端要求输入并保存到 `~/.mao/agent-cli/config.json`；`mao-cli` 的联网命令直接报错并给出设置方式（`--base-url` / `MAO_BASE_URL`），`logout` 仅做本地清理不受影响。云端执行环境（Agent 的 shell / 终端 PTY、容器）与桌面 LOCAL shell 由平台自动注入 `MAO_BASE_URL`——取系统设置「站点根地址」（`site.baseUrl`，留空回落 `upload.baseUrl`），私有化部署请在管理后台「系统设置 → 集成配置 → 站点」填写自己的实例地址。
 
 ## 默认账号
 
