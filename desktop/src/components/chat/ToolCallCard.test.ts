@@ -61,6 +61,43 @@ function makeEditCall(overrides: Partial<ToolCall> = {}): ToolCall {
   }
 }
 
+function makeShellCall(overrides: Partial<ToolCall> = {}): ToolCall {
+  return {
+    id: 'tc-shell',
+    name: 'shell',
+    input: { action: 'exec', command: 'npm run build' },
+    result: JSON.stringify({
+      exit_code: 0,
+      session_id: 'sh-1',
+      output: '> tsc\nbuild done',
+      truncated: false,
+      completed: true,
+      current_workdir: '/ws',
+      output_file: '/tmp/sh-1.log',
+    }),
+    status: 'success',
+    isExpanded: true,
+    argsStreaming: false,
+    ...overrides,
+  }
+}
+
+function makeReadCall(overrides: Partial<ToolCall> = {}): ToolCall {
+  return {
+    id: 'tc-read',
+    name: 'read_file',
+    input: { path: '/ws/src/a.ts' },
+    result: JSON.stringify({
+      content: 'line one\nline two\nline three',
+      total_lines: 3,
+    }),
+    status: 'success',
+    isExpanded: true,
+    argsStreaming: false,
+    ...overrides,
+  }
+}
+
 describe('ToolCallCard edit_file diff 展示', () => {
   let mounted: ReturnType<typeof mountCard> | null = null
   afterEach(() => { mounted?.destroy() })
@@ -76,12 +113,10 @@ describe('ToolCallCard edit_file diff 展示', () => {
     expect(del).toBe('const bar = 2')
     expect(add).toBe('const baz = 3')
 
-    // 摘要取后端 file_change 口径，与 diff 片段自算值无关
     const footer = document.querySelector('.diff-footer-row')
     expect(footer?.textContent).toContain('替换 1 处 · +1 -1')
     expect(findButton('查看原始输入输出')).toBeTruthy()
 
-    // 默认不展示输入/输出两块
     expect(resultLabels()).toEqual([])
     expect(document.querySelector('pre.result-content')).toBeNull()
   })
@@ -100,7 +135,6 @@ describe('ToolCallCard edit_file diff 展示', () => {
     expect(pres.some(t => t.includes('"replacements":1'))).toBe(true)
     expect(findButton('收起原始输入输出')).toBeTruthy()
 
-    // 再点一次收起
     findButton('收起原始输入输出')!.click()
     await nextTick()
     expect(resultLabels()).toEqual([])
@@ -131,13 +165,177 @@ describe('ToolCallCard edit_file diff 展示', () => {
     expect(document.querySelector('.edit-summary')).toBeNull()
     expect(findButton('查看原始输入输出')).toBeTruthy()
   })
+})
 
-  it('非 edit_file 工具：保持原始 输入/输出 两块，不渲染 diff 与开关', async () => {
+describe('ToolCallCard shell 富视图', () => {
+  let mounted: ReturnType<typeof mountCard> | null = null
+  afterEach(() => { mounted?.destroy() })
+
+  it('默认展示命令块 + 输出原文 + exit 徽标，无原始 JSON', async () => {
+    mounted = mountCard(makeShellCall())
+    await nextTick()
+
+    expect(resultLabels()).toEqual(['命令', '输出'])
+    const pres = Array.from(document.querySelectorAll('pre.result-content code'))
+      .map(el => el.textContent ?? '')
+    expect(pres.some(t => t === 'npm run build')).toBe(true)
+    expect(pres.some(t => t === '> tsc\nbuild done')).toBe(true)
+
+    const badge = document.querySelector('.exit-badge')
+    expect(badge?.textContent?.trim()).toBe('exit 0')
+    expect(badge?.classList.contains('ok')).toBe(true)
+    expect(document.querySelector('.diff-footer-row')?.textContent).toContain('/ws')
+    expect(findButton('查看原始输入输出')).toBeTruthy()
+  })
+
+  it('exit 非零：徽标为失败态', async () => {
+    mounted = mountCard(makeShellCall({
+      result: JSON.stringify({ exit_code: 2, output: 'error: boom', truncated: false, completed: true }),
+    }))
+    await nextTick()
+
+    const badge = document.querySelector('.exit-badge')
+    expect(badge?.textContent?.trim()).toBe('exit 2')
+    expect(badge?.classList.contains('fail')).toBe(true)
+  })
+
+  it('命令错误（{error}）：底栏直显 error 文案，无 exit 徽标', async () => {
+    mounted = mountCard(makeShellCall({
+      status: 'error',
+      result: JSON.stringify({ error: '命令被拒绝：rm -rf /' }),
+    }))
+    await nextTick()
+
+    expect(document.querySelector('.exit-badge')).toBeNull()
+    expect(document.querySelector('.diff-footer-row')?.textContent).toContain('命令被拒绝：rm -rf /')
+    // 命令本身仍展示，便于用户看清被拒的是什么
+    expect(resultLabels()).toContain('命令')
+  })
+
+  it('write_stdin 动作：主输入标签为 stdin', async () => {
+    mounted = mountCard(makeShellCall({
+      input: { action: 'write_stdin', session_id: 'sh-1', input: 'yes\n' },
+      result: JSON.stringify({ exit_code: 0, output: 'ok', truncated: false, completed: true }),
+    }))
+    await nextTick()
+
+    expect(resultLabels()).toEqual(['stdin', '输出'])
+    expect(document.querySelector('pre.result-content code')?.textContent).toBe('yes\n')
+  })
+
+  it('close 等无命令无输出动作：回退原始 输入/输出 两块', async () => {
+    mounted = mountCard(makeShellCall({
+      input: { action: 'close', session_id: 'sh-1' },
+      result: JSON.stringify({ success: true, session_id: 'sh-1' }),
+    }))
+    await nextTick()
+
+    expect(resultLabels()).toEqual(['输入', '输出'])
+    expect(document.querySelector('.exit-badge')).toBeNull()
+    expect(findButton('查看原始输入输出')).toBeNull()
+  })
+
+  it('执行中（无结果）：只展示命令块与开关', async () => {
+    mounted = mountCard(makeShellCall({ status: 'running', result: undefined }))
+    await nextTick()
+
+    expect(resultLabels()).toEqual(['命令'])
+    expect(document.querySelector('.exit-badge')).toBeNull()
+    expect(findButton('查看原始输入输出')).toBeTruthy()
+  })
+})
+
+describe('ToolCallCard read_file 富视图', () => {
+  let mounted: ReturnType<typeof mountCard> | null = null
+  afterEach(() => { mounted?.destroy() })
+
+  it('默认展示文件内容（带行号）+ 底栏行数信息，无原始 JSON', async () => {
+    mounted = mountCard(makeReadCall())
+    await nextTick()
+
+    expect(resultLabels()).toEqual(['内容'])
+    const nos = Array.from(document.querySelectorAll('.line-no')).map(el => el.textContent)
+    expect(nos).toEqual(['1', '2', '3'])
+    expect(document.querySelector('.file-line .line-text')?.textContent).toBe('line one')
+    expect(document.querySelector('.diff-footer-row')?.textContent).toContain('共 3 行 · 第 1–3 行')
+    expect(findButton('查看原始输入输出')).toBeTruthy()
+  })
+
+  it('offset 分页读取：行号从 offset+1 起算', async () => {
+    mounted = mountCard(makeReadCall({
+      input: { path: '/ws/src/a.ts', offset: 40, limit: 10 },
+      result: JSON.stringify({ content: 'a\nb', total_lines: 100 }),
+    }))
+    await nextTick()
+
+    const nos = Array.from(document.querySelectorAll('.line-no')).map(el => el.textContent)
+    expect(nos).toEqual(['41', '42'])
+    expect(document.querySelector('.diff-footer-row')?.textContent).toContain('共 100 行 · 第 41–42 行')
+  })
+
+  it('读取失败：底栏直显 error 文案，不渲染内容块', async () => {
+    mounted = mountCard(makeReadCall({
+      status: 'error',
+      result: JSON.stringify({ content: '错误：文件不存在：/ws/missing.ts', error: '错误：文件不存在：/ws/missing.ts', total_lines: 0 }),
+    }))
+    await nextTick()
+
+    expect(document.querySelector('.tool-file-content')).toBeNull()
+    expect(document.querySelector('.diff-footer-row')?.textContent).toContain('错误：文件不存在')
+  })
+
+  it('后端截断：内容带截断标记，仍走富视图', async () => {
+    mounted = mountCard(makeReadCall({
+      result: JSON.stringify({ content: 'a\n... [output truncated]', total_lines: 500, truncated: true }),
+    }))
+    await nextTick()
+
+    expect(document.querySelector('.tool-file-content')?.textContent).toContain('[output truncated]')
+    expect(findButton('查看原始输入输出')).toBeTruthy()
+  })
+
+  it('图片读取：保持图片预览 + 原始输出，不进富视图', async () => {
+    mounted = mountCard(makeReadCall({
+      result: JSON.stringify({
+        content: '图片读取成功：/ws/a.png',
+        total_lines: 0,
+        media_type: 'image',
+        data_uri: 'data:image/png;base,AAAA',
+      }),
+    }))
+    await nextTick()
+
+    expect(document.querySelector('.tool-file-content')).toBeNull()
+    expect(findButton('查看原始输入输出')).toBeNull()
+    // 回退原始两块：输入 JSON + 输出（图片预览由 el-image 承载）
+    expect(resultLabels()).toEqual(['输入', '输出'])
+  })
+
+  it('「查看原始输入输出」展开后渲染输入/输出两块', async () => {
+    mounted = mountCard(makeReadCall())
+    await nextTick()
+
+    findButton('查看原始输入输出')!.click()
+    await nextTick()
+
+    expect(resultLabels()).toEqual(['内容', '输入', '输出'])
+    const pres = Array.from(document.querySelectorAll('pre.result-content code'))
+      .map(el => el.textContent ?? '')
+    expect(pres.some(t => t.includes('"total_lines"'))).toBe(true)
+    expect(pres.some(t => t.includes('"path"'))).toBe(true)
+  })
+})
+
+describe('ToolCallCard 非富视图工具', () => {
+  let mounted: ReturnType<typeof mountCard> | null = null
+  afterEach(() => { mounted?.destroy() })
+
+  it('web_search：保持原始 输入/输出 两块，不渲染富视图与开关', async () => {
     mounted = mountCard({
       id: 'tc-2',
-      name: 'shell',
-      input: { command: 'ls -la' },
-      result: '{"exit_code":0,"stdout":"total 0"}',
+      name: 'web_search',
+      input: { query: 'mao' },
+      result: '{"results":[]}',
       status: 'success',
       isExpanded: true,
       argsStreaming: false,
@@ -145,9 +343,10 @@ describe('ToolCallCard edit_file diff 展示', () => {
     await nextTick()
 
     expect(document.querySelector('.tool-diff')).toBeNull()
+    expect(document.querySelector('.tool-file-content')).toBeNull()
     expect(findButton('查看原始输入输出')).toBeNull()
     expect(resultLabels()).toEqual(['输入', '输出'])
     expect(document.querySelector('pre.result-content code')?.textContent)
-      .toContain('"command"')
+      .toContain('"query"')
   })
 })

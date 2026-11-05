@@ -31,11 +31,37 @@
     </div>
     <div v-if="isExpanded && hasExpandableBody" class="tool-body">
       <div v-if="formattedInput" class="tool-result">
-        <template v-if="editDiff">
-          <!-- edit_file：默认只展示 diff 块；原始输入/输出收起在一个开关后，避免 JSON 噪音盖住改动本身 -->
-          <ToolCallDiffView :blocks="editDiff.blocks" />
+        <template v-if="richView">
+          <!-- 富视图骨架（edit_file / shell / read_file）：默认只渲染自然形态，原始输入/输出
+                JSON 收起在同一个开关后，避免转义噪音盖住命令、输出与文件内容本身 -->
+          <ToolCallDiffView v-if="editDiffView" :blocks="editDiffView.blocks" />
+          <template v-else-if="shellView">
+            <div v-if="shellView.primary" class="code-block-wrapper">
+              <div class="result-label">{{ shellView.primaryLabel }}</div>
+              <pre class="result-content"><code>{{ shellView.primary }}</code></pre>
+              <button class="copy-btn" title="复制" @click="copyText(shellView.primary)">
+                <el-icon :size="14"><CopyDocument /></el-icon>
+              </button>
+            </div>
+            <div v-if="shellView.output" class="code-block-wrapper">
+              <div class="result-label">输出</div>
+              <pre class="result-content"><code>{{ shellView.output }}</code></pre>
+              <button class="copy-btn" title="复制完整输出" @click="copyText(shellView.output)">
+                <el-icon :size="14"><CopyDocument /></el-icon>
+              </button>
+            </div>
+          </template>
+          <template v-else-if="fileView">
+            <div v-if="fileView.content" class="code-block-wrapper">
+              <div class="result-label">内容</div>
+              <ToolFileContent :content="fileView.content" :start-line="fileView.startLine" />
+            </div>
+          </template>
           <div class="diff-footer-row">
-            <span v-if="editResultSummary" class="edit-summary">{{ editResultSummary }}</span>
+            <span v-if="richBadge" class="exit-badge" :class="richBadge.ok ? 'ok' : 'fail'">
+              {{ richBadge.text }}
+            </span>
+            <span v-if="richSummary" class="edit-summary">{{ richSummary }}</span>
             <button class="expand-result-btn" @click="showRawIo = !showRawIo">
               {{ showRawIo ? '收起原始输入输出' : '查看原始输入输出' }}
             </button>
@@ -72,7 +98,7 @@
           </div>
         </template>
       </div>
-      <div v-if="(toolCall.result || imagePreviewUrl) && !editDiff" class="tool-result">
+      <div v-if="(toolCall.result || imagePreviewUrl) && !richView" class="tool-result">
         <div class="result-label">输出</div>
         <el-image
           v-if="imagePreviewUrl"
@@ -110,6 +136,42 @@ import { copyText as copyToClipboard } from '../../utils/clipboard'
 import { getToolDisplayName, getToolInputPreview } from '../../utils/toolDisplay'
 import { buildEditDiff } from '../../utils/toolDiff'
 import ToolCallDiffView from './ToolCallDiffView.vue'
+import ToolFileContent from './ToolFileContent.vue'
+
+/** 工具结果 JSON 的安全解析：非 JSON / 非对象返回 null，富视图据此回退原始展示。 */
+function parseResultNode(result?: string): Record<string, unknown> | null {
+  if (!result) return null
+  try {
+    const node = JSON.parse(result) as unknown
+    return node && typeof node === 'object' && !Array.isArray(node) ? node as Record<string, unknown> : null
+  } catch {
+    return null
+  }
+}
+
+function textOf(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+/**
+ * edit_file 结果摘要：成功时一行「替换 N 处 · +a -d」（行数取后端 file_change 口径，
+ * 缺失时回退 diff 片段自算）；失败时直显 error 文案；执行中/解析失败返回空串。
+ */
+function readEditSummary(result: string | undefined, diff: { added: number; deleted: number }): string {
+  const node = parseResultNode(result)
+  if (!node) return ''
+  if (node.success === true) {
+    const fc = (node.file_change ?? {}) as Record<string, unknown>
+    const added = Number(fc.lines_added ?? diff.added)
+    const deleted = Number(fc.lines_deleted ?? diff.deleted)
+    const parts: string[] = []
+    const replacements = Number(node.replacements)
+    if (Number.isFinite(replacements) && replacements > 0) parts.push(`替换 ${replacements} 处`)
+    parts.push(`+${added} -${deleted}`)
+    return parts.join(' · ')
+  }
+  return textOf(node.error)
+}
 
 const props = withDefaults(defineProps<{
   toolCall: ToolCall
@@ -215,7 +277,7 @@ const formattedInput = computed(() => {
  * 实时流式与历史回放同源（后端落库前只剥 file_change_diff，不动入参）。
  * 无变化或参数缺失时返回 null，卡片回退原始 JSON 展示。
  */
-const editDiff = computed(() => {
+const editDiffView = computed(() => {
   if (props.toolCall.name !== 'edit_file') return null
   const input = props.toolCall.input
   if (!input) return null
@@ -223,36 +285,81 @@ const editDiff = computed(() => {
   const newStr = typeof input.new_string === 'string' ? input.new_string : ''
   if (oldStr === '' && newStr === '') return null
   const diff = buildEditDiff(oldStr, newStr)
-  return diff.blocks.length > 0 ? diff : null
+  if (diff.blocks.length === 0) return null
+  return { ...diff, summary: readEditSummary(props.toolCall.result, diff) }
 })
 
 /**
- * edit_file 结果摘要：成功时一行「替换 N 处 · +a -d」（行数取后端 file_change 口径，
- * 缺失时回退 diff 片段自算）；失败时直显 error 文案。解析不出 JSON 时返回 null 走原始输出。
+ * shell 富视图：命令（exec）/ stdin（write_stdin）+ 终端输出原文 + exit code 徽标。
+ * 多动作工具：close/list 等无命令也无输出的动作拿不到可渲染内容，返回 null 走原始 JSON。
  */
-const editResultSummary = computed(() => {
-  if (!editDiff.value) return null
-  const raw = props.toolCall.result
-  if (!raw) return null
-  try {
-    const node = JSON.parse(raw) as Record<string, unknown>
-    if (node.success === true) {
-      const fc = (node.file_change ?? {}) as Record<string, unknown>
-      const added = Number(fc.lines_added ?? editDiff.value.added)
-      const deleted = Number(fc.lines_deleted ?? editDiff.value.deleted)
-      const parts: string[] = []
-      const replacements = Number(node.replacements)
-      if (Number.isFinite(replacements) && replacements > 0) parts.push(`替换 ${replacements} 处`)
-      parts.push(`+${added} -${deleted}`)
-      return parts.join(' · ')
-    }
-    const error = node.error
-    if (typeof error === 'string' && error) return error
-  } catch {
-    // not json
+const shellView = computed(() => {
+  if (props.toolCall.name !== 'shell') return null
+  const input = props.toolCall.input
+  if (!input) return null
+  const action = typeof input.action === 'string' ? input.action : 'exec'
+  const node = parseResultNode(props.toolCall.result)
+  const primary = action === 'exec'
+    ? textOf(input.command)
+    : action === 'write_stdin' ? textOf(input.input) : ''
+  const output = textOf(node?.output)
+  const error = textOf(node?.error)
+  // 命令尚未返回结果时也值得展示（执行中）；两者皆无才回退
+  if (!primary && !output && !error) return null
+  const exitRaw = node?.exit_code
+  const exitCode = typeof exitRaw === 'number' && Number.isFinite(exitRaw) ? exitRaw : null
+  const summaryParts: string[] = []
+  if (error) summaryParts.push(error)
+  else {
+    if (node?.truncated === true) summaryParts.push('输出已截断')
+    const workdir = textOf(node?.current_workdir)
+    if (workdir) summaryParts.push(workdir)
+    const message = textOf(node?.message)
+    if (message) summaryParts.push(message)
   }
-  return null
+  return {
+    primary,
+    primaryLabel: action === 'write_stdin' ? 'stdin' : '命令',
+    output,
+    badge: exitCode == null ? null : { text: `exit ${exitCode}`, ok: exitCode === 0 },
+    summary: summaryParts.join(' · '),
+  }
 })
+
+/**
+ * read_file 富视图：文件内容 + 行号槽（起始行号取 offset），底栏给总行数与读取范围。
+ * 图片读取（media_type=image）保持图片预览 + 原始输出，不进此分支。
+ */
+const fileView = computed(() => {
+  if (props.toolCall.name !== 'read_file') return null
+  if (imagePreviewUrl.value) return null
+  const input = props.toolCall.input
+  if (!input) return null
+  const node = parseResultNode(props.toolCall.result)
+  if (!node) return null
+  const error = textOf(node.error)
+  const content = textOf(node.content)
+  if (!error && !content) return null
+  const totalLines = typeof node.total_lines === 'number' && node.total_lines > 0 ? node.total_lines : null
+  const offset = typeof input.offset === 'number' && input.offset > 0 ? input.offset : 0
+  const contentLines = content === '' ? 0 : content.split('\n').length
+  const summaryParts: string[] = []
+  if (error) summaryParts.push(error)
+  else {
+    if (totalLines != null) summaryParts.push(`共 ${totalLines} 行`)
+    if (contentLines > 0) summaryParts.push(`第 ${offset + 1}–${offset + contentLines} 行`)
+  }
+  return {
+    content: error ? '' : content,
+    startLine: offset + 1,
+    summary: summaryParts.join(' · '),
+  }
+})
+
+const richView = computed(() => editDiffView.value ?? shellView.value ?? fileView.value)
+const richSummary = computed(() =>
+  editDiffView.value?.summary ?? shellView.value?.summary ?? fileView.value?.summary ?? '')
+const richBadge = computed(() => shellView.value?.badge ?? null)
 
 const showRawIo = ref(false)
 
@@ -508,6 +615,27 @@ function toggleExpand() {
   justify-content: space-between;
   gap: 8px;
   margin-top: 2px;
+}
+
+.exit-badge {
+  flex-shrink: 0;
+  font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-fine);
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: var(--aw-radius-xs);
+  cursor: default;
+  white-space: nowrap;
+}
+
+.exit-badge.ok {
+  color: var(--aw-success);
+  background: color-mix(in srgb, var(--aw-success) 12%, transparent);
+}
+
+.exit-badge.fail {
+  color: var(--aw-danger);
+  background: color-mix(in srgb, var(--aw-danger) 12%, transparent);
 }
 
 .edit-summary {
