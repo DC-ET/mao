@@ -1185,7 +1185,12 @@ async function applyServerConfig(payload = {}) {
   serverConfigCache = null
   loadServerConfig(true)
 
-  // 更新源跟随站点时重新绑定 feed
+  // 历史只记「连接成功」过的地址，置顶去重供快速切换
+  try {
+    serverConfigLib.recordServerHistory(app.getPath('userData'), targetBase, allowHttp)
+  } catch (e) {
+    console.warn('[server] history record failed:', e?.message)
+  }
   const feed = serverConfigLib.resolveUpdateFeedUrl(getServerConfig(), getUpdateFeedUrlOverride())
   if (feed.url) {
     try {
@@ -1212,8 +1217,8 @@ function openServerPickerWindow() {
     return
   }
   serverPickerWindow = new BrowserWindow({
-    width: 480,
-    height: 560,
+    width: 560,
+    useContentSize: true,
     resizable: false,
     minimizable: false,
     maximizable: false,
@@ -1681,6 +1686,7 @@ ipcMain.handle('server-config-get', () => {
     hostKey: getServerHostKey(),
     apiBase: getApiBaseUrl(),
     updateFeed: feed,
+    history: serverConfigLib.readServerHistory(app.getPath('userData')),
   }
 })
 
@@ -1705,6 +1711,13 @@ ipcMain.handle('server-picker-close', () => {
     serverPickerWindow.close()
   }
   return { ok: true }
+})
+
+ipcMain.handle('server-config-remove-history', (_event, payload = {}) => {
+  const target = String(payload?.serverBaseUrl || '').trim()
+  if (!target) return { ok: false, error: '缺少地址', history: serverConfigLib.readServerHistory(app.getPath('userData')) }
+  const history = serverConfigLib.removeServerHistory(app.getPath('userData'), target)
+  return { ok: true, history }
 })
 
 // ========== Window control IPC handlers ==========

@@ -226,7 +226,7 @@ emoji / CJK 按整字符删除；粘贴多行文本原样进入草稿。
 - **工作区以本地为权威**：服务端下发的 workspace 只能等于本地工作区或位于其内部，否则该次工具调用直接失败（`拒绝服务端下发的工作区 ...`）
 - **shell 内不注入 token**：子进程环境只有登录 shell 的 PATH 加 `TERM=dumb` / `PS1=''`，不含 `MAO_TOKEN` / `MAO_REFRESH_TOKEN`。要在 shell 工具里调 `mao` / `mao-agent`，需先 `mao login`（读 `~/.mao/auth.json`）。这与桌面 Electron（会注入 token）是有意差异
 - **MCP**：本地 stdio 服务器启动前需过审批；子进程环境为白名单（PATH / HOME / LANG / LC_* / TERM / TMPDIR / TZ / USER / LOGNAME + Windows 若干 + 该 server 显式声明的 `env`）；stdio 传输为行分隔 JSON；单服务器连接超时 45s、工具调用 120s；超时或退出杀整个进程组
-- **设备身份（0.0.438+）**：`mao-agent` 作为 LOCAL 执行端，首次运行时在本机生成 `deviceId`（UUID）并持久化到 `~/.mao/agent-cli/device.json`（可删，删除后视为新设备）；WS 握手首帧 auth 上报 `{ id, name(主机名), platform }`，`--local` 创建会话时绑定本机设备——任务创建后只能由该设备执行，不可改绑。历史无绑定的 LOCAL 会话在连接设备/唯一在线同平台设备时惰性认领。
+- **设备身份（0.0.439+）**：`mao-agent` 作为 LOCAL 执行端，首次运行时在本机生成 `deviceId`（UUID）并持久化到 `~/.mao/agent-cli/device.json`（可删，删除后视为新设备）；WS 握手首帧 auth 上报 `{ id, name(主机名), platform }`，`--local` 创建会话时绑定本机设备——任务创建后只能由该设备执行，不可改绑。历史无绑定的 LOCAL 会话在连接设备/唯一在线同平台设备时惰性认领。
 - **技能同步**：技能包只能从当前 `baseUrl` 同源地址下载，跨源 `syncUrl` 会被拒绝；包内含 `../`、绝对路径或符号链接的条目会被拒绝
 - **`AGENTS.md`** 注入系统提示时上限 100KB（与云端一致），超出截断
 - 读取图片上限 5MB，终端版不做缩放，超限需先本地压缩或裁剪

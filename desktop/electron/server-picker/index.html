@@ -11,44 +11,180 @@
       --ink: #1d1d1f;
       --muted: #6e6e73;
       --line: #e5e5ea;
+      --line-strong: #d5d5da;
       --primary: #0066cc;
       --primary-hover: #0055aa;
+      --primary-soft: rgba(0, 102, 204, 0.08);
       --danger: #c62828;
+      --danger-soft: rgba(198, 40, 40, 0.08);
+      --warn: #b26a00;
+      --warn-soft: rgba(230, 145, 20, 0.12);
       --ok: #2e7d32;
       --radius: 12px;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
       background: var(--bg);
       color: var(--ink);
       font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
-      padding: 24px;
+      padding: 20px;
     }
     .card {
-      width: 100%;
-      max-width: 420px;
+      max-width: 520px;
+      margin: 0 auto;
       background: var(--surface);
       border: 1px solid var(--line);
       border-radius: var(--radius);
-      padding: 28px 28px 24px;
+      padding: 24px 24px 20px;
       box-shadow: 0 8px 28px rgba(0, 0, 0, 0.06);
     }
     h1 {
       margin: 0 0 6px;
-      font-size: 20px;
+      font-size: 19px;
       font-weight: 600;
     }
     .sub {
-      margin: 0 0 20px;
+      margin: 0 0 18px;
       color: var(--muted);
       font-size: 13px;
       line-height: 1.5;
     }
+
+    /* ---------- 当前连接状态卡 ---------- */
+    .status {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px 14px 12px;
+      background: #fbfbfc;
+    }
+    .status-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .dot {
+      flex-shrink: 0;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #c7c7cc;
+    }
+    .status.checking .dot { background: #e6a23c; animation: pulse 1.2s ease-in-out infinite; }
+    .status.ok .dot { background: var(--ok); }
+    .status.error .dot { background: var(--danger); }
+    @keyframes pulse { 50% { opacity: 0.35; } }
+    .status-label { font-size: 13px; font-weight: 600; }
+    .status-head .spacer { flex: 1; }
+    .status-url {
+      margin-top: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      word-break: break-all;
+      line-height: 1.4;
+    }
+    .status-url.empty { color: var(--muted); font-weight: 500; }
+    .status-detail {
+      margin-top: 4px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+      word-break: break-all;
+    }
+    .status-warn {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--warn);
+      line-height: 1.5;
+    }
+    .status-actions { margin-top: 10px; display: flex; gap: 8px; }
+
+    /* ---------- 历史列表 ---------- */
+    .history { margin-top: 18px; }
+    .history-title {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .hist-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      margin-bottom: 8px;
+      background: var(--surface);
+    }
+    .hist-row:hover { border-color: var(--line-strong); }
+    .hist-row.current { background: var(--primary-soft); border-color: rgba(0, 102, 204, 0.25); }
+    .hist-avatar {
+      flex-shrink: 0;
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .hist-info { flex: 1; min-width: 0; }
+    .hist-host {
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .hist-host .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .http-tag {
+      flex-shrink: 0;
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--warn);
+      background: var(--warn-soft);
+      border-radius: 4px;
+      padding: 0 4px;
+      line-height: 16px;
+    }
+    .hist-sub {
+      margin-top: 2px;
+      font-size: 12px;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .hist-ops { flex-shrink: 0; display: flex; gap: 6px; }
+    .current-badge {
+      flex-shrink: 0;
+      font-size: 11px;
+      color: var(--primary);
+      border: 1px solid rgba(0, 102, 204, 0.4);
+      border-radius: 999px;
+      padding: 2px 8px;
+    }
+
+    /* ---------- 手动表单（折叠） ---------- */
+    .manual { margin-top: 16px; }
+    .manual-toggle {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: none;
+      border: none;
+      padding: 6px 2px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--primary);
+      cursor: pointer;
+    }
+    .manual-toggle:hover { text-decoration: underline; }
+    .manual-body { margin-top: 10px; }
     label {
       display: block;
       font-size: 13px;
@@ -59,7 +195,7 @@
       width: 100%;
       height: 40px;
       padding: 0 12px;
-      border: 1px solid var(--line);
+      border: 1px solid var(--line-strong);
       border-radius: 8px;
       font-size: 14px;
       outline: none;
@@ -74,18 +210,19 @@
       font-size: 12px;
       color: var(--muted);
       line-height: 1.5;
+      min-height: 18px;
     }
+    .hint .preview { color: var(--ink); font-weight: 500; }
     .row {
       margin-top: 14px;
       display: flex;
       align-items: flex-start;
       gap: 8px;
       font-size: 13px;
-      color: var(--ink);
     }
     .row input { margin-top: 2px; }
     .actions {
-      margin-top: 22px;
+      margin-top: 18px;
       display: flex;
       gap: 10px;
     }
@@ -96,6 +233,7 @@
       border: 1px solid transparent;
       font-size: 14px;
       cursor: pointer;
+      font-family: inherit;
     }
     button.primary {
       flex: 1;
@@ -109,9 +247,27 @@
     }
     button.ghost {
       background: transparent;
-      border-color: var(--line);
+      border-color: var(--line-strong);
       color: var(--ink);
     }
+    button.ghost:hover { border-color: var(--muted); }
+    button.ghost:disabled { opacity: 0.55; cursor: not-allowed; }
+    button.mini {
+      height: 28px;
+      padding: 0 10px;
+      font-size: 12px;
+      border-radius: 6px;
+      background: transparent;
+      border-color: var(--line-strong);
+      color: var(--ink);
+    }
+    button.mini:hover { border-color: var(--primary); color: var(--primary); }
+    button.mini.danger:hover, button.mini.danger-confirm {
+      border-color: var(--danger);
+      color: var(--danger);
+      background: var(--danger-soft);
+    }
+    button.mini:disabled { opacity: 0.55; cursor: not-allowed; }
     .msg {
       margin-top: 12px;
       min-height: 20px;
@@ -120,13 +276,33 @@
     }
     .msg.error { color: var(--danger); }
     .msg.ok { color: var(--ok); }
-    .meta {
-      margin-top: 18px;
-      padding-top: 14px;
-      border-top: 1px solid var(--line);
-      font-size: 12px;
-      color: var(--muted);
+
+    /* ---------- 确认弹窗 ---------- */
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      z-index: 10;
     }
+    .dialog {
+      width: 100%;
+      max-width: 360px;
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 20px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+    }
+    .dialog-title { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+    .dialog-body { font-size: 13px; color: var(--ink); line-height: 1.6; word-break: break-all; }
+    .dialog-body .target { font-weight: 600; }
+    .dialog-actions { margin-top: 16px; display: flex; justify-content: flex-end; gap: 8px; }
+    .dialog-actions button { height: 32px; font-size: 13px; }
+    .dialog-actions button.danger { background: var(--danger); color: #fff; }
+    .dialog-actions button.danger:hover { background: #a51f1f; }
   </style>
 </head>
 <body>
@@ -134,22 +310,49 @@
     <h1>连接 Mao 服务器</h1>
     <p class="sub">填写要连接的站点地址。同一客户端可切换不同私有化部署，无需重新打包。</p>
 
-    <label for="serverUrl">服务器地址</label>
-    <input id="serverUrl" type="text" spellcheck="false" autocomplete="off"
-           placeholder="https://mao.example.com" />
-    <div class="hint">支持站点根、<code>/api</code> 或 <code>/api/v1</code>，将自动归一化为站点根。</div>
-
-    <div class="row">
-      <input id="allowHttp" type="checkbox" />
-      <label for="allowHttp" style="margin:0;font-weight:400">允许 HTTP（仅内网自建环境，有安全风险）</label>
+    <!-- 当前连接状态 -->
+    <div class="status" id="statusCard">
+      <div class="status-head">
+        <span class="dot"></span>
+        <span class="status-label" id="statusLabel">读取中…</span>
+        <span class="spacer"></span>
+        <button class="mini" id="recheckBtn" type="button">重新检测</button>
+      </div>
+      <div class="status-url empty" id="statusUrl"></div>
+      <div class="status-detail" id="statusDetail"></div>
+      <div class="status-warn" id="statusWarn" hidden></div>
     </div>
 
-    <div class="actions">
-      <button class="primary" id="saveBtn" type="button">连接并保存</button>
-      <button class="ghost" id="probeBtn" type="button">仅检测</button>
+    <!-- 连接过的服务器：一键切换 -->
+    <div class="history" id="historyWrap" hidden>
+      <div class="history-title">连接过的服务器</div>
+      <div id="historyList"></div>
     </div>
+
+    <!-- 手动连接 -->
+    <div class="manual">
+      <button class="manual-toggle" id="manualToggle" type="button" aria-expanded="false">
+        <span id="manualToggleIcon">▸</span><span id="manualToggleText">连接到其他服务器…</span>
+      </button>
+      <div class="manual-body" id="manualBody" hidden>
+        <label for="serverUrl">服务器地址</label>
+        <input id="serverUrl" type="text" spellcheck="false" autocomplete="off"
+               placeholder="https://mao.example.com" />
+        <div class="hint" id="urlHint">支持站点根、<code>/api</code> 或 <code>/api/v1</code>，将自动归一化为站点根。</div>
+
+        <div class="row">
+          <input id="allowHttp" type="checkbox" />
+          <label for="allowHttp" style="margin:0;font-weight:400">允许 HTTP（仅内网自建环境，有安全风险）</label>
+        </div>
+
+        <div class="actions">
+          <button class="primary" id="saveBtn" type="button">连接并保存</button>
+          <button class="ghost" id="probeBtn" type="button">仅检测</button>
+        </div>
+      </div>
+    </div>
+
     <div class="msg" id="msg" aria-live="polite"></div>
-    <div class="meta" id="meta"></div>
   </div>
 
   <script>
@@ -162,22 +365,300 @@
       el.className = 'msg' + (type ? ' ' + type : '')
     }
 
-    async function loadCurrent() {
-      if (!hasApi()) {
-        setMsg('未检测到桌面客户端桥接，请从 Mao 桌面应用打开本页', 'error')
-        return
-      }
+    /** 与主进程 serverHostKey 同口径：host 或 host_port */
+    function hostKeyOf(url) {
       try {
-        const info = await window.electronAPI.serverConfig.get()
-        $('serverUrl').value = info.serverBaseUrl || ''
-        $('allowHttp').checked = !!info.allowHttp
-        const parts = []
-        if (info.appVersion) parts.push('壳版本 ' + info.appVersion)
-        if (info.updateFeedMode) parts.push('更新源 ' + info.updateFeedMode)
-        if (info.envOverride) parts.push('环境变量覆盖已启用')
-        $('meta').textContent = parts.join(' · ')
+        const parsed = new URL(String(url || ''))
+        const host = parsed.hostname || 'default'
+        return parsed.port ? `${host}_${parsed.port}` : host
+      } catch {
+        return 'default'
+      }
+    }
+
+    function hostOf(url) {
+      try {
+        return new URL(String(url || '')).hostname || String(url || '')
+      } catch {
+        return String(url || '')
+      }
+    }
+
+    /** 相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前 / 昨天 HH:mm / MM-DD HH:mm / YYYY-MM-DD */
+    function formatRelative(iso) {
+      if (!iso) return ''
+      const then = new Date(iso).getTime()
+      if (!Number.isFinite(then)) return ''
+      const diff = Date.now() - then
+      if (diff < 0) return ''
+      const min = 60000
+      if (diff < min) return '刚刚'
+      if (diff < 60 * min) return `${Math.floor(diff / min)} 分钟前`
+      if (diff < 24 * 60 * min) return `${Math.floor(diff / (60 * min))} 小时前`
+      if (diff < 7 * 24 * 60 * min) return `${Math.floor(diff / (24 * 60 * min))} 天前`
+      const pad = (n) => String(n).padStart(2, '0')
+      const d = new Date(then)
+      const hhmm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+      const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0)
+      if (then >= dayStart.getTime() - 24 * 60 * 60 * min) return `昨天 ${hhmm}`
+      if (d.getFullYear() === new Date().getFullYear()) return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hhmm}`
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    }
+
+    /** 预览用归一化（权威归一化在主进程 serverConfig.cjs） */
+    function previewNormalize(raw) {
+      const s = String(raw || '').trim().replace(/\s+/g, '')
+      if (!s) return null
+      const candidate = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s) ? s : `https://${s}`
+    try {
+      const parsed = new URL(candidate)
+      if (parsed.username || parsed.password) return null
+      let pathname = (parsed.pathname || '/').replace(/\/+$/, '')
+        pathname = pathname.replace(/\/api\/v1$/i, '').replace(/\/api$/i, '')
+        return `${parsed.origin}${pathname === '/' ? '' : pathname}`
+      } catch {
+        return null
+      }
+    }
+
+    /** 通用确认弹窗（替代 window.confirm） */
+    function showConfirm({ title, bodyHtml, confirmText = '确认', danger = false }) {
+      return new Promise((resolve) => {
+        const overlay = document.createElement('div')
+        overlay.className = 'overlay'
+        const dialog = document.createElement('div')
+        dialog.className = 'dialog'
+        dialog.setAttribute('role', 'dialog')
+        dialog.setAttribute('aria-modal', 'true')
+        const t = document.createElement('div')
+        t.className = 'dialog-title'
+        t.textContent = title
+        const b = document.createElement('div')
+        b.className = 'dialog-body'
+        b.innerHTML = bodyHtml
+        const actions = document.createElement('div')
+        actions.className = 'dialog-actions'
+        const cancel = document.createElement('button')
+        cancel.className = 'ghost'
+        cancel.type = 'button'
+        cancel.textContent = '取消'
+        const ok = document.createElement('button')
+        ok.className = danger ? 'danger' : 'primary'
+        ok.type = 'button'
+        ok.textContent = confirmText
+        const done = (val) => {
+          overlay.remove()
+          document.removeEventListener('keydown', onKey, true)
+          resolve(val)
+        }
+        const onKey = (e) => {
+          if (e.key === 'Escape') { e.stopPropagation(); done(false) }
+          if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); done(true) }
+        }
+        cancel.addEventListener('click', () => done(false))
+        ok.addEventListener('click', () => done(true))
+        overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) done(false) })
+        document.addEventListener('keydown', onKey, true)
+        actions.appendChild(cancel)
+        actions.appendChild(ok)
+        dialog.appendChild(t)
+        dialog.appendChild(b)
+        dialog.appendChild(actions)
+        overlay.appendChild(dialog)
+        document.body.appendChild(overlay)
+        ok.focus()
+      })
+    }
+
+    let currentBaseUrl = ''
+    let currentHostKey = ''
+    let currentUpdateFeedMode = 'follow-site'
+    let history = []
+    let probing = false
+    let statusMeta = ''
+    let statusProbeDetail = ''
+
+    function renderStatusDetail() {
+      $('statusDetail').textContent = [statusMeta, statusProbeDetail].filter(Boolean).join(' · ')
+    }
+
+    function setStatus(state, label, url) {
+      const card = $('statusCard')
+      card.className = 'status' + (state ? ' ' + state : '')
+      $('statusLabel').textContent = label
+      $('statusUrl').textContent = url || ''
+      $('statusUrl').classList.toggle('empty', !url)
+      renderStatusDetail()
+    }
+
+    function renderHistory() {
+      const wrap = $('historyWrap')
+      const list = $('historyList')
+      list.textContent = ''
+      if (!history.length) { wrap.hidden = true; return }
+      wrap.hidden = false
+      history.forEach((entry) => {
+        const isCurrent = entry.serverBaseUrl === currentBaseUrl
+        const row = document.createElement('div')
+        row.className = 'hist-row' + (isCurrent ? ' current' : '')
+
+        const avatar = document.createElement('div')
+        avatar.className = 'hist-avatar'
+        avatar.textContent = (hostOf(entry.serverBaseUrl)[0] || '?').toUpperCase()
+        const palette = ['#0066cc', '#6c5ce7', '#0097a7', '#2e7d32', '#b26a00', '#c62828', '#5c6bc0']
+        avatar.style.background = palette[hostOf(entry.serverBaseUrl).charCodeAt(0) % palette.length]
+
+        const info = document.createElement('div')
+        info.className = 'hist-info'
+        const host = document.createElement('div')
+        host.className = 'hist-host'
+        const name = document.createElement('span')
+        name.className = 'name'
+        name.textContent = hostOf(entry.serverBaseUrl)
+        host.appendChild(name)
+        if (entry.allowHttp) {
+          const tag = document.createElement('span')
+          tag.className = 'http-tag'
+          tag.textContent = 'HTTP'
+          host.appendChild(tag)
+        }
+        const sub = document.createElement('div')
+        sub.className = 'hist-sub'
+        const rel = formatRelative(entry.lastConnectedAt)
+        sub.textContent = rel ? `${entry.serverBaseUrl} · ${rel}` : entry.serverBaseUrl
+        sub.title = entry.serverBaseUrl
+        info.appendChild(host)
+        info.appendChild(sub)
+
+        const ops = document.createElement('div')
+        ops.className = 'hist-ops'
+        if (isCurrent) {
+          const badge = document.createElement('span')
+          badge.className = 'current-badge'
+          badge.textContent = '当前'
+          ops.appendChild(badge)
+        } else {
+          const sw = document.createElement('button')
+          sw.className = 'mini'
+          sw.type = 'button'
+          sw.textContent = '切换'
+          sw.addEventListener('click', () => switchTo(entry, sw))
+
+          const del = document.createElement('button')
+          del.className = 'mini danger'
+          del.type = 'button'
+          del.textContent = '删除'
+          let confirming = false
+          let revertTimer = null
+          const revert = () => {
+            confirming = false
+            clearTimeout(revertTimer)
+            del.textContent = '删除'
+            del.disabled = false
+          }
+          del.addEventListener('click', async () => {
+            if (!hasApi()) return
+            if (!confirming) {
+              confirming = true
+              del.textContent = '确认删除'
+              del.disabled = false
+              revertTimer = setTimeout(revert, 3000)
+              return
+            }
+            clearTimeout(revertTimer)
+            del.disabled = true
+            try {
+              const result = await window.electronAPI.serverConfig.removeHistory(entry.serverBaseUrl)
+              if (result && result.ok) {
+                history = Array.isArray(result.history) ? result.history : history.filter((e) => e.serverBaseUrl !== entry.serverBaseUrl)
+                renderHistory()
+              } else {
+                setMsg(result?.error || '删除失败', 'error')
+                revert()
+              }
+            } catch (e) {
+              setMsg(e?.message || '删除失败', 'error')
+              revert()
+            }
+          })
+          ops.appendChild(sw)
+          ops.appendChild(del)
+        }
+
+        row.appendChild(avatar)
+        row.appendChild(info)
+        row.appendChild(ops)
+        list.appendChild(row)
+      })
+    }
+
+    async function probeCurrent() {
+      if (!hasApi() || probing) return
+      probing = true
+      $('recheckBtn').disabled = true
+      setStatus('checking', '正在检测…', currentBaseUrl)
+      statusProbeDetail = ''
+      renderStatusDetail()
+      try {
+        const result = await window.electronAPI.serverConfig.probe(currentBaseUrl, {
+          allowHttp: /^http:\/\//i.test(currentBaseUrl),
+        })
+        if (result.ok) {
+          statusProbeDetail = result.detail || '站点可达'
+          setStatus('ok', '已连接', currentBaseUrl)
+        } else {
+          statusProbeDetail = result.error || '检测失败'
+          setStatus('error', '无法连接', currentBaseUrl)
+        }
       } catch (e) {
-        setMsg(e?.message || '读取配置失败', 'error')
+        statusProbeDetail = e?.message || '检测失败'
+        setStatus('error', '无法连接', currentBaseUrl)
+      } finally {
+        probing = false
+        $('recheckBtn').disabled = false
+      }
+    }
+
+    /** 历史一键切换：先探测，host 变化需确认，随后保存并重载 */
+    async function switchTo(entry, btn) {
+      if (!hasApi()) return
+      const target = entry.serverBaseUrl
+      btn.disabled = true
+      setMsg('正在检测…')
+      try {
+        const probe = await window.electronAPI.serverConfig.probe(target, { allowHttp: entry.allowHttp === true })
+        if (!probe.ok) {
+          setMsg(probe.error || '服务器检测失败', 'error')
+          btn.disabled = false
+          return
+        }
+        if (hostKeyOf(target) !== currentHostKey) {
+          const ok = await showConfirm({
+            title: '切换服务器',
+            bodyHtml: `将切换到 <span class="target">${target}</span>。<br/>切换会清除本机登录态，LOCAL 任务数据按服务器隔离，需要重新登录。确认继续？`,
+            confirmText: '切换',
+            danger: true,
+          })
+          if (!ok) { btn.disabled = false; setMsg(''); return }
+        }
+        setMsg('正在切换…')
+        const result = await window.electronAPI.serverConfig.set({
+          serverBaseUrl: target,
+          allowHttp: entry.allowHttp === true,
+          updateFeedMode: currentUpdateFeedMode,
+        })
+        if (result && result.ok) {
+          setMsg(`已切换 ${result.serverBaseUrl}，窗口即将关闭…`, 'ok')
+          setTimeout(() => {
+            try { window.electronAPI.serverConfig.closePicker?.() } catch {}
+          }, 800)
+        } else {
+          setMsg(result?.error || '切换失败', 'error')
+          btn.disabled = false
+        }
+      } catch (e) {
+        setMsg(e?.message || '切换失败', 'error')
+        btn.disabled = false
       }
     }
 
@@ -206,7 +687,12 @@
       const url = $('serverUrl').value
       const allowHttp = $('allowHttp').checked
       if (allowHttp && /^http:\/\//i.test(url.trim())) {
-        const ok = window.confirm('将使用不安全的 HTTP 连接服务器，确认继续？')
+        const ok = await showConfirm({
+          title: '使用不安全的连接',
+          bodyHtml: `将使用 HTTP（明文）连接 <span class="target">${url.trim()}</span>，仅建议内网自建环境使用。确认继续？`,
+          confirmText: '继续',
+          danger: true,
+        })
         if (!ok) return
       }
       setMsg('正在连接…')
@@ -215,7 +701,7 @@
         const result = await window.electronAPI.serverConfig.set({
           serverBaseUrl: url,
           allowHttp,
-          updateFeedMode: 'follow-site',
+          updateFeedMode: currentUpdateFeedMode,
         })
         if (result && result.ok) {
           setMsg(`已连接 ${result.serverBaseUrl}，窗口即将关闭…`, 'ok')
@@ -234,10 +720,92 @@
       }
     }
 
+    function renderUrlHint() {
+      const hint = $('urlHint')
+      const raw = $('serverUrl').value
+      if (!raw.trim()) {
+        hint.innerHTML = '支持站点根、<code>/api</code> 或 <code>/api/v1</code>，将自动归一化为站点根。'
+        return
+      }
+      const preview = previewNormalize(raw)
+      if (preview) {
+        hint.innerHTML = `将连接 <span class="preview">${preview}</span>`
+      } else {
+        hint.textContent = '地址格式无法识别，请检查后重试'
+      }
+    }
+
+    function setManualOpen(open) {
+      $('manualBody').hidden = !open
+      $('manualToggleIcon').textContent = open ? '▾' : '▸'
+      $('manualToggleText').textContent = open ? '收起' : (currentBaseUrl ? '连接到其他服务器…' : '填写服务器地址…')
+      $('manualToggle').setAttribute('aria-expanded', String(open))
+    }
+
+    async function loadCurrent() {
+      if (!hasApi()) {
+        statusMeta = ''
+        statusProbeDetail = '未检测到桌面客户端桥接，请从 Mao 桌面应用打开本页'
+        setStatus('error', '无法读取配置', '')
+        setManualOpen(true)
+        return
+      }
+      try {
+        const info = await window.electronAPI.serverConfig.get()
+        $('serverUrl').value = info.serverBaseUrl || ''
+        $('allowHttp').checked = !!info.allowHttp
+        currentBaseUrl = info.serverBaseUrl || ''
+        currentHostKey = info.hostKey || hostKeyOf(currentBaseUrl)
+        currentUpdateFeedMode = info.updateFeedMode || 'follow-site'
+        history = Array.isArray(info.history) ? info.history : []
+        renderHistory()
+        renderUrlHint()
+
+        if (!info.configured) {
+          statusMeta = ''
+          statusProbeDetail = '请在下方填写要连接的站点地址'
+          setStatus('', '尚未配置服务器', '')
+          $('statusWarn').hidden = true
+          setManualOpen(true)
+          return
+        }
+
+        const parts = []
+        if (info.appVersion) parts.push('壳版本 ' + info.appVersion)
+        if (currentHostKey) parts.push('命名空间 ' + currentHostKey)
+        statusMeta = parts.join(' · ')
+        statusProbeDetail = ''
+        setStatus('', '读取中…', currentBaseUrl)
+        if (info.envOverride) {
+          $('statusWarn').textContent = '当前地址由环境变量 MAO_DESKTOP_SERVER_URL 锁定，界面修改不生效'
+          $('statusWarn').hidden = false
+        }
+        setManualOpen(false)
+        probeCurrent()
+      } catch (e) {
+        statusMeta = ''
+        statusProbeDetail = e?.message || ''
+        setStatus('error', '读取配置失败', '')
+        setManualOpen(true)
+      }
+    }
+
+    $('recheckBtn').addEventListener('click', probeCurrent)
     $('probeBtn').addEventListener('click', probeOnly)
     $('saveBtn').addEventListener('click', saveAndConnect)
+    $('manualToggle').addEventListener('click', () => setManualOpen($('manualBody').hidden))
+    $('serverUrl').addEventListener('input', () => {
+      const cleaned = $('serverUrl').value.replace(/\s+/g, '')
+      if (cleaned !== $('serverUrl').value) $('serverUrl').value = cleaned
+      renderUrlHint()
+    })
     $('serverUrl').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') saveAndConnect()
+    })
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && hasApi()) {
+        try { window.electronAPI.serverConfig.closePicker?.() } catch {}
+      }
     })
     loadCurrent()
   </script>

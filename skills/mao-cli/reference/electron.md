@@ -48,7 +48,8 @@ npm run dist
 |----|------|
 | 配置存储 | Electron `userData/server-config.json`（站点根、更新源策略、是否允许 HTTP） |
 | 首次启动 | 未配置时展示本地服务器配置页，预填 `https://mao.example.com`，确认或修改后保存 |
-| 配置入口 | 应用菜单「服务器设置…」；桌面端设置 →「服务器」 |
+| 配置入口 | 应用菜单「服务器设置…」；桌面端设置 →「服务器」；两个入口均为「当前连接状态卡 + 历史地址一键切换 + 手动连接表单」结构 |
+| 历史快切 | 连接成功过的地址存 `userData/server-history.json`（最多 10 个，最近连接置顶），列表内一键切换（不同服务器弹确认），删除两步确认 |
 | 环境变量 | `MAO_DESKTOP_SERVER_URL` 锁定站点（优先于配置文件）；`MAO_DESKTOP_UPDATE_URL` 覆盖更新源 |
 | 地址归一化 | 接受站点根、`/api`、`/api/v1`；无协议默认 `https://` |
 | 切换行为 | 清除登录态；关闭终端/MCP/本地 Shell；LOCAL 目录按 host 隔离：`~/.mao/runtime/<host>/<sessionId>` |
@@ -99,7 +100,7 @@ LOCAL 模式下可发送非图片文件：发送时懒拷贝到 `~/.mao/attachme
 4. `electron/main.cjs` 执行 Shell/文件/MCP，结果回传后端
 5. 高风险操作按权限档位弹出审批（preload 桥接）
 
-## 本地任务与执行端设备（0.0.438+）
+## 本地任务与执行端设备（0.0.439+）
 
 LOCAL 会话创建即绑定执行端设备，之后只能由该设备执行，**不可改绑**（`PATCH` 不提供改绑）：
 

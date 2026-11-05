@@ -7,6 +7,7 @@ const os = require('os')
 const path = require('path')
 const {
   DEFAULT_SERVER_BASE_URL,
+  HISTORY_LIMIT,
   normalizeServerBaseUrl,
   deriveApiBase,
   deriveUpdateFeedUrl,
@@ -16,6 +17,10 @@ const {
   resolveUpdateFeedUrl,
   probeServer,
   defaultServerConfig,
+  getServerHistoryPath,
+  readServerHistory,
+  recordServerHistory,
+  removeServerHistory,
 } = require('./serverConfig.cjs')
 
 function tempUserData(t) {
@@ -141,6 +146,55 @@ test('probeServer flags non-Mao root html', async () => {
   const result = await probeServer('https://other.example.com', { fetchImpl })
   assert.equal(result.ok, false)
   assert.match(result.error, /不是 Mao/)
+})
+
+test('server history MRU: record, dedupe, limit and remove', (t) => {
+  const dir = tempUserData(t)
+  assert.deepEqual(readServerHistory(dir), [])
+
+  recordServerHistory(dir, 'https://a.example.com', false)
+  recordServerHistory(dir, 'https://b.example.com', false)
+  let list = readServerHistory(dir)
+  assert.equal(list.length, 2)
+  assert.equal(list[0].serverBaseUrl, 'https://b.example.com')
+  assert.equal(list[1].serverBaseUrl, 'https://a.example.com')
+
+  // 再连 a → 置顶去重，不重复
+  recordServerHistory(dir, 'https://a.example.com/api/v1', false)
+  list = readServerHistory(dir)
+  assert.equal(list.length, 2)
+  assert.equal(list[0].serverBaseUrl, 'https://a.example.com')
+  assert.ok(list[0].lastConnectedAt)
+
+  // 历史只写归一化后的干净地址（无 /api 后缀）
+  const dirty = recordServerHistory(dir, 'https://c.example.com/api', true)
+  assert.equal(dirty[0].serverBaseUrl, 'https://c.example.com')
+  assert.equal(dirty[0].allowHttp, true)
+
+  const trimmed = removeServerHistory(dir, 'https://b.example.com')
+  assert.equal(trimmed.some((e) => e.serverBaseUrl === 'https://b.example.com'), false)
+  assert.equal(readServerHistory(dir).length, trimmed.length)
+})
+
+test('server history is capped at HISTORY_LIMIT', (t) => {
+  const dir = tempUserData(t)
+  for (let i = 0; i < 15; i++) {
+    recordServerHistory(dir, `https://h${i}.example.com`, false)
+  }
+  const list = readServerHistory(dir)
+  assert.equal(list.length, HISTORY_LIMIT)
+  assert.equal(list[0].serverBaseUrl, 'https://h14.example.com')
+  assert.equal(list[list.length - 1].serverBaseUrl, 'https://h5.example.com')
+})
+
+test('readServerHistory tolerates missing or corrupt file', (t) => {
+  const dir = tempUserData(t)
+  const filePath = getServerHistoryPath(dir)
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  fs.writeFileSync(filePath, 'not json', 'utf8')
+  assert.deepEqual(readServerHistory(dir), [])
+  fs.writeFileSync(filePath, '[]', 'utf8')
+  assert.deepEqual(readServerHistory(dir), [])
 })
 
 test('defaultServerConfig shape', () => {
