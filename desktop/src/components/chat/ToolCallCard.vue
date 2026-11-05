@@ -52,6 +52,15 @@
               <ToolFileContent :content="fileView.content" :file-path="fileView.path" :start-line="fileView.startLine" />
             </div>
           </template>
+          <template v-else-if="writeView">
+            <!-- write_file：只展示写入的整篇内容（行号从 1 起）。文件路径与新建/覆盖
+                 不在正文里单独占一行——卡片头 summary 已由后端 summarizer 带上路径与行数，
+                 file_change.type 的差异体现在底栏行数差上（CREATED 无 +/-，MODIFIED 有）。 -->
+            <div v-if="writeView.content" class="code-block-wrapper">
+              <div class="result-label">写入内容</div>
+              <ToolFileContent :content="writeView.content" :file-path="writeView.path" />
+            </div>
+          </template>
           <template v-else-if="globView">
             <ToolGlobView
               :pattern="globView.pattern"
@@ -418,6 +427,44 @@ const fileView = computed(() => {
   }
 })
 
+/**
+ * write_file 富视图：写入的文件内容 + 行号 + 语法高亮。
+ * 与 read_file 同源，但内容来自入参 content（结果里只有行数/字节数，没有原文）。
+ * 不做 diff：旧内容在客户端拿不到——后端 file_change_diff 在 WS 推送与落库前都被
+ * stripPrivateDiff 剥掉，实时流式与历史回放同源地只有新内容；覆盖类改动的 diff 看
+ * FileChangePanel（快照由服务端另存，不走工具结果）。
+ * 路径与新建/覆盖不在正文单独占行：卡片头 summary 已由后端 summarizer 带上路径与行数，
+ * type 的差异体现在底栏行数差上（CREATED 无 +/-，MODIFIED 有）。
+ */
+const writeView = computed(() => {
+  if (props.toolCall.name !== 'write_file') return null
+  const input = props.toolCall.input
+  if (!input) return null
+  const content = typeof input.content === 'string' ? input.content : ''
+  const path = textOf(input.path) || textOf(input.file_path)
+  const node = parseResultNode(props.toolCall.result)
+  const error = textOf(node?.error)
+  if (!error && !content) return null
+  const fc = (node?.file_change ?? {}) as Record<string, unknown>
+  const totalLines = typeof fc.total_lines === 'number' && fc.total_lines > 0 ? fc.total_lines : null
+  const added = Number(fc.lines_added)
+  const deleted = Number(fc.lines_deleted)
+  const parts: string[] = []
+  if (error) parts.push(error)
+  else {
+    if (totalLines != null) parts.push(`共 ${totalLines} 行`)
+    if (Number.isFinite(added) && Number.isFinite(deleted) && (added > 0 || deleted > 0)) {
+      parts.push(`+${added} -${deleted}`)
+    }
+  }
+  return {
+    // 失败时与 read_file 同口径：不渲染内容块，只留 error（内容写失败了，展示它只会造成误导）
+    content: error ? '' : content,
+    path,
+    summary: parts.join(' · '),
+  }
+})
+
 /** glob_search 富视图：文件路径列表，路径相对搜索根目录，点击可在中心区打开。 */
 const globView = computed(() => {
   if (props.toolCall.name !== 'glob_search') return null
@@ -535,11 +582,11 @@ const webPageView = computed(() => {
 
 const richView = computed(() =>
   editDiffView.value ?? shellView.value ?? fileView.value
-  ?? globView.value ?? grepView.value ?? webSearchView.value ?? webPageView.value)
+  ?? writeView.value ?? globView.value ?? grepView.value ?? webSearchView.value ?? webPageView.value)
 const richSummary = computed(() =>
   editDiffView.value?.summary ?? shellView.value?.summary ?? fileView.value?.summary
-  ?? globView.value?.summary ?? grepView.value?.summary ?? webSearchView.value?.summary
-  ?? webPageView.value?.summary ?? '')
+  ?? writeView.value?.summary ?? globView.value?.summary ?? grepView.value?.summary
+  ?? webSearchView.value?.summary ?? webPageView.value?.summary ?? '')
 const richBadge = computed(() => shellView.value?.badge ?? null)
 
 const showRawIo = ref(false)

@@ -374,6 +374,87 @@ describe('ToolCallCard read_file 富视图', () => {
   })
 })
 
+function makeWriteCall(overrides: Partial<ToolCall> = {}): ToolCall {
+  return {
+    id: 'tc-write',
+    name: 'write_file',
+    input: { path: '/ws/src/a.ts', content: 'export const a = 1\nexport const b = 2\n' },
+    result: JSON.stringify({
+      success: true,
+      bytes_written: 42,
+      file_change: { path: '/ws/src/a.ts', type: 'CREATED', total_lines: 2, lines_added: 2, lines_deleted: 0 },
+    }),
+    status: 'success',
+    isExpanded: true,
+    argsStreaming: false,
+    ...overrides,
+  }
+}
+
+describe('ToolCallCard write_file 富视图', () => {
+  let mounted: ReturnType<typeof mountCard> | null = null
+  afterEach(() => { mounted?.destroy() })
+
+  it('新建：只展示写入内容（行号从 1 起），路径与徽标不单独占行', async () => {
+    mounted = mountCard(makeWriteCall())
+    await nextTick()
+
+    // 路径已在卡片头 summary 里，正文不再重复；新建/覆盖徽标也不展示
+    expect(document.querySelector('.write-head')).toBeNull()
+    expect(document.querySelector('.write-badge')).toBeNull()
+    expect(document.querySelector('.write-path')).toBeNull()
+    expect(resultLabels()).toEqual(['写入内容'])
+    // 内容来自入参 content，不是结果 JSON
+    expect(document.querySelector('.tool-file-content')?.textContent).toContain('export const a = 1')
+    expect(document.querySelector('.line-no')?.textContent).toBe('1')
+    // 底栏摘要：共 N 行 · +a -d
+    expect(document.querySelector('.edit-summary')?.textContent).toBe('共 2 行 · +2 -0')
+  })
+
+  it('覆盖：底栏带行数差，与新建（无 +/-）区分', async () => {
+    mounted = mountCard(makeWriteCall({
+      result: JSON.stringify({
+        success: true,
+        bytes_written: 42,
+        file_change: { path: '/ws/src/a.ts', type: 'MODIFIED', total_lines: 2, lines_added: 4, lines_deleted: 6 },
+      }),
+    }))
+    await nextTick()
+
+    expect(document.querySelector('.write-badge')).toBeNull()
+    expect(document.querySelector('.edit-summary')?.textContent).toBe('共 2 行 · +4 -6')
+  })
+
+  it('执行中（无结果）也展示写入内容，无摘要', async () => {
+    mounted = mountCard(makeWriteCall({ result: undefined, status: 'running' }))
+    await nextTick()
+
+    expect(document.querySelector('.tool-file-content')?.textContent).toContain('export const a = 1')
+    // 还没有 file_change，摘要 span 整个不渲染（v-if="richSummary"）
+    expect(document.querySelector('.edit-summary')).toBeNull()
+  })
+
+  it('写入失败：直显 error 文案，不渲染内容块', async () => {
+    mounted = mountCard(makeWriteCall({
+      result: JSON.stringify({ success: false, bytes_written: 0, error: '路径不在工作区内' }),
+    }))
+    await nextTick()
+
+    expect(document.querySelector('.tool-file-content')).toBeNull()
+    expect(document.querySelector('.edit-summary')?.textContent).toBe('路径不在工作区内')
+    expect(findButton('查看原始输入输出')).toBeTruthy()
+  })
+
+  it('缺少 content 入参时回退原始 JSON', async () => {
+    mounted = mountCard(makeWriteCall({ input: { path: '/ws/src/a.ts' } }))
+    await nextTick()
+
+    expect(document.querySelector('.tool-file-content')).toBeNull()
+    expect(document.querySelector('.write-head')).toBeNull()
+    expect(resultLabels()).toEqual(['输入', '输出'])
+  })
+})
+
 describe('ToolCallCard glob_search 富视图', () => {
   let mounted: ReturnType<typeof mountCard> | null = null
   afterEach(() => { mounted?.destroy() })
