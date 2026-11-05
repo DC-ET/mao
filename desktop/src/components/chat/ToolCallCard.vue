@@ -46,14 +46,14 @@
           <template v-else-if="fileView">
             <div v-if="fileView.content" class="code-block-wrapper">
               <div class="result-label">内容</div>
-              <ToolFileContent :content="fileView.content" :start-line="fileView.startLine" />
+              <ToolFileContent :content="fileView.content" :file-path="fileView.path" :start-line="fileView.startLine" />
             </div>
           </template>
           <div class="diff-footer-row">
             <span v-if="richBadge" class="exit-badge" :class="richBadge.ok ? 'ok' : 'fail'">
               {{ richBadge.text }}
             </span>
-            <span v-if="richSummary" class="edit-summary" :title="richTitle">{{ richSummary }}</span>
+            <span v-if="richSummary" class="edit-summary">{{ richSummary }}</span>
             <button class="expand-result-btn" @click="showRawIo = !showRawIo">
               {{ showRawIo ? '收起原始输入输出' : '查看原始输入输出' }}
             </button>
@@ -304,8 +304,6 @@ const shellView = computed(() => {
   const summaryParts: string[] = []
   if (!error) {
     if (node?.truncated === true) summaryParts.push('输出已截断')
-    const workdir = textOf(node?.current_workdir)
-    if (workdir) summaryParts.push(workdir.length > 40 ? `…${workdir.slice(-39)}` : workdir)
     const message = textOf(node?.message)
     if (message) summaryParts.push(message)
   }
@@ -314,8 +312,6 @@ const shellView = computed(() => {
     primaryLabel: action === 'write_stdin' ? 'stdin' : '命令',
     output,
     error,
-    /** 完整工作目录：底栏摘要里只显示截断末段，全路径走 title 悬浮查看 */
-    workdir: textOf(node?.current_workdir),
     badge: exitCode == null ? null : { text: `exit ${exitCode}`, ok: exitCode === 0 },
     summary: summaryParts.join(' · '),
   }
@@ -338,6 +334,7 @@ const fileView = computed(() => {
   const totalLines = typeof node.total_lines === 'number' && node.total_lines > 0 ? node.total_lines : null
   const offset = typeof input.offset === 'number' && input.offset > 0 ? input.offset : 0
   const contentLines = content === '' ? 0 : content.split('\n').length
+  const path = textOf(input.path) || textOf(input.file_path)
   const summaryParts: string[] = []
   if (error) summaryParts.push(error)
   else {
@@ -346,6 +343,7 @@ const fileView = computed(() => {
   }
   return {
     content: error ? '' : content,
+    path,
     startLine: offset + 1,
     summary: summaryParts.join(' · '),
   }
@@ -355,8 +353,6 @@ const richView = computed(() => editDiffView.value ?? shellView.value ?? fileVie
 const richSummary = computed(() =>
   editDiffView.value?.summary ?? shellView.value?.summary ?? fileView.value?.summary ?? '')
 const richBadge = computed(() => shellView.value?.badge ?? null)
-/** 底栏摘要的悬浮全量文案：目前只有 shell 的完整工作目录需要（摘要里显示的是截断末段） */
-const richTitle = computed(() => shellView.value?.workdir ?? '')
 
 const showRawIo = ref(false)
 

@@ -1,10 +1,21 @@
 /**
  * @vitest-environment jsdom
  */
-import { nextTick, h } from 'vue'
+import { nextTick, h, ref } from 'vue'
 import { createApp } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+// ToolFileContent 间接引入：theme.ts import 期读 window.matchMedia（jsdom 无实现）、
+// monaco-colorize 会真加载 monaco-editor——两者都 mock 掉，isDark 固定亮色
+vi.mock('../../utils/theme', () => ({
+  useTheme: () => ({ isDark: ref(false) }),
+}))
+vi.mock('../../utils/monaco-colorize', () => ({
+  colorizeCode: vi.fn(async (text: string, lang: string, isDark: boolean) =>
+    `<code class="monaco-code ${isDark ? 'vs-dark' : 'vs'}">${lang}:${text}</code>`),
+}))
+
 import ToolCallCard from './ToolCallCard.vue'
 import type { ToolCall } from '../../composables/useChat'
 
@@ -186,7 +197,9 @@ describe('ToolCallCard shell 富视图', () => {
     const badge = document.querySelector('.exit-badge')
     expect(badge?.textContent?.trim()).toBe('exit 0')
     expect(badge?.classList.contains('ok')).toBe(true)
-    expect(document.querySelector('.diff-footer-row')?.textContent).toContain('/ws')
+    // 工作目录不再在底栏展示
+    expect(document.querySelector('.diff-footer-row')?.textContent).not.toContain('/ws')
+    expect(document.querySelector('.edit-summary')).toBeNull()
     expect(findButton('查看原始输入输出')).toBeTruthy()
   })
 
@@ -249,19 +262,34 @@ describe('ToolCallCard shell 富视图', () => {
     expect(findButton('查看原始输入输出')).toBeTruthy()
   })
 
-  it('超长工作目录截断为末段，完整值在 title 中', async () => {
+  it('工作目录不在底栏展示（截断/未截断均不出现）', async () => {
     const longCwd = '/opt/mao-data/workspace/2/projects/maomao-diary/apps/server/src/modules/ai'
     mounted = mountCard(makeShellCall({
       result: JSON.stringify({ exit_code: 0, output: 'x', truncated: false, completed: true, current_workdir: longCwd }),
     }))
     await nextTick()
 
-    const summary = document.querySelector('.edit-summary')
-    expect(summary?.textContent).toContain('…')
-    // 只保留末段：头部路径被丢弃，总长受控
-    expect(summary?.textContent).not.toContain('/opt/mao-data')
-    expect(summary?.textContent).toContain('modules/ai')
-    expect(summary?.getAttribute('title')).toBe(longCwd)
+    expect(document.querySelector('.edit-summary')).toBeNull()
+    expect(document.querySelector('.diff-footer-row')?.textContent).not.toContain('mao-data')
+
+    // 输出已截断时底栏只留截断提示，仍不带工作目录
+    mounted.destroy()
+    mounted = mountCard(makeShellCall({
+      result: JSON.stringify({ exit_code: 0, output: 'x', truncated: true, completed: true, current_workdir: longCwd }),
+    }))
+    await nextTick()
+    expect(document.querySelector('.edit-summary')?.textContent).toBe('输出已截断')
+  })
+
+  it('后端 message（如后台提交/等待超时）在底栏展示', async () => {
+    mounted = mountCard(makeShellCall({
+      result: JSON.stringify({ async: true, task_id: 't-1', message: '命令已提交到后台执行。' }),
+    }))
+    await nextTick()
+
+    expect(document.querySelector('.cmd-text')?.textContent).toBe('npm run build')
+    expect(document.querySelector('.edit-summary')?.textContent).toContain('命令已提交到后台执行')
+    expect(document.querySelector('.exit-badge')).toBeNull()
   })
 })
 
@@ -276,7 +304,7 @@ describe('ToolCallCard read_file 富视图', () => {
     expect(resultLabels()).toEqual(['内容'])
     const nos = Array.from(document.querySelectorAll('.line-no')).map(el => el.textContent)
     expect(nos).toEqual(['1', '2', '3'])
-    expect(document.querySelector('.file-line .line-text')?.textContent).toBe('line one')
+    expect(document.querySelector('.file-code')?.textContent).toBe('line one\nline two\nline three')
     expect(document.querySelector('.diff-footer-row')?.textContent).toContain('共 3 行 · 第 1–3 行')
     expect(findButton('查看原始输入输出')).toBeTruthy()
   })

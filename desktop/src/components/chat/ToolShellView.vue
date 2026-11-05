@@ -89,9 +89,11 @@ async function copy(text: string) {
   user-select: none;
 }
 
+/* 命令用主色（与 $ 提示符同色）与输出区区分：--aw-text-code 与 --aw-ink 在两主题下同值，
+   直接复用会主次不分；提亮命令而非压暗输出——输出是负载主体，要保持可读性。 */
 .cmd-text {
   min-width: 0;
-  color: var(--aw-text-code);
+  color: var(--aw-primary);
   white-space: pre-wrap;
   word-break: break-all;
 }
