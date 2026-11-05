@@ -341,6 +341,13 @@ export class StreamingWsHandler {
    * 没有它，两个调用可能都在「listPending → 占位」窗口内判定空闲、都出队造成双执行。
    */
   private readonly autoConsumeDispatching = new Set<number>();
+  /**
+   * 被重入保护吞掉的并发调用：sessionId → 补跑轮是否包含 IM 接力意图（被吞调用 relayToIm 的并集）。
+   * 当前一轮结束后据此再跑一轮，避免「忙快照在等待期间过期 + 跟进调用被丢弃」形成新的排队滞留。
+   */
+  private readonly autoConsumePendingRerun = new Map<number, boolean>();
+  /** 补跑轮数软上限：正常 ≤2 轮（首轮 + 一次被吞补跑）；超限只留日志，让下一次真实事件再触发。 */
+  private static readonly AUTO_CONSUME_MAX_RERUN_ROUNDS = 5;
   /** 跨通道忙检查（飞书/钉钉/微信 handler 的 busy 内存集）：消费出队前确认 IM 无执行，避免双跑。 */
   private readonly externalBusyChecks: Array<(sessionId: number) => boolean> = [];
   /** message_queue 排空且会话空闲时的接力出口：消费飞书/钉钉等 IM 入站队列里的 busy 入队消息。 */
@@ -2015,12 +2022,34 @@ export class StreamingWsHandler {
   async autoConsumeQueue(sessionId: number, userId: number, options: { relayToIm?: boolean } = {}): Promise<void> {
     // 函数级重入保护：并发触发（WS 收尾 / IM 收尾接力 / 崩溃恢复）只放一个进入，
     // 避免两个调用在「listPending → 占位」窗口内都判定空闲、都出队造成双执行。
-    if (this.autoConsumeDispatching.has(sessionId)) return;
+    // 被吞的调用不丢弃：打补跑标记，当前轮结束后按标记里的 relay 意图再跑一轮——
+    // 否则「忙快照在等待推送/查询期间过期 + 跟进调用被吞」会让排队消息滞留到下一次执行收尾。
+    if (this.autoConsumeDispatching.has(sessionId)) {
+      const relayWanted = options.relayToIm !== false;
+      this.autoConsumePendingRerun.set(
+        sessionId,
+        (this.autoConsumePendingRerun.get(sessionId) ?? false) || relayWanted,
+      );
+      return;
+    }
     this.autoConsumeDispatching.add(sessionId);
     try {
-      await this.autoConsumeQueueInner(sessionId, userId, options);
+      let relayToIm = options.relayToIm;
+      for (let round = 0; ; round += 1) {
+        this.autoConsumePendingRerun.delete(sessionId);
+        await this.autoConsumeQueueInner(sessionId, userId, { relayToIm });
+        const pendingRelay = this.autoConsumePendingRerun.get(sessionId);
+        if (pendingRelay == null) break;
+        if (round + 1 >= StreamingWsHandler.AUTO_CONSUME_MAX_RERUN_ROUNDS) {
+          console.warn(`autoConsume 补跑达到轮数上限，放弃剩余补跑, sessionId=${sessionId}`);
+          this.autoConsumePendingRerun.delete(sessionId);
+          break;
+        }
+        relayToIm = pendingRelay;
+      }
     } finally {
       this.autoConsumeDispatching.delete(sessionId);
+      this.autoConsumePendingRerun.delete(sessionId);
     }
   }
 
@@ -2069,6 +2098,9 @@ export class StreamingWsHandler {
       const head = await this.deps.messageQueueService.dequeue(sessionId);
       if (!head) {
         this.executionClaims.delete(sessionId);
+        // 队头在 listPending 与 dequeue 之间被移除（用户取消排队 / 插队 / 跨实例消费）：
+        // 按「队列已空」处理，补上 IM 接力——否则这次消费机会被浪费、IM 队列也不再被推进。
+        if (options.relayToIm !== false) this.relayToImQueues(sessionId);
         return;
       }
       const content = head.content ?? '';

@@ -161,15 +161,94 @@ describe('StreamingWsHandler 跨通道队列接力（0.0.434）', () => {
     expect(h.sessionService.saveMessage).not.toHaveBeenCalled();
   });
 
-  it('并发触发时只放一个进入（重入保护）', async () => {
+  it('并发触发时只放一个进入，当前轮结束后补跑被吞的调用（不丢弃）', async () => {
     const h = makeHarness();
+    let call = 0;
     let resolveList!: (rows: unknown[]) => void;
-    h.messageQueueService.listPending.mockImplementation(() => new Promise((resolve) => { resolveList = resolve; }));
+    h.messageQueueService.listPending.mockImplementation(() => {
+      call += 1;
+      if (call === 1) return new Promise<unknown[]>((resolve) => { resolveList = resolve; });
+      return Promise.resolve([]);
+    });
+    const first = h.handler.autoConsumeQueue(11, 7, { relayToIm: false });
+    const second = h.handler.autoConsumeQueue(11, 7, { relayToIm: false });
+    resolveList([]);
+    await first;
+    await second;
+    // 第一轮（并发只进一次）+ 被吞调用的补跑轮 = 2 次扫描
+    expect(h.messageQueueService.listPending).toHaveBeenCalledTimes(2);
+  });
+
+  it('忙路径等待队列推送期间到达的调用：当前轮结束后必须补跑一轮', async () => {
+    const h = makeHarness();
+    let call = 0;
+    let releasePush!: (rows: unknown[]) => void;
+    h.messageQueueService.listPending.mockImplementation(() => {
+      call += 1;
+      if (call === 1) return Promise.resolve([pendingRow()]);
+      if (call === 2) return new Promise<unknown[]>((resolve) => { releasePush = resolve; });
+      return Promise.resolve([pendingRow()]);
+    });
+    // 恒忙：模拟 IM 执行仍在跑（第一次判定用的「忙快照」在等待推送期间过期）
+    h.handler.registerExternalBusyCheck(() => true);
+    const first = h.handler.autoConsumeQueue(11, 7);
+    await vi.waitFor(() => expect(call).toBe(2));
+    const second = h.handler.autoConsumeQueue(11, 7); // 模拟 IM 收尾 relay：被重入保护吞掉
+    releasePush([]);
+    await first;
+    await second;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // 补跑轮应再次扫描队列（call=3 为补跑扫描）
+    expect(call).toBeGreaterThanOrEqual(3);
+  });
+
+  it('dequeue 为空（队头在查询间被移除）时按空队列处理并接力 IM', async () => {
+    const h = makeHarness();
+    const imDrain = vi.fn();
+    h.handler.registerImQueueDrainHandler(imDrain);
+    h.messageQueueService.listPending.mockResolvedValue([pendingRow()]);
+    h.messageQueueService.dequeue.mockResolvedValue(null);
+    await h.handler.autoConsumeQueue(11, 7);
+    expect(imDrain).toHaveBeenCalledWith(11);
+  });
+
+  it('补跑沿用被吞调用的 relay 意图：relayToIm=false 不在补跑轮向 IM 回传', async () => {
+    const h = makeHarness();
+    const imDrain = vi.fn();
+    h.handler.registerImQueueDrainHandler(imDrain);
+    let call = 0;
+    let resolveList!: (rows: unknown[]) => void;
+    h.messageQueueService.listPending.mockImplementation(() => {
+      call += 1;
+      if (call === 1) return new Promise<unknown[]>((resolve) => { resolveList = resolve; });
+      return Promise.resolve([]);
+    });
+    const first = h.handler.autoConsumeQueue(11, 7, { relayToIm: false });
+    const second = h.handler.autoConsumeQueue(11, 7, { relayToIm: false });
+    resolveList([]);
+    await first;
+    await second;
+    expect(call).toBe(2);
+    expect(imDrain).not.toHaveBeenCalled();
+  });
+
+  it('补跑沿用被吞调用的 relay 意图：默认 relay=true 时补跑轮恢复向 IM 回传', async () => {
+    const h = makeHarness();
+    const imDrain = vi.fn();
+    h.handler.registerImQueueDrainHandler(imDrain);
+    let call = 0;
+    let resolveList!: (rows: unknown[]) => void;
+    h.messageQueueService.listPending.mockImplementation(() => {
+      call += 1;
+      if (call === 1) return new Promise<unknown[]>((resolve) => { resolveList = resolve; });
+      return Promise.resolve([]);
+    });
     const first = h.handler.autoConsumeQueue(11, 7);
     const second = h.handler.autoConsumeQueue(11, 7);
     resolveList([]);
     await first;
     await second;
-    expect(h.messageQueueService.listPending).toHaveBeenCalledTimes(1);
+    expect(call).toBe(2);
+    expect(imDrain).toHaveBeenCalledWith(11);
   });
 });
