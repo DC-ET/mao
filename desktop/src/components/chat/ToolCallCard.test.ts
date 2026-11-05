@@ -374,16 +374,255 @@ describe('ToolCallCard read_file 富视图', () => {
   })
 })
 
+describe('ToolCallCard glob_search 富视图', () => {
+  let mounted: ReturnType<typeof mountCard> | null = null
+  afterEach(() => { mounted?.destroy() })
+
+  const globCall = (result: string): ToolCall => ({
+    id: 'tc-glob',
+    name: 'glob_search',
+    input: { pattern: 'src/**/*.vue', path: '/ws' },
+    result,
+    status: 'success',
+    isExpanded: true,
+    argsStreaming: false,
+  })
+
+  it('文件列表按目录/文件名分色，底栏给数量，无原始 JSON', async () => {
+    mounted = mountCard(globCall(JSON.stringify({
+      files: ['src/App.vue', 'src/views/Home.vue'],
+      search_root: '/ws',
+      truncated: false,
+      total_matched: 2,
+    })))
+    await nextTick()
+
+    expect(document.querySelector('.query-pattern')?.textContent).toBe('src/**/*.vue')
+    const rows = Array.from(document.querySelectorAll('.file-row'))
+    expect(rows).toHaveLength(2)
+    expect(rows[0].querySelector('.file-dir')?.textContent).toBe('src/')
+    expect(rows[0].querySelector('.file-name')?.textContent).toBe('App.vue')
+    expect(document.querySelector('.diff-footer-row')?.textContent).toContain('2 个文件')
+    expect(document.querySelector('pre.result-content')).toBeNull()
+  })
+
+  it('截断：底栏标注 + 列表尾部提示', async () => {
+    mounted = mountCard(globCall(JSON.stringify({
+      files: ['a.ts'], search_root: '/ws', truncated: true, total_matched: 1,
+    })))
+    await nextTick()
+
+    expect(document.querySelector('.diff-footer-row')?.textContent).toContain('已截断')
+    expect(document.querySelector('.more-hint')?.textContent).toContain('已达返回上限')
+  })
+
+  it('空结果：列表区提示未找到', async () => {
+    mounted = mountCard(globCall(JSON.stringify({ files: [], search_root: '/ws', truncated: false })))
+    await nextTick()
+
+    expect(document.querySelector('.empty-hint')?.textContent).toBe('未找到匹配的文件')
+    expect(document.querySelector('.diff-footer-row')?.textContent).toContain('0 个文件')
+  })
+
+  it('错误：底栏直显 error', async () => {
+    mounted = mountCard(globCall(JSON.stringify({ files: [], error: '沙箱拒绝访问' })))
+    await nextTick()
+
+    expect(document.querySelector('.empty-hint')).toBeNull()
+    expect(document.querySelector('.diff-footer-row')?.textContent).toContain('沙箱拒绝访问')
+  })
+})
+
+describe('ToolCallCard grep_search 富视图', () => {
+  let mounted: ReturnType<typeof mountCard> | null = null
+  afterEach(() => { mounted?.destroy() })
+
+  const grepCall = (result: string, input: Record<string, unknown> = {}): ToolCall => ({
+    id: 'tc-grep',
+    name: 'grep_search',
+    input: { pattern: 'refreshData', ...input },
+    result,
+    status: 'success',
+    isExpanded: true,
+    argsStreaming: false,
+  })
+
+  it('按文件分组：命中行高亮 pattern、上下文行淡显，底栏给命中数', async () => {
+    mounted = mountCard(grepCall(JSON.stringify({
+      matches: [
+        { file: 'src/a.ts', line: 26, content: '// 刷新一下', contextual: true },
+        { file: 'src/a.ts', line: 27, content: 'this.refreshData();' },
+        { file: 'src/b.ts', line: 45, content: 'refreshData()' },
+      ],
+      truncated: false,
+      total_matches: 2,
+    })))
+    await nextTick()
+
+    const files = Array.from(document.querySelectorAll('.match-file'))
+    expect(files.map(el => el.textContent)).toEqual(['src/a.ts', 'src/b.ts'])
+    // 命中片段高亮
+    const hits = Array.from(document.querySelectorAll('.hit'))
+    expect(hits.map(el => el.textContent)).toEqual(['refreshData', 'refreshData'])
+    // 上下文行带 contextual 类
+    expect(document.querySelector('.match-row.contextual')?.textContent).toContain('刷新一下')
+    expect(document.querySelector('.diff-footer-row')?.textContent).toContain('2 处匹配 · 2 个文件')
+  })
+
+  it('ignore_case 传入时大小写不敏感高亮', async () => {
+    mounted = mountCard(grepCall(JSON.stringify({
+      matches: [{ file: 'a.ts', line: 1, content: 'RefreshData()' }],
+      truncated: false,
+      total_matches: 1,
+    }), { ignore_case: true }))
+    await nextTick()
+
+    expect(document.querySelector('.hit')?.textContent).toBe('RefreshData')
+  })
+
+  it('glob 过滤与 path 显示在查询行', async () => {
+    mounted = mountCard(grepCall(JSON.stringify({
+      matches: [], truncated: false, total_matches: 0,
+    }), { glob: '*.ts', path: '/ws/src' }))
+    await nextTick()
+
+    expect(document.querySelector('.query-glob')?.textContent).toBe('*.ts')
+    expect(document.querySelector('.query-path')?.textContent).toBe('in /ws/src')
+    expect(document.querySelector('.empty-hint')?.textContent).toBe('未找到匹配内容')
+  })
+})
+
+describe('ToolCallCard web_search 富视图', () => {
+  let mounted: ReturnType<typeof mountCard> | null = null
+  afterEach(() => { mounted?.destroy() })
+
+  const searchCall = (result: string): ToolCall => ({
+    id: 'tc-search',
+    name: 'web_search',
+    input: { query: 'mao etarch' },
+    result,
+    status: 'success',
+    isExpanded: true,
+    argsStreaming: false,
+  })
+
+  it('结果列表：标题链接 + host + 摘要', async () => {
+    mounted = mountCard(searchCall(JSON.stringify({
+      query: 'mao etarch',
+      results: [
+        { title: 'Mao 主页', url: 'https://mao.etarch.cn/', content: '多端 AI 编程助手' },
+        { title: 'GitHub', url: 'https://github.com/yangjiayi/mao', content: '' },
+      ],
+      total_results: 2,
+    })))
+    await nextTick()
+
+    const rows = Array.from(document.querySelectorAll('.result-row'))
+    expect(rows).toHaveLength(2)
+    const first = rows[0] as HTMLAnchorElement
+    expect(first.getAttribute('href')).toBe('https://mao.etarch.cn/')
+    expect(first.getAttribute('target')).toBe('_blank')
+    expect(first.querySelector('.result-title')?.textContent).toBe('Mao 主页')
+    expect(first.querySelector('.result-host')?.textContent).toBe('mao.etarch.cn')
+    expect(first.querySelector('.result-snippet')?.textContent).toBe('多端 AI 编程助手')
+    // 无摘要的结果不渲染摘要行
+    expect(rows[1].querySelector('.result-snippet')).toBeNull()
+    expect(document.querySelector('.diff-footer-row')?.textContent).toContain('2 条结果')
+  })
+
+  it('空结果与错误', async () => {
+    mounted = mountCard(searchCall(JSON.stringify({ query: 'x', results: [], total_results: 0 })))
+    await nextTick()
+    expect(document.querySelector('.empty-hint')?.textContent).toBe('未找到相关结果')
+
+    mounted.destroy()
+    mounted = mountCard(searchCall(JSON.stringify({ error: 'Tavily API Key 未配置' })))
+    await nextTick()
+    expect(document.querySelector('.empty-hint')).toBeNull()
+    expect(document.querySelector('.diff-footer-row')?.textContent).toContain('Tavily API Key 未配置')
+  })
+})
+
+describe('ToolCallCard open_web_page 富视图', () => {
+  let mounted: ReturnType<typeof mountCard> | null = null
+  afterEach(() => { mounted?.destroy() })
+
+  /** MarkdownContent 异步渲染，flush 微任务后再断言 */
+  async function flush() {
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await nextTick()
+  }
+
+  const pageCall = (result: string): ToolCall => ({
+    id: 'tc-page',
+    name: 'open_web_page',
+    input: { url: 'https://mao.etarch.cn/' },
+    result,
+    status: 'success',
+    isExpanded: true,
+    argsStreaming: false,
+  })
+
+  it('标题 + url + Markdown 正文渲染，底栏给字符数', async () => {
+    mounted = mountCard(pageCall(JSON.stringify({
+      url: 'https://mao.etarch.cn/',
+      title: 'Mao 主页',
+      content: '## 标题\n\n正文一段',
+      content_length: 12340,
+      truncated: false,
+    })))
+    await flush()
+
+    expect(document.querySelector('.page-title')?.textContent).toBe('Mao 主页')
+    const url = document.querySelector('.page-url') as HTMLAnchorElement | null
+    expect(url?.getAttribute('href')).toBe('https://mao.etarch.cn/')
+    // MarkdownContent 产物：h2 + p
+    expect(document.querySelector('.page-body h2')?.textContent).toBe('标题')
+    expect(document.querySelector('.page-body p')?.textContent).toBe('正文一段')
+    expect(document.querySelector('.diff-footer-row')?.textContent).toContain('正文 12,340 字符')
+  })
+
+  it('截断：提示 + 完整内容文件链接（点击不抛错）', async () => {
+    mounted = mountCard(pageCall(JSON.stringify({
+      url: 'https://mao.etarch.cn/',
+      title: 'Mao 主页',
+      content: '正文前段',
+      content_length: 5000,
+      truncated: true,
+      full_content_file: '/opt/mao-data/runtime/webcache/mao-abc123.md',
+      message: '正文已截断',
+    })))
+    await flush()
+
+    const notice = document.querySelector('.page-truncated')
+    expect(notice?.textContent).toContain('正文已截断')
+    const link = notice?.querySelector('button') as HTMLButtonElement | null
+    expect(link?.textContent).toContain('webcache/mao-abc123.md')
+    // 无 activeSession 时 handler 静默返回，不抛错
+    link?.click()
+    await nextTick()
+  })
+
+  it('错误：底栏直显 error', async () => {
+    mounted = mountCard(pageCall(JSON.stringify({ error: '不支持的内容类型：application/pdf', url: 'https://x.cn/a.pdf' })))
+    await flush()
+
+    expect(document.querySelector('.page-body')).toBeNull()
+    expect(document.querySelector('.diff-footer-row')?.textContent).toContain('不支持的内容类型')
+  })
+})
+
 describe('ToolCallCard 非富视图工具', () => {
   let mounted: ReturnType<typeof mountCard> | null = null
   afterEach(() => { mounted?.destroy() })
 
-  it('web_search：保持原始 输入/输出 两块，不渲染富视图与开关', async () => {
+  it('task_list：保持原始 输入/输出 两块，不渲染富视图与开关', async () => {
     mounted = mountCard({
       id: 'tc-2',
-      name: 'web_search',
-      input: { query: 'mao' },
-      result: '{"results":[]}',
+      name: 'task_list',
+      input: {},
+      result: '{"tasks":[]}',
       status: 'success',
       isExpanded: true,
       argsStreaming: false,
@@ -392,9 +631,11 @@ describe('ToolCallCard 非富视图工具', () => {
 
     expect(document.querySelector('.tool-diff')).toBeNull()
     expect(document.querySelector('.tool-file-content')).toBeNull()
+    expect(document.querySelector('.tool-shell')).toBeNull()
     expect(findButton('查看原始输入输出')).toBeNull()
     expect(resultLabels()).toEqual(['输入', '输出'])
-    expect(document.querySelector('pre.result-content code')?.textContent)
-      .toContain('"query"')
+    const pres = Array.from(document.querySelectorAll('pre.result-content code'))
+      .map(el => el.textContent ?? '')
+    expect(pres.some(t => t.includes('"tasks"'))).toBe(true)
   })
 })

@@ -49,6 +49,46 @@
               <ToolFileContent :content="fileView.content" :file-path="fileView.path" :start-line="fileView.startLine" />
             </div>
           </template>
+          <template v-else-if="globView">
+            <ToolGlobView
+              :pattern="globView.pattern"
+              :path="globView.path"
+              :search-root="globView.searchRoot"
+              :files="globView.files"
+              :truncated="globView.truncated"
+              :error="globView.error"
+              @open-file="handleOpenToolFile"
+            />
+          </template>
+          <template v-else-if="grepView">
+            <ToolGrepView
+              :pattern="grepView.pattern"
+              :glob="grepView.glob"
+              :path="grepView.path"
+              :ignore-case="grepView.ignoreCase"
+              :groups="grepView.groups"
+              :error="grepView.error"
+              @open-file="handleOpenToolFile"
+            />
+          </template>
+          <template v-else-if="webSearchView">
+            <ToolWebSearchView
+              :query="webSearchView.query"
+              :items="webSearchView.items"
+              :error="webSearchView.error"
+            />
+          </template>
+          <template v-else-if="webPageView">
+            <ToolWebPageView
+              :url="webPageView.url"
+              :title="webPageView.title"
+              :content="webPageView.content"
+              :truncated="webPageView.truncated"
+              :full-file="webPageView.fullFile"
+              :error="webPageView.error"
+              @open-file="handleOpenToolFile"
+            />
+          </template>
           <div class="diff-footer-row">
             <span v-if="richBadge" class="exit-badge" :class="richBadge.ok ? 'ok' : 'fail'">
               {{ richBadge.text }}
@@ -124,12 +164,17 @@ import { ElMessage } from 'element-plus'
 import { Select, CloseBold, ArrowDown, CopyDocument } from '@element-plus/icons-vue'
 import type { ToolCall } from '../../composables/useChat'
 import { useSessionStore } from '../../stores/session'
+import { useCenterTabs } from '../../composables/useCenterTabs'
 import { copyText as copyToClipboard } from '../../utils/clipboard'
 import { getToolDisplayName, getToolInputPreview } from '../../utils/toolDisplay'
 import { buildEditDiff } from '../../utils/toolDiff'
 import ToolCallDiffView from './ToolCallDiffView.vue'
 import ToolFileContent from './ToolFileContent.vue'
 import ToolShellView from './ToolShellView.vue'
+import ToolGlobView from './ToolGlobView.vue'
+import ToolGrepView from './ToolGrepView.vue'
+import ToolWebSearchView from './ToolWebSearchView.vue'
+import ToolWebPageView from './ToolWebPageView.vue'
 
 /** 工具结果 JSON 的安全解析：非 JSON / 非对象返回 null，富视图据此回退原始展示。 */
 function parseResultNode(result?: string): Record<string, unknown> | null {
@@ -175,6 +220,21 @@ const props = withDefaults(defineProps<{
 
 const sessionStore = useSessionStore()
 const openSubagent = inject<(payload: { childSessionId: number; title?: string }) => void>('openSubagent', () => {})
+/** 工具卡片里的文件路径（glob/grep 结果、open_web_page 完整内容文件）点击后在中心区打开，
+ *  CLOUD/LOCAL 分支与 FileChangePanel.handleFileClick 同口径。 */
+const { openFileTab } = useCenterTabs(computed(() => sessionStore.activeSessionId))
+
+function handleOpenToolFile(path: string) {
+  if (!path) return
+  const session = sessionStore.activeSession
+  if (!session) return
+  const canOpen = session.executionMode === 'CLOUD'
+    ? !!sessionStore.activeSessionId
+    : !!session.workspace
+  if (!canOpen) return
+  const title = path.split(/[/\\]/).pop() || path
+  openFileTab(path, title, session.workspace || undefined)
+}
 
 const isExpanded = ref(props.toolCall.isExpanded ?? false)
 
@@ -349,9 +409,128 @@ const fileView = computed(() => {
   }
 })
 
-const richView = computed(() => editDiffView.value ?? shellView.value ?? fileView.value)
+/** glob_search 富视图：文件路径列表，路径相对搜索根目录，点击可在中心区打开。 */
+const globView = computed(() => {
+  if (props.toolCall.name !== 'glob_search') return null
+  const input = props.toolCall.input
+  if (!input) return null
+  const node = parseResultNode(props.toolCall.result)
+  if (!node) return null
+  const files = Array.isArray(node.files)
+    ? node.files.filter((f): f is string => typeof f === 'string')
+    : []
+  const error = textOf(node.error)
+  const parts: string[] = []
+  if (error) parts.push(error)
+  else {
+    parts.push(`${files.length} 个文件`)
+    if (node.truncated === true) parts.push('已截断')
+  }
+  return {
+    pattern: textOf(input.pattern),
+    path: textOf(input.path),
+    searchRoot: textOf(node.search_root),
+    files,
+    truncated: node.truncated === true,
+    error,
+    summary: parts.join(' · '),
+  }
+})
+
+/** grep_search 富视图：按文件分组的命中行（上下文行 contextual 淡显）。 */
+const grepView = computed(() => {
+  if (props.toolCall.name !== 'grep_search') return null
+  const input = props.toolCall.input
+  if (!input) return null
+  const node = parseResultNode(props.toolCall.result)
+  if (!node) return null
+  type Row = { line: number; content: string; contextual: boolean }
+  const groups: { file: string; rows: Row[] }[] = []
+  const byFile = new Map<string, { file: string; rows: Row[] }>()
+  let hitCount = 0
+  for (const raw of Array.isArray(node.matches) ? node.matches : []) {
+    if (!raw || typeof raw !== 'object') continue
+    const entry = raw as Record<string, unknown>
+    const file = textOf(entry.file)
+    const line = Number(entry.line)
+    if (!file || !Number.isFinite(line)) continue
+    const contextual = entry.contextual === true
+    let group = byFile.get(file)
+    if (!group) {
+      group = { file, rows: [] }
+      byFile.set(file, group)
+      groups.push(group)
+    }
+    group.rows.push({ line, content: textOf(entry.content), contextual })
+    if (!contextual) hitCount++
+  }
+  const total = typeof node.total_matches === 'number' ? node.total_matches : hitCount
+  const error = textOf(node.error)
+  const parts: string[] = []
+  if (error) parts.push(error)
+  else if (total > 0) {
+    parts.push(`${total} 处匹配 · ${groups.length} 个文件`)
+    if (node.truncated === true) parts.push('已截断')
+  }
+  return {
+    pattern: textOf(input.pattern),
+    glob: textOf(input.glob),
+    path: textOf(input.path),
+    ignoreCase: input.ignore_case === true || input.ignore_case === 'true',
+    groups,
+    error,
+    summary: parts.join(' · '),
+  }
+})
+
+/** web_search 富视图：标题 + host + 摘要 的结果列表。 */
+const webSearchView = computed(() => {
+  if (props.toolCall.name !== 'web_search') return null
+  const input = props.toolCall.input
+  if (!input) return null
+  const node = parseResultNode(props.toolCall.result)
+  if (!node) return null
+  const items = (Array.isArray(node.results) ? node.results : [])
+    .filter((r): r is Record<string, unknown> => !!r && typeof r === 'object' && !Array.isArray(r))
+    .map(r => ({ title: textOf(r.title), url: textOf(r.url), content: textOf(r.content) }))
+    .filter(item => item.url || item.title)
+  const error = textOf(node.error)
+  return {
+    query: textOf(input.query),
+    items,
+    error,
+    summary: error || `${items.length} 条结果`,
+  }
+})
+
+/** open_web_page 富视图：标题 + url + Markdown 正文（content 即 turndown 产物）。 */
+const webPageView = computed(() => {
+  if (props.toolCall.name !== 'open_web_page') return null
+  const input = props.toolCall.input
+  if (!input) return null
+  const node = parseResultNode(props.toolCall.result)
+  if (!node) return null
+  const content = textOf(node.content)
+  const length = typeof node.content_length === 'number' ? node.content_length : content.length
+  const error = textOf(node.error)
+  return {
+    url: textOf(input.url) || textOf(node.url),
+    title: textOf(node.title),
+    content,
+    truncated: node.truncated === true,
+    fullFile: textOf(node.full_content_file),
+    error,
+    summary: error || (length > 0 ? `正文 ${length.toLocaleString()} 字符` : ''),
+  }
+})
+
+const richView = computed(() =>
+  editDiffView.value ?? shellView.value ?? fileView.value
+  ?? globView.value ?? grepView.value ?? webSearchView.value ?? webPageView.value)
 const richSummary = computed(() =>
-  editDiffView.value?.summary ?? shellView.value?.summary ?? fileView.value?.summary ?? '')
+  editDiffView.value?.summary ?? shellView.value?.summary ?? fileView.value?.summary
+  ?? globView.value?.summary ?? grepView.value?.summary ?? webSearchView.value?.summary
+  ?? webPageView.value?.summary ?? '')
 const richBadge = computed(() => shellView.value?.badge ?? null)
 
 const showRawIo = ref(false)
