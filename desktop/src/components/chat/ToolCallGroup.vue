@@ -1,9 +1,9 @@
 <template>
   <!-- 单工具组：组头与卡片头信息完全重复（同一 summary、同一个收起箭头），留着只会让
-       「看内容」多点一下。直接渲染卡片，一次点击即展开；卡片头自带工具图标与状态徽标，
-       信息不比组头少（图标取自 toolIcons，与组头同口径）。 -->
+       「看内容」多点一下。直接渲染卡片，一次点击即展开；卡片头带 standalone 样式充当组壳
+       （点击热区 / 悬停反馈 / 图标与多调用组头同口径），状态徽标比组头还全。 -->
   <div v-if="toolCalls.length === 1" class="tool-call-group">
-    <ToolCallCard :tool-call="toolCalls[0]" :hide-process="hideProcess" />
+    <ToolCallCard :tool-call="toolCalls[0]" :hide-process="hideProcess" standalone />
   </div>
   <div v-else class="tool-call-group">
     <div class="tool-group-header" @click="toggleExpand">

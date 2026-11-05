@@ -1,5 +1,5 @@
 <template>
-  <div class="tool-call-card" :class="[`status-${toolCall.status}`]">
+  <div class="tool-call-card" :class="[`status-${toolCall.status}`, { standalone }]">
     <div class="tool-header" @click="toggleExpand">
       <div class="tool-info">
         <!-- 工具类型图标：单工具组省掉组头后靠它辨识工具（与组头同口径，见 utils/toolIcons） -->
@@ -217,8 +217,11 @@ function readEditSummary(result: string | undefined, diff: { added: number; dele
 const props = withDefaults(defineProps<{
   toolCall: ToolCall
   hideProcess?: boolean
+  /** 单独渲染（工具组内只有一个调用、没有组头）时，卡片头充当组壳：补齐点击热区与悬停反馈 */
+  standalone?: boolean
 }>(), {
-  hideProcess: false
+  hideProcess: false,
+  standalone: false,
 })
 
 const sessionStore = useSessionStore()
@@ -604,6 +607,23 @@ function toggleExpand() {
   overflow: hidden;
   background: var(--aw-canvas);
   transition: border-color 0.2s;
+}
+
+/* 单独渲染（无组头）时卡片头即组壳：与 ToolCallGroup 的 .tool-group-header 同口径——
+   同样的内边距、圆角与悬停底色，让单调用和多调用组长得一样、一样可点 */
+.tool-call-card.standalone {
+  margin-top: 2px;
+  padding: 0;
+}
+
+.tool-call-card.standalone .tool-header {
+  padding: 5px;
+  border-radius: var(--aw-radius-sm);
+  transition: background 0.15s;
+}
+
+.tool-call-card.standalone .tool-header:hover {
+  background: var(--aw-canvas-parchment);
 }
 
 .tool-call-card.status-running {

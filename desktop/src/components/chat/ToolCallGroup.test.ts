@@ -63,6 +63,8 @@ describe('ToolCallGroup', () => {
     // 组头与卡片头信息重复，单工具组直接省掉组头
     expect(hasGroupHeader()).toBe(false)
     expect(document.querySelector('.tool-header')).not.toBeNull()
+    // 但组壳的点击热区/悬停反馈不能丢：卡片头带 standalone 样式充当组壳
+    expect(document.querySelector('.tool-call-card')?.classList.contains('standalone')).toBe(true)
     expect(toolBodyVisible()).toBe(false)
 
     const header = document.querySelector('.tool-header') as HTMLElement
@@ -87,6 +89,8 @@ describe('ToolCallGroup', () => {
     await nextTick()
     // 组头只负责展开列表，卡片内容仍需各卡片自己的点击
     expect(document.querySelectorAll('.tool-header')).toHaveLength(2)
+    // 多调用组内的卡片不带 standalone（热区/悬停由组壳负责，避免每行都一片底色）
+    expect(document.querySelector('.tool-call-card')?.classList.contains('standalone')).toBe(false)
     expect(toolBodyVisible()).toBe(false)
 
     const cardHeader = document.querySelector('.tool-header') as HTMLElement
