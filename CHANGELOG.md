@@ -1,3 +1,8 @@
+## 0.0.435 (2026-11-05)
+
+### 后端
+- **运行时容器 locale 统一为 C.UTF-8**：docker 模式下用户容器此前未设置 `LANG`（镜像 env 与 `docker run` 均无），libc 回落 POSIX/C locale——`wc -m`、`grep -i`、字符类等 locale 敏感工具对中文等非 ASCII 内容按字节处理，与宿主机模式（`en_US.UTF-8`）行为漂移（实测 `wc -m` 统计「中文abc」得 9 而非 5，`grep -i` 非 ASCII 大小写不匹配）。现在 `docker run` 显式注入 `LANG=C.UTF-8`（Bookworm 镜像自带 C.utf8，零额外装包/无需重建镜像），容器内 UTF-8 多字节语义与宿主机对齐；存量容器需重建后生效。
+
 ## 0.0.434 (2026-11-05)
 
 ### 后端

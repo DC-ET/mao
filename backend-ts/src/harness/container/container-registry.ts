@@ -735,6 +735,9 @@ export class ContainerRegistry {
       '--network', c.network,
       // 容器域名解析注入：宿主机 hosts 继承 + 后台自定义规则，逐条 --add-host host:ip
       ...hostsInjection.entries.flatMap((entry) => ['--add-host', `${entry.host}:${entry.ip}`]),
+      // locale 统一 C.UTF-8（Bookworm 镜像自带 C.utf8，无需装 locales 包）：未设置时 libc
+      // 回落 POSIX/C 语义，wc -m / grep -i 等对多字节字符按字节处理，与宿主机模式行为漂移
+      '-e', 'LANG=C.UTF-8',
       // /tmp 由 planner 按 {tmpDir}/{userId} 挂载（持久化，跨重建保留），不再使用 --tmpfs。
       // 容器 agent 硬依赖：userId 缺失即 exit(1)；roots 显式注入避免容器内出现第二套路径真相
       '-e', `MAO_CONTAINER_USER_ID=${userId}`,

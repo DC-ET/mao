@@ -107,6 +107,8 @@ describe('container registry', () => {
     expect(runArgs).toContain('--memory 512m');
     expect(runArgs).toContain('--cpus 1');
     expect(runArgs).toContain('--pids-limit 100');
+    // locale 统一 C.UTF-8：容器 shell 的多字节字符语义与宿主机 UTF-8 对齐
+    expect(runArgs).toContain('-e LANG=C.UTF-8');
     // 容器 agent 硬依赖 env：userId / token / 四个 roots（BUG-3 回归）
     expect(runArgs).toContain('-e MAO_CONTAINER_USER_ID=7');
     expect(runArgs).toContain('-e MAO_CHANNEL_TOKEN=tok-7');
