@@ -65,6 +65,37 @@
   opacity: 0.5;
 }
 
+/* 新建会话宽按钮：取代原先头部的「+」图标入口（目标小、窄面板更难命中）。
+   视觉口径与 CommandManager / SignalWatchersView 的 .create-btn 同源（主色实底 +
+   白字 + 12px 字），但改为通栏；左右 8px 与下方 .panel-content 对齐，
+   顶部不额外留白（header 已有 12px 下内边距）。 */
+.task-index-panel .new-session-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin: 0 8px 8px;
+  height: var(--aw-btn-height);
+  padding: var(--aw-btn-padding);
+  border: none;
+  border-radius: var(--aw-radius-xs);
+  background: var(--aw-primary);
+  color: #fff;
+  font-size: var(--aw-text-fine);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.task-index-panel .new-session-btn:hover {
+  background: var(--aw-primary-focus);
+}
+
+.task-index-panel .new-session-btn .new-session-label {
+  line-height: 1.2;
+}
+
 .task-index-panel .panel-content {
   flex: 1;
   overflow-y: auto;
@@ -747,6 +778,11 @@
 .task-index-panel.actions-hidden .header-actions .refresh-btn {
   width: 20px;
   height: 20px;
+}
+
+/* 窄面板下新建会话宽按钮仍整条保留：文案自解释，140px 也放得下图标 + 两字 */
+.task-index-panel.actions-hidden .new-session-btn {
+  margin: 0 4px 8px;
 }
 
 /* --- 聚焦模式 --- */

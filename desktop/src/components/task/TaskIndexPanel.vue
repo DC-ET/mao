@@ -29,11 +29,16 @@
           <button class="refresh-btn" @click="refreshSessions" :disabled="loading || focusLoading">
             <el-icon :size="14" :class="{ 'is-loading': loading || focusLoading }"><Refresh /></el-icon>
           </button>
-          <button class="refresh-btn" @click="$emit('newTask')" title="新任务">
-            <el-icon :size="14"><Plus /></el-icon>
-          </button>
         </div>
       </div>
+
+      <!-- 新建会话入口（宽按钮）：原先只是头部一个「+」图标，目标小、窄面板下更难命中。
+           置于任务列表上方、多选操作条之外；点击逻辑与原「+」完全一致（emit newTask）。
+           文案自带图标，不再需要 title tooltip。 -->
+      <button class="new-session-btn" @click="$emit('newTask')">
+        <el-icon :size="14"><ChatLineRound /></el-icon>
+        <span class="new-session-label">新会话</span>
+      </button>
 
       <!-- 多选批量操作条：置于列表上方，长列表勾选后不必滚到底部才能归档。
            仍在滚动区之外（flex-shrink:0），不被 .resize-handle 影响。 -->
@@ -202,7 +207,7 @@
 
 <script setup lang="ts">
 import { computed, ref, reactive, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { Refresh, Plus, Bell, BellFilled, Check } from '@element-plus/icons-vue'
+import { Refresh, Bell, BellFilled, Check, ChatLineRound } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useSessionStore, ACTIVE_PHASES, type Session, type TaskPhase } from '../../stores/session'

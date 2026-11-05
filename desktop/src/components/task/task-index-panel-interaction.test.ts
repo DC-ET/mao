@@ -117,7 +117,7 @@ vi.mock('../../utils/sessionShare', () => ({ downloadSessionJsonl: vi.fn() }))
 import { createApp } from 'vue'
 import TaskIndexPanel from './TaskIndexPanel.vue'
 
-function mountPanel(listMode: 'standard' | 'focus' = 'standard') {
+function mountPanel(listMode: 'standard' | 'focus' = 'standard', handlers: Record<string, () => void> = {}) {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const app = createApp({
@@ -128,6 +128,7 @@ function mountPanel(listMode: 'standard' | 'focus' = 'standard') {
       onNewTask: () => {},
       'onUpdate:listMode': () => {},
       onNewTaskFromGroup: () => {},
+      ...handlers,
     } as any),
   })
   app.use(createPinia())
@@ -299,6 +300,53 @@ describe('TaskIndexPanel 多选批量归档交互', () => {
     expect(archiveItem).toBeTruthy()
     expect(archiveItem!.className).toContain('disabled')
     expect(archiveItem!.getAttribute('title')).toContain('多选模式')
+    app.unmount()
+  })
+})
+
+describe('TaskIndexPanel 新建会话入口', () => {
+  it('新建会话是列表上方的宽按钮：带头像式图标与「新会话」文案，头部不再有「+」图标', async () => {
+    store.sessions = [row('1'), row('2')]
+    const { host, app } = mountPanel()
+    await tick()
+
+    const btn = q(host, '.new-session-btn')!
+    expect(btn).toBeTruthy()
+    expect(btn.textContent).toContain('新会话')
+    // 图标与文案同在按钮内（不再靠 title tooltip 传达语义）；
+    // jsdom 未注册 element-plus 组件，el-icon 以未知元素渲染，故按标签名取
+    expect(btn.querySelector('.new-session-label')).toBeTruthy()
+    expect(btn.querySelector('el-icon')).toBeTruthy()
+
+    // 头部只剩模式切换 / 多选 / 刷新：原「+」新建图标已移除
+    const headerIcons = qa(host, '.header-actions button')
+    expect(headerIcons.length).toBe(3)
+    expect(headerIcons.some(b => b.title === '新任务')).toBe(false)
+
+    // 按钮必须排在滚动列表之前：任务再多也不必滚到底才能新建
+    const content = q(host, '.panel-content')!
+    expect(btn.compareDocumentPosition(content) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    app.unmount()
+  })
+
+  it('点击宽按钮仍走 newTask（与原先头部「+」同一事件）', async () => {
+    store.sessions = [row('1')]
+    const onNewTask = vi.fn()
+    const { host, app } = mountPanel('standard', { onNewTask })
+    await tick()
+    ;(q(host, '.new-session-btn') as HTMLElement).click()
+    await tick()
+    expect(onNewTask).toHaveBeenCalledTimes(1)
+    app.unmount()
+  })
+
+  it('聚焦模式同样提供新建会话入口', async () => {
+    const { host, app } = mountPanel('focus')
+    await tick()
+    const btn = q(host, '.new-session-btn')!
+    expect(btn).toBeTruthy()
+    const content = q(host, '.panel-content')!
+    expect(btn.compareDocumentPosition(content) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     app.unmount()
   })
 })
