@@ -1427,7 +1427,7 @@ export class AdminAnalyticsService {
   }
 
   /**
-   * 用户：窗口内活跃用户排行/明细，默认 Top 20，附带 llm_call 消耗与失败。
+   * 用户：窗口内活跃用户明细，默认 Top 20（按 Token 倒序排列与截断，同值按消息数），附带 llm_call 消耗与失败。
    * Token 取 llm_call.total_tokens（与调用/成本同源，0.0.440 起）——不取 message.token_count：
    * 群聊等「执行人 ≠ 会话归属人」场景下，会话归属人拿不到调用人的 Token、反之亦然。
    */
@@ -1475,7 +1475,7 @@ export class AdminAnalyticsService {
         cost: callCosts.get(uid) ?? 0,
       });
     }
-    rows.sort(byNumberDesc('messageCount', 'totalTokens'));
+    rows.sort(byNumberDesc('totalTokens', 'messageCount'));
     return rows.slice(0, clampLimit(limit));
   }
 

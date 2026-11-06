@@ -35,7 +35,7 @@
         <div class="card-header">
           <span>用户用量明细</span>
           <div class="header-actions">
-            <span class="card-hint">按窗口内消息数截断的 Top {{ userRows.length }}</span>
+            <span class="card-hint">按 Token 倒序截断的 Top {{ userRows.length }}</span>
             <el-button :disabled="userRows.length === 0" @click="exportRows">导出 CSV</el-button>
           </div>
         </div>

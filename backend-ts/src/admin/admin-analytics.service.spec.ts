@@ -183,6 +183,25 @@ describe('AdminAnalyticsService', () => {
     expect(result.userActivity[0]).toMatchObject({ username: 'ada', sessionCount: 3, messageCount: 7, totalTokens: 1200 });
   });
 
+  it('userActivitySortsByTokensDesc', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const store = buildStore();
+    // 消息多但 Token 少 vs 消息少但 Token 多：明细按 Token 倒序，不被消息数主导
+    store.selectMessageStatsByUser = vi.fn(async () => [
+      { id: 1, messageCount: 100, totalTokens: 700 },
+      { id: 2, messageCount: 1, totalTokens: 9000 },
+    ]);
+    store.selectLlmCallStatsByUser = vi.fn(async () => [
+      { id: 1, callCount: 60, failCount: 0, callTokens: 700 },
+      { id: 2, callCount: 3, failCount: 0, callTokens: 9000 },
+    ]);
+    const service = new AdminAnalyticsService(statistics as never, store as never);
+
+    const result = (await service.usersScope(7)) as Record<string, any>;
+
+    expect(result.userActivity.map((row: any) => row.userId)).toEqual([2, 1]);
+  });
+
   it('summaryClampsDaysWindow', async () => {
     const statistics = { getOverview: vi.fn(async () => ({})) };
     const store = buildStore();
