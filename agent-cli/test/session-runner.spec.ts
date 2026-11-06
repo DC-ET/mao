@@ -405,9 +405,9 @@ describe('createAndAttach 来源自报（技术方案 2026-11-03 D11）', () => 
   });
 
   it('chat.ts 建会话请求字面量携带 source: cli（源码级 tripwire）', () => {
-    // resolveTargetSession 未导出、深埋 cmdChat 流程，用字面量断言防漏改：
+    // 建会话请求深埋 cmdChat 流程，用字面量断言防漏改：
     // 该处变化时本用例失败，提醒重新确认来源落位。
     const chatTs = readFileSync(path.join(__dirname, '..', 'src', 'commands', 'chat.ts'), 'utf8');
-    expect(chatTs).toMatch(/const req: CreateSessionRequest = \{[^}]*source: 'cli',/);
+    expect(chatTs).toMatch(/const request: CreateSessionRequest = \{[^}]*source: 'cli',/);
   });
 });

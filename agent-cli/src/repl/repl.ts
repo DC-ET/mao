@@ -14,6 +14,12 @@ export interface ReplOptions {
   modelId?: number;
   resolveModel: (spec: string) => Promise<number>;
   onExit: () => Promise<void>;
+  /**
+   * 延迟创建的新会话：每条消息执行前调用（幂等）。
+   * currentModelId 为当前生效模型（`/model` 可能已切换），创建时据此写库。
+   * 恢复既有会话/打印模式不传——此时会话在进入 REPL 前已就绪。
+   */
+  ensureSession?: (currentModelId?: number) => Promise<void>;
   firstPrompt?: string;
   queuedInput?: boolean;
   onInputReady?: () => void;
@@ -87,6 +93,7 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
     opts.renderer.noteUser(text);
     opts.renderer.startRound();
     try {
+      await opts.ensureSession?.(opts.modelId);
       await opts.runner.runPrompt(text, opts.modelId);
     } catch (err) {
       print(err instanceof Error ? err.message : String(err), 'err');
@@ -280,6 +287,10 @@ export async function handleSlash(
     }
     case 'session': {
       const s = opts.runner.getSession();
+      if (!s) {
+        io.print('尚未创建会话：发送第一条消息时创建。\n换会话: mao-agent resume | mao-agent ls');
+        return;
+      }
       io.print(
         `sessionId=${s?.id ?? '-'}  agent=${s?.agentName ?? s?.agentId ?? '-'}  model=${s?.modelName ?? s?.modelId ?? '-'}` +
           `  workspace=${s?.workspace ?? '-'}  phase=${s?.phase ?? '-'}\n` +
@@ -290,7 +301,9 @@ export async function handleSlash(
     case 'model': {
       if (!arg) {
         const s = opts.runner.getSession();
-        io.print(`当前模型: ${s?.modelName ?? s?.modelId ?? '-'}`);
+        // 延迟创建的新会话：第二条消息前尚无服务端会话，回退到已选择的模型。
+        const current = s?.modelName ?? s?.modelId ?? (opts.modelId != null ? `id=${opts.modelId}` : '-');
+        io.print(`当前模型: ${current}`);
         return;
       }
       try {

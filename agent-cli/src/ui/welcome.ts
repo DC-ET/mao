@@ -5,7 +5,8 @@ export function formatSessionBanner(
   session: SessionVO,
   opts: { resumed?: boolean; now?: number } = {},
 ): string {
-  const id = session.id != null ? `#${session.id}` : '';
+  // 延迟创建的新会话（第一条消息前）没有 id：显示「新会话」占位，不误导成已落库会话。
+  const id = session.id != null ? `#${session.id}` : '新会话';
   const agent = session.agentName || session.agentId || 'Agent';
   const model = session.modelName || session.modelId || 'model';
   const mode = session.executionMode || 'CLOUD';

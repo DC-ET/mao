@@ -60,8 +60,10 @@ class TraceRenderer implements Renderer {
 
 export async function cmdChat(ctx: ChatContext): Promise<number> {
   const { rest, cfg, resolved, baseUrl, logger } = ctx;
-  const session = await resolveTargetSession(ctx);
-  rememberLastSession(session.id!);
+  // 交互 REPL 的新建会话延迟到第一条消息再落库：只打开看看/直接退出不应留下空白会话。
+  const target = await resolveSessionTarget(ctx, { deferCreate: !cfg.print });
+  const session: SessionVO = target.kind === 'existing' ? target.session : target.draft;
+  if (target.kind === 'existing') rememberLastSession(session.id!);
 
   const modelId = await resolveModelId(rest, cfg.model, resolved.defaultModelId);
   let contextWindowTokens = resolveContextWindowTokens(session, undefined, modelId);
@@ -73,6 +75,11 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
     modelNames = [...new Set(models.map((m) => (m.name ?? '').trim()).filter((n) => n !== ''))];
     if (!(session.contextWindowTokens != null && session.contextWindowTokens > 0)) {
       contextWindowTokens = resolveContextWindowTokens(session, models, modelId);
+    }
+    // 延迟创建的草稿只有 modelId：补上显示名，banner / 状态栏与真实会话一致。
+    if (session.modelName == null && session.modelId != null) {
+      const found = models.find((m) => Number(m.id) === Number(session.modelId));
+      if (found?.name) session.modelName = found.name;
     }
   } catch {
     // 沿用默认窗口；Tab 补全没有模型名
@@ -219,10 +226,12 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
       tuiHandleHolder.handle = inkRenderer.mount();
     }
 
-    await runner.attach(session);
+    // 已有会话（resume/continue）与打印模式：立即挂载；新建的交互会话延迟到第一条消息（ensureSession）。
+    let attached = target.kind === 'existing';
+    if (attached) await runner.attach(session);
 
     let historyLines: string[] = [];
-    if (!cfg.print && (cfg.replayFull || resumed)) {
+    if (attached && !cfg.print && (cfg.replayFull || resumed)) {
       historyLines = await loadHistory(rest, session.id!, cfg.replayFull);
     }
     inkRenderer?.seedChrome(historyLines);
@@ -243,6 +252,25 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
     }
 
     const tuiHandle = tuiHandleHolder.handle!;
+
+    /**
+     * 延迟创建（新建的交互会话）：第一条消息前落库并 attach。
+     * 创建成功但 attach 失败时下一条消息复用同一会话重试，不会重复建会话。
+     */
+    let createdSession: SessionVO | undefined;
+    const ensureSession = async (currentModelId?: number): Promise<void> => {
+      if (attached || target.kind !== 'new') return;
+      if (!createdSession) {
+        // `/model` 可能在第一条消息前切换过模型：创建时以当前生效模型为准。
+        createdSession = await rest.createSession(
+          currentModelId != null ? { ...target.request, modelId: currentModelId } : target.request,
+        );
+        rememberLastSession(createdSession.id!);
+      }
+      await runner.attach(createdSession);
+      attached = true;
+      inkRenderer?.announce(`已创建会话 #${createdSession.id}`);
+    };
 
     await runRepl({
       runner,
@@ -267,6 +295,7 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
       onExit: async () => {
         await runner.shutdown();
       },
+      ensureSession,
       firstPrompt: cfg.prompt || undefined,
       queuedInput: resolved.ui.queuedInput,
     });
@@ -281,21 +310,29 @@ export async function cmdResume(ctx: ChatContext): Promise<number> {
   return cmdChat(ctx);
 }
 
-async function resolveTargetSession(ctx: ChatContext): Promise<SessionVO> {
+/** 打开 REPL 时的目标会话：已有会话，或「延迟创建」的草稿（第一条消息前才落库）。 */
+export type SessionTarget =
+  | { kind: 'existing'; session: SessionVO }
+  | { kind: 'new'; draft: SessionVO; request: CreateSessionRequest };
+
+export async function resolveSessionTarget(
+  ctx: ChatContext,
+  opts: { deferCreate: boolean },
+): Promise<SessionTarget> {
   const { rest, cfg, resolved } = ctx;
   if (cfg.resumeSessionId && cfg.resumeSessionId !== 'latest') {
-    return rest.getSession(cfg.resumeSessionId);
+    return { kind: 'existing', session: await rest.getSession(cfg.resumeSessionId) };
   }
   if (cfg.resumeSessionId === 'latest' || cfg.command === 'resume') {
     const list = await rest.listSessions({ status: 'ACTIVE' });
     const latest = pickLatestSession(list);
     if (!latest) throw new CliError('没有可恢复的会话。直接运行 mao-agent 新建一个。');
-    return latest;
+    return { kind: 'existing', session: latest };
   }
   if (cfg.continueLast) {
     if (resolved.lastSessionId) {
       try {
-        return await rest.getSession(resolved.lastSessionId);
+        return { kind: 'existing', session: await rest.getSession(resolved.lastSessionId) };
       } catch {
         // fall through
       }
@@ -303,40 +340,51 @@ async function resolveTargetSession(ctx: ChatContext): Promise<SessionVO> {
     const list = await rest.listSessions({ status: 'ACTIVE' });
     const latest = pickLatestSession(list);
     if (!latest) throw new CliError('没有可继续的会话。直接运行 mao-agent 新建一个。');
-    return latest;
+    return { kind: 'existing', session: latest };
   }
 
   const agent = await resolveAgent(rest, cfg.agent, resolved.defaultAgentId);
   const modelId = await resolveModelId(rest, cfg.model, resolved.defaultModelId);
   const local = cfg.local;
   const workspace = local ? path.resolve(cfg.workspace || process.cwd()) : cfg.workspace;
-  const req: CreateSessionRequest = {
+  const request: CreateSessionRequest = {
     agentId: agent.id,
     executionMode: local ? 'LOCAL' : 'CLOUD',
     permissionLevel: cfg.permissionLevel || resolved.permissionLevel,
     // 终端 CLI 固定自报来源 'cli'：admin「来源」列可筛出 CLI 会话（技术方案 D11）。
     source: 'cli',
   };
-  if (modelId != null) req.modelId = modelId;
-  if (workspace) req.workspace = workspace;
-  if (!local && cfg.cloudProject) req.cloudProjectKey = cfg.cloudProject;
+  if (modelId != null) request.modelId = modelId;
+  if (workspace) request.workspace = workspace;
+  if (!local && cfg.cloudProject) request.cloudProjectKey = cfg.cloudProject;
   if (!local && cfg.gitClone) {
-    req.workspaceMode = 'git';
-    req.gitCloneUrl = cfg.gitClone;
-    if (cfg.gitBranch) req.gitBranch = cfg.gitBranch;
+    request.workspaceMode = 'git';
+    request.gitCloneUrl = cfg.gitClone;
+    if (cfg.gitBranch) request.gitBranch = cfg.gitBranch;
   }
   if (local) {
-    req.platform = process.platform;
-    req.shell = detectShell();
-    req.osVersion = buildOsVersion();
-    req.isGit = isGitWorkspace(workspace);
+    request.platform = process.platform;
+    request.shell = detectShell();
+    request.osVersion = buildOsVersion();
+    request.isGit = isGitWorkspace(workspace);
     // LOCAL 创建即绑定本机执行端（技术方案 2026-11-05 D5）：CLI 进程与 WS 连接同源设备。
     const device = resolveDeviceIdentity();
-    req.targetDeviceId = device.id;
-    req.targetDeviceName = device.name;
+    request.targetDeviceId = device.id;
+    request.targetDeviceName = device.name;
   }
-  const session = await rest.createSession(req);
-  return session;
+  if (opts.deferCreate) {
+    // 交互新建：先给草稿（banner / 状态栏据此展示），第一条消息前才真正落库。
+    const draft: SessionVO = {
+      agentId: agent.id,
+      agentName: agent.name,
+      modelId: modelId ?? undefined,
+      executionMode: request.executionMode,
+      workspace: request.workspace ?? null,
+      permissionLevel: request.permissionLevel,
+    };
+    return { kind: 'new', draft, request };
+  }
+  return { kind: 'existing', session: await rest.createSession(request) };
 }
 
 async function ensureWorkspaceTrusted(workspace: string, canPrompt: boolean): Promise<void> {
