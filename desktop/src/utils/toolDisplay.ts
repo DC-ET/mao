@@ -155,6 +155,11 @@ export function getToolInputPreview(name: string, input?: Record<string, unknown
   if (typeof cmd === 'string') {
     return cmd.slice(0, 60) + (cmd.length > 60 ? '...' : '')
   }
+  // shell 复用会话时 write_stdin 的正文在 input 而不是 command（多端审批卡片摘要用）
+  if (name === 'shell' && input.action === 'write_stdin' && typeof input.input === 'string') {
+    const text = input.input
+    return text.length > 60 ? text.slice(0, 60) + '...' : text
+  }
   const pattern = input.pattern
   if (typeof pattern === 'string') {
     const searchPath = input.path

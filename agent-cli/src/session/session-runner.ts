@@ -23,6 +23,8 @@ export interface SessionRunnerOptions {
   sleep?: (ms: number) => Promise<void>;
   localExecutor?: LocalExecutor;
   localExtras?: () => { localSkills?: unknown[]; agentsMdContent?: string };
+  /** 多端审批：服务端 connected 帧声明的 approvalRelay 能力（每次连接重新判定）。 */
+  onApprovalRelaySupported?: (supported: boolean) => void;
 }
 
 const QUESTION_FAIL_WAIT_MS = 2000;
@@ -44,6 +46,8 @@ export class SessionRunner {
   private lastContext: { estimated?: number; actual?: number } = {};
   private startedAt = 0;
   private terminal: { phase: string } | null = null;
+  /** 本轮结束时已通知 TUI 关闭审批模态（每轮只发一次）。 */
+  private approvalAbortedEmitted = false;
   private waiters: Array<() => void> = [];
   private asked = new Set<string>();
   private unsub: (() => void) | null = null;
@@ -275,6 +279,7 @@ export class SessionRunner {
     this.toolCalls.clear();
     this.fileChanges = [];
     this.terminal = null;
+    this.approvalAbortedEmitted = false;
     this.cancelledByUserFlag = false;
     this.questionFailedFlag = false;
     this.approvalFailedFlag = false;
@@ -353,7 +358,12 @@ export class SessionRunner {
   }
 
   private handleWs(evt: WsEvent): void {
-    if (evt.type === 'connected' || evt.type === 'pong') return;
+    if (evt.type === 'connected') {
+      // 多端审批能力位：只看本次连接（旧后端不带 → false → 投票后立即本地放行）
+      this.opts.onApprovalRelaySupported?.(evt.data?.approvalRelay === true);
+      return;
+    }
+    if (evt.type === 'pong') return;
     if (evt.sessionId == null && evt.type !== 'error') return;
 
     // 该事件是服务端对我们 send_message 的拒绝回执，收件人就是发送方本人，
@@ -374,7 +384,12 @@ export class SessionRunner {
 
     if (!acceptEvent(evt, this.sessionId, this.executionId)) return;
 
-    if (evt.type === 'tool_execute' || evt.type === 'skill_sync_required' || evt.type === 'mcp_sync_required') {
+    if (
+      evt.type === 'tool_execute'
+      || evt.type === 'skill_sync_required'
+      || evt.type === 'mcp_sync_required'
+      || evt.type === 'tool_approval_resolved'
+    ) {
       void this.opts.localExecutor?.handleEvent(evt);
       return;
     }
@@ -651,6 +666,11 @@ export class SessionRunner {
   private flushWaiters(): void {
     const list = this.waiters.splice(0);
     for (const w of list) w();
+    // 本轮已结束：审批模态不能继续挂着（多端审批 §4.5-7）；只在终态时发一次
+    if (this.terminal != null && !this.approvalAbortedEmitted) {
+      this.approvalAbortedEmitted = true;
+      this.emit({ type: 'approval_aborted' });
+    }
   }
 
   private waitForSnapshot(timeoutMs: number): Promise<void> {

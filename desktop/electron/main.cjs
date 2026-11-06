@@ -49,6 +49,15 @@ let currentWorkspace = ''
 /** @type {Map<string, (approved: boolean) => void>} */
 const pendingApprovals = new Map()
 /**
+ * 多端审批（技术方案 2026-11-06）：决策可能早于本地弹卡到达（手机先点 / 本机还没走到
+ * requestToolApproval）。命中即直接放行、不再弹一张只能撤掉的卡。
+ * TTL / 上限只为兜住无人认领的迟到决策。
+ */
+const EARLY_APPROVAL_TTL_MS = 10 * 60 * 1000
+const EARLY_APPROVAL_LIMIT = 100
+/** @type {Map<string, { approved: boolean, at: number }>} */
+const earlyApprovalDecisions = new Map()
+/**
  * 待派发的通知点击深链：点击时刻渲染层监听可能尚未注册（应用刚启动、
  * 页面加载中、窗口重建），立即 send 会丢。这里总是留一份，由渲染层桥接
  * 就绪后主动拉取（consume），收到后回执（ack）清除，防止页面重载后
@@ -720,6 +729,14 @@ function requestToolApproval(toolName, description, sessionId, dangerReason, bac
   return new Promise((resolve) => {
     const requestId = backendRequestId || `approval_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
 
+    // 决策已先行到达（多端审批的早到窗口）：直接按它放行，不弹本地卡
+    const early = earlyApprovalDecisions.get(requestId)
+    if (early) {
+      earlyApprovalDecisions.delete(requestId)
+      resolve(!!early.approved)
+      return
+    }
+
     pendingApprovals.set(requestId, (approved) => {
       pendingApprovals.delete(requestId)
       resolve(approved)
@@ -739,13 +756,34 @@ async function ensureShellApproval(needApproval, description, sessionId, dangerR
   return requestToolApproval('shell', description, sessionId, dangerReason, backendRequestId, approvalHint)
 }
 
-ipcMain.handle('tool-approval-response', (event, { requestId, approved }) => {
+function pruneEarlyApprovalDecisions(now = Date.now()) {
+  for (const [requestId, entry] of earlyApprovalDecisions) {
+    if (now - entry.at > EARLY_APPROVAL_TTL_MS) earlyApprovalDecisions.delete(requestId)
+  }
+  while (earlyApprovalDecisions.size > EARLY_APPROVAL_LIMIT) {
+    const oldest = earlyApprovalDecisions.keys().next()
+    if (oldest.done) break
+    earlyApprovalDecisions.delete(oldest.value)
+  }
+}
+
+/**
+ * 多端审批的唯一解锁入口（技术方案 2026-11-06 §4.5-10）：
+ * 本地 IPC 卡点击、远端 resolved 回声、切会话清理都走这里。
+ * 有 pending 就直接 resolve；没有就写入早到缓冲（不读 locallyReleased，那个由渲染层决定）。
+ */
+ipcMain.handle('tool-approval-remote-response', (event, payload = {}) => {
+  const requestId = payload?.requestId
+  if (!requestId) return false
   const resolve = pendingApprovals.get(requestId)
   if (resolve) {
     pendingApprovals.delete(requestId)
-    resolve(!!approved)
+    resolve(!!payload.approved)
+    return true
   }
-  // alwaysAllow 由渲染层直接走 WS tool_approval 帧回服务端，主进程无需处理
+  earlyApprovalDecisions.set(requestId, { approved: !!payload.approved, at: Date.now() })
+  pruneEarlyApprovalDecisions()
+  return false
 })
 
 // ========== Multi-server baseUrl config ==========

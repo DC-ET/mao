@@ -20,6 +20,9 @@
           <div class="card-row">
             <el-icon class="card-icon" :size="12"><WarningFilled /></el-icon>
             <span class="card-label">{{ titleMap[item.toolName] || '操作待审批' }}</span>
+            <span v-if="item.deviceName" class="card-device" :title="`在 ${item.deviceName} 上执行`">
+              在 {{ item.deviceName }} 上执行
+            </span>
             <span v-if="items.length > 1" class="card-badge">{{ items.length }}</span>
           </div>
           <div class="command-line" :class="{ expanded: expandedSet.has(item.requestId) }">
@@ -83,6 +86,8 @@ export interface ApprovalItem {
   dangerReason?: string
   /** 服务端生成的「总是允许」hint；缺省 = 不可规则化（denylist 命中等），只有两按钮 */
   approvalHint?: ApprovalHint
+  /** 远端卡片展示「在 xxx 上执行」；执行端本地卡没有 */
+  deviceName?: string
 }
 
 const threshold = 120
@@ -218,6 +223,16 @@ async function copyText(text: string) {
   font-weight: 600;
   color: var(--aw-ink);
   flex: 1;
+}
+
+.card-device {
+  flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--aw-text-secondary, #8e8e93);
 }
 
 .card-badge {

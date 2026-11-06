@@ -733,3 +733,86 @@ describe('useStreamWS error 帧（执行中失败）保留部分回复', () => {
     expect(msgs.filter(m => m.role === 'assistant')).toHaveLength(1)
   })
 })
+
+describe('useStreamWS 多端审批（技术方案 2026-11-06）', () => {
+  it('connected 帧按连接记录 approvalRelay 能力位（旧后端为 false）', async () => {
+    const { useStreamWS } = (await import('./useStreamWS')) as any
+    const approvalQueue = await import('./approvalQueue')
+    approvalQueue.resetApprovalQueueForTest()
+
+    sockets.length = 0
+    const pending = useStreamWS().connect()
+    sockets[0].autoAck = false
+    sockets[0].open()
+    sockets[0].message({ type: 'connected', data: { userId: 7, approvalRelay: true } })
+    await pending
+    expect(approvalQueue.isApprovalRelaySupported()).toBe(true)
+  })
+
+  it('广播卡入场 / resolved 撤卡并按回声解锁主进程', async () => {
+    const { useStreamWS } = (await import('./useStreamWS')) as any
+    const approvalQueue = await import('./approvalQueue')
+    approvalQueue.resetApprovalQueueForTest()
+
+    const pending = useStreamWS().connect()
+    sockets[0].open()
+    await pending
+    // 旧后端：connected 帧不带 approvalRelay
+    expect(approvalQueue.isApprovalRelaySupported()).toBe(false)
+
+    const respondToolApprovalRemote = vi.fn(async () => true)
+    ;(window as any).electronAPI = { respondToolApprovalRemote }
+    try {
+      sockets[0].message({
+        type: 'tool_approval_request',
+        sessionId: 11,
+        data: {
+          requestId: 'req-a',
+          toolName: 'shell',
+          arguments: '{"command":"ls -la"}',
+          workspace: '/w',
+          deviceName: 'MacBook',
+        },
+      })
+      const items = approvalQueue.getPendingApprovals()
+      expect(items.map((item: any) => item.requestId)).toEqual(['req-a'])
+      expect(items[0].description).toContain('ls -la')
+      expect(items[0].deviceName).toBe('MacBook')
+
+      sockets[0].message({
+        type: 'tool_approval_resolved',
+        sessionId: 11,
+        data: { requestId: 'req-a', approved: true },
+      })
+      expect(approvalQueue.getPendingApprovals()).toHaveLength(0)
+      expect(respondToolApprovalRemote).toHaveBeenCalledWith('req-a', true, false)
+    } finally {
+      delete (window as any).electronAPI
+    }
+  })
+
+  it('参数被截断时展示截断原文并注明已截断', async () => {
+    const { useStreamWS } = (await import('./useStreamWS')) as any
+    const approvalQueue = await import('./approvalQueue')
+    approvalQueue.resetApprovalQueueForTest()
+
+    const pending = useStreamWS().connect()
+    sockets[0].open()
+    await pending
+
+    sockets[0].message({
+      type: 'tool_approval_request',
+      sessionId: 12,
+      data: {
+        requestId: 'req-trunc',
+        toolName: 'write_file',
+        arguments: '{"path":"a.txt","content":"xxx',
+        argumentsTruncated: true,
+        workspace: '/w',
+      },
+    })
+    const [item] = approvalQueue.getPendingApprovals()
+    expect(item.description).toContain('xxx')
+    expect(item.description).toContain('已截断')
+  })
+})

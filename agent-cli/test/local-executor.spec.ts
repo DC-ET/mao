@@ -9,7 +9,7 @@ import { persistToolResult } from '../src/local/truncate';
 import { handleEditFile, handleReadFile, handleWriteFile } from '../src/local/tools/files';
 import { handleGlobSearch, handleGrepSearch } from '../src/local/tools/search';
 import { parseMcpToolName } from '../src/local/tools/mcp';
-import { LocalExecutor } from '../src/local/executor';
+import { APPROVAL_ECHO_RETRY_MS, LocalExecutor } from '../src/local/executor';
 import type { WsClient } from '../src/ws/ws-client';
 
 const policy = (over: Partial<ApprovalPolicy> = {}): ApprovalPolicy => ({
@@ -446,5 +446,122 @@ describe('LocalExecutor', () => {
     });
     expect(p.approveRules).toEqual([]);
     expect(p.alwaysAllow).toEqual([{ toolName: 'read_file', description: 'nope-not-there.txt' }]);
+  });
+});
+
+describe('多端审批：投票、回声与回退（技术方案 2026-11-06）', () => {
+  const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  function makeExec(opts: {
+    relay: boolean;
+    sent: object[];
+    delivered: Array<[string, string]>;
+    choice?: 'allow' | 'deny' | 'always';
+    askApproval?: () => Promise<'allow' | 'deny' | 'always'>;
+  }) {
+    vi.spyOn(trust, 'isWorkspaceTrusted').mockReturnValue(true);
+    const exec = new LocalExecutor({
+      ws: {
+        sendReliable: async (payload: object) => {
+          opts.sent.push(payload);
+          return true;
+        },
+      } as unknown as WsClient,
+      getToken: async () => null,
+      baseUrl: 'https://mao.etarch.cn/api',
+      workspace: os.tmpdir(),
+      policy: policy({ onApproval: 'ask', stdoutIsTty: true, stdinIsTty: true }),
+      askApproval: opts.askApproval ?? (async () => opts.choice ?? 'allow'),
+      deliverApproval: (requestId, choice) => {
+        opts.delivered.push([requestId, choice]);
+      },
+    });
+    exec.setApprovalRelaySupported(opts.relay);
+    return exec;
+  }
+
+  const toolExecute = (requestId: string) => ({
+    type: 'tool_execute',
+    sessionId: 21,
+    data: {
+      requestId,
+      toolName: 'read_file',
+      arguments: JSON.stringify({ path: 'missing-file.txt' }),
+      workspace: os.tmpdir(),
+      needApproval: true,
+    },
+  });
+
+  it('旧后端（未声明 approvalRelay）：投票后立即按本地选择放行', async () => {
+    const sent: object[] = [];
+    const delivered: Array<[string, string]> = [];
+    const exec = makeExec({ relay: false, sent, delivered });
+    await exec.handleEvent(toolExecute('req-legacy'));
+    expect(delivered).toEqual([['req-legacy', 'allow']]);
+    const vote = sent.find((m) => (m as { type?: string }).type === 'tool_approval') as { approved?: boolean };
+    expect(vote.approved).toBe(true);
+  });
+
+  it('支持中继：等回声才放行，回声与本地按键相反时以回声为准', async () => {
+    const sent: object[] = [];
+    const delivered: Array<[string, string]> = [];
+    const exec = makeExec({ relay: true, sent, delivered, choice: 'allow' });
+    const running = exec.handleEvent(toolExecute('req-echo'));
+    await delay(20);
+    expect(delivered).toEqual([]); // 未收到回声前不放行
+    await exec.handleEvent({
+      type: 'tool_approval_resolved',
+      sessionId: 21,
+      data: { requestId: 'req-echo', approved: false },
+    });
+    await running;
+    expect(delivered).toEqual([['req-echo', 'deny']]);
+    expect(sent.filter((m) => (m as { type?: string }).type === 'tool_error')).toHaveLength(1);
+  });
+
+  it('回声先到：不再本地提问，直接按远端决策执行', async () => {
+    const sent: object[] = [];
+    const delivered: Array<[string, string]> = [];
+    const askApproval = vi.fn(async () => 'deny' as const);
+    const exec = makeExec({ relay: true, sent, delivered, askApproval });
+    await exec.handleEvent({
+      type: 'tool_approval_resolved',
+      sessionId: 21,
+      data: { requestId: 'req-early', approved: true },
+    });
+    await exec.handleEvent(toolExecute('req-early'));
+    expect(askApproval).not.toHaveBeenCalled();
+    expect(sent.filter((m) => (m as { type?: string }).type === 'tool_result')).toHaveLength(1);
+  });
+
+  it('重连补发：connected 能力位到达后立即重发未闭合的投票，回声到达即收敛', async () => {
+    vi.useFakeTimers();
+    try {
+      const sent: object[] = [];
+      const delivered: Array<[string, string]> = [];
+      const exec = makeExec({ relay: true, sent, delivered, choice: 'allow' });
+      const running = exec.handleEvent(toolExecute('req-reconnect'));
+      await vi.advanceTimersByTimeAsync(20);
+      const votes = () => sent.filter((m) => (m as { type?: string }).type === 'tool_approval');
+      expect(votes()).toHaveLength(1);
+      // 5s × 2 两次自动重发用尽后不再重发
+      await vi.advanceTimersByTimeAsync(APPROVAL_ECHO_RETRY_MS * 2 + 100);
+      expect(votes()).toHaveLength(3);
+      // 重连成功（connected 帧 → setApprovalRelaySupported(true)）必须立即补发一次
+      exec.setApprovalRelaySupported(true);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(votes()).toHaveLength(4);
+      // 服务端按近期结果补发回声 → 等待者收敛并按投票结果继续
+      await exec.handleEvent({
+        type: 'tool_approval_resolved',
+        sessionId: 21,
+        data: { requestId: 'req-reconnect', approved: true },
+      });
+      await vi.advanceTimersByTimeAsync(10);
+      await running;
+      expect(delivered).toEqual([['req-reconnect', 'allow']]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

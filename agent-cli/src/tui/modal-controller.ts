@@ -208,6 +208,8 @@ export interface ApprovalViewState {
   /** 危险操作需要二次确认；此时展示待确认的选择。 */
   confirming: ApprovalChoice | null;
   dangerous: boolean;
+  /** 本地按键已提交、等待服务端确认（多端审批），此时忽略按键。 */
+  submitted: boolean;
 }
 
 /**
@@ -216,6 +218,7 @@ export interface ApprovalViewState {
  */
 export class ApprovalController {
   private confirming: ApprovalChoice | null = null;
+  private submittedFlag = false;
 
   constructor(
     readonly request: ApprovalRequest,
@@ -234,10 +237,18 @@ export class ApprovalController {
       reason: this.reason,
       confirming: this.confirming,
       dangerous: this.dangerous,
+      submitted: this.submittedFlag,
     };
   }
 
+  /** 本地选择已交给上层去上行（多端审批）：冻结键盘，等 deliverApproval 收尾。 */
+  markSubmitted(): void {
+    this.submittedFlag = true;
+    this.confirming = null;
+  }
+
   handleKey(ev: KeyEvent): void {
+    if (this.submittedFlag) return;
     if (ev.kind === 'ctrl' && ev.letter === 'c') {
       this.onDone('deny');
       return;

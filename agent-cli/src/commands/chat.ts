@@ -152,6 +152,10 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
           }
         : undefined,
       onApprovalDenied: () => runnerHolder.current?.markApprovalDenied(),
+      // 多端审批：本地按键后由 TUI 交出选择，executor 负责上行投票并等回声；收尾关模态也走这里
+      deliverApproval: (requestId, choice) => {
+        tuiHolder.ink?.deliverApproval(requestId, choice);
+      },
     });
   }
 
@@ -178,6 +182,10 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
     maxDurationSec: cfg.maxDurationSec,
     includeToolIo: cfg.includeToolIo,
     localExecutor,
+    // 多端审批能力位：只跟本次连接（旧后端不带 approvalRelay → false，投票后立即本地放行）
+    onApprovalRelaySupported: (supported) => {
+      localExecutor?.setApprovalRelaySupported(supported);
+    },
     localExtras: localMode
       ? () => ({
           localSkills: collectLocalUnsyncedSkills(),
@@ -220,6 +228,10 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
         modelNames,
       });
       tuiHolder.ink = inkRenderer;
+      // 多端审批：审批模态的本地按键交给 executor 去上行投票（模态保持在「已提交」状态）
+      inkRenderer.setApprovalSubmitHandler((requestId, choice) => {
+        void localExecutor?.submitApprovalVote(requestId, choice);
+      });
       // SessionRunner 事件 → MultiRenderer（TraceRenderer + inkRenderer），
       // 保证 --trace-file 在交互模式仍记录完整执行事件，同时 Ink 正常渲染。
       runner.setRenderer(new MultiRenderer([...renderers, inkRenderer]));

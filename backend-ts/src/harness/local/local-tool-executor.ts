@@ -64,7 +64,15 @@ export class LocalToolExecutor {
         // hint 随签存入 registry（V135）：alwaysAllow 回包时按 requestId 取回服务端自己生成的 hint；
         // 本 finally 与 handleToolApproval 双 unregister 都会清 hint，保证恰好一次消费
         await Promise.resolve(this.approvalRegistry.register(
-          sessionId, pending.requestId, ...(approvalHint ? [approvalHint] : []),
+          sessionId,
+          pending.requestId,
+          approvalHint ?? null,
+          {
+            toolName,
+            arguments: argumentsJson ?? '{}',
+            workspace: workspace ?? '',
+            dangerReason: dangerReason ?? null,
+          },
         ));
         await Promise.resolve(this.treeSignalPublisher.publishForSession(sessionId));
         // 站内收件箱：审批待办（userId 由 InboxService 内部按 session 兜底解析，

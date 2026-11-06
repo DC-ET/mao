@@ -18,6 +18,20 @@ import { syncSkills } from './skills';
 
 export type ApprovalChoice = 'allow' | 'deny' | 'always';
 
+/** 投票后等回声：5s 未到且连接在线则重发同一帧，最多 2 次（技术方案 2026-11-06 §4.5-6）。 */
+export const APPROVAL_ECHO_RETRY_MS = 5000;
+export const APPROVAL_ECHO_MAX_RETRIES = 2;
+/** 已完成决策的 requestId 记录上限（shell 复用一个 requestId，跨请求淘汰即可）。 */
+const APPROVAL_DECIDED_LIMIT = 200;
+
+/** 等回声的投票；重连成功后要按这份上下文把同一帧再补发一次。 */
+interface ApprovalEchoWaiter {
+  sessionId: number;
+  approved: boolean;
+  alwaysAllow: boolean;
+  resolve: (choice: ApprovalChoice) => void;
+}
+
 export interface LocalExecutorOptions {
   ws: WsClient;
   getToken: () => Promise<string | null>;
@@ -26,6 +40,11 @@ export interface LocalExecutorOptions {
   policy: ApprovalPolicy;
   askApproval?: (req: ApprovalRequest, reason: string) => Promise<ApprovalChoice>;
   onApprovalDenied?: () => void;
+  /**
+   * 多端审批：本地选择确定后的收尾（关模态 + 让 requestApproval 解挂）。
+   * chat.ts 里接到 Ink 的 deliverApproval；无 Ink（readline / 打印模式）时省略即可。
+   */
+  deliverApproval?: (requestId: string, choice: ApprovalChoice) => void;
 }
 
 class ArgumentsParseError extends Error {}
@@ -77,8 +96,28 @@ export class LocalExecutor {
   private shell: LocalShellRuntime | null = null;
   private readonly mcp = new McpManager();
   private closed = false;
+  /** 服务端 connected 帧声明的审批中继能力；旧后端 / 未连接为 false（投票后立即本地放行）。 */
+  private approvalRelaySupported = false;
+  /** requestId → sessionId：按键后的投票要用（onToolExecute 期间登记）。 */
+  private readonly approvalSessions = new Map<string, number>();
+  /** requestId → resolved 回声的收尾函数（等回声期间）。 */
+  private readonly approvalEchoWaiters = new Map<string, ApprovalEchoWaiter>();
+  /** requestId → 回声重发定时器。 */
+  private readonly approvalResendTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** 已完成多端决策（含远端直接决策）的 requestId：shell 后续动作只在本地判定，不再投票。 */
+  private readonly approvalDecided = new Set<string>();
+  /** 回声先到、本地还没走到 ask() 时暂存，ask() 时取用。 */
+  private readonly approvalRemoteChoices = new Map<string, ApprovalChoice>();
 
   constructor(private readonly opts: LocalExecutorOptions) {}
+
+  /** 服务端能力位（connected 帧）同步：false = 旧后端 / 未连接。 */
+  setApprovalRelaySupported(supported: boolean): void {
+    this.approvalRelaySupported = supported;
+    // connected 帧每次到达都会走到这里：重连成功立即补发未闭合的投票，
+    // 服务端对已认领的帧会按近期结果只给本连接补发回声（技术方案 §4.5-6）。
+    if (supported) this.replayApprovalVotes();
+  }
 
   async handleEvent(evt: { type: string; sessionId: number | null; data: Record<string, unknown> | null }): Promise<void> {
     if (this.closed || evt.sessionId == null || !evt.data) return;
@@ -91,6 +130,8 @@ export class LocalExecutor {
         await this.onSkillSync(sessionId, d);
       } else if (evt.type === 'mcp_sync_required') {
         await this.onMcpSync(sessionId, d);
+      } else if (evt.type === 'tool_approval_resolved') {
+        this.onRemoteApprovalResolved(d);
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -151,6 +192,7 @@ export class LocalExecutor {
       needApproval,
       dangerReason,
       description: toolDescription(toolName, args),
+      requestId,
     };
     const decision = evaluateApproval(req, this.opts.policy);
     if (decision.action === 'deny') {
@@ -166,31 +208,196 @@ export class LocalExecutor {
     const delegatedToShell = toolName === 'shell';
     const shellAction = typeof args.action === 'string' && args.action !== '' ? args.action : 'exec';
     const shellPrompts = delegatedToShell && (shellAction === 'exec' || shellAction === 'write_stdin');
-    if (decision.action === 'ask' && !delegatedToShell) {
-      const choice = await this.ask(req, decision.reason);
-      if (choice === 'always') recordAlwaysAllow(this.opts.policy, req);
-      await this.opts.ws.sendReliable({ type: 'tool_approval', sessionId, requestId });
-      if (choice === 'deny') {
-        await this.failTool(sessionId, requestId, '用户拒绝执行该工具');
-        this.opts.onApprovalDenied?.();
-        return;
+    this.approvalSessions.set(requestId, sessionId);
+    try {
+      if (decision.action === 'ask' && !delegatedToShell) {
+        const localChoice = await this.ask(req, decision.reason);
+        const choice = await this.finalizeApproval(sessionId, requestId, localChoice);
+        if (choice === 'always') recordAlwaysAllow(this.opts.policy, req);
+        if (choice === 'deny') {
+          await this.failTool(sessionId, requestId, '用户拒绝执行该工具');
+          this.opts.onApprovalDenied?.();
+          return;
+        }
+      } else if ((needApproval || decision.action === 'ask') && !shellPrompts) {
+        await this.opts.ws.sendReliable({ type: 'tool_approval', sessionId, requestId });
       }
-    } else if ((needApproval || decision.action === 'ask') && !shellPrompts) {
-      await this.opts.ws.sendReliable({ type: 'tool_approval', sessionId, requestId });
-    }
 
-    const result = await this.runTool(toolName, args, sessionId, workspace, req, requestId);
-    const payload = persistToolResult(sessionId, requestId, result);
-    const sent = await this.opts.ws.sendReliable({ type: 'tool_result', sessionId, requestId, result: payload });
-    if (!sent) {
-      console.error(`Failed to send tool result session=${sessionId} requestId=${requestId}`);
+      const result = await this.runTool(toolName, args, sessionId, workspace, req, requestId);
+      const payload = persistToolResult(sessionId, requestId, result);
+      const sent = await this.opts.ws.sendReliable({ type: 'tool_result', sessionId, requestId, result: payload });
+      if (!sent) {
+        console.error(`Failed to send tool result session=${sessionId} requestId=${requestId}`);
+      }
+    } finally {
+      this.approvalSessions.delete(requestId);
+      this.clearApprovalResend(requestId);
+      this.approvalEchoWaiters.delete(requestId);
+      this.approvalRemoteChoices.delete(requestId);
     }
   }
 
   private async ask(req: ApprovalRequest, reason: string): Promise<ApprovalChoice> {
+    const requestId = req.requestId;
+    if (requestId) {
+      // 远端决策早于本地提问：直接采用，不再弹模态（服务端已认领，也不需要再投票）
+      const remote = this.takeRemoteChoice(requestId);
+      if (remote != null) {
+        this.markApprovalDecided(requestId);
+        return remote;
+      }
+    }
     if (this.opts.askApproval) return this.opts.askApproval(req, reason);
     return (await defaultAsk(formatApprovalPrompt(req, reason))) ? 'allow' : 'deny';
   }
+
+  /**
+   * 本地按键（Ink 模态）后由宿主转来的投票：先上行，再等 resolved 回声；
+   * 旧后端 / 断线直接按本地选择收尾。收尾动作是 deliverApproval（关模态 + 解挂 ask）。
+   */
+  async submitApprovalVote(requestId: string, choice: ApprovalChoice): Promise<void> {
+    const sessionId = this.approvalSessions.get(requestId);
+    if (sessionId == null || this.approvalDecided.has(requestId)) {
+      // 无上下文 / 本请求已决策过（如 shell 后续动作）：本地选择直接生效
+      this.opts.deliverApproval?.(requestId, choice);
+      return;
+    }
+    const final = await this.raceVoteAndEcho(sessionId, requestId, choice);
+    this.opts.deliverApproval?.(requestId, final);
+  }
+
+  /**
+   * ask() 返回后的收口：远端先到以远端为准；本请求已经投过票（submit 路径）直接采用；
+   * 其余（readline / 无模态层）在这里完成投票 + 等回声。
+   */
+  private async finalizeApproval(sessionId: number, requestId: string, localChoice: ApprovalChoice): Promise<ApprovalChoice> {
+    const remote = this.takeRemoteChoice(requestId);
+    if (remote != null) {
+      this.markApprovalDecided(requestId);
+      return remote;
+    }
+    if (this.approvalDecided.has(requestId)) return localChoice;
+    const final = await this.raceVoteAndEcho(sessionId, requestId, localChoice);
+    this.opts.deliverApproval?.(requestId, final);
+    return final;
+  }
+
+  /** 上行投票并等待回声；不可用时按本地选择返回（旧后端 / 断线 = 单机离线，无人抢认领）。 */
+  private async raceVoteAndEcho(sessionId: number, requestId: string, localChoice: ApprovalChoice): Promise<ApprovalChoice> {
+    const approved = localChoice !== 'deny';
+    const alwaysAllow = localChoice === 'always';
+    const sent = await this.opts.ws.sendReliable({
+      type: 'tool_approval',
+      sessionId,
+      requestId,
+      approved,
+      ...(alwaysAllow ? { alwaysAllow: true } : {}),
+    });
+    if (!sent || !this.approvalRelaySupported) {
+      this.markApprovalDecided(requestId);
+      return localChoice;
+    }
+    // 回声可能恰好在这一步之前先到（无等待者，已进 remoteChoices）：直接采用
+    const early = this.takeRemoteChoice(requestId);
+    if (early != null) {
+      this.markApprovalDecided(requestId);
+      return early;
+    }
+    const echoed = await new Promise<ApprovalChoice>((resolve) => {
+      this.approvalEchoWaiters.set(requestId, { sessionId, approved, alwaysAllow, resolve });
+      this.scheduleApprovalResend(sessionId, requestId, approved, alwaysAllow);
+    });
+    this.markApprovalDecided(requestId);
+    return echoed;
+  }
+
+  /** 服务端认领结果（含超时 / 中止的 null）：闭合等待者；早到或收尾帧按需转给模态收尾。 */
+  private onRemoteApprovalResolved(d: Record<string, unknown>): void {
+    const requestId = typeof d.requestId === 'string' ? d.requestId : '';
+    if (!requestId) return;
+    const approved = typeof d.approved === 'boolean' ? d.approved : null;
+    const choice: ApprovalChoice | null = approved == null
+      ? null
+      : (approved ? (d.alwaysAllow === true ? 'always' : 'allow') : 'deny');
+    const waiter = this.approvalEchoWaiters.get(requestId);
+    if (waiter) {
+      this.clearApprovalResend(requestId);
+      this.approvalEchoWaiters.delete(requestId);
+      waiter.resolve(choice ?? 'deny');
+      return;
+    }
+    if (choice == null) {
+      // 没有人工决策（超时 / 中止 / 通知收尾）：只按拒绝关闭可能开着的模态，不算远端决策
+      this.opts.deliverApproval?.(requestId, 'deny');
+      return;
+    }
+    if (this.approvalDecided.has(requestId)) return;
+    this.markApprovalDecided(requestId);
+    this.approvalRemoteChoices.set(requestId, choice);
+    if (this.approvalRemoteChoices.size > APPROVAL_DECIDED_LIMIT) {
+      const oldest = this.approvalRemoteChoices.keys().next();
+      if (!oldest.done) this.approvalRemoteChoices.delete(oldest.value);
+    }
+    this.opts.deliverApproval?.(requestId, choice);
+  }
+
+  private takeRemoteChoice(requestId: string): ApprovalChoice | null {
+    const choice = this.approvalRemoteChoices.get(requestId);
+    if (choice == null) return null;
+    this.approvalRemoteChoices.delete(requestId);
+    return choice;
+  }
+
+  private markApprovalDecided(requestId: string): void {
+    this.approvalDecided.add(requestId);
+    if (this.approvalDecided.size > APPROVAL_DECIDED_LIMIT) {
+      const oldest = this.approvalDecided.values().next();
+      if (!oldest.done) this.approvalDecided.delete(oldest.value);
+    }
+    this.clearApprovalResend(requestId);
+    this.approvalEchoWaiters.delete(requestId);
+  }
+
+  private clearApprovalResend(requestId: string): void {
+    const timer = this.approvalResendTimers.get(requestId);
+    if (timer) clearTimeout(timer);
+    this.approvalResendTimers.delete(requestId);
+  }
+
+  /** 重连成功（connected 帧）后立即补发所有仍未闭合的投票一次。 */
+  private replayApprovalVotes(): void {
+    for (const [requestId, waiter] of this.approvalEchoWaiters) {
+      void this.opts.ws.sendReliable({
+        type: 'tool_approval',
+        sessionId: waiter.sessionId,
+        requestId,
+        approved: waiter.approved,
+        ...(waiter.alwaysAllow ? { alwaysAllow: true } : {}),
+      });
+    }
+  }
+
+  private scheduleApprovalResend(sessionId: number, requestId: string, approved: boolean, alwaysAllow: boolean): void {
+    const attempt = (left: number): void => {
+      if (left <= 0) return;
+      const timer = setTimeout(() => {
+        this.approvalResendTimers.delete(requestId);
+        if (!this.approvalEchoWaiters.has(requestId)) return;
+        void this.opts.ws.sendReliable({
+          type: 'tool_approval',
+          sessionId,
+          requestId,
+          approved,
+          ...(alwaysAllow ? { alwaysAllow: true } : {}),
+        });
+        attempt(left - 1);
+      }, APPROVAL_ECHO_RETRY_MS);
+      timer.unref?.();
+      this.approvalResendTimers.set(requestId, timer);
+    };
+    attempt(APPROVAL_ECHO_MAX_RETRIES);
+  }
+
 
   private async runTool(
     toolName: string,
@@ -275,10 +482,9 @@ export class LocalExecutor {
       return false;
     }
     const choice = await this.ask(stepReq, decision.reason);
-    if (choice === 'always') recordAlwaysAllow(this.opts.policy, stepReq);
-    // 用户已经作答之后才告诉服务端。命令还没开始，长命令不会在同意之后再被提醒。
-    await this.opts.ws.sendReliable({ type: 'tool_approval', sessionId, requestId });
-    if (choice === 'deny') {
+    const finalChoice = await this.finalizeApproval(sessionId, requestId, choice);
+    if (finalChoice === 'always') recordAlwaysAllow(this.opts.policy, stepReq);
+    if (finalChoice === 'deny') {
       this.opts.onApprovalDenied?.();
       return false;
     }

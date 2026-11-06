@@ -115,6 +115,9 @@ export class InkTuiRenderer implements Renderer {
   private modalQueue: ModalEntry[] = [];
   private askResolvers = new Map<string, (a: AskAnswer[] | 'fail' | 'cancelled') => void>();
   private askPending = new Map<string, AskAnswer[] | 'fail' | 'cancelled'>();
+  /** 多端审批：requestId → requestApproval 的解挂函数（收到回声 / 本地放行才解）。 */
+  private approvalResolvers = new Map<string, (choice: ApprovalChoice) => void>();
+  private approvalSubmitHandler: ((requestId: string, choice: ApprovalChoice) => void) | null = null;
 
   private input: InputController;
   private decoder = new KeyDecoder();
@@ -425,6 +428,10 @@ export class InkTuiRenderer implements Renderer {
       case 'ask_user_questions_cancelled':
         this.cancelAsk(evt.requestId);
         break;
+      case 'approval_aborted':
+        // 本轮结束 / 断开：审批模态不能继续挂着（多端审批 §4.5-7）
+        this.abortAllApprovals();
+        break;
       default:
         break;
     }
@@ -600,16 +607,58 @@ export class InkTuiRenderer implements Renderer {
     resolve(answers);
   }
 
-  /** LOCAL 审批：入队展示，FIFO 串行，避免 resolver 相互覆盖。 */
+  /** 多端审批：用户按键后把选择交给 executor（上行投票 / 等回声）。 */
+  setApprovalSubmitHandler(handler: ((requestId: string, choice: ApprovalChoice) => void) | null): void {
+    this.approvalSubmitHandler = handler;
+  }
+
+  /**
+   * LOCAL 审批：入队展示，FIFO 串行，避免 resolver 相互覆盖。
+   * - 带 requestId（多端审批）：按键只把选择交给 executor 上行，模态保持打开，
+   *   等 `deliverApproval` 带回服务端决策（或旧后端 / 断线时按本地选择收尾）。
+   * - 不带 requestId（旧调用 / 单测）：按键即返回，保持原行为。
+   */
   requestApproval(req: ApprovalRequest, reason: string): Promise<ApprovalChoice> {
+    const requestId = req.requestId;
     return new Promise((resolve) => {
       const controller = new ApprovalController(req, reason, (choice) => {
-        this.closeModal((m) => m.kind === 'approval' && m.controller === controller);
-        resolve(choice);
+        if (!requestId) {
+          this.closeModal((m) => m.kind === 'approval' && m.controller === controller);
+          resolve(choice);
+          return;
+        }
+        // 本地按键：交给 executor 去上行；解挂留给 deliverApproval
+        controller.markSubmitted();
+        this.render(true);
+        this.approvalSubmitHandler?.(requestId, choice);
       });
+      if (requestId) this.approvalResolvers.set(requestId, resolve);
       this.modalQueue = [...this.modalQueue, { kind: 'approval', controller }];
       this.render(true);
     });
+  }
+
+  /**
+   * 多端审批收尾：关闭该请求的审批模态并解挂 requestApproval。
+   * 没有等待者（模态没开 / 已收尾）时是无操作——「决策早到」由 executor 的
+   * approvalRemoteChoices 兜住，不在渲染层缓存，避免污染同一 requestId 的后续动作。
+   */
+  deliverApproval(requestId: string, choice: ApprovalChoice | null): void {
+    const resolve = this.approvalResolvers.get(requestId);
+    if (!resolve) return;
+    this.approvalResolvers.delete(requestId);
+    this.closeModal((m) => m.kind === 'approval' && m.controller.request.requestId === requestId);
+    resolve(choice ?? 'deny');
+  }
+
+  /** 本轮结束 / 断开：关闭全部审批模态并按拒绝解挂，避免模态永久悬挂。 */
+  abortAllApprovals(): void {
+    const resolvers = [...this.approvalResolvers.values()];
+    this.approvalResolvers.clear();
+    if (this.modalQueue.some((m) => m.kind === 'approval')) {
+      this.closeModal((m) => m.kind === 'approval');
+    }
+    for (const resolve of resolvers) resolve('deny');
   }
 
   // === 兼容 REPL 的读写接口 ===
@@ -846,7 +895,9 @@ export class InkTuiRenderer implements Renderer {
     if (s.request.workspace) {
       lines.push({ text: truncateToWidth(`  工作区: ${s.request.workspace}`, cols), tone: 'dim' });
     }
-    if (s.confirming) {
+    if (s.submitted) {
+      lines.push({ text: '  已提交，等待服务端确认…', tone: 'dim', bold: true });
+    } else if (s.confirming) {
       const what = s.confirming === 'allow' ? '允许这一次' : '本会话允许同类';
       lines.push({ text: `  再按 Enter 确认「${what}」，Esc 返回`, tone: 'err', bold: true });
     } else {
