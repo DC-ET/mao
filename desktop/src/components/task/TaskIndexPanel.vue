@@ -1,8 +1,13 @@
 <template>
-  <div ref="panelEl" class="task-index-panel" :class="{ collapsed, 'actions-hidden': !showItemActions }" :style="panelStyle">
+  <div
+    ref="panelEl"
+    class="task-index-panel"
+    :class="{ collapsed, 'actions-hidden': !showItemActions, 'header-condensed': !showHeaderTitle }"
+    :style="panelStyle"
+  >
     <template v-if="!collapsed">
       <div class="panel-header">
-        <span class="panel-title">任务</span>
+        <span v-if="showHeaderTitle" class="panel-title">任务</span>
         <div class="header-actions">
           <button
             class="refresh-btn mode-toggle-btn"
@@ -767,8 +772,11 @@ const effectivePanelWidth = ref(280)
 const MIN_WIDTH = 120
 const MAX_WIDTH = 500
 const ACTION_BUTTONS_MIN_WIDTH = 200
+/** 头部标题独立阈值：图标由 5 个减为 3 个后，160px 起标题 + 三个图标就能同框放下 */
+const HEADER_TITLE_MIN_WIDTH = 160
 
 const showItemActions = computed(() => effectivePanelWidth.value >= ACTION_BUTTONS_MIN_WIDTH)
+const showHeaderTitle = computed(() => effectivePanelWidth.value >= HEADER_TITLE_MIN_WIDTH)
 
 let resizeObserver: ResizeObserver | null = null
 

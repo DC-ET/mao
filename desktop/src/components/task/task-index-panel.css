@@ -770,12 +770,15 @@
   color: var(--aw-primary);
 }
 
-/* 窄面板（<200px，可拖至 120px；移动端默认 140px）：过滤 / 多选两个新入口加入后
-   header 已有 5 个图标按钮，等比缩小一档并隐藏装饰性标题，保证全部可见不裁切 */
-.task-index-panel.actions-hidden .panel-title {
+/* 窄面板（<160px，可拖至 120px；移动端默认 140px）：隐藏装饰性标题，
+   把头部宽度全让给图标按钮（阈值见 TaskIndexPanel.vue HEADER_TITLE_MIN_WIDTH） */
+.task-index-panel.header-condensed .panel-title {
   display: none;
 }
 
+/* 极窄面板（<200px，可拖至 120px；移动端默认 140px）：行内操作 / 分组头部入口
+   一并隐藏后，头部图标再等比缩小一档，保证全部可见不裁切
+   （阈值见 TaskIndexPanel.vue ACTION_BUTTONS_MIN_WIDTH） */
 .task-index-panel.actions-hidden .header-actions {
   gap: 1px;
 }

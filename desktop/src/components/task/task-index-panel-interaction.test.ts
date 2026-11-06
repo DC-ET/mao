@@ -7,12 +7,22 @@ import { h, reactive, ref } from 'vue'
 import { createPinia } from 'pinia'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
+/** 面板有效宽度（px）：宽度相关用例按需改写，afterEach 复位 */
+let mockPanelWidth = 280
+
 vi.hoisted(() => {
   if (typeof window !== 'undefined' && !window.matchMedia) {
     ;(window as any).matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} })
   }
+  // 拖拽改变面板宽度走 ResizeObserver：保留回调句柄，宽度用例可手动触发一次
+  if (typeof globalThis !== 'undefined' && !(globalThis as any).__resizeCallbacks) {
+    ;(globalThis as any).__resizeCallbacks = []
+  }
   if (typeof globalThis !== 'undefined' && !(globalThis as any).ResizeObserver) {
     ;(globalThis as any).ResizeObserver = class {
+      constructor(cb: () => void) {
+        ;(globalThis as any).__resizeCallbacks.push(cb)
+      }
       observe() {}
       unobserve() {}
       disconnect() {}
@@ -20,8 +30,12 @@ vi.hoisted(() => {
   }
   // jsdom 的 offsetWidth 恒为 0：面板 onMounted 会据此把有效宽度刷成 0，
   // showItemActions（>=200px）随之变假，行内删除确认按钮整块不渲染。
-  // 统一补到桌面常见宽度，让「宽面板」分支可测。
-  Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, value: 280 })
+  // 统一补到桌面常见宽度，让「宽面板」分支可测；宽度用例再按需改写该值。
+  Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+    configurable: true,
+    get() { return mockPanelWidth },
+    set() {},
+  })
 })
 
 // ---- mock 重子组件（局部 import 优先于全局注册，必须 mock 模块）----
@@ -157,6 +171,7 @@ const menuItem = (text: string) =>
 
 beforeEach(() => {
   document.body.innerHTML = ''
+  mockPanelWidth = 280
   store.sessions = []
   store.fetchSessions.mockClear()
   store.fetchFocusSessions.mockClear()
@@ -425,6 +440,58 @@ describe('TaskIndexPanel 右键菜单删除路径', () => {
 
     expect(store.archiveSessions).toHaveBeenCalledWith(['1', '3'])
     expect(messageSuccess).toHaveBeenCalledWith('已归档 2 个')
+    app.unmount()
+  })
+})
+
+describe('TaskIndexPanel 宽度阈值', () => {
+  const panel = (host: HTMLElement) => host.querySelector('.task-index-panel')!
+
+  it('≥160px 显示「任务」标题（图标 3 个后标题 + 图标可同框）', async () => {
+    mockPanelWidth = 180
+    const { host, app } = mountPanel()
+    await tick()
+    expect(panel(host).classList.contains('header-condensed')).toBe(false)
+    expect(q(host, '.panel-title')!.textContent).toBe('任务')
+    app.unmount()
+  })
+
+  it('<160px 隐藏「任务」标题（极窄栏把宽度让给图标）', async () => {
+    mockPanelWidth = 140
+    const { host, app } = mountPanel()
+    await tick()
+    expect(panel(host).classList.contains('header-condensed')).toBe(true)
+    expect(q(host, '.panel-title')).toBeNull()
+    app.unmount()
+  })
+
+  it('160–199px 仍不显示行内操作按钮（行内阈值独立保持 200px）', async () => {
+    mockPanelWidth = 180
+    store.sessions = [row('1')]
+    const { host, app } = mountPanel()
+    await tick()
+    // 标题回来了，但 .session-item-actions 依旧被 showItemActions 门控
+    expect(panel(host).classList.contains('header-condensed')).toBe(false)
+    expect(panel(host).classList.contains('actions-hidden')).toBe(true)
+    expect(q(rowEl(host, '1'), '.session-item-actions')).toBeNull()
+    app.unmount()
+  })
+
+  it('拖窄跨越 160px 时标题实时隐藏（走 ResizeObserver）', async () => {
+    mockPanelWidth = 280
+    const { host, app } = mountPanel()
+    await tick()
+    expect(q(host, '.panel-title')!.textContent).toBe('任务')
+
+    mockPanelWidth = 140
+    ;(globalThis as any).__resizeCallbacks.forEach((cb: () => void) => cb())
+    await tick()
+    expect(q(host, '.panel-title')).toBeNull()
+
+    mockPanelWidth = 200
+    ;(globalThis as any).__resizeCallbacks.forEach((cb: () => void) => cb())
+    await tick()
+    expect(q(host, '.panel-title')!.textContent).toBe('任务')
     app.unmount()
   })
 })
