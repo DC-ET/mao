@@ -186,8 +186,12 @@ resolveForSession(userId, sessionId):
   if session == null:
      log('git-scope: session not found, sid=%s uid=%s', sessionId, userId)
      return {}                                              # 故障 → fail-closed
-  if session.userId !== userId:
-     log('git-scope: session owner mismatch, sid=%s uid=%s', sessionId, userId)
+  # 资格校验（code review 修订 2026-11-06）：shell / 容器通道按「运行身份」调用
+  # （tool-dispatcher §5.5：toolUserId = runtimeUserId），群聊会话按 (appId, chatId) 复用、
+  # 归属者是首个发言人 —— owner 或「最近一次运行身份」命中即放行；
+  # 两者都不命中才 fail-closed（防传错 / 跨用户 sessionId）。
+  if session.userId != userId and session.lastRuntimeUserId != userId:
+     log('git-scope: session owner mismatch, sid=%s uid=%s owner=%s runtime=%s', ...)
      return {}                                              # 故障 → fail-closed
   return resolveForAgent(userId, session.agentId ?? null)
 ```
@@ -198,9 +202,15 @@ resolveForSession(userId, sessionId):
 |---|---|---|
 | `agentId == null`（结构上无 Agent 上下文：历史会话） | 配置未就绪 | 走全局策略（宽松全量 / 严格空） |
 | `sessionId == null`（调用方未传会话上下文） | 配置未就绪 + **独立日志**（见伪代码） | 同上；现存调用点中 PTY（必填）、clone（`session.id` 已落库）可确定带值，dispatch 的 `ctx.sessionId` 类型允许 null——先以日志观察来源，确认后再评估收紧为 fail-closed |
-| `session == null` / `agent == null` / `session.userId !== userId` | **故障** | **空集 + `warn` 日志**，与 DB 异常同口径 |
+| `session == null` / `agent == null` / owner 与最近运行身份都不匹配 | **故障** | **空集 + `warn` 日志**，与 DB 异常同口径（运行身份口径见上方伪代码的 code review 修订说明） |
 
-owner 不匹配应额外打 `warn`（疑似越权访问），不放行。
+> **code review 修订（2026-11-06）**：资格校验不能只比 `session.userId`——shell / 容器通道传的 `userId`
+> 是**运行身份（本次发言者）**（`tool-dispatcher` §5.5），而群聊会话按 `(appId, chatId)` 复用、归属者固定为
+> 首个发言人，两者天然不等；子代理会话也继承父会话的运行身份。改为「owner 或最近一次运行身份
+> （`session.last_runtime_user_id`，V183，每轮执行前已落库）命中即放行」，其余仍 fail-closed。
+> 该缺陷若按原口径上线，会导致群聊 / 子代理会话在宽松模式下也拿不到任何 Git 凭据（功能回归，非越权）。
+
+owner 与最近运行身份都匹配不上时额外打 `warn`（疑似越权访问），不放行（code review 修订后的口径，见上方修订块）。
 
 **软删 / 停用 Agent（D1，已定稿：选 A）**：此处原稿与上面的故障兜底冲突——`AgentRepository.findById`（`agent.repository.ts:36-38`）**带 `notDeleted()` 过滤**，软删 Agent 会返回 `null`，落到「`agent == null`」分支；而按修正后口径那是**故障 fail-closed → 空集**，等于「软删 Agent 的历史会话立刻断凭据」，且「删除 Agent」会变成隐式的收回凭据操作而 admin 删除确认毫无提示。
 
@@ -556,4 +566,12 @@ D1/D3 的专项断言：`selectGitAllowedDomainsById` 的 SQL **不得含 `notDe
 | 6 | 小项：`isMcpLoadModeSetting` 行号 627（非 631）；`getTokenMapByUserFiltered` 空数组边界；`scope=client` 最小暴露；`listAgents` 新参数默认值须保持 `listOptions` 行为；§8-8 措辞 | §3.2、§3.6、§4.2、§8 |
 
 复核抽查确认无误的关键行号与事实：`shell-session-manager.ts:582` 前缀全清、`session.service.ts:1579` `updateSessionAgent`、`app-feishu-messaging.ts:66` / `weixin/session.service.ts:40` bot 会话带 agentId、`system_setting` 六列结构与 `description VARCHAR(256)` / `setting_key UNIQUE`、`sensitive-env.ts` 的 `GIT_TOKEN_` 保留前缀、宿主机 MCP env 白名单不含 `GIT_TOKEN_*`（六通道清单无遗漏）、`create-app.ts:845` / `app-harness-engine.ts:189` / `app-routes.ts:409` / `shell-workdir.spec.ts:53` 行号、`agent.deleted`（V052）、V186 为最新迁移（V187 空置）、`normalizeGitDomain` 两条错误文案分离、`DockerDispatchContext.sessionId` 允许 null（据此保留日志观察而非直接 fail-closed）。
+
+### Code review 修订（2026-11-06，实现阶段）
+
+实现完成后由独立 reviewer 对照未提交代码审查（报告：`docs/code-review/2026-11-06-agent-git-credential-scope-review.md`），发现并修复 1 项 P1 功能回归：
+
+| # | 问题 | 修订位置 |
+|---|---|---|
+| 1 | `resolveForSession` 仅按 `session.userId`（会话归属）做资格校验，与「运行身份」机制冲突：shell / 容器通道按本次发言者（`runtimeUserId`）调用，而群聊会话按 `(appId, chatId)` 复用、归属者是首个发言人，子代理会话继承父会话运行身份 —— 非首发成员发言时 Git 凭据被整体丢弃（安全方向无越权，属功能回归）。修复：`selectById` 返回类型补 `lastRuntimeUserId`，校验改为「owner 或最近运行身份命中即放行」，两者都不命中仍 fail-closed；补「群聊非首发发言人」「双不匹配」回归用例 | §3.3 伪代码与故障表；`git-token-resolver.ts` + spec |
 

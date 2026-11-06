@@ -13,6 +13,11 @@ export interface Agent {
   mcpServerIds?: string | null;
   /** 关联的自定义 HTTP 工具 ID 列表（JSON 数组字符串），为空表示不启用 */
   httpToolIds?: string | null;
+  /**
+   * Git 凭据域白名单（JSON 数组字符串，技术方案 2026-11-06）：
+   * null=未配置（跟随全局策略 gitToken.scopePolicy）；'[]'=显式禁止注入；非空=白名单。
+   */
+  gitAllowedDomains?: string | null;
   defaultModelId?: number | null;
   isDefault?: number | null;
   /** 1-启用 0-停用；缺省视为启用 */
@@ -69,7 +74,13 @@ export interface SuggestedQuestionInput {
 }
 
 export interface AgentRepository {
-  selectList(keyword?: string | null, includeDisabled?: boolean, clientVisibleOnly?: boolean): Promise<Agent[]>;
+  selectList(
+    keyword?: string | null,
+    includeDisabled?: boolean,
+    clientVisibleOnly?: boolean,
+    /** true=仅返回 git_allowed_domains IS NULL 的 Agent（管理后台「未配置」筛选）。 */
+    missingGitAllowedDomains?: boolean,
+  ): Promise<Agent[]>;
   findById(id: number): Promise<Agent | null>;
   findDefault(): Promise<Agent | null>;
   insert(agent: Agent): Promise<number>;
@@ -81,6 +92,12 @@ export interface AgentRepository {
   removeSkillName(skillName: string): Promise<number>;
   listPromptVersions(agentId: number): Promise<AgentPromptVersion[]>;
   rollbackPrompt(agentId: number, version: number, operatorId: number): Promise<Agent>;
+  /**
+   * 不过滤软删的轻量查询（技术方案 2026-11-06 D1）：只取 git_allowed_domains 一列。
+   * 返回 null=agent id 不存在（故障）；{ domains: null }=行存在但未配置——两者必须可区分，
+   * 所以不能用带 notDeleted() 的 findById（软删会退化成「查不到」）。
+   */
+  selectGitAllowedDomainsById(id: number): Promise<{ domains: string | null } | null>;
 }
 
 export interface AgentExperienceRepository {

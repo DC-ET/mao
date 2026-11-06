@@ -594,7 +594,10 @@ describe('GitOperationService', () => {
     const dir = useTmpDir('clone-');
     const scripts: string[] = [];
     const git = new GitOperationService(
-      { getTokenMapByUser: async () => ({ 'git.acg.team': 'tok-value' }) },
+      {
+        resolveForSession: async () => ({ 'git.acg.team': 'tok-value' }),
+        resolveForAgent: async () => ({ 'git.acg.team': 'tok-value' }),
+      },
       {
         resolveGitAskpassScript: (userId, sessionId) => {
           const script = join(dir, `git-askpass-${userId}-${sessionId}.sh`);
@@ -616,7 +619,7 @@ describe('GitOperationService', () => {
   it('clones anonymously when the user has no credentials', async () => {
     const dir = useTmpDir('clone-');
     const git = new GitOperationService(
-      { getTokenMapByUser: async () => ({}) },
+      { resolveForSession: async () => ({}), resolveForAgent: async () => ({}) },
       { resolveGitAskpassScript: () => join(dir, 'unused.sh') },
     );
     // 同上：`https://` 指向本地关闭端口使 clone 立即失败，避开代理下 `*.invalid` 的 5-10s 握手等待。

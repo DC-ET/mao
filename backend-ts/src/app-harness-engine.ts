@@ -6,6 +6,7 @@ import type { SessionTodoMapper } from './harness/todo/session-todo.mapper.js';
 import type { ScheduledTaskService } from './schedule/scheduled-task.service.js';
 import type { SessionService } from './session/session.service.js';
 import type { SessionRepository } from './session/session.repository.js';
+import type { GitTokenResolver } from './session/types.js';
 import type { ShellSessionManager, OutputManager } from './harness/shell/shell-session-manager.js';
 import type { BackgroundTaskManager } from './harness/core/background-task-manager.js';
 import type { RuntimeDataResolver } from './harness/runtime/runtime-data-resolver.js';
@@ -92,7 +93,7 @@ export interface HarnessEngineDeps {
   shellManager: ShellSessionManager;
   outputManager: OutputManager;
   backgroundTasks: BackgroundTaskManager;
-  gitLookup: any;
+  gitTokenResolver: GitTokenResolver;
   jwt: JwtService;
   userRepo: any;
   ecpInjector: any;
@@ -186,7 +187,7 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     shellSessionManager: d.shellManager,
     outputManager: d.outputManager,
     backgroundTaskManager: d.backgroundTasks,
-    gitCredentialService: d.gitLookup,
+    gitTokenResolver: d.gitTokenResolver,
     jwtService: d.jwt,
     shellUserLookup: { findById: (id: number) => d.userRepo.findById(id) },
     shellEcpInjector: d.ecpInjector,

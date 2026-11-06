@@ -28,6 +28,7 @@ import { MysqlEcpSessionRepository } from './auth/ecp-session.repository.js';
 import { MysqlUserRepository } from './user/user.repository.js';
 import { UserService } from './user/user.service.js';
 import { GitCredentialService, assertGitCredentialSecret } from './user/git-credential.service.js';
+import { DefaultGitTokenResolver } from './user/git-token-resolver.js';
 import { MysqlEnvVariableRepository } from './env/env-variable.repository.js';
 import { EnvVariableService } from './env/env-variable.service.js';
 import {
@@ -362,9 +363,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
   );
   const gitCredentials = new GitCredentialService(db, cfg.app.gitCredential.secretKey);
-  const gitLookup = {
-    getTokenMapByUser: async (userId: number) => Object.fromEntries(await gitCredentials.getTokenMapByUser(userId)),
-  };
+  // 说明：凭据注入统一走 GitTokenResolver（技术方案 2026-11-06），其构造依赖 agentRepo(:384) /
+  // settingService(:435) / sessionRepo(:467)，因此延后到 sessionRepo 之后创建（见下方 gitTokenResolver）。
+  // gitCredentials 实例保留：仍供 user/admin 凭据路由（app-routes 侧）直接使用。
 
   const auditRepo = new MysqlAuditLogRepository(db);
   const auditService = new AuditLogService(auditRepo);
@@ -465,6 +466,14 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // 链接目标命中允许根才不会被沙箱当作路径逃逸拦截（容器严格模式同款放行见 container-tool-executor）。
   pathSandbox.addAllowedRoot(shareDir);
   const sessionRepo = new SessionRepository(db);
+  // Git 凭据统一解析器（技术方案 2026-11-06）：六条注入通道的唯一凭据数据源 =
+  // 用户 token ∩ Agent 允许域；依赖 gitCredentials / agentRepo / settingService，均已在本行之前构造。
+  const gitTokenResolver = new DefaultGitTokenResolver({
+    gitCredentialService: gitCredentials,
+    agentLookup: agentRepo,
+    sessionLookup: sessionRepo,
+    scopePolicy: settingService,
+  });
   const messageRepo = new MessageRepository(db);
   // run 轨迹读模型：零新表，读时聚合消息 / llm_call / session_activity / 压缩事件。
   const llmCallRepo = new LlmCallRepository(db);
@@ -498,7 +507,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const sessionCompactionEventService = new SessionCompactionEventService(new SessionCompactionEventRepository(db));
   const envInfo = new EnvironmentInfoProvider();
   const runtimeResolver = new RuntimeDataResolver(cfg.app.harness.runtimeDir, cfg.app.harness.userHomeDir, cfg.app.harness.skillViewsDir);
-  const gitOps = new GitOperationService(gitLookup, runtimeResolver);
+  const gitOps = new GitOperationService(gitTokenResolver, runtimeResolver);
   const todoMapper = new SessionTodoMapper(db);
   const todoRepo = new SessionTodoRepository(db);
   // TerminalManager / 定时任务存储 / MCP 同步服务已迁移到 ctx（延迟解引用）
@@ -622,7 +631,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const terminalAudit = createTerminalAudit(auditService);
   // ── 用户运行时容器隔离（技术方案 §5）：host 模式下整组组件闲置、派发分支短路 ──
   const containerRuntime = await assembleContainerRuntime({
-    cfg, ctx, jwt, sessionRepo, userRepo, settingService, runtimeResolver, gitLookup,
+    cfg, ctx, jwt, sessionRepo, userRepo, settingService, runtimeResolver, gitTokenResolver,
     envVariableService, uploadDir, userSkillsDir, shareDir, mcpClient, activityHeartbeat,
     ecpInjector, larkUatInjector,
   });
@@ -631,7 +640,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const terminalManager = new TerminalManager({
     pathSandbox,
     runtimeResolver,
-    gitCredentials: gitLookup,
+    gitTokenResolver,
     shellToken: jwt,
     userLookup: { findById: (id: number) => userRepo.findById(id) as Promise<{ username: string } | null> },
     ecpInjector,
@@ -806,7 +815,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // 这些消费者在构造时就读取真实的 harness 与 agentLoop（holder 只是给运行期晚绑定用）。
   const harnessEngine = assembleHarnessEngine({
     cfg, apiPrefix, uploadDir, harnessTuning, pathSandbox, todoMapper, scheduledService,
-    sessionSvc, sessionMap, shellManager, outputManager, backgroundTasks, gitLookup, jwt,
+    sessionSvc, sessionMap, shellManager, outputManager, backgroundTasks, gitTokenResolver, jwt,
     userRepo, ecpInjector, larkUatInjector, settingService, runtimeResolver, modelService,
     wechatBridges, feishuMessageService, feishuMessageRepository, getFeishuClient,
     sendBytesBridge, dingtalkMediaHolder, definitionRegistry, holder, subagentMapper,
@@ -843,7 +852,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const usageService = new LlmUsageService(new LlmUsageRepository(db));
   const gitCommitMsg = new GitCommitMessageService(llmAdapter as never, harness as never, usageService, { getValue: (key: string) => settingService.getValue(key) });
   const gitWrite = new GitWriteOperationService(
-    workspaceGit, gitCommitMsg, gitLookup, runtimeResolver, activityService,
+    workspaceGit, gitCommitMsg, gitTokenResolver, runtimeResolver, activityService,
   );
 
   const weixinServices = assembleWeixinServices({

@@ -15,6 +15,7 @@ describe('AgentService', () => {
     selectList: vi.fn(),
     findById: vi.fn(),
     findDefault: vi.fn(),
+    selectGitAllowedDomainsById: vi.fn(),
     insert: vi.fn(async (a) => {
       a.id = a.id ?? 1;
       return a.id;
@@ -70,7 +71,7 @@ describe('AgentService', () => {
     vi.mocked(agentRepo.findById).mockResolvedValue(existing);
 
     expect(await service.listAgents(7, 'old')).toEqual([existing]);
-    expect(agentRepo.selectList).toHaveBeenCalledWith('old', false, false);
+    expect(agentRepo.selectList).toHaveBeenCalledWith('old', false, false, false);
     expect(await service.getAgent(1)).toBe(existing);
 
     const experiences = [experienceInputOf(null, 'tip', 0, true)];
@@ -248,7 +249,7 @@ describe('AgentService', () => {
     it('passes clientVisibleOnly through to the repository', async () => {
       vi.mocked(agentRepo.selectList).mockResolvedValue([]);
       await service.listAgents(7, null, false, true);
-      expect(agentRepo.selectList).toHaveBeenCalledWith(null, false, true);
+      expect(agentRepo.selectList).toHaveBeenCalledWith(null, false, true, false);
     });
 
     it('defaults new agents to visible and persists hidden when requested', async () => {
@@ -281,6 +282,63 @@ describe('AgentService', () => {
 
       await service.updateAgent(7, 1, null, null, null, null, null, null, null, null, null, undefined, undefined, true);
       expect(agentRepo.updateById.mock.calls.at(-1)![0]).toMatchObject({ clientVisible: 1 });
+    });
+  });
+
+  describe('gitAllowedDomains（Agent 级 Git 凭据域，技术方案 2026-11-06）', () => {
+    const baseAgent = { ...agent(1, 'a', 0), gitAllowedDomains: '["github.com"]' };
+
+    it('createAgent 保留白名单与显式禁止（[] 不折叠为 null）', async () => {
+      const withList = await service.createAgent(
+        7, 'a', null, 'p', null, null, null, null, null, 0, null,
+        undefined, undefined, undefined, ['git.acg.team'],
+      );
+      expect(withList.gitAllowedDomains).toBe('["git.acg.team"]');
+
+      const withEmpty = await service.createAgent(
+        7, 'a', null, 'p', null, null, null, null, null, 0, null,
+        undefined, undefined, undefined, [],
+      );
+      expect(withEmpty.gitAllowedDomains).toBe('[]');
+
+      const omitted = await service.createAgent(7, 'a', null, 'p', null, null, null, null, null, 0, null);
+      expect(omitted.gitAllowedDomains).toBeUndefined();
+    });
+
+    it('updateAgent 四态：undefined 不改 / null 清空 / [] 禁止 / 数组白名单', async () => {
+      vi.mocked(agentRepo.findById).mockResolvedValue({ ...baseAgent });
+
+      // undefined（未传）→ 保持原值
+      const keep = await service.updateAgent(7, 1, null, null, null, null, null, null, null, null, null, undefined);
+      expect(keep.gitAllowedDomains).toBe('["github.com"]');
+
+      // null → 清空
+      const cleared = await service.updateAgent(
+        7, 1, null, null, null, null, null, null, null, null, null, undefined,
+        undefined, undefined, undefined, null,
+      );
+      expect(cleared.gitAllowedDomains).toBeNull();
+
+      // [] → 显式禁止
+      const forbidden = await service.updateAgent(
+        7, 1, null, null, null, null, null, null, null, null, null, undefined,
+        undefined, undefined, undefined, [],
+      );
+      expect(forbidden.gitAllowedDomains).toBe('[]');
+
+      // 数组 → 白名单
+      const listed = await service.updateAgent(
+        7, 1, null, null, null, null, null, null, null, null, null, undefined,
+        undefined, undefined, undefined, ['git.acg.team', 'git.zizaitianye.com'],
+      );
+      expect(listed.gitAllowedDomains).toBe('["git.acg.team","git.zizaitianye.com"]');
+      expect(agentRepo.updateById).toHaveBeenCalled();
+    });
+
+    it('listAgents 透传「未配置」筛选参数', async () => {
+      vi.mocked(agentRepo.selectList).mockResolvedValue([]);
+      await service.listAgents(7, null, true, false, true);
+      expect(agentRepo.selectList).toHaveBeenCalledWith(null, true, false, true);
     });
   });
 });

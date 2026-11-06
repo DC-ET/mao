@@ -1,3 +1,16 @@
+## 0.0.453 (2026-11-06)
+
+### 后端
+- **Git 凭据注入按 Agent 收敛（Agent 级 Git 凭据域）**：修复「同一用户的全部 Git token 会被注入到任意 Agent 会话」的隔离缺陷——`user_git_credential` 只按用户维度存储，此前 Agent shell、云端终端、容器 envelope、容器 MCP、建会话 clone、Git 面板写操作六条通道都按 userId 全量取 token，导致同时服务两家公司的多个 Agent 互相可见对方凭据（出现过「B 公司 Agent 拉取 A 公司仓库」的越权事件）。现在：
+  - `agent` 新增 `git_allowed_domains`（三态：NULL=未配置、`[]`=显式禁止、非空=白名单），统一解析器 `GitTokenResolver` 按会话 / Agent 上下文取「用户凭据域 ∩ Agent 允许域」，六条注入通道全部改走它；
+  - 兜底口径：会话查不到 / 归属不符 / Agent id 不存在 / 任何异常一律 fail-closed（空集 + warn 日志）；`agentId` 为空的存量历史会话与未传会话上下文的调用按全局策略处理；白名单场景只解密交集域的 token（`getTokenMapByUserFiltered`，SQL `IN`），不再全量解密；
+  - 新增系统设置「Git 凭据域策略」（`gitToken.scopePolicy`）：宽松=未配置允许域的 Agent 不限制（默认，升级无感）、严格=未配置即不注入（fail-closed）；切换后已打开的终端 / 容器 MCP 连接需重开才生效（shell 工具下一条命令即生效）；
+  - 管理后台 Agent 表单新增「Git 凭据域」（启用开关 + 域名多选 / 手输，候选来自当前管理员自己的凭据域）；列表能力概览显示三态（未配置 / 已禁止 / N 个域）并支持筛选「未配置」，便于收敛存量；
+  - `AgentVO.gitAllowedDomains` 仅对具备 `agent:read` / `agent:write` 权限的调用方返回（最小暴露）。
+
+### 管理后台
+- Agent 编辑页新增「Git 凭据域」配置项；Agent 列表新增 Git 域状态与「未配置」筛选；系统设置新增「Git 凭据域策略」下拉（宽松 / 严格）。
+
 ## 0.0.452 (2026-11-06)
 
 ### 前端（桌面 / Web / 安卓）

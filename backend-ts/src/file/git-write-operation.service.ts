@@ -7,7 +7,7 @@ import { ErrorCode } from '../common/error-code.js';
 import { utf8Prefix } from '../common/utf8.js';
 import type { RuntimeDataResolver } from '../harness/runtime/runtime-data-resolver.js';
 import type { ActivityService } from '../session/activity.service.js';
-import type { GitCredentialLookup, Session } from '../session/types.js';
+import type { GitTokenResolver, Session } from '../session/types.js';
 import {
   GitCommitMessageService,
   MAX_DIFF_BYTES,
@@ -94,7 +94,7 @@ export class GitWriteOperationService {
   constructor(
     private readonly workspaceGitService: WorkspaceGitService,
     private readonly commitMessageService: GitCommitMessageService,
-    private readonly credentialService: GitCredentialLookup,
+    private readonly gitTokenResolver: GitTokenResolver,
     private readonly runtimeDataResolver: RuntimeDataResolver,
     private readonly activityService: ActivityService,
   ) {}
@@ -501,7 +501,8 @@ export class GitWriteOperationService {
   }
 
   private async credentialEnv(session: Session): Promise<Record<string, string>> {
-    const tokens = await this.credentialService.getTokenMapByUser(session.userId);
+    // 技术方案 2026-11-06：已有 session 对象，直接按 Agent 上下文解析（省一次 session 查询）
+    const tokens = await this.gitTokenResolver.resolveForAgent(session.userId, session.agentId ?? null);
     const env: Record<string, string> = { GIT_TERMINAL_PROMPT: '0' };
     if (Object.keys(tokens).length === 0) return env;
     try {

@@ -34,6 +34,24 @@ describe('SystemSettingService', () => {
     return new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime });
   }
 
+  it('getGitScopePolicy：strict 仅识别严格值，缺省 / 非法值一律 lenient（升级默认）', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(null);
+    expect(await service().getGitScopePolicy()).toBe('lenient');
+
+    const row = (value: string) => ({ ...setting('gitToken.scopePolicy', 'Agent 与模型', 1), value });
+    vi.mocked(mapper.findByKey).mockResolvedValue(row('strict'));
+    expect(await service().getGitScopePolicy()).toBe('strict');
+
+    vi.mocked(mapper.findByKey).mockResolvedValue(row('  STRICT  '));
+    expect(await service().getGitScopePolicy()).toBe('strict');
+
+    vi.mocked(mapper.findByKey).mockResolvedValue(row('lenient'));
+    expect(await service().getGitScopePolicy()).toBe('lenient');
+
+    vi.mocked(mapper.findByKey).mockResolvedValue(row('bogus'));
+    expect(await service().getGitScopePolicy()).toBe('lenient');
+  });
+
   it('updateRejectsReadonlySetting', async () => {
     vi.mocked(mapper.findByKey).mockResolvedValue(setting('workspace.root', '运行环境', 0));
     await expect(service().update('workspace.root', '/tmp/workspace')).rejects.toThrow(BusinessException);

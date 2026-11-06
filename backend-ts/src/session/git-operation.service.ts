@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { ASKPASS, envVarNameForDomain } from '../file/git-write-operation.service.js';
-import type { GitCredentialLookup } from './types.js';
+import type { GitTokenResolver } from './types.js';
 import { GitCloneErrorFormatter } from './util/git-clone-error-formatter.js';
 import { GitUrlParser } from './util/git-url-parser.js';
 
@@ -20,7 +20,7 @@ export interface GitAskpassPathResolver {
 
 export class GitOperationService {
   constructor(
-    private readonly gitCredentialService: GitCredentialLookup,
+    private readonly gitTokenResolver: GitTokenResolver,
     private readonly runtimeResolver: GitAskpassPathResolver,
   ) {}
 
@@ -76,7 +76,8 @@ export class GitOperationService {
     if (userId == null) {
       return env;
     }
-    const tokens = await this.gitCredentialService.getTokenMapByUser(userId);
+    // 技术方案 2026-11-06：按会话上下文解析（用户 token ∩ Agent 允许域），不再全量注入
+    const tokens = await this.gitTokenResolver.resolveForSession(userId, sessionId);
     const entries = Object.entries(tokens ?? {});
     if (entries.length === 0) {
       return env;

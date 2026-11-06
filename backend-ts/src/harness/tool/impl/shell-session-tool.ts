@@ -5,7 +5,7 @@ import type { PathSandbox } from '../../safety/path-sandbox.js';
 import { SecurityException } from '../../safety/path-sandbox.js';
 import type { ShellSession, ShellSessionManager, OutputManager, OutputResult } from '../../shell/shell-session-manager.js';
 import type { BackgroundTaskManager } from '../../core/background-task-manager.js';
-import type { GitCredentialLookup } from '../../../session/types.js';
+import type { GitTokenResolver } from '../../../session/types.js';
 import { matchShellDenyList } from '../../shell/command-deny-list.js';
 import { harnessLog } from '../../log.js';
 
@@ -62,7 +62,7 @@ export class ShellSessionTool extends BaseTool {
     private readonly sessionManager: ShellSessionManager,
     private readonly outputManager: OutputManager,
     private readonly backgroundTaskManager: BackgroundTaskManager,
-    private readonly gitCredentialService?: GitCredentialLookup | null,
+    private readonly gitTokenResolver?: GitTokenResolver | null,
     private readonly jwtService?: ShellTokenIssuer | null,
     private readonly userLookup?: ShellUserLookup | null,
     private readonly ecpInjector?: ShellEcpInjector | null,
@@ -180,8 +180,9 @@ export class ShellSessionTool extends BaseTool {
     // deps 等会话工作区之外的目录。docker 模式下越界由挂载清单兜底（未挂载的路径在
     // 容器内不存在）；host 模式的跨用户越界靠 REST/MCP 收口与 deny-list，与 8-26 前一致
     if (workdirArg) workdir = this.pathSandbox.resolveLenient(workdirArg, workspace);
-    const tokenMap = userId != null && this.gitCredentialService
-      ? await this.gitCredentialService.getTokenMapByUser(userId) : {};
+    // 凭据可见域收敛（技术方案 2026-11-06）：按会话上下文解析 = 用户 token ∩ Agent 允许域
+    const tokenMap = userId != null && this.gitTokenResolver
+      ? await this.gitTokenResolver.resolveForSession(userId, conversationId) : {};
     // 工作区变量按「会话创建时的工作区」绑定（workdir 参数可能是子目录，不能作为绑定键）
     const envVars = await this.sessionManager.resolveEnvVarsFor(userId, workspace);
     const shellId = asText(args.session_id);
@@ -342,8 +343,9 @@ export class ShellSessionTool extends BaseTool {
         this.settleSession(session, answered, livePending.keepSession);
         return toJson(payload);
       }
-      const tokenMap = userId != null && this.gitCredentialService
-        ? await this.gitCredentialService.getTokenMapByUser(userId) : {};
+      // 与 exec 一致：刷新环境前按会话上下文重新解析（收紧白名单后下一条命令即生效）
+      const tokenMap = userId != null && this.gitTokenResolver
+        ? await this.gitTokenResolver.resolveForSession(userId, conversationId) : {};
       this.sessionManager.refreshUserEnvironment?.(
         session, userId, tokenMap, null, await this.sessionManager.resolveEnvVarsForSession(session, userId),
       );

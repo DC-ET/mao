@@ -42,6 +42,33 @@ describe('MysqlAgentRepository', () => {
     await repo.updateById({ ...agent, clientVisible: 0 }, 7, false);
     expect(db.updateById).toHaveBeenLastCalledWith('agent', 5, expect.objectContaining({ clientVisible: 0 }));
   });
+  it('selectGitAllowedDomainsById distinguishes missing row from unconfigured, and keeps [] intact on write', async () => {
+    const db = mockDb();
+    db.transaction.mockImplementation(async (fn) => fn(db));
+    const repo = new MysqlAgentRepository(db as never);
+
+    // 查不到行 = agent id 不存在（故障）：返回 null；SQL 不得带 notDeleted()（软删也要能查到，D1）
+    db.query.mockResolvedValueOnce([]);
+    expect(await repo.selectGitAllowedDomainsById(9)).toBeNull();
+    expect(String(db.query.mock.calls.at(-1)?.[0])).not.toContain('deleted = 0');
+
+    // 行存在、值为 NULL = 未配置：{ domains: null }
+    db.query.mockResolvedValueOnce([{ domains: null }]);
+    expect(await repo.selectGitAllowedDomainsById(9)).toEqual({ domains: null });
+
+    // 显式禁止 '[]' 与白名单原样返回
+    db.query.mockResolvedValueOnce([{ domains: '[]' }]);
+    expect(await repo.selectGitAllowedDomainsById(9)).toEqual({ domains: '[]' });
+    db.query.mockResolvedValueOnce([{ domains: '["git.acg.team"]' }]);
+    expect(await repo.selectGitAllowedDomainsById(9)).toEqual({ domains: '["git.acg.team"]' });
+
+    // 写入：'[]' 不被 ?? null 折叠（三态语义）
+    const writeAgent = { id: 5, name: 'A', systemPrompt: 'p', gitAllowedDomains: '[]' };
+    await repo.insert(writeAgent);
+    expect(db.insert).toHaveBeenCalledWith('agent', expect.objectContaining({ gitAllowedDomains: '[]' }));
+    await repo.updateById(writeAgent, 7, false);
+    expect(db.updateById).toHaveBeenCalledWith('agent', 5, expect.objectContaining({ gitAllowedDomains: '[]' }));
+  });
   it('covers list find insert update delete and experiences', async () => {
     const db = mockDb();
     const repo = new MysqlAgentRepository(db as never);
@@ -56,6 +83,9 @@ describe('MysqlAgentRepository', () => {
     expect(db.query).toHaveBeenLastCalledWith(expect.stringContaining('client_visible = 1'), []);
     await repo.selectList(null, false, false);
     expect(String(db.query.mock.calls.at(-1)?.[0])).not.toContain('client_visible = 1');
+    // 未配置筛选（技术方案 2026-11-06）：只取 git_allowed_domains IS NULL
+    await repo.selectList(null, false, false, true);
+    expect(db.query).toHaveBeenLastCalledWith(expect.stringContaining('git_allowed_domains IS NULL'), []);
     await repo.findDefault();
     expect(db.queryOne).toHaveBeenCalledWith(expect.stringContaining('enabled = 1'));
     await repo.updateEnabled(5, 0);

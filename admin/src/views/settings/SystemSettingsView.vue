@@ -161,6 +161,16 @@
                           <el-option label="容器隔离（docker）：每用户独立容器；切换后旧 shell 会话会终止" value="docker" />
                         </el-select>
                         <el-select
+                          v-else-if="isGitScopePolicySetting(row.settingKey)"
+                          v-model="plainModel[row.settingKey]"
+                          :disabled="!canWrite"
+                          placeholder="Git 凭据域策略"
+                          style="width: 100%"
+                        >
+                          <el-option label="宽松：未配置允许域的 Agent 不限制（兼容现状）" value="lenient" />
+                          <el-option label="严格：未配置允许域的 Agent 不注入任何 Git 凭据" value="strict" />
+                        </el-select>
+                        <el-select
                           v-else-if="isAgentSetting(row.settingKey)"
                           v-model="plainModel[row.settingKey]"
                           :disabled="!canWrite"
@@ -631,6 +641,11 @@ function isMcpLoadModeSetting(key: string | undefined | null) {
 /** 全局用户运行时模式：枚举下拉；后端保存前会预检容器运行时，失败则拒绝保存并提示原因。 */
 function isRuntimeModeSetting(key: string | undefined | null) {
   return key === 'runtime.mode'
+}
+
+/** Git 凭据域策略（V187，技术方案 2026-11-06）：枚举下拉，避免管理员手填拼错（后端缺省/非法值回落 lenient）。 */
+function isGitScopePolicySetting(key: string | undefined | null) {
+  return key === 'gitToken.scopePolicy'
 }
 
 /** 自定义 HTTP 工具内网放行清单：CIDR JSON 数组多行编辑器，保存前按格式校验（后端同样强校验）。 */

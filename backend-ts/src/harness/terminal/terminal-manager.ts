@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { harnessLog } from '../log.js';
 import { GitCredentialService } from '../../user/git-credential.service.js';
 import { ASKPASS } from '../../file/git-write-operation.service.js';
+import type { GitTokenResolver } from '../../session/types.js';
 import { RemoteTerminal, nodePtyFactory, type PtyFactory, type RemoteTerminalInfo } from './remote-terminal.js';
 import { sanitizeInheritedEnv } from '../../common/sensitive-env.js';
 
@@ -44,9 +45,8 @@ export interface TerminalRuntimeResolver {
   resolveUserHomeDir(userId: number | null | undefined): string | null;
 }
 
-export interface TerminalGitCredentialLookup {
-  getTokenMapByUser(userId: number): Promise<Record<string, string>>;
-}
+/** 凭据解析（技术方案 2026-11-06）：按会话上下文解析 = 用户 token ∩ Agent 允许域。 */
+export type TerminalGitTokenResolver = GitTokenResolver;
 
 export interface TerminalShellTokenIssuer {
   generateShellToken(userId: number, username: string): string;
@@ -141,7 +141,7 @@ export interface TerminalBaseUrlProvider {
 export interface TerminalManagerDeps {
   pathSandbox: TerminalPathSandbox;
   runtimeResolver: TerminalRuntimeResolver;
-  gitCredentials?: TerminalGitCredentialLookup;
+  gitTokenResolver?: TerminalGitTokenResolver;
   shellToken?: TerminalShellTokenIssuer;
   userLookup?: TerminalUserLookup;
   ecpInjector?: TerminalEcpInjector;
@@ -435,9 +435,10 @@ export class TerminalManager {
         harnessLog('warn', `Failed to resolve env vars for user ${userId}`, e);
       }
     }
-    if (this.deps.gitCredentials) {
+    if (this.deps.gitTokenResolver) {
       try {
-        const tokenMap = await this.deps.gitCredentials.getTokenMapByUser(userId);
+        // 技术方案 2026-11-06：按会话上下文解析（用户 token ∩ Agent 允许域）；PTY 仅在创建时注入一次
+        const tokenMap = await this.deps.gitTokenResolver.resolveForSession(userId, sessionId);
         if (Object.keys(tokenMap).length > 0) {
           this.configureGitCredentials(env, userId, sessionId, tokenMap);
         }

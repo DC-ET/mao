@@ -41,6 +41,12 @@ export interface AgentVO {
   mcpServerIds?: number[];
   /** 关联的自定义 HTTP 工具 ID 列表（管理员在 Agent 表单多选；该 Agent 的会话可调用） */
   httpToolIds?: number[];
+  /**
+   * Git 凭据域白名单（技术方案 2026-11-06）：
+   * null=未配置（跟随全局策略 gitToken.scopePolicy），[]=禁止注入任何 Git 凭据，非空=白名单。
+   * 仅对具备 agent:read / agent:write 权限的调用方返回（最小暴露）。
+   */
+  gitAllowedDomains?: string[] | null;
   experiences?: ExperienceVO[];
   suggestedQuestions?: SuggestedQuestionVO[];
   createdAt?: string | null;

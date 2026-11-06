@@ -15,7 +15,12 @@ import type {
 export class MysqlAgentRepository implements AgentRepository {
   constructor(private readonly db: Db) {}
 
-  selectList(keyword?: string | null, includeDisabled = false, clientVisibleOnly = false): Promise<Agent[]> {
+  selectList(
+    keyword?: string | null,
+    includeDisabled = false,
+    clientVisibleOnly = false,
+    missingGitAllowedDomains = false,
+  ): Promise<Agent[]> {
     const where: string[] = [notDeleted()];
     const params: unknown[] = [];
     if (!includeDisabled) {
@@ -23,6 +28,9 @@ export class MysqlAgentRepository implements AgentRepository {
     }
     if (clientVisibleOnly) {
       where.push('client_visible = 1');
+    }
+    if (missingGitAllowedDomains) {
+      where.push('git_allowed_domains IS NULL');
     }
     if (keyword != null && keyword.length > 0) {
       where.push('name LIKE ?');
@@ -57,6 +65,21 @@ export class MysqlAgentRepository implements AgentRepository {
     );
   }
 
+  /**
+   * 不过滤软删的轻量查询（技术方案 2026-11-06 D1）：只取 git_allowed_domains 一列。
+   * 用 query（数组）而非 queryOne 以区分「行不存在」与「行存在但值为 NULL」。
+   */
+  async selectGitAllowedDomainsById(id: number): Promise<{ domains: string | null } | null> {
+    const rows = await this.db.query<{ domains: string | null }>(
+      'SELECT git_allowed_domains AS domains FROM agent WHERE id = ?',
+      [id],
+    );
+    if (rows.length === 0) {
+      return null;
+    }
+    return { domains: rows[0].domains ?? null };
+  }
+
   async insert(agent: Agent): Promise<number> {
     const id = await this.db.transaction(async (tx) => {
       const id = await tx.insert('agent', {
@@ -69,6 +92,7 @@ export class MysqlAgentRepository implements AgentRepository {
         skillNames: agent.skillNames,
         mcpServerIds: agent.mcpServerIds,
         httpToolIds: agent.httpToolIds,
+        gitAllowedDomains: agent.gitAllowedDomains ?? null,
         defaultModelId: agent.defaultModelId ?? null,
         isDefault: agent.isDefault ?? 0,
         enabled: agent.enabled ?? 1,
@@ -104,6 +128,8 @@ export class MysqlAgentRepository implements AgentRepository {
         skillNames: agent.skillNames ?? null,
         mcpServerIds: agent.mcpServerIds ?? null,
         httpToolIds: agent.httpToolIds ?? null,
+        // 全量回写：'[]' 字符串原样保留（不能被 ?? null 折叠），否则无法表达「显式禁止」（技术方案 2026-11-06）
+        gitAllowedDomains: agent.gitAllowedDomains ?? null,
         defaultModelId: agent.defaultModelId ?? null,
         isDefault: agent.isDefault,
         clientVisible: agent.clientVisible ?? 1,

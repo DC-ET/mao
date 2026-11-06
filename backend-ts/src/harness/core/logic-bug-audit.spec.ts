@@ -151,7 +151,10 @@ describe('Logic Bug Audit 2026-10-29', () => {
         })),
       };
       const background = { submit: vi.fn(() => 'task-1') };
-      const git = { getTokenMapByUser: vi.fn(async () => ({})) };
+      const git = {
+        resolveForSession: vi.fn(async () => ({})),
+        resolveForAgent: vi.fn(async () => ({})),
+      };
       const tool = new ShellSessionTool(pathSandbox as never, sessionManager as never, outputManager as never, background as never, git);
 
       // 初始 pendingCommand: keepSession=false（锁前快照）

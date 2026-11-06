@@ -26,6 +26,8 @@ export const EMBED_AGENT_ID_KEY = 'embed.agentId';
 export const SHELL_ENV_VARS_ENABLED_KEY = 'shell.envVars.enabled';
 /** MCP 工具加载模式全局默认（V159）：working_set=工作集（默认） | full=全量注入。 */
 export const MCP_LOAD_MODE_KEY = 'mcp.loadMode';
+/** Git 凭据域策略（V187）：lenient=未配置允许域的 Agent 不限制（默认）；strict=不注入任何 Git 凭据。 */
+export const GIT_SCOPE_POLICY_KEY = 'gitToken.scopePolicy';
 /** 自定义 HTTP 工具内网放行清单（V163，CIDR JSON 数组）：环回与云元数据永拒，默认空数组=一律按私网拒绝。 */
 export const HTTP_TOOL_PRIVATE_ALLOWLIST_KEY = 'tools.http.privateAllowlist';
 export const WEIXIN_MODEL_ID_KEY = 'weixin.modelId';
@@ -227,6 +229,15 @@ export class SystemSettingService {
   async shellEnvVarsEnabled(): Promise<boolean> {
     const raw = (await this.getText(SHELL_ENV_VARS_ENABLED_KEY)).trim().toLowerCase();
     return raw !== 'false' && raw !== '0';
+  }
+
+  /**
+   * Git 凭据域策略（V187，技术方案 2026-11-06）：
+   * strict=未配置允许域的 Agent 不注入任何 Git 凭据（fail-closed）；其余/缺省一律 lenient（兼容存量）。
+   */
+  async getGitScopePolicy(): Promise<'lenient' | 'strict'> {
+    const raw = (await this.getText(GIT_SCOPE_POLICY_KEY, 'lenient')).trim().toLowerCase();
+    return raw === 'strict' ? 'strict' : 'lenient';
   }
 
   /**

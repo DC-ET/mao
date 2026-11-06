@@ -1,11 +1,9 @@
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
+import { normalizeAndValidateGitDomain } from '../common/git-domain.js';
 import { decryptAesCbc, encryptAesCbc } from '../crypto/aes-cbc.js';
 import type { Db } from '../db/db.js';
-
-const DOMAIN_PATTERN =
-  /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 
 export interface GitCredential {
   id?: number;
@@ -73,9 +71,34 @@ export class GitCredentialService {
     return map;
   }
 
+  /**
+   * 只解密指定域名集合内的 token（Agent 白名单过滤后调用，技术方案 2026-11-06 D3）：
+   * SQL 侧 WHERE domain IN (...)，避免把用户全部 token 无谓解密。
+   * domains 为空时直接返回空 Map（方法作为 API 的边界保护，防 IN () 非法 SQL）。
+   * 注意：domains 必须是规范化后的 host（与 user_git_credential.domain 存储口径一致）。
+   */
+  async getTokenMapByUserFiltered(
+    userId: number | null | undefined,
+    domains: string[],
+  ): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    if (userId == null || domains.length === 0) {
+      return map;
+    }
+    const placeholders = domains.map(() => '?').join(', ');
+    const rows = await this.db.query<GitCredential>(
+      `SELECT * FROM user_git_credential WHERE user_id = ? AND domain IN (${placeholders})`,
+      [userId, ...domains],
+    );
+    for (const c of rows) {
+      map.set(c.domain, decryptAesCbc(c.accessToken, this.secretKey));
+    }
+    return map;
+  }
+
   async create(userId: number, domain: string, accessToken: string, description?: string | null): Promise<GitCredential> {
-    const normalizedDomain = this.normalizeDomain(domain);
-    this.validateDomain(normalizedDomain);
+    // 规范化与校验口径统一收敛到 common/git-domain（Agent 白名单校验共用，见 §4.2-1）
+    const normalizedDomain = normalizeAndValidateGitDomain(domain);
     if (!hasText(accessToken)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, 'Access Token 不能为空');
     }
@@ -138,29 +161,5 @@ export class GitCredentialService {
       'SELECT * FROM user_git_credential WHERE user_id = ? AND domain = ?',
       [userId, domain],
     );
-  }
-
-  private normalizeDomain(domain: string | null | undefined): string {
-    if (!hasText(domain ?? undefined)) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, '域名不能为空');
-    }
-    let normalized = domain!.trim().toLowerCase();
-    if (normalized.startsWith('https://')) {
-      normalized = normalized.slice('https://'.length);
-    }
-    if (normalized.startsWith('http://')) {
-      normalized = normalized.slice('http://'.length);
-    }
-    const slash = normalized.indexOf('/');
-    if (slash >= 0) {
-      normalized = normalized.slice(0, slash);
-    }
-    return normalized;
-  }
-
-  private validateDomain(domain: string): void {
-    if (!DOMAIN_PATTERN.test(domain)) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, '域名格式无效，示例: github.com');
-    }
   }
 }
