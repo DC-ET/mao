@@ -71,15 +71,26 @@ export function isSharedCloudProject(session: Pick<Session, 'executionMode' | 'w
   return session.executionMode === 'CLOUD' && !!session.workspace?.includes('/projects/')
 }
 
-/** Cloud project slug to carry into a new CLOUD task (undefined for independent workspaces). */
+/**
+ * Cloud project slug to carry into a new CLOUD task (undefined for independent workspaces).
+ *
+ * 只有共享云项目（工作区在 projects/ 下）才带回 projectKey。通道会话（飞书群/私聊、钉钉、微信）
+ * 的 projectKey 是通道工作区标识（feishu-chat-{botId}-{chatId} 等），不是项目 slug：带进新建态
+ * 会把工作区来源切成「选择工作区」，首条消息按 existing 解析 {root}/{userId}/projects/<通道key>，
+ * 目录不存在直接报「工作区不存在」。任务列表分组新建入口（TaskIndexPanel.onGroupNewTask）本就是
+ * 这个口径，此处与它对齐。
+ */
 export function cloudProjectKeyForNewTask(
-  session: Pick<Session, 'executionMode' | 'projectKey' | 'id'>
+  session: Pick<Session, 'executionMode' | 'projectKey' | 'id' | 'workspace'>
 ): string | undefined {
   if (session.executionMode !== 'CLOUD' || !session.projectKey) {
     return undefined
   }
   // Independent CLOUD sessions derive projectKey from session id — not a shared project slug.
   if (String(session.projectKey) === String(session.id)) {
+    return undefined
+  }
+  if (!isSharedCloudProject(session)) {
     return undefined
   }
   return session.projectKey

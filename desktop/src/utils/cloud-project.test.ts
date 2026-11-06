@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   cloudGroupKey,
+  cloudProjectKeyForNewTask,
   cloudWorkspaceIndicator,
   formatCloudGroupLabel,
   groupIconKind,
@@ -236,5 +237,50 @@ describe('newTaskWorkspacePrefill（新建态工作区预填口径）', () => {
     expect(newTaskWorkspacePrefill('LOCAL', {})).toBe('')
     expect(newTaskWorkspacePrefill('CLOUD', { reuseWorkspace: true })).toBe('')
     expect(newTaskWorkspacePrefill('CLOUD', null)).toBe('')
+  })
+})
+
+describe('cloudProjectKeyForNewTask（新建态项目沿用口径）', () => {
+  it('共享云项目（projects/ 下）带回 projectKey', () => {
+    expect(cloudProjectKeyForNewTask({
+      executionMode: 'CLOUD', id: '12', workspace: '/opt/mao-data/workspace/2/projects/mao', projectKey: 'mao'
+    })).toBe('mao')
+  })
+
+  it('飞书群聊会话不带回通道 key：否则新会话按 existing 解析 projects/feishu-chat-* 报「工作区不存在」', () => {
+    // 回归：飞书群会话点「新会话」后首发消息报错，projectKey 是通道工作区标识而非项目 slug
+    expect(cloudProjectKeyForNewTask({
+      executionMode: 'CLOUD', id: '88', workspace: '/opt/mao-data/workspace/feishu-chat/2/oc_4fc3cb715272aae592213f167743846d',
+      projectKey: 'feishu-chat-2-0c_4fc3cb715272aae592213f167743846d'
+    })).toBeUndefined()
+  })
+
+  it('飞书私聊 / 钉钉 / 微信通道会话同样不带回', () => {
+    expect(cloudProjectKeyForNewTask({
+      executionMode: 'CLOUD', id: '9', workspace: '/opt/mao-data/workspace/feishu-chat/1/private-3', projectKey: 'feishu-1-private-3'
+    })).toBeUndefined()
+    expect(cloudProjectKeyForNewTask({
+      executionMode: 'CLOUD', id: '9', workspace: '/opt/mao-data/workspace/dingtalk-chat/1/cid_abc', projectKey: 'dingtalk-chat-1-cid_abc'
+    })).toBeUndefined()
+    expect(cloudProjectKeyForNewTask({
+      executionMode: 'CLOUD', id: '9', workspace: '/opt/mao-data/workspace/weixin/1', projectKey: 'weixin-bot'
+    })).toBeUndefined()
+  })
+
+  it('独立临时会话（projectKey = 会话 id）不带回', () => {
+    expect(cloudProjectKeyForNewTask({
+      executionMode: 'CLOUD', id: '77', workspace: '/opt/mao-data/workspace/2/77', projectKey: '77'
+    })).toBeUndefined()
+  })
+
+  it('CLOUD 显式工作区（非 projects/，如总览复用的临时目录）不带回', () => {
+    expect(cloudProjectKeyForNewTask({
+      executionMode: 'CLOUD', id: '5', workspace: '/opt/mao-data/workspace/2/5', projectKey: '5'
+    })).toBeUndefined()
+  })
+
+  it('LOCAL 会话与无 projectKey 一律不带回', () => {
+    expect(cloudProjectKeyForNewTask({ executionMode: 'LOCAL', id: '3', workspace: '/Users/x/p', projectKey: 'x' })).toBeUndefined()
+    expect(cloudProjectKeyForNewTask({ executionMode: 'CLOUD', id: '3', workspace: '/opt/mao-data/workspace/2/3' })).toBeUndefined()
   })
 })
