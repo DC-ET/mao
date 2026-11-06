@@ -169,10 +169,14 @@ export class WatcherService {
     // 复制（copyFrom）：敏感请求头与 body 从源行解密继承。必须在 normalizeInput 之前——
     // create 原首行即 normalizeInput，POST 缺 body 会先抛「POST 方法必须填写请求体」，
     // 写在 normalize 之后的继承逻辑够不着（技术方案 2026-10-27 §3.6.3）。
-    const effective = input.copyFrom != null
-      ? await this.applyCopyInheritance(userId, input)
-      : input;
-    const normalized = this.normalizeInput(effective);
+    let effective = input;
+    let legacyHeaderValues: ReadonlySet<string> | undefined;
+    if (input.copyFrom != null) {
+      const inherited = await this.applyCopyInheritance(userId, input);
+      effective = inherited.input;
+      legacyHeaderValues = inherited.legacyHeaderValues;
+    }
+    const normalized = this.normalizeInput(effective, legacyHeaderValues);
     const id = await this.deps.watcherRepo.insert({
       userId,
       agentId: normalized.agentId,
@@ -209,6 +213,10 @@ export class WatcherService {
     const headers = input.headers !== undefined
       ? this.restoreMaskedHeaders(input.headers, storedHeaders)
       : storedHeaders;
+    // 存量字面量豁免（review round 1）：库内已存的旧值随编辑回传（未修改行 / 掩码行还原）
+    // 或未下发 headers 时沿用，不应被新 D4 校验卡死——否则含 `{{...}}` 字面量的存量哨兵
+    // 连改名都做不到。豁免按「值精确等于任一库内存量值」判定，新填写的值不受豁免。
+    const legacyHeaderValues = new Set(Object.values(storedHeaders));
     const merged: WatcherInput = {
       name: input.name ?? existing.name,
       agentId: input.agentId ?? existing.agentId,
@@ -222,7 +230,7 @@ export class WatcherService {
       promptTemplate: input.promptTemplate ?? existing.promptTemplate,
       triggerMode: input.triggerMode ?? existing.triggerMode,
     };
-    const normalized = this.normalizeInput(merged);
+    const normalized = this.normalizeInput(merged, legacyHeaderValues);
     // 基线重置判定用「本次实际生效的值」而非原始入参：normalizeInput 会把
     // method/compareMode 转大写、jsonPath 去首尾空白、url 规范化（主机转小写），
     // 落库值与库内一致、存储内容零变化，拿原始入参（'get' / ' data.price '）与库内
@@ -665,7 +673,7 @@ export class WatcherService {
     }
   }
 
-  private normalizeInput(input: WatcherInput): {
+  private normalizeInput(input: WatcherInput, legacyHeaderValues?: ReadonlySet<string>): {
     name: string;
     agentId: number;
     url: string;
@@ -691,7 +699,7 @@ export class WatcherService {
     if (!SIGNAL_PROBE_METHODS.includes(method)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '方法仅支持 GET/POST');
     }
-    const headers = input.headers == null ? null : assertProbeHeaders(input.headers);
+    const headers = input.headers == null ? null : assertProbeHeaders(input.headers, legacyHeaderValues);
     // body 只对 POST 有意义：切到 GET 时强制清空，避免库里残留一段用户看不见、
     // 探针却仍会发送的请求体（BUG-E）。method 先归一化再判。
     const isPost = method === 'POST';
@@ -766,7 +774,7 @@ export class WatcherService {
    *   （源行无 body 时继承 null，由 normalizeInput 的 POST 必填校验拦住）；
    * - 其余字段（含 triggerMode）随请求体原样下发，reuseSessionId 不继承（create 置空）。
    */
-  private async applyCopyInheritance(userId: number, input: WatcherInput): Promise<WatcherInput> {
+  private async applyCopyInheritance(userId: number, input: WatcherInput): Promise<{ input: WatcherInput; legacyHeaderValues: ReadonlySet<string> }> {
     const source = await this.requireOwned(userId, input.copyFrom!);
     const storedHeaders = this.decryptHeaders(source.headersJson);
     const headers = input.headers != null
@@ -776,7 +784,9 @@ export class WatcherService {
     if (body === undefined && (input.method ?? 'GET').trim().toUpperCase() === 'POST') {
       body = this.decryptBody(source.body);
     }
-    return { ...input, headers, body };
+    // 源行存量值全部豁免 D4（review round 1）：源哨兵头里的旧 `{{...}}` 字面量
+    // 随复制继承落到副本，副本落库的仍是同样的字面量，执行态与源哨兵一致（原样直发）。
+    return { input: { ...input, headers, body }, legacyHeaderValues: new Set(Object.values(storedHeaders)) };
   }
 
   /**

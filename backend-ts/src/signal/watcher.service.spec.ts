@@ -1487,3 +1487,44 @@ describe('WatcherService 凭据占位符解析', () => {
     expect(h.probeExecute.mock.calls[0]![0].headers).toEqual({ Authorization: 'Bearer tok-copy' });
   });
 });
+
+describe('存量 {{...}} 字面量头的兼容（review round 1）', () => {
+  function legacyLiteralWatcher(): SignalWatcher {
+    const cipher = makeCipher();
+    return watcher({
+      headersJson: cipher.encrypt(JSON.stringify({ 'X-Tpl': '{{EVIL}}', Accept: 'json' })),
+    });
+  }
+
+  it('改名（未下发 headers）与未修改行回传不被 D4 卡死，新填写值仍拒绝', async () => {
+    const h = harness({ watcher: legacyLiteralWatcher() });
+    // 只改名：库内字面量沿用，正常保存
+    await h.service.update(7, 1, { name: 'renamed' });
+    expect(h.watchers.get(1)!.name).toBe('renamed');
+    expect(h.service.decryptHeadersForCompare(h.watchers.get(1)!.headersJson))
+      .toEqual({ 'X-Tpl': '{{EVIL}}', Accept: 'json' });
+    // 未修改行随编辑回传（前端编辑对话框总是全量下发头行）：豁免
+    const untouched = await h.service.update(7, 1, { headers: { 'X-Tpl': '{{EVIL}}', Accept: 'json' } });
+    expect(untouched.headers).toEqual({ 'X-Tpl': '{{EVIL}}', Accept: 'json' });
+    // 新填写的未识别占位符：仍拒绝（D4 对新输入不变）
+    await expect(h.service.update(7, 1, { headers: { 'X-Tpl': '{{EVIL}}2' } })).rejects.toThrow(/不支持的占位符/);
+    await expect(h.service.create(7, { ...baseInput, headers: { 'X-A': '{{EVIL}}' } })).rejects.toThrow(/不支持的占位符/);
+  });
+
+  it('复制：源行字面量继承到副本（create 不被 D4 卡死），副本落库仍是该字面量', async () => {
+    const h = harness({ watcher: legacyLiteralWatcher() });
+    const copy = await h.service.create(7, {
+      ...baseInput, name: 'copy', headers: { 'X-Tpl': '{{EVIL}}', Accept: 'json' }, copyFrom: 1,
+    });
+    expect(copy.id).not.toBe(1);
+    expect(h.service.decryptHeadersForCompare(h.watchers.get(copy.id)!.headersJson))
+      .toEqual({ 'X-Tpl': '{{EVIL}}', Accept: 'json' });
+  });
+
+  it('存量字面量执行态原样直发（与旧版行为一致）', async () => {
+    const h = harness({ watcher: legacyLiteralWatcher() });
+    await h.service.runCheck(1);
+    expect(h.probeExecute).toHaveBeenCalledTimes(1);
+    expect(h.probeExecute.mock.calls[0]![0].headers).toEqual({ 'X-Tpl': '{{EVIL}}', Accept: 'json' });
+  });
+});

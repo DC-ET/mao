@@ -114,7 +114,7 @@ export function isForbiddenProbeHeader(name: string): boolean {
 }
 
 /** 校验请求头键值对；不合法抛 PARAM_INVALID。返回trim 后的新对象。 */
-export function assertProbeHeaders(headers: Record<string, string>): Record<string, string> {
+export function assertProbeHeaders(headers: Record<string, string>, legacyValues?: ReadonlySet<string>): Record<string, string> {
   const entries = Object.entries(headers ?? {});
   if (entries.length > MAX_PROBE_HEADERS) {
     throw new BusinessException(ErrorCode.PARAM_INVALID, `请求头最多 ${MAX_PROBE_HEADERS} 个`);
@@ -137,7 +137,10 @@ export function assertProbeHeaders(headers: Record<string, string>): Record<stri
     }
     // D4（2026-11-06 方案）：值里出现 `{{...}}` 且不是白名单占位符直接拒绝——
     // 静默放行会让占位符字面量发往目标服务，用户还以为注入生效了。
-    if (containsUnsupportedPlaceholder(value)) {
+    // legacyValues：库内已存的旧字面量（本功能上线前 assertProbeHeaders 允许任意
+    // 无 CRLF 值落库）随编辑回传 / 复制继承时豁免，否则存量哨兵将无法再编辑、改名、
+    // 复制（review round 1）；只拦「新填写」的值，执行态对未识别形态本就原样直发。
+    if (containsUnsupportedPlaceholder(value) && !legacyValues?.has(value)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, `请求头 ${key} 含不支持的占位符（仅支持 {{MAO_TOKEN}} / {{ECP_TOKEN}}）`);
     }
     result[key] = value;
