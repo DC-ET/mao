@@ -738,7 +738,90 @@ describe('CrashRecoveryRunner orphan sweep', () => {
     expect(sessionMapper.selectById).toHaveBeenCalledWith(14);
   });
 
-  it('recoversOrphanOnIntervalAndStopsAfterStopPeriodicSweep', async () => {    vi.useFakeTimers();
+  describe('LOCAL 会话恢复前的执行端可达性预检', () => {
+    function makeLocalRecoveryRunner(options: { executionMode?: string; connected: boolean }) {
+      const pending: Promise<void>[] = [];
+      const session = {
+        id: 21, userId: 42, sessionType: 'DEFAULT', phase: 'RUNNING', modelId: null,
+        executionMode: options.executionMode ?? 'LOCAL',
+        lastActivityAt: null,
+      };
+      const sessionMapper = {
+        selectByPhase: vi.fn(async (phase: string) =>
+          (phase === 'RUNNING' || phase === 'RESUMING') ? [session] : []),
+        selectById: vi.fn(async () => session),
+      };
+      const finishExecution = vi.fn().mockResolvedValue(undefined);
+      const harnessExecute = vi.fn().mockResolvedValue(undefined);
+      const send = vi.fn();
+      const localToolSessions = { isConnected: vi.fn(async () => options.connected) };
+      const onExecutionFinished = vi.fn().mockResolvedValue(undefined);
+      const runner = new CrashRecoveryRunner(
+        sessionMapper as never,
+        { cleanupIncompleteTail: vi.fn().mockResolvedValue(0), updatePhase: vi.fn().mockResolvedValue(undefined) } as never,
+        { finishExecution } as never,
+        { execute: harnessExecute } as never,
+        { registerCancelFlag: vi.fn().mockReturnValue({ get: () => false }), removeCancelFlag: vi.fn() } as never,
+        { send } as never,
+        {} as never,
+        { clear: vi.fn() } as never,
+        { selectBySessionId: vi.fn().mockResolvedValue([]) } as never,
+        { selectById: vi.fn().mockResolvedValue(null), selectDefault: vi.fn().mockResolvedValue(null) } as never,
+        '/tmp',
+        { submit: (fn: () => Promise<void>) => { pending.push(fn()); } },
+        onExecutionFinished,
+        undefined,
+        undefined,
+        () => false,
+        9080,
+        localToolSessions as never,
+      );
+      return { runner, pending, finishExecution, harnessExecute, localToolSessions, send, onExecutionFinished };
+    }
+
+    it('skipsRecoveryAndFailsFastWhenTheLocalExecutorIsUnreachable', async () => {
+      // 回归（线上 session 2297）：后端重启后恢复执行跑到技能同步才失败，用户看到的是
+      // 60s 等待 + 误导性超时文案。设备离线时应直接判失败并给出可执行文案。
+      const { runner, pending, finishExecution, harnessExecute, localToolSessions, onExecutionFinished } = makeLocalRecoveryRunner({ connected: false });
+
+      await runner.run();
+      await Promise.all(pending);
+
+      expect(localToolSessions.isConnected).toHaveBeenCalledWith(21);
+      expect(harnessExecute).not.toHaveBeenCalled();
+      expect(finishExecution).toHaveBeenCalledWith(
+        21, 42, 'FAILED', expect.any(String), expect.stringContaining('本地执行端未连接'),
+      );
+      // fail-fast 也是 FAILED 终态：必须走收尾回调（定时任务运行记录收敛 / IM 队列接力），
+      // 与同终态的异常路径口径一致，否则 scheduled_task_run 停在 RUNNING、队列滞留。
+      expect(onExecutionFinished).toHaveBeenCalledWith(21, 42, 'FAILED');
+    });
+
+    it('stillRecoversWhenTheLocalExecutorIsOnline', async () => {
+      const { runner, pending, finishExecution, harnessExecute } = makeLocalRecoveryRunner({ connected: true });
+
+      await runner.run();
+      await Promise.all(pending);
+
+      expect(harnessExecute).toHaveBeenCalled();
+      expect(finishExecution).not.toHaveBeenCalledWith(
+        21, 42, 'FAILED', expect.anything(), expect.anything(),
+      );
+    });
+
+    it('doesNotGateCloudSessionsOnLocalReachability', async () => {
+      const { runner, pending, harnessExecute, localToolSessions } = makeLocalRecoveryRunner({ executionMode: 'CLOUD', connected: false });
+
+      await runner.run();
+      await Promise.all(pending);
+
+      expect(localToolSessions.isConnected).not.toHaveBeenCalled();
+      expect(harnessExecute).toHaveBeenCalled();
+    });
+  });
+
+  it('recoversOrphanOnIntervalAndStopsAfterStopPeriodicSweep', async () => {
+    vi.useFakeTimers();
     try {
       const dir = useTmpDir('mao-sweep-periodic-');
       writeActivePort(dir, 9081);

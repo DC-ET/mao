@@ -138,6 +138,7 @@
 | LOCAL shell 里 `mao` 报 401 | shell 子进程有意不注入 `MAO_TOKEN`，先在该机 `mao login` 写入 `~/.mao/auth.json` |
 | `--approve-rule` 报错退出码 4 | 必须写成 `tool:pattern`；`*`、`*:*`、只写工具名都会被拒绝 |
 | LOCAL 任务无任何回复、约 60 秒后失败 | 客户端版本过旧：技能同步完成信号未带 `syncId`，服务端等到超时才判失败。升级桌面端或 `mao-agent update`（修复见 0.0.94）。新版服务端会直接提示「技能同步失败：客户端未回带技能同步标识 syncId」 |
+| 桌面端对话报「技能同步失败：客户端 60 秒内未回报技能同步结果」 | mao-agent 已退出但会话仍绑定它的设备：0.0.455 起桌面端与 mao-agent 共用同一份 `~/.mao/agent-cli/device.json`，同步帧投给该设备下的所有本地连接，桌面端可直接接手；若仍报错，确认桌面端与 `mao-agent --local` 至少有一个在线。一列满 60 秒后才失败说明本地连接都不可写，服务端会直接提示「没有可用的本地执行端连接」 |
 | LOCAL 任务报「技能同步失败：没有可执行本机工具的客户端连接」 | 桌面端 / `mao-agent --local` 未连上或已退出；重新启动客户端后重发 |
 | `--model` / `/model` 报「多个模型名为 X」或「找不到名为 X 的模型」 | 取值优先按显示名匹配、厂商串兜底，见 [mao-agent.md](mao-agent.md) 的「模型解析」。用 `mao model list-active` 查候选，必要时直接给 `--model <id>` |
 

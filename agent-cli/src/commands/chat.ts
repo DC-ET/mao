@@ -95,6 +95,7 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
   const tuiHandleHolder: { handle?: TuiHandle } = {};
 
   const localMode = session.executionMode === 'LOCAL' || (cfg.local && session.executionMode !== 'CLOUD');
+  const localWorkspace = path.resolve(session.workspace || cfg.workspace || process.cwd());
   const ws = new WsClient({
     baseUrl,
     getToken: ctx.getToken,
@@ -103,7 +104,6 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
       logger.warn(`连不上服务器（已重试 ${n} 次）。检查网络，或 mao-agent login 后重试。`);
     },
   });
-  const localWorkspace = path.resolve(session.workspace || cfg.workspace || process.cwd());
   if (cfg.local && !localMode) {
     process.stderr.write(`⚠ 该会话是 ${session.executionMode ?? 'CLOUD'} 模式，忽略 --local，按会话原模式运行。\n`);
   }

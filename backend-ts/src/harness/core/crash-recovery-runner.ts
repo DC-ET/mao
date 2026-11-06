@@ -109,6 +109,11 @@ export class CrashRecoveryRunner {
     private readonly isSessionLocallyActive?: (sessionId: number) => boolean,
     /** 本实例监听的后端端口；与 active-backend-port 一致时才允许执行孤儿巡检。 */
     private readonly selfPort?: number,
+    /**
+     * LOCAL 会话执行端可达性判定（恢复前预检）。可选以兼容既有装配与单测；
+     * 缺省时视为可达，恢复按原路径走（由技能同步处自然失败）。
+     */
+    private readonly localToolSessions?: { isConnected(sessionId: number | null): Promise<boolean> },
   ) {}
 
   async run(): Promise<void> {
@@ -379,6 +384,17 @@ export class CrashRecoveryRunner {
     // 恢复续跑的实际终态：默认 FAILED，供收尾回调（onExecutionFinished）按终态决定队列是否接力消费。
     let terminalPhase: 'COMPLETED' | 'FAILED' | 'CANCELLED' = 'FAILED';
     try {
+      // LOCAL 会话恢复前先确认执行端可达：设备离线时恢复跑起来也只会在技能同步处失败，
+      // 而失败路径会把 60 秒等待、错误横幅一起带给用户。提前判定可直接给出可执行文案。
+      // 放在 try 内：这条 FAILED 终态也必须走下面的 finally 收尾（定时任务运行记录收敛、
+      // IM 队列接力），与异常 / 成功路径口径一致。
+      if (session.executionMode === 'LOCAL' && !(await this.isLocalTargetReachable(sessionId))) {
+        const reason = '本地执行端未连接（桌面端 / mao-agent 未连接或已掉线），恢复执行已取消；请启动客户端后重试';
+        harnessLog('warn', `Session ${sessionId}: recovery skipped, local target unreachable`);
+        await this.taskTerminalService.finishExecution(sessionId, userId, 'FAILED', executionId, reason);
+        this.notifyClient(userId, sessionId, 'FAILED');
+        return;
+      }
       const deleted = await this.sessionService.cleanupIncompleteTail(sessionId);
       if (deleted > 0) {
         harnessLog('info', `Session ${sessionId}: filled ${deleted} missing tool output(s)`);
@@ -448,6 +464,17 @@ export class CrashRecoveryRunner {
           harnessLog('warn', `Auto-consume after recovery failed for session ${sessionId}`, e);
         }
       }
+    }
+  }
+
+  /** LOCAL 会话的执行端是否可达：绑定设备在线，或（未绑定时）存在可用的本地客户端连接。 */
+  private async isLocalTargetReachable(sessionId: number): Promise<boolean> {
+    if (this.localToolSessions == null) return true;
+    try {
+      return await this.localToolSessions.isConnected(sessionId);
+    } catch (e) {
+      harnessLog('warn', `Local target reachability check failed for session ${sessionId}`, e);
+      return true;
     }
   }
 

@@ -74,6 +74,73 @@ describe('StreamingWsRegistry', () => {
     }
   });
 
+  it('sendToDeviceFamily reaches every connection sharing the device id', () => {
+    // 回归（线上 session 2297）：桌面端与 mao-agent 共用 ~/.mao/agent-cli/device.json，
+    // 同机两端是同一个 deviceId 但是两条独立 WS 连接。mao-agent 退出后它的连接可能
+    // 仍在（半死空壳：活着但没有该会话上下文，收到请求也不回报）。只按 deviceExecutors
+    // 里那一条投递就会空等到超时，因此同 deviceId 的存活连接全部纳入，桌面端可直接接手。
+    const cliSend = vi.fn();
+    const desktopSend = vi.fn();
+    const cli = mockSocket('ws-cli', cliSend);
+    const desktop = mockSocket('ws-desktop', desktopSend);
+    registry.register(cli, 5, 'cli', undefined, true, { id: 'shared-device', name: 'Mac', platform: 'darwin' });
+    registry.register(desktop, 5, 'electron', undefined, true, { id: 'shared-device', name: 'Mac', platform: 'darwin' });
+
+    const result = registry.sendToDeviceFamily(5, 'shared-device', wsEvent('skill_sync_required', 10, { syncId: 's-1' }));
+
+    expect(result.targetCount).toBe(2);
+    expect(result.successCount).toBe(2);
+    expect(cliSend).toHaveBeenCalled();
+    expect(desktopSend).toHaveBeenCalled();
+  });
+
+  it('sendToDeviceFamily skips connections of another device and reports zero delivery when the device is offline', () => {
+    // 另一台机器（Mac + Windows 各开一个桌面端）不会收到：否则它会在本地落一份用不了的
+    // 技能副本，还可能抢先回报让服务端误判同步完成。
+    const macSend = vi.fn();
+    const otherSend = vi.fn();
+    const mac = mockSocket('ws-mac', macSend);
+    const other = mockSocket('ws-other', otherSend);
+    registry.register(mac, 8, 'cli', undefined, true, { id: 'dev-mac', name: 'Mac', platform: 'darwin' });
+    registry.register(other, 8, 'electron', undefined, true, { id: 'dev-other', name: 'Other', platform: 'linux' });
+
+    const scoped = registry.sendToDeviceFamily(8, 'dev-mac', wsEvent('skill_sync_required', 10, {}));
+    expect(scoped.targetCount).toBe(1);
+    expect(macSend).toHaveBeenCalled();
+    expect(otherSend).not.toHaveBeenCalled();
+
+    // 设备整机离线：没有可投递连接，调用方据此快速失败而不等 60s 超时
+    const offline = registry.sendToDeviceFamily(8, 'dev-absent', wsEvent('skill_sync_required', 10, {}));
+    expect(offline.targetCount).toBe(0);
+    expect(offline.successCount).toBe(0);
+
+    // 浏览器 / 无设备身份的连接不参与设备族投递
+    const browserSend = vi.fn();
+    registry.register(mockSocket('ws-browser', browserSend), 8, 'browser');
+    const browserOnly = registry.sendToDeviceFamily(8, 'dev-browser', wsEvent('skill_sync_required', 10, {}));
+    expect(browserOnly.targetCount).toBe(0);
+    expect(browserSend).not.toHaveBeenCalled();
+  });
+
+  it('sendToDeviceFamily reports zero delivery when the only connection is not writable', () => {
+    const browserSend = vi.fn();
+    const browser = mockSocket('ws-browser', browserSend);
+    registry.register(browser, 6, 'browser');
+
+    const empty = registry.sendToDeviceFamily(6, 'dev-1', wsEvent('skill_sync_required', 10, {}));
+    expect(empty.targetCount).toBe(0);
+    expect(empty.successCount).toBe(0);
+    expect(browserSend).not.toHaveBeenCalled();
+
+    // 写失败的连接计入 failureCount，供调用方区分「没目标」与「送了但没送达」
+    const broken = mockSocket('ws-broken', () => { throw new Error('closed'); });
+    registry.register(broken, 6, 'cli', undefined, true, { id: 'dev-broken', name: 'X', platform: 'linux' });
+    const failed = registry.sendToDeviceFamily(6, 'dev-broken', wsEvent('skill_sync_required', 10, {}));
+    expect(failed.targetCount).toBe(1);
+    expect(failed.successCount).toBe(0);
+    expect(failed.failureCount).toBe(1);
+  });
+
   it('reportsFailureWhenAllWritesFail', async () => {
     const session = mockSocket('ws-2', () => { throw new Error('closed'); });
     registry.register(session, 1, 'electron');

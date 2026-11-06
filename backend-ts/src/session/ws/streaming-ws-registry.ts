@@ -402,6 +402,45 @@ export class StreamingWsRegistry {
   }
 
   /**
+   * 同一台机器上的所有本地执行连接（同步直发，不走增量队列）。
+   *
+   * 用途：技能 / MCP 同步这类「必须有人响应」的帧。设备身份统一后（桌面端与 mao-agent
+   * 共用 `~/.mao/agent-cli/device.json`），同机两端是同一个 deviceId，但它们是两条独立
+   * WS 连接——mao-agent 退出后它的连接可能仍在（半死状态：活着但 `LocalExecutor` 没有
+   * 该会话上下文，收到请求也不回报）。只按 `deviceExecutors` 里那一条投递就会空等到超时，
+   * 因此这里把同 deviceId 的存活连接全部纳入，桌面端可直接接手。
+   *
+   * 只覆盖同一个 deviceId：另一台机器（Mac + Windows 各开一个桌面端）不会收到，
+   * 也就不会在本地落一份用不了的技能副本、或抢先回报让服务端误判同步完成。
+   */
+  sendToDeviceFamily(userId: number, deviceId: string, event: WsEvent): WsDeliveryResult {
+    const result: WsDeliveryResult = { targetCount: 0, successCount: 0, failureCount: 0 };
+    if (userId == null || !deviceId || event == null) return result;
+    let json: string;
+    try {
+      json = JSON.stringify(event);
+    } catch {
+      return result;
+    }
+    const delivered = new Set<WsSocket>();
+    for (const session of this.userSessions.get(userId) ?? []) {
+      if (session.readyState !== WS_OPEN) continue;
+      if (!this.isConnectionAuthorized(session)) continue;
+      if (this.connectionDevice.get(session.id)?.id !== deviceId) continue;
+      if (delivered.has(session)) continue;
+      delivered.add(session);
+      result.targetCount++;
+      try {
+        session.send(json);
+        result.successCount++;
+      } catch {
+        result.failureCount++;
+      }
+    }
+    return result;
+  }
+
+  /**
    * 定向投递到指定设备的执行连接（同步直发，不走增量队列）。
    * 工具指令 / 技能同步这类帧丢失会让服务端等待方悬挂，不能随普通增量帧一起被丢弃。
    */

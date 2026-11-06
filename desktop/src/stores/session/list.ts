@@ -541,6 +541,8 @@ export function createSessionListModule(ctx: {
       payload.workspace = workspace || undefined
       // 本机设备身份（技术方案 2026-11-05 D5）：桌面端创建 LOCAL 会话即绑定执行端设备，
       // 之后只能由该设备执行。浏览器拿不到设备身份（本就不允许浏览器新建 LOCAL 会话）。
+      // deviceId 与 mao-agent 共用同一份设备文件，服务端把该设备下的所有本地连接
+      // 都视为可接手执行端，桌面端与 CLI 谁在线都能应答技能 / MCP 同步。
       const device = await getLocalDeviceInfo()
       if (device) {
         payload.targetDeviceId = device.id

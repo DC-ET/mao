@@ -63,7 +63,7 @@ function sideRejection(message: string): { message: string; code: string } {
 }
 import type { JwtService } from '../../crypto/jwt.service.js';
 import { contentParts, WsStreamingEventListener, type AgentEventListener, type WsListenerDeps } from './ws-streaming-event-listener.js';
-import type { StreamingWsRegistry, WsDeviceInfo, WsSocket } from './streaming-ws-registry.js';
+import type { StreamingWsRegistry, WsDeliveryResult, WsDeviceInfo, WsSocket } from './streaming-ws-registry.js';
 import { wsEvent } from './ws-event.js';
 import { isActivePhase } from '../session-vo.js';
 import type { AgentExecutionContext } from '../../harness/core/agent-execution-context.js';
@@ -2368,10 +2368,23 @@ export class StreamingWsHandler {
     // 入参 session 可能还是旧 NULL，直接按快照判断会误走广播。
     const targetDeviceId = (await this.deps.localToolSessionRegistry.resolveTarget(sessionId))?.deviceId
       ?? session.targetDeviceId ?? null;
+    // 本地执行端广播：只按 deviceId 定向会把「同机另一个本地客户端」排除在外，
+    // 而桌面端与 mao-agent 虽然共用 ~/.mao/agent-cli/device.json 拿到同一个 deviceId，
+    // 但它们是两条独立 WS 连接——mao-agent 退出后它的连接可能仍在（半死状态：活着但
+    // LocalExecutor 没有该会话上下文，收到请求也不回报）。只按 deviceExecutors 里那一条
+    // 投递就会空等到超时，因此同 deviceId 的存活连接全部纳入，桌面端可直接接手。
+    let delivery: WsDeliveryResult = { targetCount: 0, successCount: 0, failureCount: 0 };
     if (targetDeviceId != null && targetDeviceId !== '') {
-      this.deps.registry.sendToDevice(userId, targetDeviceId, skillSyncEvent);
+      delivery = this.deps.registry.sendToDeviceFamily(userId, targetDeviceId, skillSyncEvent);
     } else {
+      // 未绑定设备的旧会话：退回用户级广播（改造前行为）
       this.deps.registry.sendToLocalClients(userId, skillSyncEvent);
+      delivery = { targetCount: 1, successCount: 1, failureCount: 0 };
+    }
+    if (delivery.targetCount === 0) {
+      // 一个可投递的 local 连接都没有：不等 60s，直接把真实原因返回给会话失败路径。
+      this.pendingSkillSyncs.delete(sessionId);
+      return '没有可用的本地执行端连接（桌面端 / mao-agent 未连接或已掉线）';
     }
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -2412,10 +2425,19 @@ export class StreamingWsHandler {
       const mcpSyncEvent = wsEvent('mcp_sync_required', sessionId, payload);
       const targetDeviceId = (await this.deps.localToolSessionRegistry.resolveTarget(sessionId))?.deviceId
         ?? _session.targetDeviceId ?? null;
+      // 与技能同步同口径：同 deviceId 的存活连接全部纳入（桌面端 / mao-agent 虽共用
+      // device.json 拿到同一 deviceId，但是两条独立连接，其中一条可能是半死空壳）。
+      let delivery: WsDeliveryResult = { targetCount: 0, successCount: 0, failureCount: 0 };
       if (targetDeviceId != null && targetDeviceId !== '') {
-        this.deps.registry.sendToDevice(userId, targetDeviceId, mcpSyncEvent);
+        delivery = this.deps.registry.sendToDeviceFamily(userId, targetDeviceId, mcpSyncEvent);
       } else {
         this.deps.registry.sendToLocalClients(userId, mcpSyncEvent);
+        delivery = { targetCount: 1, successCount: 1, failureCount: 0 };
+      }
+      if (delivery.targetCount === 0) {
+        // 没有可投递的 local 连接：不等超时，直接走降级（清空本会话本地 MCP 快照）。
+        this.deps.mcpSyncService.clearLocalSession(sessionId);
+        return;
       }
       await Promise.race([
         done,
@@ -2677,12 +2699,18 @@ export class StreamingWsHandler {
 
   /**
    * LOCAL 发送 / 触发前置（技术方案 2026-11-05 §4.1-8）：
-   * 1) 已绑定（内存或 DB）→ 刷新登记并返回绑定值；
+   * 1) 已绑定 → 刷新登记并返回绑定值（设备是否可达由投递方按 hasDeviceConnection 判定）；
    * 2) 未绑定 + 入站连接带设备身份（桌面 / CLI）→ 条件认领给它；
    * 3) 未绑定 + 唯一在线设备且平台一致 → 条件认领；
    * 4) 未绑定 + 多台在线 / 平台不符 → 返回引导文案（调用方决定如何报错）；
    * 5) 未绑定 + 无任何带设备身份的连接（纯旧端环境）→ 返回 null，保持广播回退。
    * 队列消费 / 内部执行入口（socket 为 undefined）不认领、不拒绝，只沿用已绑定值。
+   *
+   * 绑定建立后不可改绑：会话创建时绑定执行端，之后没有任何路径改写它（DB 的
+   * `claimTargetDevice` 只在 `target_device_id IS NULL` 时生效，内存注册表同样保留旧值）。
+   * 原设备离线时由「同机另一端接手响应」解决——桌面端与 mao-agent 共用同一份
+   * `~/.mao/agent-cli/device.json`，同步 / 工具帧按 deviceId 投给该设备下所有存活连接，
+   * 因此不需要把会话改绑到另一台机器。
    */
   private async prepareLocalTarget(
     socket: WsSocket | undefined,

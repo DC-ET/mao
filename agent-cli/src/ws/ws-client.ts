@@ -217,7 +217,11 @@ export class WsClient {
         this.lastServerMessageAt = Date.now();
         // 鉴权首帧：token 不进握手 URL，连接后第一条消息必须先于任何业务帧（subscribe 等）。
         // 携带本机设备身份（技术方案 2026-11-05 §4.2）：服务端按设备定向投递 LOCAL 工具请求。
-        this.send({ type: 'auth', token, client, device: this.opts.getDevice?.() ?? resolveDeviceIdentity() });
+        const device = this.opts.getDevice?.() ?? resolveDeviceIdentity();
+        this.send({
+          type: 'auth', token, client,
+          device,
+        });
         this.startHeartbeat();
         for (const sid of this.subscribed) {
           this.send({ type: 'subscribe', sessionId: sid });

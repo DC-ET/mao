@@ -40,6 +40,7 @@ describe('StreamingWsHandler', () => {
     getUserId: vi.fn(), send: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(),
     register: vi.fn(), unregister: vi.fn(), hasLocalClientConnection: vi.fn(),
     sendToLocalClients: vi.fn(), sendToDevice: vi.fn(() => ({ targetCount: 0, successCount: 0, failureCount: 0 })), hasDeviceConnection: vi.fn(() => false), getDeviceExecutorSocket: vi.fn(() => null), getDeviceId: vi.fn(() => null), getDeviceInfo: vi.fn(() => null), getDevice: vi.fn(() => null), getOnlineDeviceIds: vi.fn(() => []), getActiveToolCalls: vi.fn(() => []), clearActiveToolCalls: vi.fn(),
+    sendToDeviceFamily: vi.fn(() => ({ targetCount: 1, successCount: 1, failureCount: 0 })),
     isSessionThinking: vi.fn(() => false), setSessionThinking: vi.fn(),
     getSessionExecution: vi.fn(() => undefined), setSessionExecution: vi.fn(), clearSessionExecution: vi.fn(),
     getClientType: vi.fn(() => 'browser'), bindEmbedSession: vi.fn(), unbindEmbedSession: vi.fn(),
@@ -1346,7 +1347,8 @@ describe('StreamingWsHandler', () => {
     harnessService.prepareMessage.mockResolvedValue('local-event');
     localToolSessionRegistry.isConnected.mockResolvedValue(true);
     registry.hasLocalClientConnection.mockReturnValue(true);
-    // 旧版客户端（mao-agent ≤ 0.1.2 / 旧桌面端）回报的 skill_sync_done 不带 syncId
+    // 旧版客户端（mao-agent ≤ 0.1.2 / 旧桌面端）回报的 skill_sync_done 不带 syncId。
+    // 本会话未绑定设备（targetDeviceId 为空），走用户级本地广播回退路径。
     registry.sendToLocalClients.mockImplementationOnce(() => {
       void handler.handleTextMessage(ws, JSON.stringify({ type: 'skill_sync_done', sessionId: 11, success: true }));
     });
@@ -1368,8 +1370,84 @@ describe('StreamingWsHandler', () => {
     localToolSessionRegistry.isConnected.mockReset();
   });
 
-  it('localSessionFailsWithConnectionReasonWhenNoLocalClientIsRegistered', async () => {
+  it('localSessionSkillSyncReachesEveryConnectionOfTheDeviceSoDesktopCanAnswerForAnOfflineCliConnection', async () => {
+    // 回归：mao-agent 建的 LOCAL 会话绑定 CLI 的设备，用户在桌面端对话。
+    // 桌面端与 mao-agent 共用 ~/.mao/agent-cli/device.json 拿到同一个 deviceId，但它们是
+    // 两条独立 WS 连接；mao-agent 退出后它的连接可能仍在（半死空壳，收到请求也不回报）。
+    // 只按 deviceExecutors 里那一条投递时桌面端收不到 skill_sync_required，
+    // 60s 后会话失败（线上 session 2297）。
     vi.clearAllMocks();
+    executor.tasks.length = 0;
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'IDLE'));
+    sessionService.saveMessage.mockResolvedValue(message(130, 'USER'));
+    harnessService.prepareMessage.mockResolvedValue('local-device-family');
+    localToolSessionRegistry.isConnected.mockResolvedValue(true);
+    registry.hasLocalClientConnection.mockReturnValue(true);
+    // 会话已绑定 CLI 设备（离线）。绑定不可改绑，但桌面端与 mao-agent 共用同一 deviceId，
+    // 同步帧仍按 deviceId 投给该设备下所有存活连接，桌面端可直接接手响应。
+    localToolSessionRegistry.resolveTarget.mockResolvedValue({ userId: 7, deviceId: 'shared-device' });
+    registry.hasDeviceConnection.mockReturnValue(false);
+    // 客户端回报完成：echo 服务端刚下发的 syncId（handleSkillSyncDone 按轮次匹配）
+    registry.sendToDeviceFamily.mockImplementation((_userId: number, _deviceId: string, event: { data?: { syncId?: string } }) => {
+      void handler.handleTextMessage(ws, JSON.stringify({
+        type: 'skill_sync_done', sessionId: 11, success: true, syncId: event?.data?.syncId,
+      }));
+      return { targetCount: 1, successCount: 1, failureCount: 0 };
+    });
+    harnessService.executeFromEvent.mockImplementation(async () => undefined);
+
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'send_message', sessionId: 11, data: { content: '看下我电脑的硬盘情况' },
+    }));
+    await executor.runAll();
+
+    // 技能同步帧必须按 deviceId 覆盖同机所有连接，而不是只发给 deviceExecutors 里那一条
+    expect(registry.sendToDeviceFamily).toHaveBeenCalledWith(
+      7, 'shared-device', expect.objectContaining({ type: 'skill_sync_required', sessionId: 11 }),
+    );
+    // 同步成功，执行继续
+    expect(harnessService.executeFromEvent).toHaveBeenCalled();
+    expect(taskTerminalService.finishExecution).not.toHaveBeenCalledWith(
+      11, 7, 'FAILED', expect.anything(), expect.anything(),
+    );
+    registry.hasLocalClientConnection.mockReset();
+    localToolSessionRegistry.isConnected.mockReset();
+    localToolSessionRegistry.resolveTarget.mockReset();
+    localToolSessionRegistry.resolveTarget.mockResolvedValue(null);
+  });
+
+  it('localSessionSkillSyncFailsFastInsteadOfWaiting60sWhenNoLocalClientCanBeDelivered', async () => {
+    // 回归：设备族里一个可投递连接都没有（整机离线）时，必须立刻以真实原因失败，
+    // 不再空等 60s 超时（超时文案会把「客户端没连上」误导成「客户端没回应」）。
+    vi.clearAllMocks();
+    executor.tasks.length = 0;
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'IDLE'));
+    sessionService.saveMessage.mockResolvedValue(message(131, 'USER'));
+    harnessService.prepareMessage.mockResolvedValue('local-no-delivery');
+    localToolSessionRegistry.isConnected.mockResolvedValue(true);
+    registry.hasLocalClientConnection.mockReturnValue(true);
+    localToolSessionRegistry.resolveTarget.mockResolvedValue({ userId: 7, deviceId: 'cli-device' });
+    registry.hasDeviceConnection.mockReturnValue(false);
+    registry.sendToDeviceFamily.mockReturnValue({ targetCount: 0, successCount: 0, failureCount: 0 });
+
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'send_message', sessionId: 11, data: { content: 'hello' },
+    }));
+    await executor.runAll();
+
+    expect(harnessService.executeFromEvent).not.toHaveBeenCalled();
+    expect(taskTerminalService.finishExecution).toHaveBeenCalledWith(
+      11, 7, 'FAILED', 'local-no-delivery', expect.stringContaining('没有可用的本地执行端连接'),
+    );
+    registry.hasLocalClientConnection.mockReset();
+    localToolSessionRegistry.isConnected.mockReset();
+    localToolSessionRegistry.resolveTarget.mockReset();
+    localToolSessionRegistry.resolveTarget.mockResolvedValue(null);
+  });
+
+  it('localSessionFailsWithConnectionReasonWhenNoLocalClientIsRegistered', async () => {    vi.clearAllMocks();
     executor.tasks.length = 0;
     registry.getUserId.mockReturnValue(7);
     sessionService.getSession.mockResolvedValue(session('LOCAL', 'IDLE'));
@@ -2204,6 +2282,7 @@ describe('StreamingWsHandler tool_approval.alwaysAllow（V135）', () => {
     getUserId: vi.fn(), send: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(),
     register: vi.fn(), unregister: vi.fn(), hasLocalClientConnection: vi.fn(),
     sendToLocalClients: vi.fn(), sendToDevice: vi.fn(() => ({ targetCount: 0, successCount: 0, failureCount: 0 })), hasDeviceConnection: vi.fn(() => false), getDeviceExecutorSocket: vi.fn(() => null), getDeviceId: vi.fn(() => null), getDeviceInfo: vi.fn(() => null), getDevice: vi.fn(() => null), getOnlineDeviceIds: vi.fn(() => []), getActiveToolCalls: vi.fn(() => []), clearActiveToolCalls: vi.fn(),
+    sendToDeviceFamily: vi.fn(() => ({ targetCount: 1, successCount: 1, failureCount: 0 })),
     isSessionThinking: vi.fn(() => false), setSessionThinking: vi.fn(),
     getClientType: vi.fn(() => 'browser'), bindEmbedSession: vi.fn(), unbindEmbedSession: vi.fn(),
     getEmbedSessionsForConnection: vi.fn(() => []), getEmbedSessionConnection: vi.fn(() => null),
