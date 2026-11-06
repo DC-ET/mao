@@ -5,6 +5,7 @@ import type { Session } from '../../domain/types.js';
 import type { WsSocket } from './streaming-ws-registry.js';
 import { StreamingWsRegistry, WS_OPEN } from './streaming-ws-registry.js';
 import { CompactionSignalBus } from '../../harness/core/compaction-signal-bus.js';
+import { ApprovalRegistry } from '../../harness/approval/approval-registry.js';
 
 class CapturingExecutor {
   readonly tasks: Array<() => void | Promise<void>> = [];
@@ -2235,6 +2236,8 @@ describe('StreamingWsHandler tool_approval.alwaysAllow（V135）', () => {
 
   function buildHandler(extra: {
     approvalEscalationSuppressor?: { suppressByRequest: ReturnType<typeof vi.fn> };
+    /** 覆盖默认桩，用于「真实 ApprovalRegistry」回归用例。 */
+    approvalRegistry?: unknown;
   } = {}) {
     return new StreamingWsHandler({
       registry, titleService, harnessService, sessionService, taskTerminalService, messageQueueService,
@@ -2367,6 +2370,44 @@ describe('StreamingWsHandler tool_approval.alwaysAllow（V135）', () => {
       ws,
       expect.objectContaining({ type: 'tool_approval_resolved', sessionId: 11, data: { requestId: 'req-6', approved: true } }),
     );
+  });
+
+  it('realRegistryClaimsVoteAndBroadcastsResolved', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'WAITING_APPROVAL'));
+    // 回归：handler 里若把 approvalRegistry.has 解构后调用会丢 this 抛错，
+    // 投票被 processTextMessage 的兜底 catch 吞掉（既不认领也不广播 resolved）。
+    const realWsSend = vi.fn();
+    const realRegistry = new ApprovalRegistry(
+      {
+        enterWaitingApproval: vi.fn(async () => true),
+        restoreRunningAfterApproval: vi.fn(async () => true),
+      } as unknown as ConstructorParameters<typeof ApprovalRegistry>[0],
+      {
+        selectById: vi.fn(async () => ({
+          id: 11, userId: 7, targetDeviceId: 'dev-1', targetDeviceName: 'MacBook',
+        })),
+      } as unknown as ConstructorParameters<typeof ApprovalRegistry>[1],
+      { send: realWsSend, sendToConnection: vi.fn() } as unknown as ConstructorParameters<typeof ApprovalRegistry>[2],
+    );
+    await realRegistry.register(11, 'req-real-1', null, {
+      toolName: 'shell',
+      arguments: '{"command":"ls"}',
+      workspace: '/tmp',
+    });
+    expect(realRegistry.has(11, 'req-real-1')).toBe(true);
+
+    await buildHandler({ approvalRegistry: realRegistry }).handleTextMessage(ws, JSON.stringify({
+      type: 'tool_approval', sessionId: 11, requestId: 'req-real-1', approved: true,
+    }));
+
+    expect(realRegistry.has(11, 'req-real-1')).toBe(false);
+    const resolved = realWsSend.mock.calls
+      .map((c) => c[1])
+      .filter((e) => (e as { type?: string }).type === 'tool_approval_resolved');
+    expect(resolved).toHaveLength(1);
+    expect((resolved[0] as { data?: unknown }).data).toEqual({ requestId: 'req-real-1', approved: true });
   });
 
 });

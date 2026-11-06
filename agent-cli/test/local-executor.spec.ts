@@ -9,7 +9,7 @@ import { persistToolResult } from '../src/local/truncate';
 import { handleEditFile, handleReadFile, handleWriteFile } from '../src/local/tools/files';
 import { handleGlobSearch, handleGrepSearch } from '../src/local/tools/search';
 import { parseMcpToolName } from '../src/local/tools/mcp';
-import { LocalExecutor } from '../src/local/executor';
+import { APPROVAL_ECHO_RETRY_MS, LocalExecutor } from '../src/local/executor';
 import type { WsClient } from '../src/ws/ws-client';
 
 const policy = (over: Partial<ApprovalPolicy> = {}): ApprovalPolicy => ({
@@ -532,5 +532,36 @@ describe('多端审批：投票、回声与回退（技术方案 2026-11-06）',
     await exec.handleEvent(toolExecute('req-early'));
     expect(askApproval).not.toHaveBeenCalled();
     expect(sent.filter((m) => (m as { type?: string }).type === 'tool_result')).toHaveLength(1);
+  });
+
+  it('重连补发：connected 能力位到达后立即重发未闭合的投票，回声到达即收敛', async () => {
+    vi.useFakeTimers();
+    try {
+      const sent: object[] = [];
+      const delivered: Array<[string, string]> = [];
+      const exec = makeExec({ relay: true, sent, delivered, choice: 'allow' });
+      const running = exec.handleEvent(toolExecute('req-reconnect'));
+      await vi.advanceTimersByTimeAsync(20);
+      const votes = () => sent.filter((m) => (m as { type?: string }).type === 'tool_approval');
+      expect(votes()).toHaveLength(1);
+      // 5s × 2 两次自动重发用尽后不再重发
+      await vi.advanceTimersByTimeAsync(APPROVAL_ECHO_RETRY_MS * 2 + 100);
+      expect(votes()).toHaveLength(3);
+      // 重连成功（connected 帧 → setApprovalRelaySupported(true)）必须立即补发一次
+      exec.setApprovalRelaySupported(true);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(votes()).toHaveLength(4);
+      // 服务端按近期结果补发回声 → 等待者收敛并按投票结果继续
+      await exec.handleEvent({
+        type: 'tool_approval_resolved',
+        sessionId: 21,
+        data: { requestId: 'req-reconnect', approved: true },
+      });
+      await vi.advanceTimersByTimeAsync(10);
+      await running;
+      expect(delivered).toEqual([['req-reconnect', 'allow']]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

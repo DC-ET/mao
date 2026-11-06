@@ -24,6 +24,14 @@ export const APPROVAL_ECHO_MAX_RETRIES = 2;
 /** 已完成决策的 requestId 记录上限（shell 复用一个 requestId，跨请求淘汰即可）。 */
 const APPROVAL_DECIDED_LIMIT = 200;
 
+/** 等回声的投票；重连成功后要按这份上下文把同一帧再补发一次。 */
+interface ApprovalEchoWaiter {
+  sessionId: number;
+  approved: boolean;
+  alwaysAllow: boolean;
+  resolve: (choice: ApprovalChoice) => void;
+}
+
 export interface LocalExecutorOptions {
   ws: WsClient;
   getToken: () => Promise<string | null>;
@@ -93,7 +101,7 @@ export class LocalExecutor {
   /** requestId → sessionId：按键后的投票要用（onToolExecute 期间登记）。 */
   private readonly approvalSessions = new Map<string, number>();
   /** requestId → resolved 回声的收尾函数（等回声期间）。 */
-  private readonly approvalEchoWaiters = new Map<string, (choice: ApprovalChoice) => void>();
+  private readonly approvalEchoWaiters = new Map<string, ApprovalEchoWaiter>();
   /** requestId → 回声重发定时器。 */
   private readonly approvalResendTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** 已完成多端决策（含远端直接决策）的 requestId：shell 后续动作只在本地判定，不再投票。 */
@@ -106,6 +114,9 @@ export class LocalExecutor {
   /** 服务端能力位（connected 帧）同步：false = 旧后端 / 未连接。 */
   setApprovalRelaySupported(supported: boolean): void {
     this.approvalRelaySupported = supported;
+    // connected 帧每次到达都会走到这里：重连成功立即补发未闭合的投票，
+    // 服务端对已认领的帧会按近期结果只给本连接补发回声（技术方案 §4.5-6）。
+    if (supported) this.replayApprovalVotes();
   }
 
   async handleEvent(evt: { type: string; sessionId: number | null; data: Record<string, unknown> | null }): Promise<void> {
@@ -293,7 +304,7 @@ export class LocalExecutor {
       return early;
     }
     const echoed = await new Promise<ApprovalChoice>((resolve) => {
-      this.approvalEchoWaiters.set(requestId, resolve);
+      this.approvalEchoWaiters.set(requestId, { sessionId, approved, alwaysAllow, resolve });
       this.scheduleApprovalResend(sessionId, requestId, approved, alwaysAllow);
     });
     this.markApprovalDecided(requestId);
@@ -312,7 +323,7 @@ export class LocalExecutor {
     if (waiter) {
       this.clearApprovalResend(requestId);
       this.approvalEchoWaiters.delete(requestId);
-      waiter(choice ?? 'deny');
+      waiter.resolve(choice ?? 'deny');
       return;
     }
     if (choice == null) {
@@ -351,6 +362,19 @@ export class LocalExecutor {
     const timer = this.approvalResendTimers.get(requestId);
     if (timer) clearTimeout(timer);
     this.approvalResendTimers.delete(requestId);
+  }
+
+  /** 重连成功（connected 帧）后立即补发所有仍未闭合的投票一次。 */
+  private replayApprovalVotes(): void {
+    for (const [requestId, waiter] of this.approvalEchoWaiters) {
+      void this.opts.ws.sendReliable({
+        type: 'tool_approval',
+        sessionId: waiter.sessionId,
+        requestId,
+        approved: waiter.approved,
+        ...(waiter.alwaysAllow ? { alwaysAllow: true } : {}),
+      });
+    }
   }
 
   private scheduleApprovalResend(sessionId: number, requestId: string, approved: boolean, alwaysAllow: boolean): void {

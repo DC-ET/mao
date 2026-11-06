@@ -1171,8 +1171,9 @@ export class StreamingWsHandler {
     const approved = typeof root.approved === 'boolean' ? root.approved : null;
     const alwaysAllow = root.alwaysAllow === true;
 
-    const hasFn = this.deps.approvalRegistry.has;
-    if (hasFn && !hasFn(sessionId, requestId)) {
+    // 必须带接收者调用：ApprovalRegistry.has 依赖 this.pending，解构后调用会抛错
+    // （异常被 processTextMessage 兜底 catch 吞掉，表现为投票全部无声失效）。
+    if (this.deps.approvalRegistry.has?.(sessionId, requestId) === false) {
       // 已认领 / 已超时：可能是客户端在重发投票，命中近期结果就给这个连接补一次回声
       this.resendRecentResolution(socket, sessionId, requestId);
       return;
