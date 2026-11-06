@@ -3,7 +3,7 @@ import { CliError, EXIT } from './util/exit-codes';
 import { createLogger } from './util/logger';
 import { getCliVersion } from './util/version';
 import { cleanupRuntimeDir, resolveConfig } from './config/config-store';
-import { BASE_URL_SETUP_HINT, setupBaseUrlInteractive, warnIfTransientBaseUrl } from './config/base-url';
+import { BASE_URL_SETUP_HINT, persistTransientBaseUrl, setupBaseUrlInteractive } from './config/base-url';
 import { createTokenResolver } from './auth/token';
 import { currentTokenSource } from './auth/token';
 import { RestClient } from './rest/rest-client';
@@ -144,7 +144,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     switch (cfg.command) {
       case 'login':
         await cmdLogin(rest, { username: cfg.username, password: cfg.password });
-        warnIfTransientBaseUrl(Boolean(cfg.baseUrl || process.env.MAO_BASE_URL));
+        persistTransientBaseUrl(cfg.baseUrl || process.env.MAO_BASE_URL);
         return 0;
       case 'logout':
         await cmdLogout(rest);

@@ -1,7 +1,7 @@
 import { normalizeBaseUrl } from '../args';
 import { promptVisible } from '../ui/hidden-prompt';
 import { CliError } from '../util/exit-codes';
-import { CONFIG_FILE, findProjectConfig, loadUserConfig, saveUserConfig } from './config-store';
+import { CONFIG_FILE, loadUserConfig, saveUserConfig } from './config-store';
 
 /**
  * baseUrl 不再有内置默认值。这段提示用于 login 交互取消、非 TTY 登录，
@@ -72,11 +72,34 @@ export async function setupBaseUrlInteractive(io: BaseUrlSetupIo = {}): Promise<
   }
 }
 
-/** 登录成功后的提醒：地址若只来自 --base-url / MAO_BASE_URL，下次不会自动沿用。 */
-export function warnIfTransientBaseUrl(fromCliOrEnv: boolean): void {
-  if (!fromCliOrEnv) return;
-  if (loadUserConfig().baseUrl || findProjectConfig()?.baseUrl) return;
-  process.stderr.write(
-    `提示：站点地址来自 --base-url / MAO_BASE_URL，未写入配置；长期使用请写入 ${CONFIG_FILE} 或 export MAO_BASE_URL。\n`,
-  );
+/** 登录成功后的地址持久化：仅当本次地址只来自 --base-url / MAO_BASE_URL 且用户配置里还没有时写入。 */
+export interface PersistBaseUrlIo {
+  /** 结果落盘（默认写入 ~/.mao/agent-cli/config.json）。 */
+  save?: (patch: { baseUrl: string }) => unknown;
+  /** 提示输出（默认 stderr）。 */
+  out?: (message: string) => void;
+}
+
+/**
+ * 登录成功后记住本次使用的站点地址：
+ * - 地址只来自 `--base-url` / `MAO_BASE_URL`（fromCliOrEnv 有值）且用户配置里还没有 baseUrl 时写入用户配置，
+ *   避免「带 --base-url 登录成功后，下次裸跑仍提示未配置」；
+ * - 已有用户配置不覆盖（临时连其它环境不会改写长期默认）；项目配置不参与判断（只对对应项目生效）；
+ * - 保存失败不影响本次登录结果，只提示手动设置方式。
+ * 返回是否写入。
+ */
+export function persistTransientBaseUrl(fromCliOrEnv: string | undefined, io: PersistBaseUrlIo = {}): boolean {
+  const raw = (fromCliOrEnv ?? '').trim().replace(/\/+$/, '');
+  if (!raw) return false;
+  if (loadUserConfig().baseUrl) return false;
+  const save = io.save ?? ((patch: { baseUrl: string }) => saveUserConfig(patch));
+  const out = io.out ?? ((message: string) => process.stderr.write(message));
+  try {
+    save({ baseUrl: raw });
+    out(`✔ 站点地址已保存到 ${CONFIG_FILE}，下次可直接运行 mao-agent。\n`);
+    return true;
+  } catch (e) {
+    out(`⚠ 站点地址保存失败（${(e as Error).message}）；可手动写入 ${CONFIG_FILE} 或设置 MAO_BASE_URL。\n`);
+    return false;
+  }
 }

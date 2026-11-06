@@ -111,44 +111,59 @@ describe('setupBaseUrlInteractive', () => {
   });
 });
 
-describe('warnIfTransientBaseUrl', () => {
-  it('warns when the address only came from --base-url / MAO_BASE_URL', async () => {
-    const { warnIfTransientBaseUrl } = await baseUrlModule();
-    const stderr = captureStream(process.stderr);
-    try {
-      warnIfTransientBaseUrl(true);
-    } finally {
-      stderr.restore();
-    }
-    expect(stderr.text()).toContain('未写入配置');
+describe('persistTransientBaseUrl', () => {
+  it('saves the CLI/env address when the user config has none', async () => {
+    const { persistTransientBaseUrl } = await baseUrlModule();
+    const saved: Array<{ baseUrl: string }> = [];
+    const out: string[] = [];
+    const wrote = persistTransientBaseUrl('  https://mao.example.com/  ', {
+      save: (patch) => saved.push(patch),
+      out: (msg) => out.push(msg),
+    });
+    expect(wrote).toBe(true);
+    expect(saved).toEqual([{ baseUrl: 'https://mao.example.com' }]);
+    expect(out.join('')).toContain('已保存');
   });
 
-  it('stays silent when the address came from config files', async () => {
-    const { warnIfTransientBaseUrl } = await baseUrlModule();
+  it('does not overwrite an existing user config', async () => {
     fs.mkdirSync(path.join(home, '.mao', 'agent-cli'), { recursive: true });
     fs.writeFileSync(
       path.join(home, '.mao', 'agent-cli', 'config.json'),
       JSON.stringify({ baseUrl: 'https://persisted.example.com' }),
     );
-    const stderr = captureStream(process.stderr);
-    try {
-      // loadUserConfig() 每次调用都重新读文件，先落盘再调用即可命中「已持久化」分支。
-      warnIfTransientBaseUrl(true);
-    } finally {
-      stderr.restore();
-    }
-    expect(stderr.text()).toBe('');
+    const { persistTransientBaseUrl } = await baseUrlModule();
+    const saved: unknown[] = [];
+    const out: string[] = [];
+    const wrote = persistTransientBaseUrl('https://cli.example.com', {
+      save: (patch) => saved.push(patch),
+      out: (msg) => out.push(msg),
+    });
+    expect(wrote).toBe(false);
+    expect(saved).toEqual([]);
+    expect(out.join('')).toBe('');
   });
 
-  it('stays silent when fromCliOrEnv is false', async () => {
-    const { warnIfTransientBaseUrl } = await baseUrlModule();
-    const stderr = captureStream(process.stderr);
-    try {
-      warnIfTransientBaseUrl(false);
-    } finally {
-      stderr.restore();
-    }
-    expect(stderr.text()).toBe('');
+  it('does nothing when the address did not come from CLI/env', async () => {
+    const { persistTransientBaseUrl } = await baseUrlModule();
+    const saved: unknown[] = [];
+    const out: string[] = [];
+    expect(persistTransientBaseUrl(undefined, { save: (p) => saved.push(p), out: (m) => out.push(m) })).toBe(false);
+    expect(persistTransientBaseUrl('   ', { save: (p) => saved.push(p), out: (m) => out.push(m) })).toBe(false);
+    expect(saved).toEqual([]);
+    expect(out.join('')).toBe('');
+  });
+
+  it('reports save failures without throwing', async () => {
+    const { persistTransientBaseUrl } = await baseUrlModule();
+    const out: string[] = [];
+    const wrote = persistTransientBaseUrl('https://cli.example.com', {
+      save: () => {
+        throw new Error('disk full');
+      },
+      out: (msg) => out.push(msg),
+    });
+    expect(wrote).toBe(false);
+    expect(out.join('')).toContain('保存失败');
   });
 });
 
