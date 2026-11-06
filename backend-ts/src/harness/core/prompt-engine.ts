@@ -2,7 +2,7 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { hasText } from '../../common/case.js';
 import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
-import type { ChatMessage, ChatRequest, ToolDefinition } from '../llm/chat-request.js';
+import type { ChatMessage, ChatRequest, ContentPart, ToolDefinition } from '../llm/chat-request.js';
 import type { PathSandbox } from '../safety/path-sandbox.js';
 import type { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
 import type { SkillLoader } from '../skill/skill-loader.js';
@@ -230,48 +230,91 @@ export class PromptEngine {
     const userId = this.runtimeUserIdOf(context);
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
-      if (msg.role !== 'user' || typeof msg.content !== 'string') continue;
+      if (msg.role !== 'user') continue;
       // M-13：展开只基于「DB 原始内容」副本，绝不写回 context.messages。
       // 若展开结果写回，命令内容嵌套其它 #{...}# 时会在多轮 buildRequest 中逐层再展开，
       // 同一用户消息在每次 LLM 请求中内容不同，且与崩溃恢复后单遍展开的首轮内容不一致。
       const content = msg.content;
-      let replaced = content.replace(SKILL_PATTERN, (match, skillName: string) => {
-        if (this.skillLoader.hasSkill(skillName) || this.hasUserSkill(skillName, userId)
-          || this.hasLocalUnsyncedSkill(skillName, context)) {
-          return '/' + skillName;
-        }
-        if (!isBenignTemplatePlaceholderName(skillName)) {
-          harnessLog('warn', `Skill not found for marker: ${match}`);
-        }
-        return match;
-      });
-      const commandMatches = [...replaced.matchAll(COMMAND_PATTERN)];
-      // 单遍从后向前替换：String.replace(string, ...) 只换第一处，且前向替换会让
-      // 后续匹配的索引在内容展开后失配（同名标记或展开内容含 #{...}# 时错乱）
-      for (let ci = commandMatches.length - 1; ci >= 0; ci--) {
-        const m = commandMatches[ci];
-        if (m.index == null) continue;
-        const commandName = m[1];
-        // 文档里对 marker 语法的字面描述（`` `#{...}#` ``、`#{skill_name}#`）不是命令：
-        // 原样保留且不查表、不打日志，否则每轮 buildRequest 都刷 Command not found。
-        if (isBenignCommandName(commandName)) continue;
-        let command: { content?: string } | null = null;
-        if (userId != null) {
-          command = await this.userCommandService.getByUserIdAndName(userId, commandName);
-        }
-        if (command?.content != null) {
-          replaced = replaced.slice(0, m.index) + command.content + replaced.slice(m.index + m[0].length);
-        } else {
-          harnessLog('warn', `Command not found for marker: #{${commandName}}#`);
-        }
+      // 多模态用户消息（带图片）的 content 是 part 数组：marker 只可能出现在 text part，
+      // image 等其它 part 原样保留。带图消息里的快捷指令此前整条被跳过，Agent 只看到
+      // marker 以外的正文（会话 2290 的 `#{talk}#` 即此）。
+      const expanded = Array.isArray(content)
+        ? await this.expandMarkersInParts(content as ContentPart[], context, userId)
+        : typeof content === 'string'
+          ? await this.expandMarkersInText(content, context, userId)
+          : null;
+      if (expanded == null || expanded === content) continue;
+      // 必须保留原消息其余字段：senderYmd（跨天提示的日期基准）一旦在这里丢掉，
+      // 含快捷命令 marker 且恰好跨天的那条用户消息就收不到标签（技术方案 2026-10-12 §5.3）。
+      messages[i] = { ...msg, content: expanded };
+    }
+  }
+
+  /** 展开单条纯文本正文里的 skill / command / file 三类 marker。 */
+  private async expandMarkersInText(
+    content: string,
+    context: AgentExecutionContext,
+    userId: number | null,
+  ): Promise<string> {
+    let replaced = content.replace(SKILL_PATTERN, (match, skillName: string) => {
+      if (this.skillLoader.hasSkill(skillName) || this.hasUserSkill(skillName, userId)
+        || this.hasLocalUnsyncedSkill(skillName, context)) {
+        return '/' + skillName;
       }
-      replaced = replaced.replace(FILE_REF_PATTERN, (_match, filePath: string) => filePath);
-      if (replaced !== content) {
-        // 必须保留原消息其余字段：senderYmd（跨天提示的日期基准）一旦在这里丢掉，
-        // 含快捷命令 marker 且恰好跨天的那条用户消息就收不到标签（技术方案 2026-10-12 §5.3）。
-        messages[i] = { ...msg, content: replaced };
+      if (!isBenignTemplatePlaceholderName(skillName)) {
+        harnessLog('warn', `Skill not found for marker: ${match}`);
+      }
+      return match;
+    });
+    const commandMatches = [...replaced.matchAll(COMMAND_PATTERN)];
+    // 单遍从后向前替换：String.replace(string, ...) 只换第一处，且前向替换会让
+    // 后续匹配的索引在内容展开后失配（同名标记或展开内容含 #{...}# 时错乱）
+    for (let ci = commandMatches.length - 1; ci >= 0; ci--) {
+      const m = commandMatches[ci];
+      if (m.index == null) continue;
+      const commandName = m[1];
+      // 文档里对 marker 语法的字面描述（`` `#{...}#` ``、`#{skill_name}#`）不是命令：
+      // 原样保留且不查表、不打日志，否则每轮 buildRequest 都刷 Command not found。
+      if (isBenignCommandName(commandName)) continue;
+      let command: { content?: string } | null = null;
+      if (userId != null) {
+        command = await this.userCommandService.getByUserIdAndName(userId, commandName);
+      }
+      if (command?.content != null) {
+        replaced = replaced.slice(0, m.index) + command.content + replaced.slice(m.index + m[0].length);
+      } else {
+        harnessLog('warn', `Command not found for marker: #{${commandName}}#`);
       }
     }
+    return replaced.replace(FILE_REF_PATTERN, (_match, filePath: string) => filePath);
+  }
+
+  /**
+   * 多模态用户消息的 marker 展开：只改 text part，其余 part（image 等）原样保留。
+   * 逐 part 返回新数组，绝不原地修改调用方传进的 parts（与字符串分支同一不可变约定：
+   * 请求副本与 context.messages 共享 part 引用，原地改会污染上下文）。
+   */
+  private async expandMarkersInParts(
+    parts: ContentPart[],
+    context: AgentExecutionContext,
+    userId: number | null,
+  ): Promise<ContentPart[]> {
+    const expanded: ContentPart[] = [];
+    let changed = false;
+    for (const part of parts) {
+      if (part?.type !== 'text' || typeof part.text !== 'string') {
+        expanded.push(part);
+        continue;
+      }
+      const text = await this.expandMarkersInText(part.text, context, userId);
+      if (text === part.text) {
+        expanded.push(part);
+        continue;
+      }
+      expanded.push({ ...part, text });
+      changed = true;
+    }
+    return changed ? expanded : parts;
   }
 
   private hasUserSkill(skillName: string, userId: number | null | undefined): boolean {

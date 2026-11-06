@@ -902,6 +902,98 @@ describe('PromptEngine 会话日期锚定与跨天提示', () => {
     expect((ctx.messages[0].content as unknown[]).length).toBe(1);
   });
 
+  it('多模态用户消息里的快捷指令 marker 同样展开（带图消息不再漏指令）', async () => {
+    // 会话 2290：`#{talk}#` 开头的带图消息整条被 typeof content !== 'string' 跳过，
+    // Agent 只看到 marker 以外的正文，指令内容（对话模式约束）从未进入上下文。
+    const getByUserIdAndName = vi.fn(async (_uid: number, name: string) => (
+      name === 'talk' ? { content: '用自然语言沟通需求，每次只讨论 1～2 个点' } : null
+    ));
+    const pe = new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => '/ws' } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+    const ctx = context();
+    ctx.userId = 2;
+    const image = { type: 'image_url', imageUrl: { url: 'data:image/png;base64,abc' } };
+    ctx.messages = [{
+      role: 'user',
+      content: [
+        { type: 'text', text: '#{talk}# 我在想，创建信号哨兵时能否支持勾选注入 MAO_TOKEN？\n\n[图片 1] https://x/y.png' },
+        image,
+      ],
+    }];
+    const request = await pe.buildRequest(ctx);
+    const parts = request.messages![1].content as Array<{ type?: string; text?: string }>;
+    // text part 里的 marker 被展开成命令正文，其余文字保留
+    expect(parts[0].text).toContain('用自然语言沟通需求');
+    expect(parts[0].text).not.toContain('#{talk}#');
+    expect(parts[0].text).toContain('创建信号哨兵时能否支持勾选注入 MAO_TOKEN？');
+    // 图片 part 原样、顺序不变
+    expect(parts[1]).toBe(image);
+    expect(parts).toHaveLength(2);
+    // M-13 不变量：上下文原文（含 parts 数组）未被污染
+    expect((ctx.messages[0].content as unknown[])[0]).toEqual({
+      type: 'text',
+      text: '#{talk}# 我在想，创建信号哨兵时能否支持勾选注入 MAO_TOKEN？\n\n[图片 1] https://x/y.png',
+    });
+    expect(getByUserIdAndName).toHaveBeenCalledWith(2, 'talk');
+  });
+
+  it('多模态用户消息无 marker 时 parts 原样返回（不产生新数组）', async () => {
+    const ctx = context();
+    ctx.userId = 1;
+    const image = { type: 'image_url', imageUrl: { url: 'data:image/png;base64,abc' } };
+    const parts = [{ type: 'text', text: '普通提问' }, image];
+    ctx.messages = [{ role: 'user', content: parts }];
+    const request = await engine().buildRequest(ctx);
+    expect(request.messages![1].content).toBe(parts);
+  });
+
+  it('多模态用户消息：未知命令 marker 原样保留并告警', async () => {
+    const logSpy = vi.spyOn(harnessLogModule, 'harnessLog').mockImplementation(() => undefined);
+    const ctx = context();
+    ctx.userId = 1;
+    ctx.messages = [{
+      role: 'user',
+      content: [
+        { type: 'text', text: '#{nope}# 看图' },
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,abc' } },
+      ],
+    }];
+    const request = await engine().buildRequest(ctx);
+    const parts = request.messages![1].content as Array<{ type?: string; text?: string }>;
+    expect(parts[0].text).toBe('#{nope}# 看图');
+    expect(parts[1].type).toBe('image_url');
+    expect(logSpy).toHaveBeenCalledWith('warn', 'Command not found for marker: #{nope}#');
+    logSpy.mockRestore();
+  });
+
+  it('多模态用户消息里的技能与文件引用 marker 一并展开', async () => {
+    const pe = new PromptEngine(
+      { hasSkill: () => true, getAllNames: () => ['java'], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => '/ws' } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName: async () => null } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+    const ctx = context();
+    ctx.userId = 1;
+    ctx.messages = [{
+      role: 'user',
+      content: [
+        { type: 'text', text: '参考 ${java}$ 与 @{src/App.ts}@' },
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,abc' } },
+      ],
+    }];
+    const request = await pe.buildRequest(ctx);
+    const parts = request.messages![1].content as Array<{ type?: string; text?: string }>;
+    expect(parts[0].text).toBe('参考 /java 与 src/App.ts');
+    expect(parts[1].type).toBe('image_url');
+  });
+
   it('压缩边界前的日期参照参与首条窗口消息的比较', async () => {
     const ctx = context({
       sessionBaseYmd: '2026-10-12',
