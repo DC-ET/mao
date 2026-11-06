@@ -58,17 +58,17 @@ export function sessionStatusLabel(code: string | null | undefined): string {
 
 export interface SessionTypeTag {
   label: string;
-  type: 'info' | 'warning';
+  type: 'info' | 'warning' | 'primary';
 }
 
 /**
  * 会话类型标签：NORMAL / 缺省 → 主会话（灰），SIDE_TASK → 边路任务（橙），
- * SUBAGENT → 子代理（蓝）。三种类型都着标签，列表里每一行都有明确类型；
+ * SUBAGENT → 子代理（蓝）。三种类型都着色标签，列表里视线可区分；
  * 未知类型按原值展示，不静默吞掉。
  */
 export function sessionTypeTag(code: string | null | undefined): SessionTypeTag {
   if (code === 'SIDE_TASK') return { label: SESSION_TYPE_LABELS.SIDE_TASK, type: 'warning' };
-  if (code === 'SUBAGENT') return { label: SESSION_TYPE_LABELS.SUBAGENT, type: 'info' };
+  if (code === 'SUBAGENT') return { label: SESSION_TYPE_LABELS.SUBAGENT, type: 'primary' };
   if (code === 'NORMAL') return { label: SESSION_TYPE_LABELS.NORMAL, type: 'info' };
   return { label: code ?? SESSION_TYPE_LABELS.NORMAL, type: 'info' };
 }

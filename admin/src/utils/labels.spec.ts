@@ -10,7 +10,7 @@ describe('sessionTypeTag', () => {
 
   it('distinguishes side tasks from subagents', () => {
     expect(sessionTypeTag('SIDE_TASK')).toEqual({ label: '边路任务', type: 'warning' })
-    expect(sessionTypeTag('SUBAGENT')).toEqual({ label: '子代理', type: 'info' })
+    expect(sessionTypeTag('SUBAGENT')).toEqual({ label: '子代理', type: 'primary' })
   })
 
   it('shows unknown codes as-is rather than swallowing them', () => {
