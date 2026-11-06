@@ -175,7 +175,7 @@ import {
   type FileRangeQuotePayload,
   type ReplyQuote,
 } from '../../utils/selection-quote'
-import { cloudWorkspaceIndicator, extractGitRepoSlug, isHttpsGitUrl } from '../../utils/cloud-project'
+import { cloudWorkspaceIndicator, extractGitRepoSlug, isChannelWorkspacePath, isHttpsGitUrl, workspaceTailLabel } from '../../utils/cloud-project'
 import { getUploadConfig } from '../../utils/storageMode'
 import { generateUUID } from '../../utils/uuid'
 import type { LocalPendingFile } from '../../utils/chatLocalAttach'
@@ -325,6 +325,10 @@ const canSend = computed(() => {
 
 const dirName = computed(() => {
   if (!props.workspace) return ''
+  // 通道工作区（飞书群/私聊、钉钉）：目录名是 chatId，用通道标签（飞书群1·oc_d1254d0）
+  if (isChannelWorkspacePath(props.workspace)) {
+    return cloudWorkspaceIndicator('CLOUD', props.workspace, undefined) || workspaceTailLabel(props.workspace)
+  }
   const parts = props.workspace.replace(/\\/g, '/').split('/').filter(Boolean)
   return parts[parts.length - 1] || props.workspace
 })

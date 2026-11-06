@@ -10,6 +10,7 @@ import {
   isGroupRenameable,
   isSignalGroupKey,
   isWeixinGroupSession,
+  newTaskWorkspaceFromSession,
   newTaskWorkspacePrefill,
   resolveGroupLabel,
   SIGNAL_GROUP_KEY,
@@ -282,5 +283,32 @@ describe('cloudProjectKeyForNewTask（新建态项目沿用口径）', () => {
   it('LOCAL 会话与无 projectKey 一律不带回', () => {
     expect(cloudProjectKeyForNewTask({ executionMode: 'LOCAL', id: '3', workspace: '/Users/x/p', projectKey: 'x' })).toBeUndefined()
     expect(cloudProjectKeyForNewTask({ executionMode: 'CLOUD', id: '3', workspace: '/opt/mao-data/workspace/2/3' })).toBeUndefined()
+  })
+})
+
+describe('newTaskWorkspaceFromSession（新建态工作区沿用）', () => {
+  it('LOCAL 沿用所选目录', () => {
+    expect(newTaskWorkspaceFromSession({ executionMode: 'LOCAL', workspace: '/Users/x/p' })).toBe('/Users/x/p')
+    expect(newTaskWorkspaceFromSession({ executionMode: 'LOCAL' })).toBe('')
+  })
+
+  it('飞书群聊工作区沿用：新会话继续落在该群共享目录', () => {
+    // 回归：通道会话只有靠显式 workspace 预填才能沿用（projectKey 是通道标识，不是项目 slug）
+    expect(newTaskWorkspaceFromSession({
+      executionMode: 'CLOUD', workspace: '/opt/mao-data/workspace/feishu-chat/2/oc_4fc3cb715272aae592213f167743846d'
+    })).toBe('/opt/mao-data/workspace/feishu-chat/2/oc_4fc3cb715272aae592213f167743846d')
+  })
+
+  it('飞书私聊 / 钉钉通道工作区同样沿用', () => {
+    expect(newTaskWorkspaceFromSession({ executionMode: 'CLOUD', workspace: '/opt/mao-data/workspace/feishu-chat/1/private-3' }))
+      .toBe('/opt/mao-data/workspace/feishu-chat/1/private-3')
+    expect(newTaskWorkspaceFromSession({ executionMode: 'CLOUD', workspace: '/opt/mao-data/workspace/dingtalk-chat/1/cid_abc' }))
+      .toBe('/opt/mao-data/workspace/dingtalk-chat/1/cid_abc')
+  })
+
+  it('共享云项目与临时工作区都不预填：项目走 cloudProjectKey，临时的由后端自动建目录', () => {
+    expect(newTaskWorkspaceFromSession({ executionMode: 'CLOUD', workspace: '/opt/mao-data/workspace/2/projects/mao' })).toBe('')
+    expect(newTaskWorkspaceFromSession({ executionMode: 'CLOUD', workspace: '/opt/mao-data/workspace/2/77' })).toBe('')
+    expect(newTaskWorkspaceFromSession({ executionMode: 'CLOUD' })).toBe('')
   })
 })

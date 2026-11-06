@@ -118,7 +118,7 @@ import type { SideTaskContextMode } from '../../types/file-browser'
 import type { SideTaskEntryOptions } from '../../composables/useCenterTabs'
 import { getToken } from '../../utils/auth-storage'
 import { nowDateTime } from '../../utils/datetime'
-import { cloudProjectKeyForNewTask, newTaskWorkspacePrefill } from '../../utils/cloud-project'
+import { cloudProjectKeyForNewTask, newTaskWorkspaceFromSession, newTaskWorkspacePrefill } from '../../utils/cloud-project'
 import { resolveInspectorTarget, type InspectorTarget, type InspectorViewType } from '../../utils/inspector-target'
 import { api, fetchWorkspaceOverview } from '../../api'
 import TaskIndexPanel from '../../components/task/TaskIndexPanel.vue'
@@ -1109,10 +1109,14 @@ function getCurrentNewTaskDefaults(): NewTaskDefaults | null {
     || (sessionIdParam.value ? sessionStore.sessions.find(s => String(s.id) === String(sessionIdParam.value)) : null)
 
   if (active) {
+    // 通道会话（飞书群/私聊、钉钉）没有可沿用的项目 slug，改用显式工作区预填，
+    // 新会话才继续落在该群/该私聊的共享目录（与总览「新任务」同链路）。
+    const carriedWorkspace = newTaskWorkspaceFromSession(active)
     return {
       agentId: active.agentId ? String(active.agentId) : null,
       executionMode: active.executionMode || 'CLOUD',
-      workspace: active.executionMode === 'LOCAL' ? active.workspace : undefined,
+      workspace: carriedWorkspace || undefined,
+      reuseWorkspace: carriedWorkspace ? true : undefined,
       cloudProjectKey: cloudProjectKeyForNewTask(active),
       permissionLevel: active.permissionLevel,
       modelId: active.modelId
@@ -1317,7 +1321,9 @@ async function loadSession(sid: string) {
       lastViewedSession.value = {
         agentId: normalizedAgentId,
         executionMode: data.executionMode || 'CLOUD',
-        workspace: data.workspace,
+        // 只存「新建态该预填」的工作区（LOCAL 目录 / 通道工作区），临时与其他目录不存，
+        // 回落时直接赋值即可，不必再判执行模式
+        workspace: newTaskWorkspaceFromSession(data) || undefined,
         cloudProjectKey: cloudProjectKeyForNewTask(data),
         permissionLevel: data.permissionLevel,
         modelId: data.modelId
@@ -1560,7 +1566,11 @@ watch(getRouteWatchState, async (state, prev) => {
       if (previous) {
         newTaskAgentId.value = previous.agentId ? String(previous.agentId) : null
         newTaskMode.value = (previous.executionMode as 'CLOUD' | 'LOCAL') || 'CLOUD'
-        newTaskWorkspace.value = previous.executionMode === 'LOCAL' ? (previous.workspace || '') : ''
+        newTaskWorkspace.value = previous.workspace || ''
+        // 预填了显式工作区就不能停在残留的 git / existing 模式上：git 模式下 payload 不带
+        // workspace，会把预填的通道工作区悄悄丢成临时工作区
+        newTaskWorkspaceMode.value = 'new'
+        newTaskGitCloneUrl.value = ''
         newTaskCloudProjectKey.value = previous.cloudProjectKey || ''
         permissionLevel.value = previous.permissionLevel || 'READ_ONLY'
         if (previous.modelId) {

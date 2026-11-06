@@ -71,6 +71,23 @@ export function isSharedCloudProject(session: Pick<Session, 'executionMode' | 'w
   return session.executionMode === 'CLOUD' && !!session.workspace?.includes('/projects/')
 }
 
+/** 通道（飞书 / 钉钉）会话工作区路径：{workspaceRoot}/feishu-chat|dingtalk-chat/{accountId}/{leaf}。 */
+export function isChannelWorkspacePath(workspace: string | undefined | null): boolean {
+  return isFeishuChatWorkspace(workspace) || isDingtalkChatWorkspace(workspace)
+}
+
+/**
+ * 新建态要沿用的会话工作区：LOCAL 所选目录，以及通道（飞书群/私聊、钉钉）共享工作区。
+ *
+ * 通道会话的 projectKey 是通道标识而非 projects/ 下的项目 slug，只能靠显式 workspace
+ * 预填才能让新会话继续落在同一目录（与总览「新任务」同链路，后端对本人参与过的通道
+ * 工作区放行）。临时工作区与其他自定义目录不预填，仍由后端自动建独立目录。
+ */
+export function newTaskWorkspaceFromSession(session: Pick<Session, 'executionMode' | 'workspace'>): string {
+  if (session.executionMode === 'LOCAL') return session.workspace || ''
+  return isChannelWorkspacePath(session.workspace) ? (session.workspace || '') : ''
+}
+
 /**
  * Cloud project slug to carry into a new CLOUD task (undefined for independent workspaces).
  *
