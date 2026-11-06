@@ -16,6 +16,8 @@ import {
   normalizeMessageScope,
   normalizeSearchListParams,
   prepareMessageSearch,
+  resolveActivityWindow,
+  type ActivityWindow,
   type MessageSearchScope,
   type PreparedSearch,
   type SearchListParams,
@@ -68,6 +70,16 @@ const SEARCH_RESULT_LIMIT = 20;
 const RECENT_USER_MESSAGE_SCAN_BATCH = 50;
 /** 写入会话工作区的 runtime 临时目录/文件前缀，会话删除时一并清理。 */
 const RUNTIME_WORKSPACE_PREFIX = 'mao-runtime-';
+
+/** 管理端会话列表的「活跃时间」窗口选项，语义见 resolveActivityWindow。 */
+export interface AdminSessionListOptions {
+  /** 'ALL' = 不限时间；'7D' / '30D' / '90D' = 最近 N 天（含今天）；缺省 = 最近 7 天 */
+  range?: string | null;
+  /** 显式起始日（含），YYYY-MM-DD，Asia/Shanghai 日历；优先级高于 range 预设 */
+  dateFrom?: string | null;
+  /** 显式结束日（含整日），YYYY-MM-DD */
+  dateTo?: string | null;
+}
 
 export class SessionService {
   static readonly SEARCH_RESULT_LIMIT = SEARCH_RESULT_LIMIT;
@@ -500,6 +512,11 @@ export class SessionService {
     return merged;
   }
 
+  /**
+   * 管理端会话列表。`options` 承载「活跃时间」窗口（默认最近 7 天，`range=ALL` 不限）：
+   * 会话按 last_activity_at、关键词消息按 created_at 同窗过滤，避免关键词搜索退化成
+   * 全表消息扫描（详见 resolveActivityWindow 的说明）。
+   */
   async listSessionsForAdmin(
     page: number,
     size: number,
@@ -511,9 +528,19 @@ export class SessionService {
     status?: string | null,
     messageScope?: string | null,
     source?: string | null,
+    options: AdminSessionListOptions = {},
   ): Promise<{ records: Session[]; total: number; current: number; size: number; matchSnippets: Record<number, string> }> {
     const clauses: string[] = [];
     const params: unknown[] = [];
+    const activityWindow = resolveActivityWindow(options);
+    if (activityWindow?.from != null) {
+      clauses.push('last_activity_at >= ?');
+      params.push(activityWindow.from);
+    }
+    if (activityWindow?.toExclusive != null) {
+      clauses.push('last_activity_at < ?');
+      params.push(activityWindow.toExclusive);
+    }
     if (userId != null) {
       clauses.push('user_id = ?');
       params.push(userId);
@@ -545,23 +572,28 @@ export class SessionService {
     const trimmedKeyword = keyword != null ? keyword.trim() : '';
     // 搜索范围决定消息正文是否含工具输出/系统消息：ALL 保留旧口径，默认只看对话双方。
     const scope = normalizeMessageScope(messageScope);
-    // 关键词命中消息正文优先走 ngram 全文索引：LIKE '%kw%' 对 23 万条 message 全表扫，
-    // 实测 1~2s/次；FT 命中消息再 LEFT JOIN 回 session，可降到几十毫秒。
-    // 单字符关键词 ngram(token_size=2) 索引不到，会漏召，仍走 LIKE 子查询。
-    const messageMatch = this.buildAdminMessageMatch(trimmedKeyword, scope);
-    if (messageMatch != null) {
-      const [matchSql, ...matchParams] = messageMatch;
-      clauses.push(`(title LIKE ? ESCAPE '\\\\' OR summary LIKE ? ESCAPE '\\\\' OR id IN (${matchSql}))`);
-      params.push(`%${escapeLike(trimmedKeyword)}%`, `%${escapeLike(trimmedKeyword)}%`, ...matchParams);
-    } else if (trimmedKeyword.length > 0) {
-      // 无全文索引可用的关键词（单字符 / 显式关闭 FT）：退回消息正文子串扫描。
-      clauses.push(
-        `(title LIKE ? ESCAPE '\\\\' OR summary LIKE ? ESCAPE '\\\\' OR id IN (
-          SELECT m.session_id FROM message m
-          WHERE m.deleted = 0${messageRoleClause(scope)} AND m.content LIKE CONCAT('%', ?, '%') ESCAPE '\\\\'
-        ))`,
-      );
-      params.push(`%${escapeLike(trimmedKeyword)}%`, `%${escapeLike(trimmedKeyword)}%`, `%${escapeLike(trimmedKeyword)}%`);
+    // 关键词只在「已按活跃时间筛出的会话」里匹配：此前走全局 ngram 全文索引
+    // （id IN (SELECT ... MATCH ...)）或全表 LIKE，会话上的过滤传不进消息子查询——
+    // message 表 68 万行、正文 1.5GB 时实测单次 70~80s，必然触发前端 30s 超时。
+    // 现在改为逐会话 EXISTS 自身窗口内的消息，扫描面随活跃时间窗收敛，实测 1.5~2.2s；
+    // 代价是该接口不再享受全文索引（FT 本身的性能问题另行立项）。
+    if (trimmedKeyword.length > 0) {
+      const escapedKeyword = escapeLike(trimmedKeyword);
+      let messageSql = `SELECT 1 FROM message m WHERE m.session_id = \`session\`.id AND m.deleted = 0${messageRoleClause(scope)}`;
+      const messageParams: unknown[] = [];
+      // 消息也限定在同一时间窗内，避免「活跃会话里的历史消息」把扫描面放大
+      if (activityWindow?.from != null) {
+        messageSql += ' AND m.created_at >= ?';
+        messageParams.push(activityWindow.from);
+      }
+      if (activityWindow?.toExclusive != null) {
+        messageSql += ' AND m.created_at < ?';
+        messageParams.push(activityWindow.toExclusive);
+      }
+      messageSql += ` AND m.content LIKE ? ESCAPE '\\\\'`;
+      messageParams.push(`%${escapedKeyword}%`);
+      clauses.push(`(title LIKE ? ESCAPE '\\\\' OR summary LIKE ? ESCAPE '\\\\' OR EXISTS (${messageSql}))`);
+      params.push(`%${escapedKeyword}%`, `%${escapedKeyword}%`, ...messageParams);
     }
     clauses.push('status = ?');
     params.push(status != null && status.length > 0 ? status : 'ACTIVE');
@@ -569,28 +601,16 @@ export class SessionService {
     // 按最后活动倒序（最近有动作的浮到最前；未产生过活动的 NULL 由 MySQL 归底）；
     // last_activity_at 秒级精度：并列行补唯一 tiebreaker，保证深翻页不重复/丢行
     const result = await this.sessionRepo.selectPage(page, size, whereSql, params, 'ORDER BY last_activity_at DESC, id DESC');
-    const matchSnippets = await this.loadAdminMatchSnippets(result.records, trimmedKeyword, scope);
+    const matchSnippets = await this.loadAdminMatchSnippets(result.records, trimmedKeyword, scope, activityWindow);
     return { ...result, current: page, size, matchSnippets };
   }
 
-  /**
-   * 管理端关键词的消息正文匹配子查询。返回 [sql, ...params]，无法走全文索引时返回 null（调用方降级 LIKE）。
-   * 全文索引建在 message.content 上（V146 ngram），命中消息的 session 经 DISTINCT 去重后用于 `id IN (...)`。
-   */
-  private buildAdminMessageMatch(keyword: string, scope: MessageSearchScope): [string, ...unknown[]] | null {
-    if (keyword.length === 0) return null;
-    const prepared = prepareMessageSearch(keyword, this.searchFulltextEnabled());
-    if (prepared.path !== 'FULLTEXT') return null;
-    const match = prepared.match.replace(/\*/g, '');
-    if (match.length === 0) return null;
-    return [
-      `SELECT m.session_id FROM message m
-       WHERE m.deleted = 0${messageRoleClause(scope)} AND MATCH(m.content) AGAINST (? IN BOOLEAN MODE)`,
-      match,
-    ];
-  }
-
-  private async loadAdminMatchSnippets(records: Session[], keyword: string, scope: MessageSearchScope): Promise<Record<number, string>> {
+  private async loadAdminMatchSnippets(
+    records: Session[],
+    keyword: string,
+    scope: MessageSearchScope,
+    activityWindow: ActivityWindow | null,
+  ): Promise<Record<number, string>> {
     if (keyword.length === 0 || records.length === 0) {
       return {};
     }
@@ -598,7 +618,14 @@ export class SessionService {
     if (sessionIds.length === 0) {
       return {};
     }
-    const hits = await this.messageRepo.selectFirstMatchingMessages(sessionIds, escapeLike(keyword), scope);
+    // 片段与召回同口径：消息也限定在活跃时间窗内，否则会截到窗口外命中的片段
+    const hits = await this.messageRepo.selectFirstMatchingMessages(
+      sessionIds,
+      escapeLike(keyword),
+      scope,
+      activityWindow?.from ?? null,
+      activityWindow?.toExclusive ?? null,
+    );
     const matchSnippets: Record<number, string> = {};
     for (const hit of hits) {
       const snippet = this.searchSnippet(hit.content ?? null, keyword);

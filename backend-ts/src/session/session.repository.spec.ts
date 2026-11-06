@@ -137,6 +137,22 @@ describe('MessageRepository', () => {
     expect(allSql).not.toContain('m.role IN');
   });
 
+  it('selectFirstMatchingMessages applies the message created_at window', async () => {
+    const db = mockDb(null, []);
+    const repo = new MessageRepository(db as never);
+    await repo.selectFirstMatchingMessages([3, 4], 'k', 'CONVERSATION', '2026-10-31 00:00:00', '2026-11-07 00:00:00');
+    const [sql, params] = db.query.mock.calls.at(-1) as [string, unknown[]];
+    expect(sql).toContain('m.created_at >= ?');
+    expect(sql).toContain('m.created_at < ?');
+    // 窗口参数在占位符顺序上位于会话 id 之前
+    expect(params).toEqual(['2026-10-31 00:00:00', '2026-11-07 00:00:00', 3, 4, 'k']);
+    // 单边窗口只拼一侧
+    await repo.selectFirstMatchingMessages([3], 'k', 'CONVERSATION', null, '2026-11-07 00:00:00');
+    const oneSided = db.query.mock.calls.at(-1) as [string, unknown[]];
+    expect(String(oneSided[0])).not.toContain('m.created_at >=');
+    expect(oneSided[1]).toEqual(['2026-11-07 00:00:00', 3, 'k']);
+  });
+
   it('selectFirstUserStamp takes the earliest non-deleted USER stamp', async () => {
     const db = mockDb({ id: 5, createdAt: '2026-10-12 23:50:11' }, [{ id: 5 }]);
     const repo = new MessageRepository(db as never);

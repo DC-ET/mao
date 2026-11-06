@@ -187,6 +187,13 @@ describe('session and admin routes', () => {
     expect((await json('GET', '/v1/sessions/1/queue')).body.data).toEqual([]);
     expect((await json('GET', '/v1/admin/sessions')).body.data.total).toBe(1);
     expect((await json('GET', '/v1/admin/sessions')).body.data.records[0].pendingQuestionCount).toBe(2);
+    // 活跃时间窗参数原样透传给 service（默认窗口由后端兜底，显式参数优先）
+    await json('GET', '/v1/admin/sessions?range=ALL&dateFrom=2026-11-01&dateTo=2026-11-06');
+    expect(vi.mocked(sessionService.listSessionsForAdmin).mock.calls.at(-1)?.[10]).toEqual({
+      range: 'ALL',
+      dateFrom: '2026-11-01',
+      dateTo: '2026-11-06',
+    });
     expect((await json('GET', '/v1/admin/sessions/1')).body.data.id).toBe(1);
     expect((await json('GET', '/v1/admin/sessions/1')).body.data.pendingQuestionCount).toBe(2);
     expect((await json('GET', '/v1/admin/sessions/1/messages')).body.data.messages).toEqual([]);

@@ -98,6 +98,12 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
       queryOptStr(request, 'status'),
       queryOptStr(request, 'messageScope'),
       queryOptStr(request, 'source'),
+      {
+        // 活跃时间窗：默认最近 7 天（后端兜底），range=ALL 显式放宽到全部时间
+        range: queryOptStr(request, 'range'),
+        dateFrom: queryOptStr(request, 'dateFrom'),
+        dateTo: queryOptStr(request, 'dateTo'),
+      },
     );
     const records = pageResult.records;
     const userMap = await batchLoadUsers(records);
