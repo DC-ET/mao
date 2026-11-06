@@ -120,7 +120,7 @@
 
 | 字段 | 说明 |
 |------|------|
-| `userActivity[]` | `userId` / `username` / `displayName` / `sessionCount` / `messageCount` / `totalTokens` / `lastLoginAt` / `callCount` / `callFailCount` / `callCancelledCount` / `callTokens` / `cost`，剔除零活跃用户，按 Token 倒序（`llm_call` 口径，同值按消息数降序，0.0.440 起）；`totalTokens` 与 `callTokens` 同源（`llm_call.total_tokens`，与调用/成本一致），`sessionCount` / `messageCount` 仍按会话/消息表统计 |
+| `userActivity[]` | `userId` / `username` / `displayName` / `sessionCount` / `messageCount` / `totalTokens` / `lastLoginAt` / `callCount` / `callFailCount` / `callCancelledCount` / `callTokens` / `cost`，剔除零活跃用户，按 Token 倒序截断（同值按消息数降序，0.0.458 起）；`totalTokens` 与 `callTokens` 同源（`llm_call.total_tokens`，0.0.440 起，与调用/成本一致），`sessionCount` / `messageCount` 仍按会话/消息表统计 |
 | `tokenTop[]` | 按调用 Token（`llm_call.total_tokens`，0.0.440 起）排序截断的排行：`userId` / `username` / `displayName` / `totalTokens`，仅返回 Token > 0 的用户；与 `userActivity[].totalTokens` 同源 |
 | `periodTotals` | `{ activeUsers }` |
 
