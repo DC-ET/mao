@@ -720,3 +720,58 @@ describe('ToolCallCard 非富视图工具', () => {
     expect(pres.some(t => t.includes('"tasks"'))).toBe(true)
   })
 })
+
+describe('ToolCallCard 执行中耗时', () => {
+  let mounted: ReturnType<typeof mountCard> | null = null
+  afterEach(() => { mounted?.destroy() })
+
+  function elapsedText(): string | null {
+    return document.querySelector('.tool-elapsed')?.textContent ?? null
+  }
+
+  it('running 且有起表时刻：spinner 旁显示耗时', async () => {
+    mounted = mountCard(makeShellCall({
+      status: 'running',
+      result: undefined,
+      startedAtMs: Date.now() - 90_000,
+    }))
+    await nextTick()
+
+    expect(elapsedText()).toBe('1m30s')
+  })
+
+  it('已完成、或 running 但没有起表时刻：不显示耗时', async () => {
+    // 已完成的调用一律不展示耗时（用户明确要求），哪怕有起表时刻
+    mounted = mountCard(makeShellCall({ status: 'success', startedAtMs: Date.now() - 90_000 }))
+    await nextTick()
+    expect(elapsedText()).toBeNull()
+
+    // 历史回放 / 兜底创建的调用没有起表时刻，宁可不显示也不显示 0
+    mounted.destroy()
+    mounted = mountCard(makeShellCall({ status: 'running', result: undefined }))
+    await nextTick()
+    expect(elapsedText()).toBeNull()
+  })
+
+  it('秒级走表：挂载期间每秒推进，卸载后停止', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_000_000)
+      mounted = mountCard(makeShellCall({
+        status: 'running',
+        result: undefined,
+        startedAtMs: 1_000_000 - 2_000,
+      }))
+      await nextTick()
+      expect(elapsedText()).toBe('2s')
+
+      vi.advanceTimersByTime(1000)
+      await nextTick()
+      expect(elapsedText()).toBe('3s')
+    } finally {
+      mounted?.destroy()
+      mounted = null
+      vi.useRealTimers()
+    }
+  })
+})

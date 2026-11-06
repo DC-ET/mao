@@ -22,6 +22,7 @@
         <el-tooltip v-if="toolCall.resultTruncated" content="后端已截断工具输出（超出工具自身的输出上限），此处展示的是截断后的内容" placement="top">
           <span class="truncated-badge">输出已截断</span>
         </el-tooltip>
+        <ToolCallElapsed v-if="toolCall.status === 'running'" :started-at-ms="toolCall.startedAtMs" />
         <span v-if="toolCall.status === 'running'" class="status-spinner"></span>
         <el-icon v-else-if="toolCall.status === 'success'" class="status-icon success"><Select /></el-icon>
         <el-icon v-else-if="toolCall.status === 'error'" class="status-icon error"><CloseBold /></el-icon>
@@ -182,6 +183,7 @@ import { getToolDisplayName, getToolInputPreview } from '../../utils/toolDisplay
 import { getToolIcon } from '../../utils/toolIcons'
 import { buildEditDiff } from '../../utils/toolDiff'
 import ToolCallDiffView from './ToolCallDiffView.vue'
+import ToolCallElapsed from './ToolCallElapsed.vue'
 import ToolFileContent from './ToolFileContent.vue'
 import ToolShellView from './ToolShellView.vue'
 import ToolGlobView from './ToolGlobView.vue'

@@ -12,6 +12,7 @@
         <span class="group-summary">{{ groupSummary }}</span>
       </div>
       <div class="group-status">
+        <ToolCallElapsed v-if="runningStartedAtMs != null" :started-at-ms="runningStartedAtMs" />
         <span v-if="hasRunning" class="status-spinner"></span>
         <el-icon
           class="expand-icon"
@@ -37,6 +38,7 @@ import type { ToolCall } from '../../composables/useChat'
 import { getToolDisplayName } from '../../utils/toolDisplay'
 import { getToolIcon } from '../../utils/toolIcons'
 import ToolCallCard from './ToolCallCard.vue'
+import ToolCallElapsed from './ToolCallElapsed.vue'
 
 const props = withDefaults(defineProps<{
   toolCalls: ToolCall[]
@@ -50,6 +52,21 @@ const isExpanded = ref(false)
 const hasRunning = computed(() =>
   props.toolCalls.some(tc => tc.status === 'running' || tc.status === 'pending')
 )
+
+/**
+ * 组头耗时：取组内仍在执行、最早开始的那个调用（已成功/失败的不参与——它们的耗时到结果
+ * 事件即停，不该继续撑住组头）。无 running 调用、或 running 调用没有起表时刻（如审批等待
+ * 中的历史态）时为 null，组头只留 spinner。并行调用各自在卡片行显示自己的耗时。
+ */
+const runningStartedAtMs = computed(() => {
+  let earliest: number | null = null
+  for (const tc of props.toolCalls) {
+    if (tc.status !== 'running' && tc.status !== 'pending') continue
+    if (tc.startedAtMs == null) continue
+    if (earliest == null || tc.startedAtMs < earliest) earliest = tc.startedAtMs
+  }
+  return earliest
+})
 
 const groupIcon = computed(() => getToolIcon(props.toolCalls[0]?.name ?? ''))
 

@@ -121,4 +121,37 @@ describe('ToolCallGroup', () => {
     expect(document.querySelector('.group-summary')?.textContent).toBe('2次读取文件、执行命令')
     m.destroy()
   })
+
+  it('组内有执行中调用：组头显示最早开始的 running 调用耗时', async () => {
+    const m = mountGroup([
+      makeCall('tc-1', { status: 'success', startedAtMs: Date.now() - 5_000 }),
+      makeCall('tc-2', { status: 'running', result: undefined, startedAtMs: Date.now() - 90_000 }),
+      makeCall('tc-3', { status: 'running', result: undefined, startedAtMs: Date.now() - 30_000 }),
+    ])
+    await nextTick()
+
+    // 已成功的不参与（它的计时到结果事件即停）；两个 running 里取最早开始的
+    expect(document.querySelector('.group-status .tool-elapsed')?.textContent).toBe('1m30s')
+    m.destroy()
+  })
+
+  it('组内无执行中调用、或 running 无起表时刻：组头不显示耗时', async () => {
+    const m = mountGroup([
+      makeCall('tc-1', { status: 'success', startedAtMs: Date.now() - 90_000 }),
+      makeCall('tc-2', { status: 'error', startedAtMs: Date.now() - 30_000 }),
+    ])
+    await nextTick()
+    expect(document.querySelector('.tool-elapsed')).toBeNull()
+    m.destroy()
+
+    // running 但没有起表时刻（历史态/兜底）：只留 spinner，不显示 0
+    const m2 = mountGroup([
+      makeCall('tc-1', { status: 'running', result: undefined }),
+      makeCall('tc-2', { status: 'success' }),
+    ])
+    await nextTick()
+    expect(document.querySelector('.tool-elapsed')).toBeNull()
+    expect(document.querySelector('.group-status .status-spinner')).not.toBeNull()
+    m2.destroy()
+  })
 })

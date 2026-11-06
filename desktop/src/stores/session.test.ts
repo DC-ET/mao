@@ -128,6 +128,19 @@ describe('session store 实体/投影模型', () => {
     ])
   })
 
+  it('工具调用开始事件打上起表时刻，供执行中耗时走表', () => {
+    const store = useSessionStore()
+    store.addUserMessage('1', { id: 'u1', role: 'user', content: '跑构建', createdAt: '2026-11-06 10:00:00' })
+
+    const before = Date.now()
+    store.appendToolCallStart('1', { tool_call_id: 't1', tool_name: 'shell', arguments: '{"command":"ls"}' })
+    const after = Date.now()
+
+    const call = store.getMessages('1').at(-1)?.toolCalls?.[0]
+    expect(call?.startedAtMs).toBeGreaterThanOrEqual(before)
+    expect(call?.startedAtMs).toBeLessThanOrEqual(after)
+  })
+
   it('fetchSessions 填充实体与标准投影；unread 以服务端为准（不保留旧本地 false）', async () => {
     const store = useSessionStore()
     mockGet.mockResolvedValueOnce({

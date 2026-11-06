@@ -508,7 +508,9 @@ export function createMessageRuntimeModule(ctx: {
       status: 'running',
       isExpanded: false,
       argsStreaming: true,
-      argumentsText: data.arguments || ''
+      argumentsText: data.arguments || '',
+      // 执行中耗时起表：与结果到达时刻都在客户端打表，无时钟偏差；历史回放无此字段
+      startedAtMs: Date.now()
     })
     const list = sessionMessages.value.get(sid) ?? []
     sessionMessages.value.set(sid, [...list])

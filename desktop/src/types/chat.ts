@@ -24,6 +24,11 @@ export interface ToolCall {
   }
   /** 后端在工具实现内已截断输出（结果 JSON 顶层 truncated===true），历史回放与实时事件均落到此标志 */
   resultTruncated?: boolean
+  /**
+   * 执行中耗时的起表时刻（epoch ms，tool_call_start 到达客户端时打）：只服务 running 状态的
+   * 秒级走表（ToolCallElapsed），工具结束即不再展示。历史回放无此字段，已完成调用一律不显示耗时。
+   */
+  startedAtMs?: number
 }
 
 export type FileChangeType = 'CREATED' | 'MODIFIED' | 'DELETED' | 'RENAMED' | 'COPIED' | string
