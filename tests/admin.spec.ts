@@ -376,8 +376,30 @@ test.describe('Session Management', () => {
     // 默认只搜对话双方消息，工具输出不再刷屏；需要反查工具输出时切「全部消息」
     await expect(page.locator('.search-form')).toContainText('搜索范围')
     await expect(page.locator('.search-form')).toContainText('仅对话消息')
+    // 活跃时间窗默认最近 7 天（关键词消息同窗过滤，避免全表扫描超时）
+    await expect(page.locator('.search-form')).toContainText('活跃时间')
+    await expect(page.locator('.search-form')).toContainText('最近 7 天')
     await expect(page.locator('button:has-text("查询")')).toBeVisible()
     await expect(page.getByRole('button', { name: '重置', exact: true })).toBeVisible()
+  })
+
+  test('should filter sessions by activity time presets', async ({ page }) => {
+    const rangeItem = page.locator('.search-form .el-form-item', { hasText: '活跃时间' })
+    // 切到「全部时间」：后端不做时间过滤，列表仍应有数据
+    await rangeItem.locator('.el-select').click()
+    await page.locator('.el-select-dropdown:visible .el-select-dropdown__item', { hasText: '全部时间' }).click()
+    await expect(rangeItem).toContainText('全部时间')
+    await page.getByRole('button', { name: '查询', exact: true }).click()
+    await page.waitForSelector('.el-table__body tr', { timeout: 15_000 })
+    await expect(page.locator('.el-table__body tr').first()).toBeVisible()
+
+    // 「自定义」档位展开日期区间选择器
+    await rangeItem.locator('.el-select').click()
+    await page.locator('.el-select-dropdown:visible .el-select-dropdown__item', { hasText: '自定义' }).click()
+    await expect(rangeItem.locator('.el-range-editor')).toBeVisible()
+    // 重置回到默认的最近 7 天
+    await page.getByRole('button', { name: '重置', exact: true }).click()
+    await expect(rangeItem).toContainText('最近 7 天')
   })
 
   test('should navigate to session detail on click', async ({ page }) => {

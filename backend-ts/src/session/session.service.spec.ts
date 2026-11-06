@@ -779,13 +779,74 @@ describe('SessionService embed source', () => {
       { sessionId: 31, content: '用户反馈登录页面一直报 500 错误' },
     ]);
 
-    const result = await service.listSessionsForAdmin(1, 10, null, null, null, null, '登录页面', null);
+    const result = await service.listSessionsForAdmin(1, 10, null, null, null, null, '登录页面', null, null, null, { range: 'ALL' });
     const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
     expect(String(call[2])).toContain('title LIKE');
-    expect(String(call[2])).toContain('MATCH(m.content) AGAINST (? IN BOOLEAN MODE)');
-    expect(call[3]).toEqual(['%登录页面%', '%登录页面%', '"登录页面"', 'ACTIVE']);
+    expect(String(call[2])).toContain('EXISTS (SELECT 1 FROM message m');
+    expect(String(call[2])).toContain('m.content LIKE ?');
+    expect(String(call[2])).not.toContain('AGAINST');
+    expect(call[3]).toEqual(['%登录页面%', '%登录页面%', '%登录页面%', 'ACTIVE']);
     expect(result.matchSnippets[31]).toContain('登录页面');
     expect(result.matchSnippets[31]).toContain('500');
+  });
+
+  it('admin list applies the default 7-day activity window to sessions and messages', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-06T10:00:00+08:00'));
+    try {
+      const { service, sessionRepo } = makeService();
+      vi.mocked(sessionRepo.selectPage).mockResolvedValue({ records: [], total: 0 });
+      await service.listSessionsForAdmin(1, 10, null, null, null, null, 'P单', null);
+      const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
+      const sql = String(call[2]);
+      // 会话按活跃时间、关键词消息按创建时间同窗过滤，避免退化成全表消息扫描
+      expect(sql).toContain('last_activity_at >= ?');
+      expect(sql).toContain('last_activity_at < ?');
+      expect(sql).toContain('m.created_at >= ?');
+      expect(sql).toContain('m.created_at < ?');
+      expect(call[3]).toEqual([
+        '2026-10-31 00:00:00', '2026-11-07 00:00:00',
+        '%P单%', '%P单%', '2026-10-31 00:00:00', '2026-11-07 00:00:00', '%P单%',
+        'ACTIVE',
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('admin list range=ALL drops the activity window entirely', async () => {
+    const { service, sessionRepo } = makeService();
+    vi.mocked(sessionRepo.selectPage).mockResolvedValue({ records: [], total: 0 });
+    await service.listSessionsForAdmin(1, 10, null, null, null, null, 'P单', null, null, null, { range: 'ALL' });
+    const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
+    const sql = String(call[2]);
+    expect(sql).not.toContain('last_activity_at >=');
+    expect(sql).not.toContain('m.created_at >=');
+    expect(call[3]).toEqual(['%P单%', '%P单%', '%P单%', 'ACTIVE']);
+  });
+
+  it('admin list takes explicit date range over the preset', async () => {
+    const { service, sessionRepo } = makeService();
+    vi.mocked(sessionRepo.selectPage).mockResolvedValue({ records: [], total: 0 });
+    await service.listSessionsForAdmin(1, 10, null, null, null, null, 'P单', null, null, null, {
+      range: '30D',
+      dateFrom: '2026-11-01',
+      dateTo: '2026-11-06',
+    });
+    const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
+    expect(call[3]).toEqual([
+      '2026-11-01 00:00:00', '2026-11-07 00:00:00',
+      '%P单%', '%P单%', '2026-11-01 00:00:00', '2026-11-07 00:00:00', '%P单%',
+      'ACTIVE',
+    ]);
+  });
+
+  it('admin list rejects an unknown activity range', async () => {
+    const { service, sessionRepo } = makeService();
+    await expect(
+      service.listSessionsForAdmin(1, 10, null, null, null, null, 'P单', null, null, null, { range: '5Y' }),
+    ).rejects.toThrow('时间范围不合法');
+    expect(sessionRepo.selectPage).not.toHaveBeenCalled();
   });
 
   it('admin list match snippets strip citation markers', async () => {
@@ -828,55 +889,42 @@ describe('SessionService embed source', () => {
     expect(messageRepo.selectFirstMatchingMessages).not.toHaveBeenCalled();
   });
 
-  it('admin list keyword hits messages through fulltext index', async () => {
+  it('admin list keyword avoids the global fulltext scan', async () => {
     const { service, sessionRepo } = makeService();
     vi.mocked(sessionRepo.selectPage).mockResolvedValue({
       records: [session(31, '排障会话', 'NORMAL', 9, '2026-08-07 10:00:00')],
       total: 1,
     });
-    await service.listSessionsForAdmin(1, 10, null, null, null, null, '登录页面', null);
+    await service.listSessionsForAdmin(1, 10, null, null, null, null, '登录页面', null, null, null, { range: 'ALL' });
     const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
-    expect(String(call[2])).toContain('MATCH(m.content) AGAINST (? IN BOOLEAN MODE)');
-    expect(String(call[2])).not.toContain('m.content LIKE');
-    // 布尔短语串作为独立参数下发，不拼进 SQL
-    expect(call[3]).toEqual(['%登录页面%', '%登录页面%', '"登录页面"', 'ACTIVE']);
+    const sql = String(call[2]);
+    // 全局 FT 检索（MATCH ... AGAINST）在 68 万条消息上要 70s+，管理端列表不再使用
+    expect(sql).not.toContain('AGAINST');
+    expect(sql).not.toContain('MATCH(');
+    // 改为相关子查询：只在当前会话自己的消息里做子串匹配
+    expect(sql).toContain('EXISTS (SELECT 1 FROM message m WHERE m.session_id = `session`.id');
+    expect(call[3]).toEqual(['%登录页面%', '%登录页面%', '%登录页面%', 'ACTIVE']);
   });
 
-  it('admin list single-char keyword stays on LIKE scan', async () => {
+  it('admin list single-char keyword still matches message content', async () => {
     const { service, sessionRepo } = makeService();
     vi.mocked(sessionRepo.selectPage).mockResolvedValue({ records: [], total: 0 });
-    await service.listSessionsForAdmin(1, 10, null, null, null, null, '的', null);
+    await service.listSessionsForAdmin(1, 10, null, null, null, null, '的', null, null, null, { range: 'ALL' });
     const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
-    // ngram(token_size=2) 索引不到单字，走 LIKE 才不漏召
-    expect(String(call[2])).toContain('m.content LIKE');
+    // 单字无 ngram 索引可用，窗口内 LIKE 覆盖全部关键词，不再分两条路径
+    expect(String(call[2])).toContain('m.content LIKE ?');
     expect(String(call[2])).not.toContain('AGAINST');
-    // 降级路径同样只认对话双方，避免单字搜索被工具输出刷屏
+    // 同样只认对话双方，避免单字搜索被工具输出刷屏
     expect(String(call[2])).toContain("m.role IN ('USER', 'ASSISTANT')");
     expect(call[3]).toEqual(['%的%', '%的%', '%的%', 'ACTIVE']);
-  });
-
-  it('admin list keyword falls back to LIKE when fulltext disabled', async () => {
-    const { service, sessionRepo } = makeService();
-    vi.mocked(sessionRepo.selectPage).mockResolvedValue({ records: [], total: 0 });
-    const previous = process.env.SEARCH_FULLTEXT_ENABLED;
-    process.env.SEARCH_FULLTEXT_ENABLED = 'false';
-    try {
-      await service.listSessionsForAdmin(1, 10, null, null, null, null, '登录页面', null);
-    } finally {
-      if (previous == null) delete process.env.SEARCH_FULLTEXT_ENABLED;
-      else process.env.SEARCH_FULLTEXT_ENABLED = previous;
-    }
-    const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
-    expect(String(call[2])).toContain('m.content LIKE');
-    expect(String(call[2])).not.toContain('AGAINST');
   });
 
   it('admin list escapes like wildcards in title and summary match', async () => {
     const { service, sessionRepo } = makeService();
     vi.mocked(sessionRepo.selectPage).mockResolvedValue({ records: [], total: 0 });
-    await service.listSessionsForAdmin(1, 10, null, null, null, null, '100%', null);
+    await service.listSessionsForAdmin(1, 10, null, null, null, null, '100%', null, null, null, { range: 'ALL' });
     const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
-    expect(call[3]).toEqual(['%100\\%%', '%100\\%%', '"100%"', 'ACTIVE']);
+    expect(call[3]).toEqual(['%100\\%%', '%100\\%%', '%100\\%%', 'ACTIVE']);
   });
 
   it('admin list defaults to conversation-only message match', async () => {
@@ -885,11 +933,11 @@ describe('SessionService embed source', () => {
       records: [session(31, '排障会话', 'NORMAL', 9, '2026-08-07 10:00:00')],
       total: 1,
     });
-    await service.listSessionsForAdmin(1, 10, null, null, null, null, 'P单', null);
+    await service.listSessionsForAdmin(1, 10, null, null, null, null, 'P单', null, null, null, { range: 'ALL' });
     const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
     expect(String(call[2])).toContain("m.role IN ('USER', 'ASSISTANT')");
-    // 片段查询与召回同口径，否则会出现「命中片段取自工具输出」
-    expect(messageRepo.selectFirstMatchingMessages).toHaveBeenCalledWith([31], 'P单', 'CONVERSATION');
+    // 片段查询与召回同口径（含时间窗参数），否则会出现「命中片段取自窗口外消息」
+    expect(messageRepo.selectFirstMatchingMessages).toHaveBeenCalledWith([31], 'P单', 'CONVERSATION', null, null);
   });
 
   it('admin list message scope ALL keeps tool output searchable', async () => {
@@ -898,11 +946,11 @@ describe('SessionService embed source', () => {
       records: [session(31, '排障会话', 'NORMAL', 9, '2026-08-07 10:00:00')],
       total: 1,
     });
-    await service.listSessionsForAdmin(1, 10, null, null, null, null, 'P单', null, 'all');
+    await service.listSessionsForAdmin(1, 10, null, null, null, null, 'P单', null, 'all', null, { range: 'ALL' });
     const call = vi.mocked(sessionRepo.selectPage).mock.calls[0];
     expect(String(call[2])).not.toContain('m.role IN');
-    expect(String(call[2])).toContain('MATCH(m.content) AGAINST');
-    expect(messageRepo.selectFirstMatchingMessages).toHaveBeenCalledWith([31], 'P单', 'ALL');
+    expect(String(call[2])).toContain('EXISTS (SELECT 1 FROM message m');
+    expect(messageRepo.selectFirstMatchingMessages).toHaveBeenCalledWith([31], 'P单', 'ALL', null, null);
   });
 
   it('admin list rejects unknown message scope', async () => {

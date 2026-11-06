@@ -29,10 +29,15 @@
 | `--keyword` | 否 | 字符串 | — | 标题/摘要/消息内容关键词（消息范围见 `--search-scope`） | `keyword` |
 | `--search-scope` | 否 | 字符串 | `conversation` | `conversation` 只搜对话双方消息；`all` 连工具输出/系统消息一起搜 | `messageScope` |
 | `--status` | 否 | 字符串 | — | 会话状态 | `status` |
+| `--range` | 否 | 字符串 | `7d` | 活跃时间窗：`7d`/`30d`/`90d`/`all`（全部时间） | `range` |
+| `--date-from` | 否 | 字符串 | — | 活跃时间窗起始日（含），`YYYY-MM-DD`，优先于 `--range` | `dateFrom` |
+| `--date-to` | 否 | 字符串 | — | 活跃时间窗结束日（含整日），`YYYY-MM-DD` | `dateTo` |
 
 `GET /admin/sessions`
 
 列表按最后活动时间倒序（`last_activity_at DESC, id DESC`；从未产生活动的会话排在末尾，0.0.380 起）。
+
+**活跃时间窗（0.0.460 起）**：会话按 `last_activity_at`、关键词消息按 `created_at` 在同一窗口内过滤，默认最近 7 天（不传参数也按 7 天兜底）；要看更早的会话用 `--range all`，或 `--date-from/--date-to` 指定区间（如 `--date-from 2026-11-01 --date-to 2026-11-06`）。窗口按北京时间（Asia/Shanghai）日历日切分，`--range` 只对 `7d`/`30d`/`90d`/`all`（大小写不敏感）有效；`last_activity_at` 为空的存量会话在带时间窗时不可见（`--range all` 可见）。
 
 关键词会同时匹配标题、摘要与消息正文。消息正文默认只搜对话双方（`USER`/`ASSISTANT`），命中片段 `matchSnippet` 同口径——工具输出、读到的文件内容、`ls` 文件名不再把会话顶上来；要反查工具输出里的词时加 `--search-scope all`（等同旧口径，含 `TOOL`/`SYSTEM`）。记录带 `sessionType`（`NORMAL`/`SIDE_TASK`/`SUBAGENT`）与 `parentSessionId`：管理后台列表「类型」列三种类型都着标签（边路任务橙色、子代理与主会话蓝色），悬停显示来源说明；`parentSessionId` 非空时指向父会话。
 
@@ -40,6 +45,8 @@
 mao admin-session list --user-id 1 --execution-mode LOCAL --page 1 --size 20
 mao admin-session list --keyword "登录页面报 500"
 mao admin-session list --keyword "P单" --search-scope all
+mao admin-session list --keyword "P单" --range all          # 不限时间（默认只看最近 7 天活跃的会话）
+mao admin-session list --date-from 2026-11-01 --date-to 2026-11-06
 ```
 
 ## 命令：admin-session get

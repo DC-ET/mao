@@ -31,6 +31,26 @@
                 />
               </el-select>
             </el-form-item>
+            <el-form-item label="活跃时间">
+              <el-select v-model="filters.activityRange" style="width: 120px">
+                <el-option
+                  v-for="opt in ACTIVITY_RANGE_OPTIONS"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
+              </el-select>
+              <el-date-picker
+                v-if="filters.activityRange === 'CUSTOM'"
+                v-model="filters.activityCustomRange"
+                type="daterange"
+                value-format="YYYY-MM-DD"
+                range-separator="至"
+                start-placeholder="开始日期"
+                end-placeholder="结束日期"
+                style="width: 250px; margin-left: 8px"
+              />
+            </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="handleSearch">查询</el-button>
               <el-button @click="handleReset">重置</el-button>
@@ -246,6 +266,13 @@ import { useAuthStore } from '../../stores/auth'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import FilterPanel from '../../components/FilterPanel.vue'
 import {
+  ACTIVITY_RANGE_DEFAULT,
+  ACTIVITY_RANGE_OPTIONS,
+  activityRangeParams,
+  defaultCustomRange,
+  isActivityRangeValue
+} from '../../utils/sessionActivityRange'
+import {
   EXECUTION_MODE_OPTIONS,
   PHASE_OPTIONS,
   SEARCH_SCOPE_OPTIONS,
@@ -274,7 +301,17 @@ const filters = reactive({
   status: '' as string,
   source: '' as string,
   keyword: '' as string,
-  messageScope: 'CONVERSATION' as string
+  messageScope: 'CONVERSATION' as string,
+  // 「活跃时间」筛选：默认最近 7 天（后端同口径兜底），ALL = 全部时间
+  activityRange: ACTIVITY_RANGE_DEFAULT as string,
+  activityCustomRange: null as [string, string] | null
+})
+
+// 切到「自定义」时给一个最近 7 天的初始区间，避免空区间悄悄落回默认档
+watch(() => filters.activityRange, (next) => {
+  if (next === 'CUSTOM' && !filters.activityCustomRange) {
+    filters.activityCustomRange = defaultCustomRange()
+  }
 })
 
 const userOptions = ref<Array<{ id: number; username: string; displayName: string }>>([])
@@ -291,6 +328,15 @@ function applyRouteQuery() {
   filters.keyword = typeof q.keyword === 'string' ? q.keyword : ''
   // 非法值回落到默认口径，避免地址栏拼错就查不到东西
   filters.messageScope = q.messageScope === 'ALL' ? 'ALL' : 'CONVERSATION'
+  // 活跃时间：range=7D/30D/90D/ALL；自定义档读 dateFrom/dateTo，缺失时回落默认档
+  const range = typeof q.range === 'string' ? q.range.toUpperCase() : ''
+  filters.activityRange = isActivityRangeValue(range) ? range : ACTIVITY_RANGE_DEFAULT
+  const dateFrom = typeof q.dateFrom === 'string' ? q.dateFrom : ''
+  const dateTo = typeof q.dateTo === 'string' ? q.dateTo : ''
+  filters.activityCustomRange = dateFrom && dateTo ? [dateFrom, dateTo] : null
+  if (filters.activityRange === 'CUSTOM' && !filters.activityCustomRange) {
+    filters.activityRange = ACTIVITY_RANGE_DEFAULT
+  }
 }
 
 /** 上次已经写进筛选表单的 query。地址没变时只刷新列表，不冲掉表单里尚未写入 URL 的条件。 */
@@ -344,6 +390,8 @@ async function fetchSessions() {
     if (filters.keyword) params.keyword = filters.keyword
     // 默认口径由后端决定，只在放宽到全部消息时传参
     if (filters.messageScope === 'ALL') params.messageScope = 'ALL'
+    // 活跃时间窗：预设档位交给后端按上海日历计算，自定义下发具体日期
+    Object.assign(params, activityRangeParams(filters.activityRange, filters.activityCustomRange))
 
     const { data } = await api.get('/admin/sessions', { params })
     if (seq !== fetchSessionsSeq) return
@@ -379,6 +427,8 @@ function handleReset() {
   filters.source = ''
   filters.keyword = ''
   filters.messageScope = 'CONVERSATION'
+  filters.activityRange = ACTIVITY_RANGE_DEFAULT
+  filters.activityCustomRange = null
   currentPage.value = 1
   fetchSessions()
 }

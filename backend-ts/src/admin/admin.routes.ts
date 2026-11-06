@@ -22,6 +22,8 @@ export interface AdminSessionLister {
     keyword?: string,
     status?: string,
     messageScope?: string,
+    source?: string,
+    options?: { range?: string | null; dateFrom?: string | null; dateTo?: string | null },
   ): Promise<{ records: unknown[]; total: number; current: number; size: number; matchSnippets?: Record<number, string> }>;
 }
 
@@ -157,6 +159,9 @@ export function registerAdminRuntimeRoutes(app: FastifyInstance, deps: AdminRout
       keyword?: string;
       status?: string;
       messageScope?: string;
+      range?: string;
+      dateFrom?: string;
+      dateTo?: string;
     };
     const page = Number(q.page ?? 1);
     const size = Number(q.size ?? 20);
@@ -177,6 +182,8 @@ export function registerAdminRuntimeRoutes(app: FastifyInstance, deps: AdminRout
       q.keyword,
       q.status,
       q.messageScope,
+      undefined,
+      { range: q.range, dateFrom: q.dateFrom, dateTo: q.dateTo },
     );
     sendJson(reply, 200, ok(result));
   });

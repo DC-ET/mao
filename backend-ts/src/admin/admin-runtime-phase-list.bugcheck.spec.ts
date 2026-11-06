@@ -48,4 +48,19 @@ describe('admin 运行监控默认相位集', () => {
     expect(listSessionsForAdmin.mock.calls[0]?.[5]).toBe('RUNNING');
     await app.close();
   });
+
+  it('活跃时间窗参数透传为 options（range / dateFrom / dateTo）', async () => {
+    const { app, listSessionsForAdmin } = await makeApp();
+    await app.inject({
+      method: 'GET',
+      url: '/v1/admin/runtime/sessions?range=ALL&dateFrom=2026-11-01&dateTo=2026-11-06',
+    });
+
+    expect(listSessionsForAdmin.mock.calls[0]?.[10]).toEqual({
+      range: 'ALL',
+      dateFrom: '2026-11-01',
+      dateTo: '2026-11-06',
+    });
+    await app.close();
+  });
 });
