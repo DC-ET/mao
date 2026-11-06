@@ -1,8 +1,8 @@
 # Agent 级 Git 凭据域收敛技术方案（用户级凭据按 Agent 过滤注入）
 
-- 状态：**草案（2026-11-06，已评审并补充；本轮只出方案，不进入代码开发）**
+- 状态：**草案（2026-11-06，已评审并复核补充；本轮只出方案，不进入代码开发）**
 - 日期：2026-11-06
-- 评审：2026-11-06 对照代码全量核对六条注入通道、装配点、迁移编号、admin 现有范式后修订，评审记录见 §11。
+- 评审：2026-11-06 对照代码全量核对六条注入通道、装配点、迁移编号、admin 现有范式后修订；同日第二轮复核修正 TOC 分类归属、查询次数口径、MCP 长驻盲点等 6 项（见 §11 末「第二轮复核」），评审记录见 §11。
 - 覆盖端：后端 backend-ts、数据库迁移、管理后台 admin、共享契约 `@mao/contracts`
 - 不涉及：桌面 Electron 本地执行链路（LOCAL）、容器运行时协议、agent-cli
 - 关联方案：
@@ -96,8 +96,11 @@ ALTER TABLE `agent`
     AFTER `http_tool_ids`;
 
 -- 全局策略开关行（评审补充）：system_setting 缺行时管理后台分类卡片不渲染该控件，
--- 必须随迁移种子插入，否则上线后看不到开关。category 用已存在的分类名（不是 TOC 组名，
--- 「Agent 引擎」是 TOC_GROUPS 的组 label，真正的 category 是它下面的 'Agent 与模型'）。
+-- 必须随迁移种子插入，否则上线后看不到开关。
+-- category 用已存在的分类名 'Agent 与模型'（复核修正：该分类挂在 TOC_GROUPS 的
+-- 「模型任务」组下，SystemSettingsView.vue:344；「Agent 引擎」组下只有 integration
+-- （:330-337），没有分类。写成组名/不存在的分类会新建卡片并落入「其他」兜底——
+-- 因此本开关将出现在「模型任务 → Agent 与模型」卡片，零改 TOC）。
 INSERT IGNORE INTO `system_setting`
     (`setting_key`, `value`, `category`, `description`, `editable`, `is_secret`) VALUES
 ('gitToken.scopePolicy', 'lenient', 'Agent 与模型',
@@ -120,13 +123,13 @@ INSERT IGNORE INTO `system_setting`
 
 - 读取：`SystemSettingService.getValue('gitToken.scopePolicy')`（`settings/settings.service.ts:209`）；resolver 每次解析时读取，不做进程内缓存（口径同 `site.baseUrl`，保证开关即时生效）；
 - 入口：管理后台「系统设置」（`admin/src/views/settings/SystemSettingsView.vue`）。
-  **注意不是「加个 radio」**（评审补充）：分类卡片由后端 `system_setting` 行驱动，控件形态由前端谓词分派；且 `description` 列为 `VARCHAR(256)`，放不下两行长文案。照 `isRuntimeModeSetting`（`:632`）/ `isMcpLoadModeSetting`（`:631`）既有范式做：
+  **注意不是「加个 radio」**（评审补充）：分类卡片由后端 `system_setting` 行驱动，控件形态由前端谓词分派；且 `description` 列为 `VARCHAR(256)`，放不下两行长文案。照 `isRuntimeModeSetting`（`:632`）/ `isMcpLoadModeSetting`（`:627`）既有范式做：
   1. 新增谓词 `isGitScopePolicySetting(key)` → `key === 'gitToken.scopePolicy'`；
   2. 在通用渲染链（`:138` 的 switch 之后）插一个 `el-select` 分支，option label 中文硬编码在前端：
      - `lenient` → 宽松：未配置允许域的 Agent 不限制（兼容现状）
      - `strict` → 严格：未配置允许域的 Agent 不注入任何 Git 凭据（fail-closed）
   3. `settingsSearchCatalog.ts` 加搜索条目；`SPECIAL_KEYS` **不**加（留在分类卡片内即可）；
-  4. `category` 必须是**已存在的分类名**而非 TOC 组名——`TOC_GROUPS`（`:310`）里「Agent 引擎」是组 label，其下的分类名是 `Agent 与模型`；写成组名会新建一个分类卡片并掉到对应组末尾（甚至「其他」组）；
+  4. `category` 必须是**已存在的分类名**而非 TOC 组名——**复核修正**：`Agent 与模型` 是「模型任务」组下的分类（`TOC_GROUPS`，`SystemSettingsView.vue:344`），「Agent 引擎」组下只有 integration（`:330-337`）；写成组名/不存在的分类会新建卡片并落入「其他」兜底。**定稿选 A：沿用 `Agent 与模型` 分类**（开关出现在「模型任务 → Agent 与模型」卡片），零改 TOC；
   5. 行本身由迁移种子插入（见 §3.1）。
 - 用途：解决「存量 Agent 未配置」与「升级不破坏」的矛盾——先宽松上线，两个 Agent 配好后切严格（见 §6）。
 
@@ -171,11 +174,14 @@ resolveForAgent(userId, agentId):
 
   # D3（已定稿）：只解密交集，避免把用户全部 token 无谓解密出来
   result = gitCredentialService.getTokenMapByUserFiltered(userId, allowed)
-  log('git-scope: injected=%d agentId=%s uid=%s', result.size, agentId, userId)
+  log('git-scope: injected=%d allowed=%d agentId=%s uid=%s',
+      result.size, allowed.size, agentId, userId)
   return result
 
 resolveForSession(userId, sessionId):
-  if sessionId == null: return resolveForAgent(userId, null)
+  if sessionId == null:
+     log('git-scope: no session context, uid=%s', userId)   # 独立观察点（复核修正）：调用方漏传排查
+     return resolveForAgent(userId, null)
   session = sessionRepo.selectById(sessionId)
   if session == null:
      log('git-scope: session not found, sid=%s uid=%s', sessionId, userId)
@@ -186,11 +192,12 @@ resolveForSession(userId, sessionId):
   return resolveForAgent(userId, session.agentId ?? null)
 ```
 
-**「故障」与「配置未就绪」必须分开兜底（评审补充，安全相关）**：
+**「故障」与「配置未就绪」必须分开兜底（评审补充，安全相关；复核修正：`sessionId == null` 单列并加独立日志）**：
 
 | 情况 | 定性 | 兜底 |
 |---|---|---|
-| `agentId == null`（结构上无 Agent 上下文：历史会话、无 sessionId 的调用） | 配置未就绪 | 走全局策略（宽松全量 / 严格空） |
+| `agentId == null`（结构上无 Agent 上下文：历史会话） | 配置未就绪 | 走全局策略（宽松全量 / 严格空） |
+| `sessionId == null`（调用方未传会话上下文） | 配置未就绪 + **独立日志**（见伪代码） | 同上；现存调用点中 PTY（必填）、clone（`session.id` 已落库）可确定带值，dispatch 的 `ctx.sessionId` 类型允许 null——先以日志观察来源，确认后再评估收紧为 fail-closed |
 | `session == null` / `agent == null` / `session.userId !== userId` | **故障** | **空集 + `warn` 日志**，与 DB 异常同口径 |
 
 owner 不匹配应额外打 `warn`（疑似越权访问），不放行。
@@ -211,7 +218,7 @@ SELECT git_allowed_domains FROM agent WHERE id = ?        -- 故意不带 notDel
 
 **为什么不选 B/C**：B（软删即断凭据）实现最省，但会让删除 Agent 成为隐式收回凭据的入口，需额外在 admin 删除确认里加提示，且会话跑到一半断凭据比按原白名单继续更危险；C（让 `findById` 不过滤软删）会影响 `getAgent` 等所有既有调用方，不可取。
 
-性能：每条 shell 命令新增 1 次 session 主键查询 + 1 次 agent 单列查询（本地库毫秒级），不引入缓存，优先保证配置与开关即时生效。若压测显示热点，再按 `agentId` 加 30–60s TTL 缓存（届时需处理严格模式切换的失效问题，单独立项）。
+性能：每条 shell 命令新增 **3 次查询**（复核修正）——1 次 session 主键查询 + 1 次 agent 单列查询 + 1 次 `system_setting` 查询（`getGitScopePolicy` 走 `getValue`，`settings.service.ts:209` 每次 `findByKey` 查库、无缓存），本地库毫秒级，不引入缓存，优先保证配置与开关即时生效。若压测显示热点，再按 `agentId` 加 30–60s TTL 缓存（届时需处理严格模式切换的失效问题，单独立项）。
 
 补充说明（评审修正）：
 
@@ -289,7 +296,7 @@ gitAllowedDomains?: string[] | null;
 - `agent/agent.routes.ts`：
   - `CreateAgentRequest` / `UpdateAgentRequest` 增加 `gitAllowedDomains?: string[] | null`；
   - 新增校验 `normalizeGitDomains()`：逐项 `normalizeGitDomain` + 去重，非法抛 `PARAM_INVALID`；
-  - `toVO` 反序列化为数组，`null` 原样返回。
+  - `toVO` 反序列化为数组，`null` 原样返回；**复核修正**：建议 `scope=client` 的列表/详情不返回该字段（普通客户端无需知道 Agent 的凭据访问范围，最小暴露；实现为 `toVO` 加可选开关，管理端路径照常返回）。
 
 **⚠ 三态语义必须区分 `undefined` 与 `null`（评审补充，易错点）**：`updateAgent` 是**部分更新**，现有字段统一 `if (x != null)` 处理，导致 `[]` 和 `null` 都不写库（`agent.service.ts:145-152`）。本字段有四种输入，必须在方案与单测里固定：
 
@@ -309,7 +316,7 @@ gitAllowedDomains?: string[] | null;
   - 回显要能区分后端返回的 `null` 与 `[]`：开关绑定写成 `modelValue !== null && modelValue !== undefined`，否则「开启 + 空」会被显示成关闭；
   - 域名输入：候选多选 + 手工输入。**候选源定稿为「当前管理员自己的」`GET /v1/user/git-credentials`**（D4 已定，零新端点）——原稿的 `GET /v1/admin/git-domains`（`SELECT DISTINCT domain FROM user_git_credential`）会把全站所有用户配过的域名透给持该权限的人，是新的横向枚举面，而唯一用途只是表单提示，性价比不成立；手工输入走同一 `normalizeGitDomain` 校验，避免两侧口径漂移；
   - **不做「一键预设」按钮**（D5 已定）：候选多选本身就是预设——管理员勾选自己已配的域即可，再单独加一个「按我的 token 域填充」按钮是重复交互。若后续反馈勾选繁琐，再作为增强项提。
-- `admin/src/views/agent/AgentListView.vue`：能力摘要 tooltip 已有「技能 / MCP」两行（`:98-99`），加「Git 域：未配置 / 已禁止 / N 个域」一行即可；列表按「未配置」筛选需要 **`AgentService.listAgents` 加第四个过滤参数**（现签名仅 `userId / keyword / includeDisabled / clientVisibleOnly`）+ repository 查询条件，这是 §5 清单原先漏掉的改动；
+- `admin/src/views/agent/AgentListView.vue`：能力摘要 tooltip 已有「技能 / MCP」两行（`:98-99`），加「Git 域：未配置 / 已禁止 / N 个域」一行即可；列表按「未配置」筛选需要 **`AgentService.listAgents` 加第四个过滤参数**（现签名仅 `userId / keyword / includeDisabled / clientVisibleOnly`）+ repository 查询条件，这是 §5 清单原先漏掉的改动；**复核修正**：新参数默认关闭，不得改变 `app-harness-engine.ts:189` 的 `listOptions`（`selectList(null, true)`）行为；
 - `admin/src/views/settings/SystemSettingsView.vue`：「Git 凭据域策略」下拉（宽松 / 严格，形态见 §3.2），同步 `settingsSearchCatalog.ts` 搜索条目。
 
 **桌面端（可选，P2）**：`desktop/src/views/settings/GitCredentialsView.vue` 增一行说明「凭据仅在被 Agent 允许的域名下注入」，不阻塞主链路。
@@ -332,7 +339,7 @@ gitAllowedDomains?: string[] | null;
 
 1. 抽公共函数 `normalizeGitDomain()` 到 `src/common/git-domain.ts`（现逻辑在 `GitCredentialService.normalizeDomain` / `validateDomain`，含 `DOMAIN_PATTERN`），`GitCredentialService` 改为调用它，行为不变；agent 路由复用同一函数，保证「用户配置的 token 域」与「Agent 允许域」两侧规范化口径一致。
    **保留两条不同错误文案**：`normalizeDomain` 空值抛「域名不能为空」、`validateDomain` 格式不符抛「域名格式无效，示例: github.com」，是两个 `private` 方法、两条语义，抽取时不得合并成一句，否则 agent 表单复用时的错误提示会退化；
-2. `GitCredentialService` 增加 `getTokenMapByUserFiltered(userId, domains)`（D3），SQL 带 `WHERE domain IN (...)`，只解密交集；`getTokenMapByUser` 签名与行为不动；
+2. `GitCredentialService` 增加 `getTokenMapByUserFiltered(userId, domains)`（D3），SQL 带 `WHERE domain IN (...)`，只解密交集；`domains` 为空时直接返回 `{}`（复核修正：方法作为独立 API 的边界保护，防 `IN ()` 非法 SQL）；`getTokenMapByUser` 签名与行为不动；
 3. `AgentRepository` 增加 `selectGitAllowedDomainsById(id)`（D1）——**故意不带 `notDeleted()`**，只取 `git_allowed_domains` 一列，用于区分「agent 不存在（故障）」与「未配置（值为 NULL）」；
 4. `agent/types.ts`、`agent/agent.repository.ts`、`agent/agent.service.ts`、`agent/agent.routes.ts` 增加字段与校验；`AgentService.listAgents` 增加「未配置」过滤参数；
 5. `session/types.ts` 新增 `GitTokenResolver` 接口；新增实现 `src/user/git-token-resolver.ts`；
@@ -390,7 +397,7 @@ gitAllowedDomains?: string[] | null;
 **阶段 2：配置两个 Agent（事故场景立即关闭）**
 
 - 梁子配置 `["git.acg.team"]`（按阶段 1.5 盘点结果补充其它域）；野子配置 `["git.zizaitianye.com"]`；
-- **配置后重开两侧已开着的 shell / PTY 终端**：PTY 没有 shell 那条「按 `GIT_TOKEN_*` 前缀全清」的机制（见 §9-5），不放宽的话旧 token 会一直驻留在已开终端里；
+- **配置后重开两侧已开着的 shell / PTY 终端、重连容器 MCP 连接**：PTY 与容器 MCP 都没有刷新机制（见 §9-5），不重开 / 重连的话旧 token 会一直驻留在已开终端与已建连接里；
 - 验收（事故回放）：
   - 野子会话内：`env | grep GIT_TOKEN` 无 `git.acg.team` 条目；`git clone https://git.acg.team/...` 因无凭据失败；
   - 梁子会话内：clone / push ACG 仓库正常。
@@ -399,7 +406,7 @@ gitAllowedDomains?: string[] | null;
 
 - 管理后台按「未配置」筛选，逐批确认并配置；
 - 关键 Agent（或全部）配置完成后，系统设置切「严格模式」；
-- 切严格后同样需要重开各 Agent 的存量终端；
+- 切严格后同样需要重开各 Agent 的存量终端、重连 MCP 连接（见 §9-5）；
 - 观察 1–2 周日志中 `injected` 的分布（口径见 §3.7：`injected < allowed` 说明有允许域没配 token）与目录内业务反馈，确认无受损后进入常规运维。
 
 **回滚**：策略切回宽松即恢复兼容行为；字段与配置保留，无需回滚数据。
@@ -458,21 +465,25 @@ D1/D3 的专项断言：`selectGitAllowedDomainsById` 的 SQL **不得含 `notDe
 5. 严格模式下未配置 Agent 不注入任何 Git 凭据；
 6. 宿主机 shell / PTY 终端 / 容器 envelope 三处注入形态的过滤结果一致；
 7. 既有测试全部通过，无新增回归；
-8. （评审补充）传错 sessionId / 跨用户 sessionId 时不注入任何凭据，并落 `warn` 日志；
+8. （评审补充，复核修正）不存在的 sessionId / 跨用户 sessionId 时不注入任何凭据，并落 `warn` 日志；`sessionId == null`（调用方未传）落独立 info 日志；
 9. （评审补充）重开终端后，收紧前的旧 `GIT_TOKEN_*` 不再出现在 PTY 环境里；
-10. （评审补充）管理后台能看到并切换「Git 凭据域策略」（种子行生效）。
+10. （评审补充）管理后台能看到并切换「Git 凭据域策略」（种子行生效）；
+11. （复核修正）重连容器 MCP 连接后，收紧前的旧 `GIT_TOKEN_*` 不再出现在 MCP 子进程环境里。
 
 ## 9. 风险与回归护栏
 
 1. **存量未配置 Agent（宽松期仍全量注入）**：本方案的收敛依赖「配置动作 + 切严格」，为此提供配置状态可见（列表筛选）与策略开关；验收清单里把「未配置 Agent 清零」列为切严格的前置条件；
 2. **`[]` 与 `NULL` 混淆**：`AgentService` 对该字段单独处理并有专项单测，禁止把 `[]` 折叠成 `NULL`；同时禁止把 `undefined`（不修改）当成 `null`（清空）处理（见 §3.6 三态表）；
-3. **性能**：每条 shell 命令新增 2 次主键查询（session + agent）；压测若观测到明显延迟，再以 `agentId` 为键加 TTL 缓存（需处理策略开关即时性，另立小方案）。热路径仅通道 1 与 PTY 创建，通道 5/6 是一次性用户操作，不计入增量；
+3. **性能**：每条 shell 命令新增 3 次查询（复核修正：session + agent + `system_setting`，策略读取当前无缓存）；压测若观测到明显延迟，再以 `agentId` 为键加 TTL 缓存（需处理策略开关即时性，另立小方案）。热路径仅通道 1 与 PTY 创建，通道 5/6 是一次性用户操作，不计入增量；
 4. **`session.agentId` 为空的历史会话**：按「无 Agent 上下文」处理（宽松放行 + 日志 / 严格拒绝），并观察日志确认此类调用点是否符合预期；**注意与「故障」区分**——session 查不到、owner 不匹配一律 fail-closed 返回空集，不在宽松模式下放行（见 §3.3）；
-5. **长驻进程的旧 env**：已 spawn 的 shell / PTY 子进程持有旧 env。shell 侧有 `for k in ${!GIT_TOKEN_@}; do unset "$k"; done`（`shell-session-manager.ts:582`）在每条命令前全清，收紧后下一条命令即生效；**但 PTY 终端没有这个机制**——`terminal-manager.ts:440` 仅在创建 PTY 时注入一次，之后无刷新入口、无前缀 unset。因此收紧白名单或切换 Agent 后，**已开着的 PTY 会一直持有旧 token 直到终端重开**。这是已知限制而非缺陷（PTY 的交互语义决定无法逐条命令注入），须写入使用者文档，并把「重开终端」列入 §6 阶段 2/3 的运维步骤与验收清单；
+5. **长驻进程的旧 env（PTY / 容器 MCP 两个盲点，复核修正）**：已 spawn 的 shell / PTY 子进程持有旧 env。shell 侧有 `for k in ${!GIT_TOKEN_@}; do unset "$k"; done`（`shell-session-manager.ts:582`）在每条命令前全清，收紧后下一条命令即生效；**但两条通道没有刷新机制**——
+   - **PTY 终端**：`terminal-manager.ts:440` 仅在创建 PTY 时注入一次，之后无刷新入口、无前缀 unset。收紧白名单或切换 Agent 后，**已开着的 PTY 会一直持有旧 token 直到终端重开**；
+   - **容器内 MCP 连接**：`ContainerMcpBridge.connectAndListTools`（`container-mcp-bridge.ts:36-46`）在**连接时**用 `containerMcpEnv(serverEnv, envelope)` 构造 env，之后 `callTool` 复用 `sessionClients` 里的长驻客户端——**不会**随 envelope 更新。收紧变更后需重连 MCP（或重建会话）才生效；
+   两条均为已知限制而非缺陷（交互 / 连接语义决定无法逐次注入），须写入使用者文档，并把「重开终端 / 重连 MCP」列入 §6 阶段 2/3 的运维步骤与验收清单；
 6. **端口 / 子域匹配**：本方案不改变匹配语义；带端口的 remote（`git.acg.team:8443`）与现状行为一致（既有问题，不在本期）；
 7. **LOCAL 会话**：不经过平台注入，行为不变；若未来要求「桌面端读取服务端凭据」，另行设计；
 8. **误配白名单导致业务受损**：日志中 `injected` 异常掉到 0（或明显低于 `allowed`）时先切回宽松定位，再修配置；
-9. **软删 Agent 的历史会话（D1 已定稿：选 A）**：resolver 用不过滤软删的 `selectGitAllowedDomainsById`，软删 Agent 按当时配置继续解析；agent id 根本不存在才算故障并 fail-closed。**不要**用带 `notDeleted()` 的 `findById`（见 §3.3）；
+9. **软删 Agent 的历史会话（D1 已定稿：选 A）**：resolver 用不过滤软删的 `selectGitAllowedDomainsById`，软删 Agent 按当时配置继续解析；agent id 根本不存在才算故障并 fail-closed。**不要**用带 `notDeleted()` 的 `findById`（见 §3.3）。**连带运维口径（复核修正）**：软删后 Agent 在管理后台不可见、无法再改白名单——如需在删除时立即收回凭据，应先将其 `git_allowed_domains` 设为 `[]`（禁止）再删除；建议 admin 删除确认文案加一句提示（可选增强）；
 10. **`container-tool-executor` 适配器漏改**：`ShellSessionTool` 依赖类型变更会波及该文件（见 §3.5 警示块），漏改则 `tsc` 直接报错——这是全方案唯一阻断编译的点，实现时优先处理。
 
 ## 10. 决策记录（原开放问题，2026-11-06 已全部定稿）
@@ -503,7 +514,7 @@ D1/D3 的专项断言：`selectGitAllowedDomainsById` 的 SQL **不得含 `notDe
 
 核实通过的关键前提（方案成立的地基，均与代码一致）：
 
-- 六条通道真实存在；`getTokenMapByUser` 是唯一凭据源，5 个真实调用点（`container-tool-executor.ts:109` 是 mock 适配器，不是注入点）；
+- 六条通道真实存在；`getTokenMapByUser` 是唯一凭据源，6 处生产调用、5 个通道（`container-tool-executor.ts:109` 是 envelope 适配器——生产代码但非注入源，复核修正）；
 - `shell-session-manager.ts:582` 的 `for k in ${!GIT_TOKEN_@}; do unset "$k"; done` 前缀全清确实存在——这是「控制传入 map 即可收敛」能成立的关键机制；
 - 飞书 / 微信 bot 会话都带 `agentId`（`app-feishu-messaging.ts:66`、`weixin/session.service.ts:40`），不是空悬字段；
 - `updateSessionAgent` 允许会话中途切 Agent（`session.service.ts:1579`），方案按注入时实时读 `session.agentId`，天然正确；
@@ -530,4 +541,19 @@ D1/D3 的专项断言：`selectGitAllowedDomainsById` 的 SQL **不得含 `notDe
 | 15 | 阶段 2 直接配白名单会误伤「野子恰好要动 ACG 仓库」的场景 | §6 阶段 1.5 |
 
 未改动但需知晓的既有约束（本期范围外）：LOCAL 桌面执行链路不经平台注入；带端口 remote 与子域匹配语义沿用现状；`GIT_TOKEN_*` 已在 `common/sensitive-env.ts` 的保留前缀内，用户环境变量无法覆盖它。
+
+### 第二轮复核（2026-11-06）
+
+对评审修订稿逐条对照代码复核，确认 15 项修订基本成立；本轮修正 6 处（正文内联标注「复核修正」）：
+
+| # | 问题 | 修订位置 |
+|---|---|---|
+| 1 | TOC 归属写错：`Agent 与模型` 是「模型任务」组下分类（`SystemSettingsView.vue:344`），不在「Agent 引擎」组（该组仅 integration）；定稿选 A——沿用该分类、零改 TOC | §3.1、§3.2-4 |
+| 2 | 查询次数口径：`getGitScopePolicy` 走 `getValue`（每次 `findByKey` 查库、无缓存），每条命令实为 3 次查询（session + agent + `system_setting`），不是 2 次 | §3.3、§9-3 |
+| 3 | 长驻盲点补容器内 MCP 连接（连接时构造 env、`callTool` 复用长驻客户端，需重连才生效） | §9-5、§6、§8-11 |
+| 4 | `sessionId == null` 与 `agentId == null` 分离：前者独立打日志（调用方漏传排查），确认来源后再评估 fail-closed | §3.3 |
+| 5 | 软删 Agent 的运维缺口：删除后不可见、无法改白名单，删除前应清空白名单；admin 删除确认提示（可选增强） | §9-9 |
+| 6 | 小项：`isMcpLoadModeSetting` 行号 627（非 631）；`getTokenMapByUserFiltered` 空数组边界；`scope=client` 最小暴露；`listAgents` 新参数默认值须保持 `listOptions` 行为；§8-8 措辞 | §3.2、§3.6、§4.2、§8 |
+
+复核抽查确认无误的关键行号与事实：`shell-session-manager.ts:582` 前缀全清、`session.service.ts:1579` `updateSessionAgent`、`app-feishu-messaging.ts:66` / `weixin/session.service.ts:40` bot 会话带 agentId、`system_setting` 六列结构与 `description VARCHAR(256)` / `setting_key UNIQUE`、`sensitive-env.ts` 的 `GIT_TOKEN_` 保留前缀、宿主机 MCP env 白名单不含 `GIT_TOKEN_*`（六通道清单无遗漏）、`create-app.ts:845` / `app-harness-engine.ts:189` / `app-routes.ts:409` / `shell-workdir.spec.ts:53` 行号、`agent.deleted`（V052）、V186 为最新迁移（V187 空置）、`normalizeGitDomain` 两条错误文案分离、`DockerDispatchContext.sessionId` 允许 null（据此保留日志观察而非直接 fail-closed）。
 
