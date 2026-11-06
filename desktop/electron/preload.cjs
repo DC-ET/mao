@@ -100,9 +100,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeToolApprovalDismissListener: () => {
     ipcRenderer.removeAllListeners('tool-approval-dismiss')
   },
-  // alwaysAllow（V135）为第 3 参：仅布尔位，规则 pattern 由服务端自行取回，客户端不可注入
-  respondToolApproval: (requestId, approved, alwaysAllow) =>
-    ipcRenderer.invoke('tool-approval-response', { requestId, approved, alwaysAllow: alwaysAllow === true }),
+  // 多端审批（技术方案 2026-11-06）：本地卡点击 / 远端回声 / 清理都走这一个解锁入口。
+  // alwaysAllow 仅在需要时透传，主进程不消费（规则由服务端按 hint 生成）。
+  respondToolApprovalRemote: (requestId, approved, alwaysAllow) =>
+    ipcRenderer.invoke('tool-approval-remote-response', { requestId, approved, alwaysAllow: alwaysAllow === true }),
 
   // Skill sync — renderer triggers, main process downloads & extracts zip
   skillSync: (sessionId, syncUrl, token, workspace, apiBase) =>

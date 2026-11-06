@@ -159,4 +159,111 @@ describe('ApprovalRegistry', () => {
     expect(reg.takeHint(10, 'r1')).toBeNull();
     expect(reg.takeHint(10, 'missing')).toBeNull();
   });
+
+  describe('多端审批（技术方案 2026-11-06）', () => {
+    const context = {
+      toolName: 'shell',
+      arguments: '{"command":"npm run build"}',
+      workspace: '/repo',
+      dangerReason: '写入工作区',
+    };
+
+    function deps(overrides: { session?: Record<string, unknown> } = {}) {
+      const sessionMapper = {
+        selectById: vi.fn().mockResolvedValue({ id: 10, userId: 7, ...overrides.session }),
+      } as unknown as SessionMapper;
+      const sessionService = {
+        enterWaitingApproval: vi.fn().mockResolvedValue(true),
+        restoreRunningAfterApproval: vi.fn().mockResolvedValue(true),
+      } as unknown as SessionService;
+      const ws = { send: vi.fn() } as unknown as StreamingWsRegistry;
+      return { sessionMapper, sessionService, ws, reg: new ApprovalRegistry(sessionService, sessionMapper, ws) };
+    }
+
+    function events(ws: StreamingWsRegistry, type: string) {
+      return (ws.send as unknown as ReturnType<typeof vi.fn>).mock.calls
+        .map((call) => call[1] as { type: string; sessionId: number; data: Record<string, unknown> })
+        .filter((event) => event.type === type);
+    }
+
+    it('registerBroadcastsApprovalRequestWithDeviceAndContext', async () => {
+      const { ws, reg } = deps({ session: { targetDeviceId: 'dev-1', targetDeviceName: 'MacBook' } });
+      await reg.register(10, 'r1', null, context);
+      const requests = events(ws, 'tool_approval_request');
+      expect(requests).toHaveLength(1);
+      expect(requests[0].sessionId).toBe(10);
+      expect(requests[0].data).toMatchObject({
+        requestId: 'r1',
+        toolName: 'shell',
+        arguments: context.arguments,
+        argumentsTruncated: false,
+        workspace: '/repo',
+        dangerReason: '写入工作区',
+        deviceName: 'MacBook',
+      });
+    });
+
+    it('truncatesArgumentsToBroadcastLimitAndReplaysTruncatedPayload', async () => {
+      const { ws, reg } = deps();
+      const long = JSON.stringify({ content: 'x'.repeat(9000) });
+      await reg.register(10, 'r1', null, { ...context, arguments: long });
+      const requests = events(ws, 'tool_approval_request');
+      expect(requests[0].data.argumentsTruncated).toBe(true);
+      expect(Buffer.byteLength(String(requests[0].data.arguments), 'utf8')).toBeLessThanOrEqual(8192);
+      const pending = reg.getPendingForSession(10);
+      expect(pending).toHaveLength(1);
+      expect(pending[0].argumentsTruncated).toBe(true);
+      expect(pending[0].arguments).toBe(requests[0].data.arguments);
+    });
+
+    it('doesNotBroadcastWhenSessionHasNoOwner', async () => {
+      const { ws, reg } = deps({ session: { userId: null } });
+      await reg.register(10, 'r1', null, context);
+      expect(events(ws, 'tool_approval_request')).toHaveLength(0);
+      expect(reg.countForSession(10)).toBe(1);
+    });
+
+    it('broadcastsResolvedAfterClaimWithDecision', async () => {
+      const { ws, reg } = deps();
+      await reg.register(10, 'r1', null, context);
+      await reg.unregister(10, 'r1', { approved: true, alwaysAllow: true });
+      const resolved = events(ws, 'tool_approval_resolved');
+      expect(resolved).toHaveLength(1);
+      expect(resolved[0].data).toEqual({ requestId: 'r1', approved: true, alwaysAllow: true });
+    });
+
+    it('claimsExactlyOnceAndReturnsHintOnlyToWinner', async () => {
+      const { ws, reg } = deps();
+      const hint = { ruleType: 'SHELL_PREFIX' as const, ruleValue: 'npm run', label: 'x' };
+      await reg.register(10, 'r1', hint, context);
+      const first = await reg.unregister(10, 'r1', { approved: false, alwaysAllow: false });
+      const second = await reg.unregister(10, 'r1', { approved: true, alwaysAllow: true });
+      expect(first.removed).toBe(true);
+      expect(first.hint).toEqual(hint);
+      expect(second.removed).toBe(false);
+      expect(second.hint).toBeNull();
+      expect(events(ws, 'tool_approval_resolved')).toHaveLength(1);
+    });
+
+    it('keepsRecentResolutionForRetriedVotes', async () => {
+      const { reg } = deps();
+      await reg.register(10, 'r1', null, context);
+      await reg.unregister(10, 'r1', { approved: false, alwaysAllow: false });
+      expect(reg.getRecentResolution(10, 'r1')).toEqual({ approved: false, alwaysAllow: false });
+      expect(reg.getRecentResolution(10, 'missing')).toBeNull();
+    });
+
+    it('fallsBackToParentOwnerForSubagentSession', async () => {
+      const sessionMapper = {
+        selectById: vi.fn(async (id: number) => (id === 10
+          ? { id: 10, userId: null, sessionType: 'SUBAGENT', parentSessionId: 9 }
+          : { id: 9, userId: 7 })),
+      } as unknown as SessionMapper;
+      const sessionService = { enterWaitingApproval: vi.fn().mockResolvedValue(true) } as unknown as SessionService;
+      const ws = { send: vi.fn() } as unknown as StreamingWsRegistry;
+      const reg = new ApprovalRegistry(sessionService, sessionMapper, ws);
+      await reg.register(10, 'r1', null, context);
+      expect(events(ws, 'tool_approval_request')).toHaveLength(1);
+    });
+  });
 });

@@ -63,6 +63,8 @@ export interface ApprovalRequest {
   description: string;
   dangerReason?: string | null;
   workspace?: string;
+  /** 服务端 tool_execute 的请求 id：多端审批按它投票 / 收回声（旧调用可缺省）。 */
+  requestId?: string;
 }
 
 export interface PanelLine {

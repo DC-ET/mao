@@ -61,6 +61,7 @@ async function attached(opts?: {
   ifRunning?: 'wait' | 'cancel' | 'fail';
   maxDurationSec?: number;
   snapshot?: WsEvent;
+  onApprovalRelaySupported?: (supported: boolean) => void;
 }) {
   const ws = new FakeWs();
   if (opts?.snapshot) ws.snapshot = opts.snapshot;
@@ -75,6 +76,7 @@ async function attached(opts?: {
     askHandler: opts?.askHandler,
     includeToolIo: true,
     maxDurationSec: opts?.maxDurationSec,
+    onApprovalRelaySupported: opts?.onApprovalRelaySupported,
   });
   await runner.attach(session());
   return { ws, renderer, runner };
@@ -409,5 +411,25 @@ describe('createAndAttach 来源自报（技术方案 2026-11-03 D11）', () => 
     // 该处变化时本用例失败，提醒重新确认来源落位。
     const chatTs = readFileSync(path.join(__dirname, '..', 'src', 'commands', 'chat.ts'), 'utf8');
     expect(chatTs).toMatch(/const request: CreateSessionRequest = \{[^}]*source: 'cli',/);
+  });
+
+  it('connected 帧的 approvalRelay 能力位透传给宿主（每次连接重新判定）', async () => {
+    const values: boolean[] = [];
+    const { ws } = await attached({ onApprovalRelaySupported: (v) => values.push(v) });
+    ws.emit({ type: 'connected', sessionId: null, data: { userId: 7, approvalRelay: true } });
+    ws.emit({ type: 'connected', sessionId: null, data: { userId: 7 } });
+    expect(values).toEqual([true, false]);
+  });
+
+  it('本轮终态时通知 TUI 关闭审批模态（approval_aborted，只发一次）', async () => {
+    const { ws, renderer, runner } = await attached();
+    const p = runner.runPrompt('x');
+    await Promise.resolve();
+    const eid = (ws.sent.find((m) => (m as { type: string }).type === 'send_message') as { data: { eventId: string } })
+      .data.eventId;
+    terminal(ws, eid, 'COMPLETED');
+    terminal(ws, eid, 'COMPLETED');
+    await p;
+    expect(renderer.events.filter((e) => e.type === 'approval_aborted')).toHaveLength(1);
   });
 });

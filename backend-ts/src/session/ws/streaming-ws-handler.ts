@@ -70,6 +70,7 @@ import type { AgentExecutionContext } from '../../harness/core/agent-execution-c
 import type { EmbedPageToolRegistry } from '../../harness/embed-page-tool-registry.js';
 import type { McpConnectionError } from '../../harness/mcp/entity/mcp-server.js';
 import type { ApprovalHint } from '../../harness/approval/approval-hint.js';
+import type { ApprovalRequestPayload } from '../../harness/approval/approval-registry.js';
 
 export interface WsHandlerDeps {
   registry: StreamingWsRegistry;
@@ -145,9 +146,21 @@ export interface WsHandlerDeps {
     publishForSession(sessionId: number): void | Promise<void>;
   };
   approvalRegistry: {
-    unregister(sessionId: number | null, requestId: string | null): void | Promise<void>;
-    /** alwaysAllow 消费服务端 hint（恰好一次）；缺省场景（旧测试桩）返回 null 即可。 */
-    takeHint?(sessionId: number, requestId: string): ApprovalHint | null;
+    /**
+     * 认领 + 收尾（技术方案 2026-11-06）：同步摘除 pending / 取 hint / 删公告 / 记近期结果，
+     * `removed === false` 表示本次帧输掉仲裁——不得建规则、不广播、不产生其它副作用。
+     */
+    unregister(
+      sessionId: number | null,
+      requestId: string | null,
+      decision?: { approved: boolean | null; alwaysAllow: boolean } | null,
+    ): { removed: boolean; hint: ApprovalHint | null } | Promise<{ removed: boolean; hint: ApprovalHint | null }>;
+    /** 快路径：是否仍有挂起审批。缺省（旧测试桩）时直接走 unregister。 */
+    has?(sessionId: number | null, requestId: string | null): boolean;
+    /** 订阅重放：该会话当前所有待审批请求。 */
+    getPendingForSession?(sessionId: number): ApprovalRequestPayload[];
+    /** 近期结果缓存：重发投票时只对发起连接补发一次回声。 */
+    getRecentResolution?(sessionId: number, requestId: string): { approved: boolean | null; alwaysAllow: boolean } | null;
   };
   /** 审批规则域（V135）：未注入时 alwaysAllow 静默忽略（不建规则、不影响执行）。 */
   approvalRuleService?: {
@@ -527,7 +540,12 @@ export class StreamingWsHandler {
       const pageEnabled = typeof root.pageEnabled === 'boolean' ? root.pageEnabled : true;
       const device = this.parseDevice(root);
       this.deps.registry.register(session, metadata.userId, clientType, metadata, pageEnabled, device);
-      this.deps.registry.sendToConnection(session, wsEvent('connected', null, { userId: metadata.userId }));
+      // 能力协商（技术方案 2026-11-06 §4.1）：声明本服务端支持审批广播 + 回声放行。
+      // 旧后端不带该字段，新客户端按 false 处理（投票后立即本地放行）；每次连接重新判定，不跨重连粘滞。
+      this.deps.registry.sendToConnection(
+        session,
+        wsEvent('connected', null, { userId: metadata.userId, approvalRelay: true }),
+      );
       return;
     }
     if (type === 'auth_refresh') {
@@ -557,7 +575,7 @@ export class StreamingWsHandler {
       case 'tool_result': await this.handleToolResult(userId, root); break;
       case 'tool_error': await this.handleToolError(userId, root); break;
       case 'page_tool_result': await this.handlePageToolResult(session, userId, root); break;
-      case 'tool_approval': await this.handleToolApproval(userId, root); break;
+      case 'tool_approval': await this.handleToolApproval(session, userId, root); break;
       case 'ask_user_questions_result': await this.handleAskUserQuestionsResult(userId, root); break;
       case 'create_side_session': await this.handleCreateSideSession(session, userId, root); break;
       case 'cancel_side_task': await this.handleCancelSideTask(userId, root); break;
@@ -616,6 +634,10 @@ export class StreamingWsHandler {
         const payload: Record<string, unknown> = { requestId: pq.requestId, questions: pq.questions ?? [] };
         if (pq.metadata != null) payload.metadata = pq.metadata;
         this.deps.registry.send(userId, wsEvent('ask_user_questions', sessionId, payload));
+      }
+      // 多端审批（技术方案 2026-11-06 D8）：订阅 / 重连时重放待审批请求，客户端按 requestId 去重。
+      for (const pending of this.deps.approvalRegistry.getPendingForSession?.(sessionId) ?? []) {
+        this.deps.registry.send(userId, wsEvent('tool_approval_request', sessionId, { ...pending }));
       }
     }
   }
@@ -1132,24 +1154,51 @@ export class StreamingWsHandler {
   }
 
   /** LOCAL 审批卡片点「执行/拒绝」后立即恢复 RUNNING，不必等命令真正跑完。 */
-  private async handleToolApproval(userId: number, root: Record<string, unknown>): Promise<void> {
+  /**
+   * 多端审批（技术方案 2026-11-06）：任意端投出的一票都走这里。
+   * 认领（unregister 的同步摘除）决定谁获胜：只有获胜帧能建规则、刷新树信号、抑制升级；
+   * 输掉 / 迟到的帧只做一次「补发回声」尝试（近期结果缓存）。
+   */
+  private async handleToolApproval(
+    socket: WsSocket | undefined,
+    userId: number,
+    root: Record<string, unknown>,
+  ): Promise<void> {
     const sessionId = this.getLong(root, 'sessionId');
     const requestId = typeof root.requestId === 'string' ? root.requestId : null;
     if (sessionId == null || requestId == null) return;
     if (!(await this.requireOwnedSession(userId, sessionId))) return;
+    const approved = typeof root.approved === 'boolean' ? root.approved : null;
+    const alwaysAllow = root.alwaysAllow === true;
+
+    const hasFn = this.deps.approvalRegistry.has;
+    if (hasFn && !hasFn(sessionId, requestId)) {
+      // 已认领 / 已超时：可能是客户端在重发投票，命中近期结果就给这个连接补一次回声
+      this.resendRecentResolution(socket, sessionId, requestId);
+      return;
+    }
+
+    // 认领：removed=false 说明并发的另一帧先摘除了 pending，本帧全部副作用跳过
+    const claim = await Promise.resolve(
+      this.deps.approvalRegistry.unregister(
+        sessionId,
+        requestId,
+        approved == null ? undefined : { approved, alwaysAllow },
+      ),
+    );
+    if (!claim.removed) {
+      this.resendRecentResolution(socket, sessionId, requestId);
+      return;
+    }
     // 「总是允许」（V135）：客户端只回传布尔位，pattern 由服务端按 requestId 取回自己生成的 hint。
-    // deny 帧（approved=false）永不落规则；hint 不在缓存（超时/重启/同帧重发已消费）→ 静默忽略只执行。
-    if (root.alwaysAllow === true && root.approved === true) {
-      const hint = this.deps.approvalRegistry.takeHint?.(sessionId, requestId) ?? null;
-      if (hint && this.deps.approvalRuleService) {
-        try {
-          await this.deps.approvalRuleService.createSessionRuleFromAlwaysAllow(userId, sessionId, hint);
-        } catch (e) {
-          console.error(`Failed to create approval rule from always-allow (sessionId=${sessionId})`, e);
-        }
+    // deny 永不落规则；hint 只从获胜的认领结果里取（认领前取会被输家消费掉）；缺失则静默忽略。
+    if (approved === true && alwaysAllow && claim.hint && this.deps.approvalRuleService) {
+      try {
+        await this.deps.approvalRuleService.createSessionRuleFromAlwaysAllow(userId, sessionId, claim.hint);
+      } catch (e) {
+        console.error(`Failed to create approval rule from always-allow (sessionId=${sessionId})`, e);
       }
     }
-    await Promise.resolve(this.deps.approvalRegistry.unregister(sessionId, requestId));
     await Promise.resolve(this.deps.treeSignalPublisher.publishForSession(sessionId));
     // 批准后命令还要跑。抑制必须发生在这一帧，不能等 tool_result，否则长命令会在人已经点过之后仍被提醒。
     if (this.deps.approvalEscalationSuppressor) {
@@ -1159,6 +1208,23 @@ export class StreamingWsHandler {
         console.warn(`Failed to suppress approval escalation: sessionId=${sessionId}, requestId=${requestId}, error=${e instanceof Error ? e.message : String(e)}`);
       }
     }
+  }
+
+  /**
+   * 重发投票 / 迟到帧的兜底：该 requestId 已被认领过时，从近期结果缓存取结果，
+   * 只发给发起帧的连接（不广播、不改变已生效的决策）。覆盖「投票帧丢 / 回声帧丢」两种单向丢失。
+   */
+  private resendRecentResolution(
+    socket: WsSocket | undefined,
+    sessionId: number,
+    requestId: string,
+  ): void {
+    if (!socket) return;
+    const recent = this.deps.approvalRegistry.getRecentResolution?.(sessionId, requestId);
+    if (!recent) return;
+    const payload: Record<string, unknown> = { requestId, approved: recent.approved };
+    if (recent.alwaysAllow) payload.alwaysAllow = true;
+    this.deps.registry.sendToConnection(socket, wsEvent('tool_approval_resolved', sessionId, payload));
   }
 
   private async handlePageToolResult(session: WsSocket, userId: number, root: Record<string, unknown>): Promise<void> {

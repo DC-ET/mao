@@ -27,7 +27,8 @@ export type CliEvent =
   | { type: 'reconnected' }
   | { type: 'user_message_saved'; messageId: number }
   | { type: 'side_session_created'; sideSessionId: number; title?: string }
-  | { type: 'subagent_session_created'; childSessionId: number; title?: string };
+  | { type: 'subagent_session_created'; childSessionId: number; title?: string }
+  | { type: 'approval_aborted' };
 
 export interface ToolCallRecord {
   toolCallId: string;

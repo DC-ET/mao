@@ -56,7 +56,9 @@ describe('LocalToolExecutor', () => {
       sendToolRequest: vi.fn().mockResolvedValue({ requestId: 'req-1', future: Promise.resolve('{"ok":true}') }),
     } as unknown as LocalToolSessionRegistry;
     await executor(registry, 900).execute(7, 'shell', '{}', 'workspace', true, 'reason');
-    expect(approvalRegistry.register).toHaveBeenCalledWith(7, 'req-1');
+    expect(approvalRegistry.register).toHaveBeenCalledWith(7, 'req-1', null, {
+      toolName: 'shell', arguments: '{}', workspace: 'workspace', dangerReason: 'reason',
+    });
     expect(approvalRegistry.unregister).toHaveBeenCalledWith(7, 'req-1');
     expect(treeSignalPublisher.publishForSession).toHaveBeenCalledTimes(2);
   });
@@ -191,7 +193,9 @@ describe('LocalToolExecutor', () => {
     vi.clearAllMocks();
     await expect(executor(null).execute(7, 'shell', '{}', 'workspace', true, 'reason'))
       .resolves.toBe('{"ok":true}');
-    expect(approvalRegistry.register).toHaveBeenCalledWith(7, 'req-inbox');
+    expect(approvalRegistry.register).toHaveBeenCalledWith(7, 'req-inbox', null, {
+      toolName: 'shell', arguments: '{}', workspace: 'workspace', dangerReason: 'reason',
+    });
   });
 
   describe('审批升级外推', () => {
@@ -317,10 +321,12 @@ describe('LocalToolExecutor', () => {
     const hint = { ruleType: 'SHELL_PREFIX' as const, ruleValue: 'npm run', label: '本会话总是允许以 npm run 开头的命令' };
     await executor(null, reg).execute(7, 'shell', '{"command":"npm run build"}', 'workspace', true, null, hint);
     expect(reg.sendToolRequest).toHaveBeenCalledWith(7, 'shell', '{"command":"npm run build"}', 'workspace', true, null, hint);
-    expect(approvalRegistry.register).toHaveBeenCalledWith(7, 'req-hint', hint);
+    expect(approvalRegistry.register).toHaveBeenCalledWith(7, 'req-hint', hint, {
+      toolName: 'shell', arguments: '{"command":"npm run build"}', workspace: 'workspace', dangerReason: null,
+    });
   });
 
-  it('无 approvalHint 时保持旧签名（6 参 register / 6 参 sendToolRequest）', async () => {
+  it('无 approvalHint 时 hint 传 null、上下文照常透传', async () => {
     vi.clearAllMocks();
     const reg = {
       isConnected: vi.fn().mockResolvedValue(true),
@@ -328,7 +334,9 @@ describe('LocalToolExecutor', () => {
     } as unknown as LocalToolSessionRegistry;
     await executor(null, reg).execute(7, 'shell', '{}', 'workspace', true, 'reason');
     expect(reg.sendToolRequest).toHaveBeenCalledWith(7, 'shell', '{}', 'workspace', true, 'reason');
-    expect(approvalRegistry.register).toHaveBeenCalledWith(7, 'req-nohint');
+    expect(approvalRegistry.register).toHaveBeenCalledWith(7, 'req-nohint', null, {
+      toolName: 'shell', arguments: '{}', workspace: 'workspace', dangerReason: 'reason',
+    });
   });
 });
 

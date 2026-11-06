@@ -418,6 +418,40 @@ describe('InkTuiRenderer approval flow', () => {
     t.stdin.emit('data', '\r');
     expect(await decision).toBe('allow');
   });
+
+  it('多端审批：按键只提交选择，模态留在「等待服务端确认」，deliverApproval 收尾', async () => {
+    const t = mount();
+    t.renderer.seedChrome();
+    const submitted: Array<[string, string]> = [];
+    t.renderer.setApprovalSubmitHandler((requestId, choice) => submitted.push([requestId, choice]));
+    const decision = t.renderer.requestApproval(
+      { toolName: 'shell', description: 'ls', requestId: 'r-multi' },
+      '需要审批',
+    );
+    await tick();
+    t.stdin.emit('data', 'y');
+    await tick();
+    expect(submitted).toEqual([['r-multi', 'allow']]);
+    expect(t.plain()).toContain('等待服务端确认');
+    // 提交后忽略后续按键，避免同一请求重复投票
+    t.stdin.emit('data', 'n');
+    await tick();
+    expect(submitted).toEqual([['r-multi', 'allow']]);
+    t.renderer.deliverApproval('r-multi', 'allow');
+    expect(await decision).toBe('allow');
+  });
+
+  it('多端审批：abortAllApprovals 按拒绝关闭全部审批模态', async () => {
+    const t = mount();
+    t.renderer.seedChrome();
+    const decision = t.renderer.requestApproval(
+      { toolName: 'shell', description: 'ls', requestId: 'r-abort' },
+      '需要审批',
+    );
+    await tick();
+    t.renderer.abortAllApprovals();
+    expect(await decision).toBe('deny');
+  });
 });
 
 describe('InkTuiRenderer keyboard routing', () => {

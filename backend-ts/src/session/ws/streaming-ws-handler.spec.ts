@@ -75,7 +75,11 @@ describe('StreamingWsHandler', () => {
     failAllForSession: vi.fn(), getPendingForSession: vi.fn(() => []), complete: vi.fn(),
   };
   const treeSignalPublisher = { publishIfSideTask: vi.fn(), publishForSession: vi.fn() };
-  const approvalRegistry = { unregister: vi.fn() };
+  const approvalRegistry = {
+    unregister: vi.fn(() => ({ removed: true, hint: null })),
+    has: vi.fn(() => true),
+    getPendingForSession: vi.fn(() => []),
+  };
   const activityService = { record: vi.fn() };
   const activityHeartbeat = { touch: vi.fn(), clear: vi.fn() };
   const sessionTodoMapper = { deleteBySessionId: vi.fn(), selectBySessionId: vi.fn(async () => []) };
@@ -730,7 +734,7 @@ describe('StreamingWsHandler', () => {
     expect(messageQueueService.moveToIndex).toHaveBeenCalledWith(4, 0);
     expect(localToolSessionRegistry.completeToolRequest).toHaveBeenCalledWith(11, 'req', 'ok');
     expect(localToolSessionRegistry.completeToolRequestError).toHaveBeenCalledWith(11, 'req', 'bad');
-    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req');
+    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req', { approved: true, alwaysAllow: false });
     expect(treeSignalPublisher.publishForSession).toHaveBeenCalledWith(11);
     expect(askUserQuestionsRegistry.complete).toHaveBeenCalledWith(11, 'q', '{"answers":[{"id":"a"}]}');
   });
@@ -754,6 +758,21 @@ describe('StreamingWsHandler', () => {
     expect(localToolSessionRegistry.setTargetForSession).toHaveBeenCalledWith(11, 7, null);
     expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
       type: 'session_snapshot', sessionId: 11, data: expect.objectContaining({ phase: 'WAITING_APPROVAL' }),
+    }));
+  });
+
+  it('replaysPendingApprovalsOnSubscribe', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'WAITING_APPROVAL'));
+    approvalRegistry.getPendingForSession.mockReturnValueOnce([{
+      requestId: 'req-replay', toolName: 'shell', arguments: '{}', argumentsTruncated: false, workspace: '/repo',
+    }]);
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+    expect(approvalRegistry.getPendingForSession).toHaveBeenCalledWith(11);
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'tool_approval_request', sessionId: 11,
+      data: expect.objectContaining({ requestId: 'req-replay' }),
     }));
   });
 
@@ -2189,8 +2208,11 @@ describe('StreamingWsHandler tool_approval.alwaysAllow（V135）', () => {
   const embedPageToolRegistry = { request: vi.fn(), complete: vi.fn(), failSession: vi.fn(), isEmbedSession: vi.fn(() => false) };
   const askUserQuestionsRegistry = { failAllForSession: vi.fn(), getPendingForSession: vi.fn(() => []), complete: vi.fn() };
   const treeSignalPublisher = { publishIfSideTask: vi.fn(), publishForSession: vi.fn() };
-  const approvalRegistry = { unregister: vi.fn(), takeHint: vi.fn() };
-  const takeHint = approvalRegistry.takeHint;
+  const approvalRegistry = {
+    unregister: vi.fn(() => ({ removed: true, hint: null })),
+    has: vi.fn(() => true),
+    getRecentResolution: vi.fn(() => null),
+  };
   const activityService = { record: vi.fn() };
   const activityHeartbeat = { touch: vi.fn(), clear: vi.fn() };
   const sessionTodoMapper = { deleteBySessionId: vi.fn(), selectBySessionId: vi.fn(async () => []) };
@@ -2235,7 +2257,7 @@ describe('StreamingWsHandler tool_approval.alwaysAllow（V135）', () => {
     }));
     expect(suppressByRequest).toHaveBeenCalledWith(11, 'req-esc');
     expect(localToolSessionRegistry.completeToolRequest).not.toHaveBeenCalled();
-    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-esc');
+    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-esc', { approved: true, alwaysAllow: false });
   });
 
   it('deniedApprovalAlsoSuppressesEscalation', async () => {
@@ -2247,6 +2269,7 @@ describe('StreamingWsHandler tool_approval.alwaysAllow（V135）', () => {
       type: 'tool_approval', sessionId: 11, requestId: 'req-deny', approved: false,
     }));
     expect(suppressByRequest).toHaveBeenCalledWith(11, 'req-deny');
+    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-deny', { approved: false, alwaysAllow: false });
   });
 
   it('escalationSuppressFailureDoesNotBlockUnregister', async () => {
@@ -2257,59 +2280,93 @@ describe('StreamingWsHandler tool_approval.alwaysAllow（V135）', () => {
     await buildHandler({ approvalEscalationSuppressor: { suppressByRequest } }).handleTextMessage(ws, JSON.stringify({
       type: 'tool_approval', sessionId: 11, requestId: 'req-err', approved: true,
     }));
-    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-err');
+    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-err', { approved: true, alwaysAllow: false });
   });
 
-  it('approvedAlwaysAllowConsumesHintAndCreatesSessionRule', async () => {
+  it('approvedAlwaysAllowConsumesHintFromClaimAndCreatesSessionRule', async () => {
     vi.clearAllMocks();
     registry.getUserId.mockReturnValue(7);
     sessionService.getSession.mockResolvedValue(session('LOCAL', 'WAITING_APPROVAL'));
     const hint = { ruleType: 'SHELL_PREFIX' as const, ruleValue: 'npm run', label: '本会话总是允许以 npm run 开头的命令' };
-    takeHint.mockReturnValue(hint);
+    approvalRegistry.unregister.mockResolvedValueOnce({ removed: true, hint });
     await buildHandler().handleTextMessage(ws, JSON.stringify({
       type: 'tool_approval', sessionId: 11, requestId: 'req-1', approved: true, alwaysAllow: true,
     }));
-    expect(takeHint).toHaveBeenCalledWith(11, 'req-1');
     expect(createSessionRuleFromAlwaysAllow).toHaveBeenCalledWith(7, 11, hint);
-    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-1');
+    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-1', { approved: true, alwaysAllow: true });
   });
 
   it('denyFrameNeverCreatesRuleEvenWithAlwaysAllow', async () => {
     vi.clearAllMocks();
     registry.getUserId.mockReturnValue(7);
     sessionService.getSession.mockResolvedValue(session('LOCAL', 'WAITING_APPROVAL'));
-    takeHint.mockReturnValue({ ruleType: 'SHELL_PREFIX', ruleValue: 'npm run', label: 'x' });
+    approvalRegistry.unregister.mockResolvedValueOnce({
+      removed: true,
+      hint: { ruleType: 'SHELL_PREFIX', ruleValue: 'npm run', label: 'x' },
+    });
     await buildHandler().handleTextMessage(ws, JSON.stringify({
       type: 'tool_approval', sessionId: 11, requestId: 'req-2', approved: false, alwaysAllow: true,
     }));
-    expect(takeHint).not.toHaveBeenCalled();
     expect(createSessionRuleFromAlwaysAllow).not.toHaveBeenCalled();
-    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-2');
+    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-2', { approved: false, alwaysAllow: true });
   });
 
   it('missingHintOrMissingRuleServiceFallsBackToPlainExecution', async () => {
     vi.clearAllMocks();
     registry.getUserId.mockReturnValue(7);
     sessionService.getSession.mockResolvedValue(session('LOCAL', 'WAITING_APPROVAL'));
-    // hint 不在缓存（超时/重启/重发已消费）→ 忽略 alwaysAllow 只执行
-    takeHint.mockReturnValue(null);
+    // hint 缺失（超时 / 重启 / 认领未带回）→ 忽略 alwaysAllow 只执行
+    approvalRegistry.unregister.mockResolvedValueOnce({ removed: true, hint: null });
     await buildHandler().handleTextMessage(ws, JSON.stringify({
       type: 'tool_approval', sessionId: 11, requestId: 'req-3', approved: true, alwaysAllow: true,
     }));
     expect(createSessionRuleFromAlwaysAllow).not.toHaveBeenCalled();
-    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-3');
+    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-3', { approved: true, alwaysAllow: true });
   });
 
   it('ruleCreationFailureDoesNotBlockUnregister', async () => {
     vi.clearAllMocks();
     registry.getUserId.mockReturnValue(7);
     sessionService.getSession.mockResolvedValue(session('LOCAL', 'WAITING_APPROVAL'));
-    takeHint.mockReturnValue({ ruleType: 'SHELL_PREFIX', ruleValue: 'npm run', label: 'x' });
+    approvalRegistry.unregister.mockResolvedValueOnce({
+      removed: true,
+      hint: { ruleType: 'SHELL_PREFIX', ruleValue: 'npm run', label: 'x' },
+    });
     createSessionRuleFromAlwaysAllow.mockRejectedValueOnce(new Error('db down'));
     await buildHandler().handleTextMessage(ws, JSON.stringify({
       type: 'tool_approval', sessionId: 11, requestId: 'req-4', approved: true, alwaysAllow: true,
     }));
-    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-4');
+    expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req-4', { approved: true, alwaysAllow: true });
+  });
+
+  it('losingFrameSkipsRuleTreeAndSuppress', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'WAITING_APPROVAL'));
+    const suppressByRequest = vi.fn(async () => undefined);
+    approvalRegistry.unregister.mockResolvedValueOnce({ removed: false, hint: null });
+    await buildHandler({ approvalEscalationSuppressor: { suppressByRequest } }).handleTextMessage(ws, JSON.stringify({
+      type: 'tool_approval', sessionId: 11, requestId: 'req-5', approved: true, alwaysAllow: true,
+    }));
+    expect(createSessionRuleFromAlwaysAllow).not.toHaveBeenCalled();
+    expect(treeSignalPublisher.publishForSession).not.toHaveBeenCalled();
+    expect(suppressByRequest).not.toHaveBeenCalled();
+  });
+
+  it('nonPendingFrameResendsRecentResolutionOnlyToItsConnection', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'WAITING_APPROVAL'));
+    approvalRegistry.has.mockReturnValueOnce(false);
+    approvalRegistry.getRecentResolution.mockReturnValueOnce({ approved: true, alwaysAllow: false });
+    await buildHandler().handleTextMessage(ws, JSON.stringify({
+      type: 'tool_approval', sessionId: 11, requestId: 'req-6', approved: true,
+    }));
+    expect(approvalRegistry.unregister).not.toHaveBeenCalled();
+    expect(registry.sendToConnection).toHaveBeenCalledWith(
+      ws,
+      expect.objectContaining({ type: 'tool_approval_resolved', sessionId: 11, data: { requestId: 'req-6', approved: true } }),
+    );
   });
 
 });

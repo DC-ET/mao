@@ -3,6 +3,19 @@ import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { useSessionStore, type SessionEnvironmentInfo } from '../stores/session'
 import { useStreamWS } from './useStreamWS'
+import {
+  clearApprovalVoted,
+  drainApprovalEcho,
+  findPendingApproval,
+  isApprovalRelaySupported,
+  markApprovalVoted,
+  markLocallyReleased,
+  pendingApprovals,
+  registerApprovalEcho,
+  removeApproval,
+  takePendingApprovals,
+  upsertApproval,
+} from './approvalQueue'
 import { useChatQueue } from './useChatQueue'
 import {
   guardUploadsBeforeSend,
@@ -36,19 +49,11 @@ import type { ApprovalHint } from '../components/chat/ApprovalStack.vue'
 /** 待发非图片文件：File + （LOCAL 模式）本机绝对路径。 */
 export type PendingUploadFile = LocalPendingFile
 
-export interface ApprovalItem {
-  requestId: string
-  toolName: string
-  description: string
-  sessionId?: string
-  dangerReason?: string
-  /** 服务端生成的「总是允许」hint；缺省 = 不可规则化，卡片只有两按钮 */
-  approvalHint?: ApprovalHint
-}
+export type { ApprovalItem } from './approvalQueue'
 
-// Module-level shared approval queue — ChatPanel + SideChatPanel both consume this.
+// Module-level shared approval queue lives in ./approvalQueue so that useStreamWS can
+// consume the same state without importing useChat (circular dependency).
 // IPC listener must close over a stable ref, not a per-useChat() instance.
-const pendingApprovals = ref<ApprovalItem[]>([])
 let approvalListenerSetup = false
 
 function ensureApprovalListener() {
@@ -56,59 +61,67 @@ function ensureApprovalListener() {
   approvalListenerSetup = true
 
   ;(window as any).electronAPI.onToolApprovalRequest((data: { requestId: string; toolName: string; description: string; sessionId?: number; dangerReason?: string; approvalHint?: ApprovalHint }) => {
-    const sessionStore = useSessionStore()
     const sid = data.sessionId != null ? String(data.sessionId) : undefined
-    if (!pendingApprovals.value.some(a => a.requestId === data.requestId)) {
-      pendingApprovals.value.push({
-        requestId: data.requestId,
-        toolName: data.toolName,
-        description: data.description,
-        sessionId: sid,
-        dangerReason: data.dangerReason,
-        approvalHint: data.approvalHint
-      })
-      if (sid) sessionStore.incrementPendingApproval(sid)
-    }
+    upsertApproval({
+      requestId: data.requestId,
+      toolName: data.toolName,
+      description: data.description,
+      sessionId: sid,
+      dangerReason: data.dangerReason,
+      approvalHint: data.approvalHint,
+      source: 'local',
+    })
   })
 
   ;(window as any).electronAPI.onToolApprovalDismiss((data: { requestId: string }) => {
-    const sessionStore = useSessionStore()
-    const item = pendingApprovals.value.find(a => a.requestId === data.requestId)
-    if (item?.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
-    pendingApprovals.value = pendingApprovals.value.filter(a => a.requestId !== data.requestId)
+    removeApproval(data.requestId)
   })
 }
 
 /** Shared tool-approval queue for main chat and side tasks. */
 export function useToolApprovals() {
-  const sessionStore = useSessionStore()
   const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
   ensureApprovalListener()
 
   async function confirmApproval(requestId: string, approved: boolean, alwaysAllow = false) {
-    const index = pendingApprovals.value.findIndex(a => a.requestId === requestId)
-    const item = index >= 0 ? pendingApprovals.value[index] : undefined
-    if (item?.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
-    pendingApprovals.value = pendingApprovals.value.filter(a => a.requestId !== requestId)
-    if (requestId && isElectron) {
-      await (window as any).electronAPI.respondToolApproval(requestId, approved, alwaysAllow)
-    }
-    if (item?.sessionId) {
+    const item = findPendingApproval(requestId)
+    removeApproval(requestId)
+    markApprovalVoted(requestId)
+    // alwaysAllow 只在 approved 时有意义；deny 永远不带该标记
+    const allowForRule = approved && alwaysAllow
+    const sessionId = item?.sessionId
+    if (sessionId) {
       const { sendToolApproval } = useStreamWS()
-      // alwaysAllow 只在 approved 时有意义；deny 永远不带该标记
-      const sent = await sendToolApproval(item.sessionId, requestId, approved, approved && alwaysAllow)
+      const sent = await sendToolApproval(sessionId, requestId, approved, allowForRule)
       if (!sent) {
-        // 发送失败（断线/重连超时）时必须把审批项放回原位：服务端仍停在
-        // WAITING_APPROVAL 等回包，静默移除会让用户失去重试入口、任务像卡死。
-        if (!pendingApprovals.value.some(a => a.requestId === requestId)) {
-          const restored = pendingApprovals.value.slice()
-          restored.splice(Math.min(index, restored.length), 0, item)
-          pendingApprovals.value = restored
-          sessionStore.incrementPendingApproval(item.sessionId)
-        }
+        // 发送失败（断线/重连超时）时必须把审批项放回：服务端仍停在 WAITING_APPROVAL
+        // 等回包，静默移除会让用户失去重试入口、任务像卡死。
+        clearApprovalVoted(requestId)
+        if (item) upsertApproval(item)
         ElMessage.error('审批发送失败，网络连接不可用，请重试')
+        return
       }
     }
+    if (!isElectron) {
+      // 浏览器 / 移动端只投票：没有本地等待需要解锁
+      return
+    }
+    if (!sessionId || !isApprovalRelaySupported()) {
+      // 旧后端（connected 帧未声明 approvalRelay）或无会话的本地卡：不会等到回声，直接按本地选择放行
+      markLocallyReleased(requestId)
+      await (window as any).electronAPI.respondToolApprovalRemote(requestId, approved, allowForRule)
+      return
+    }
+    // 支持中继：放行只认 tool_approval_resolved 回声；期间按 §4.5-6 重发同一票
+    registerApprovalEcho(requestId, {
+      sessionId,
+      approved,
+      alwaysAllow: allowForRule,
+      resend: async () => {
+        const { sendToolApproval: resendVote } = useStreamWS()
+        return resendVote(sessionId, requestId, approved, allowForRule)
+      },
+    })
   }
 
   /**
@@ -117,19 +130,19 @@ export function useToolApprovals() {
    * 新建任务/面板卸载时必须传入当前会话，否则会误拒边路任务/子代理仍在等待的审批。
    */
   function clearPendingApprovals(onlySessionId?: string | null) {
-    const items = onlySessionId != null
-      ? pendingApprovals.value.filter((item) => item.sessionId === onlySessionId)
-      : pendingApprovals.value.slice()
-    if (onlySessionId != null) {
-      pendingApprovals.value = pendingApprovals.value.filter((item) => item.sessionId !== onlySessionId)
-    } else {
-      pendingApprovals.value = []
-    }
+    const items = takePendingApprovals(onlySessionId)
     for (const item of items) {
-      if (item.sessionId) sessionStore.decrementPendingApproval(item.sessionId)
-      // Reject in main process so requestToolApproval() Promises do not hang forever.
+      // Electron：解锁主进程，避免 requestToolApproval() Promise 悬挂；不补发投票，
+      // 避免在桌面上看 CLI 任务时一切走会话就替那次执行投出拒绝。
       if (item.requestId && isElectron) {
-        void (window as any).electronAPI.respondToolApproval(item.requestId, false)
+        void (window as any).electronAPI.respondToolApprovalRemote(item.requestId, false, false)
+      }
+    }
+    // 已投票但一直没等到回声的项：同一触发点按拒绝兜底放行（§4.5-7）
+    const drained = drainApprovalEcho((entry) => onlySessionId == null || entry.sessionId === onlySessionId)
+    if (isElectron) {
+      for (const requestId of drained) {
+        void (window as any).electronAPI.respondToolApprovalRemote(requestId, false, false)
       }
     }
   }

@@ -10,6 +10,8 @@ export interface ApprovalRequest {
   needApproval: boolean;
   dangerReason?: string | null;
   description: string;
+  /** 服务端 tool_execute 下发的请求 id：多端审批按它投票 / 收回声（旧调用可缺省）。 */
+  requestId?: string;
 }
 
 /** 选择「总是允许」时记下的免审条目：只对完全相同的工具 + 参数文本生效，不放开整类工具。 */

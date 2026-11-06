@@ -73,6 +73,10 @@ const CRITICAL_EVENT_TYPES = new Set([
   'queue_updated',
   'queue_message_consumed',
   'session_already_running',
+  // 多端审批（技术方案 2026-11-06）：卡片入场 / 撤卡与执行端放行信号。丢帧会让各端卡片
+  // 或执行端 IPC / TUI 等待悬挂到超时，与 ask_user_questions 同级走关键队列。
+  'tool_approval_request',
+  'tool_approval_resolved',
   // 收件箱未读数：普通帧队列满时是直接丢弃，弱网/高频会话下未读数会静默停在旧值
   // 且无主动重拉入口；事件日均为个位数到数十条，不会挤占关键通道。
   'inbox_updated',
