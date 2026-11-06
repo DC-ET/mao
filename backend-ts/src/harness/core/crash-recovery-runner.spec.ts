@@ -956,6 +956,32 @@ describe('CrashRecoveryRunner.recoverFailedSessions', () => {
     expect(result.skipped).toEqual([{ id: 7, reason: 'EXECUTOR_BUSY' }]);
   });
 
+  it('rejectsConcurrentDuplicateSubmitsAcrossAwaitGap', async () => {
+    // 并发回归：recovering 检查与占位之间隔着 selectById 的 await——两笔并发请求若都
+    // 在对方 add 前通过 has 检查，同一会话会被提交两次（执行池多 worker 下双跑）。
+    const { runner, sessionMapper, submitted } = makeFailedRunner();
+    let resolveSelect!: (session: typeof session) => void;
+    type SessionRow = { id: number; userId: number; sessionType: string; phase: string; executionMode: string; modelId: null; lastRuntimeUserId: number };
+    const session: SessionRow = {
+      id: 7, userId: 42, sessionType: 'NORMAL', phase: 'FAILED',
+      executionMode: 'CLOUD', modelId: null, lastRuntimeUserId: 67,
+    };
+    (sessionMapper.selectById as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => new Promise<SessionRow>((resolve) => { resolveSelect = resolve; }),
+    );
+    const first = runner.recoverFailedSessions([7]);
+    // 让 first 通过 has 检查、占位并挂起在 selectById 上
+    await Promise.resolve();
+    const second = await runner.recoverFailedSessions([7]);
+    expect(second.accepted).toEqual([]);
+    expect(second.skipped).toEqual([{ id: 7, reason: 'RECOVERING' }]);
+    resolveSelect(session);
+    const firstResult = await first;
+    expect(firstResult.accepted).toEqual([7]);
+    expect(submitted).toHaveLength(1);
+    await Promise.all(submitted.map((fn) => fn()));
+  });
+
   it('reportsOutcomeToOnSessionFinishedWithoutCard', async () => {
     const onSessionFinished = vi.fn().mockResolvedValue(undefined);
     const { runner, submitted } = makeFailedRunner();

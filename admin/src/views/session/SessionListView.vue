@@ -280,6 +280,14 @@
         </el-select>
         <el-button type="primary" plain :loading="recoveryLoading" @click="fetchRecoveryPreview">重新扫描</el-button>
       </div>
+      <el-alert
+        v-if="recoverableCount > RECOVERY_MAX_BATCH"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+        :title="`可恢复 ${recoverableCount} 个，单批最多 ${RECOVERY_MAX_BATCH} 个，默认已勾选最近活跃的 ${RECOVERY_MAX_BATCH} 个，请分批恢复其余会话`"
+      />
       <el-table
         ref="recoveryTableRef"
         :data="recoveryItems"
@@ -613,6 +621,10 @@ const recoveryLoading = ref(false)
 const recoverySubmitting = ref(false)
 const recoveryTableRef = ref()
 
+/** 单批恢复上限（与后端 FAILED_RECOVERY_MAX_BATCH 对齐） */
+const RECOVERY_MAX_BATCH = 20
+const recoverableCount = computed(() => recoveryItems.value.filter((item) => item.willRecover).length)
+
 function openRecoveryDialog() {
   recoveryVisible.value = true
   recoverySelected.value = []
@@ -630,10 +642,12 @@ async function fetchRecoveryPreview() {
     if (seq !== fetchRecoverySeq) return
     recoveryItems.value = data?.items || []
     recoverySelected.value = []
-    // 默认全选可恢复项（技术方案 §4.6），不可恢复行 selectable 已禁用不会进勾选
+    // 默认勾选可恢复项（技术方案 §4.6），单批最多 RECOVERY_MAX_BATCH 个（列表按最后活跃倒序，
+    // 即默认勾选最近活跃的一批）；不可恢复行 selectable 已禁用不会进勾选
     await nextTick()
     recoveryItems.value
       .filter((item) => item.willRecover)
+      .slice(0, RECOVERY_MAX_BATCH)
       .forEach((item) => recoveryTableRef.value?.toggleRowSelection(item, true))
   } catch { /* 拦截器已提示失败 */ } finally {
     if (seq === fetchRecoverySeq) recoveryLoading.value = false
@@ -647,6 +661,10 @@ function onRecoverySelectionChange(rows: RecoveryItem[]) {
 async function submitRecovery() {
   const ids = recoverySelected.value.map((item) => item.sessionId)
   if (ids.length === 0) return
+  if (ids.length > RECOVERY_MAX_BATCH) {
+    ElMessage.warning(`单批最多恢复 ${RECOVERY_MAX_BATCH} 个会话，请分批恢复`)
+    return
+  }
   try {
     await ElMessageBox.confirm(
       `确认对选中的 ${ids.length} 个会话发起恢复？恢复在后台异步执行，原渠道卡片会持续更新；请先确认模型额度已恢复。`,

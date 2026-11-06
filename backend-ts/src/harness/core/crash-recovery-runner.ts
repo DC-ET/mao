@@ -419,40 +419,49 @@ export class CrashRecoveryRunner {
         skipped.push({ id, reason });
       };
       // L3/L4：同一实例内在恢复中（提交后、开跑前的窗口由本 Set 兜住）。
+      // 检查与占位必须同步相邻：中间若隔 await（如 selectById），两笔并发请求会在
+      // 对方 add 之前都通过 has 检查，同一会话被提交两次（执行池多 worker 下并发双跑）。
       if (this.recovering.has(id)) {
         skip('RECOVERING');
         continue;
       }
+      this.recovering.add(id);
+      const releaseClaim = (): void => {
+        this.recovering.delete(id);
+      };
       // L2：执行前重查当前状态——预览后用户可能已手动重试或会话已收尾。
       let current: Session | null = null;
       try {
         current = await this.sessionMapper.selectById(id);
       } catch (e) {
         harnessLog('warn', `[failed-session-recovery] Session ${id}: reload failed, skipped`, e);
+        releaseClaim();
         skip('NOT_FAILED');
         continue;
       }
       if (current == null || current.phase !== 'FAILED') {
+        releaseClaim();
         skip('NOT_FAILED');
         continue;
       }
       if (current.executionMode === 'LOCAL') {
         // 服务端无法续跑 LOCAL 会话（工具在桌面端执行），预览已排除，此处兜底。
+        releaseClaim();
         skip('LOCAL_MODE');
         continue;
       }
       // 本实例已在执行（AgentLoop 挂了 cancel flag）或任务已在跑：防并发双跑。
       if (this.isSessionLocallyActive?.(id) === true) {
+        releaseClaim();
         skip('ALREADY_RUNNING');
         continue;
       }
-      this.recovering.add(id);
       try {
         const session = current;
         this.agentExecutor.submit(() => this.runFailedRecovery(session, opts.onSessionFinished));
         accepted.push(id);
       } catch (e) {
-        this.recovering.delete(id);
+        releaseClaim();
         skip(e instanceof AgentExecutorRejectedError ? 'EXECUTOR_BUSY' : 'SUBMIT_FAILED');
       }
     }
