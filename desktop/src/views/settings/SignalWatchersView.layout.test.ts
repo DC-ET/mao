@@ -194,3 +194,38 @@ describe('信号哨兵触发方式与复制', () => {
     expect(fn).toContain('留空不修改')
   })
 })
+
+// ── 凭据占位符插入控件（2026-11-06 方案 §5.2 / §6.2）─────────────────────────
+// 插入控件改变请求头编辑区的交互与知情权文案，直接锁在源码级断言里。
+describe('信号哨兵凭据占位符插入控件', () => {
+  it('值输入框提供 MAO/ECP 两个插入按钮，且显式 type="button"', () => {
+    expect(src).toContain("insertCredential(index, '{{MAO_TOKEN}}')")
+    expect(src).toContain("insertCredential(index, '{{ECP_TOKEN}}')")
+    // el-form 内 button 不写 type 默认 submit，会触发表单提交整页重载（文件既有坑）
+    const btns = src.match(/<button[^>]*insert-cred-btn[^>]*>/g) ?? []
+    expect(btns.length).toBe(2)
+    for (const tag of btns) expect(tag).toContain('type="button"')
+  })
+
+  it('插入控件 tooltip 含知情权文案（每次探针时自动发往所配 URL）', () => {
+    // 方案 §6.2/§8.8：服务端会自动把有效凭据外发到用户配置的 URL，必须明示。
+    // 只数 tooltip content 属性里的出现（模板注释里的同句不参与计数）。
+    expect(src).toContain('插入的凭据会在每次探针时自动发往上面配置的 URL')
+    const tooltipContents = src.match(/content="[^"]*插入的凭据会在每次探针时自动发往上面配置的 URL[^"]*"/g) ?? []
+    expect(tooltipContents.length).toBe(2)
+  })
+
+  it('控件内嵌值输入框 suffix，不改 header-row 三列 grid（窄屏删除按钮不被顶出）', () => {
+    expect(src).toContain('grid-template-columns: 1fr 1.4fr 32px')
+    const valueInputAt = src.indexOf('v-model="pair.value"')
+    const closeAt = src.indexOf('</el-input>', valueInputAt)
+    expect(valueInputAt).toBeGreaterThan(-1)
+    expect(closeAt).toBeGreaterThan(-1)
+    expect(src.slice(valueInputAt, closeAt)).toContain('#suffix')
+    expect(src.slice(valueInputAt, closeAt)).toContain('insertCredential')
+  })
+
+  it('值输入框 placeholder 提示支持占位符（新建/编辑态）', () => {
+    expect(src).toContain('值，支持 {{MAO_TOKEN}}/{{ECP_TOKEN}} 凭据占位符')
+  })
+})

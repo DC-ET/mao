@@ -129,9 +129,25 @@
             <div v-for="(pair, index) in form.headers" :key="index" class="header-row">
               <el-input v-model="pair.key" placeholder="Header 名" />
               <el-input
+                :ref="(el: unknown) => setHeaderValueRef(index, el)"
                 v-model="pair.value"
-                :placeholder="editing && pair.masked ? '留空不修改' : '值'"
-              />
+                :placeholder="editing && pair.masked ? '留空不修改' : '值，支持 {{MAO_TOKEN}}/{{ECP_TOKEN}} 凭据占位符'"
+              >
+                <!--
+                  插入凭据控件（2026-11-06 方案 §5.2）：放在值输入框 suffix 内，
+                  不动 .header-row 三列 grid，窄屏不挤删除按钮。tooltip 必须含
+                  「插入的凭据会在每次探针时自动发往上面配置的 URL」——服务端会自动
+                  把有效 token 外发到用户配的 URL，这是知情权文案（方案 §6.2/§8.8）。
+                -->
+                <template #suffix>
+                  <el-tooltip content="插入 {{MAO_TOKEN}}：Mao 短效登录凭据。插入的凭据会在每次探针时自动发往上面配置的 URL，请确认目标服务可信" :show-after="300">
+                    <button type="button" class="insert-cred-btn" @click="insertCredential(index, '{{MAO_TOKEN}}')">MAO</button>
+                  </el-tooltip>
+                  <el-tooltip content="插入 {{ECP_TOKEN}}：ECP 登录态凭据。插入的凭据会在每次探针时自动发往上面配置的 URL，请确认目标服务可信" :show-after="300">
+                    <button type="button" class="insert-cred-btn" @click="insertCredential(index, '{{ECP_TOKEN}}')">ECP</button>
+                  </el-tooltip>
+                </template>
+              </el-input>
               <button type="button" class="action-btn action-btn-danger" @click="removeHeaderRow(index)">
                 <el-icon :size="14"><Delete /></el-icon>
               </button>
@@ -274,9 +290,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { Plus, Delete, Edit, Aim, Tickets, VideoPause, VideoPlay, CopyDocument } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, type InputInstance } from 'element-plus'
 import { useRouter } from 'vue-router'
 import {
   api,
@@ -521,6 +537,35 @@ function addHeaderRow(): void {
 
 function removeHeaderRow(index: number): void {
   form.headers.splice(index, 1)
+}
+
+/** 请求头值输入框实例（按行下标存，供「插入凭据」读光标位置）。 */
+const headerValueInputs = ref<(InputInstance | null)[]>([])
+
+function setHeaderValueRef(index: number, el: unknown): void {
+  headerValueInputs.value[index] = el as InputInstance | null
+}
+
+/**
+ * 在值输入框光标处插入凭据占位符（2026-11-06 方案 §5.2）；拿不到光标（未聚焦等）
+ * 时退化为追加到值末尾。落库的是占位符本身，明文 token 每次探针由后端现取。
+ */
+function insertCredential(index: number, placeholder: string): void {
+  const pair = form.headers[index]
+  if (!pair) return
+  const instance = headerValueInputs.value[index]
+  const native = instance?.input ?? instance?.textarea ?? null
+  if (native && typeof native.selectionStart === 'number') {
+    const start = native.selectionStart
+    const end = native.selectionEnd ?? start
+    pair.value = pair.value.slice(0, start) + placeholder + pair.value.slice(end)
+    void nextTick(() => {
+      native.focus()
+      native.setSelectionRange(start + placeholder.length, start + placeholder.length)
+    })
+  } else {
+    pair.value = pair.value + placeholder
+  }
 }
 
 const bodyPlaceholder = computed(() => {
@@ -870,6 +915,23 @@ onMounted(() => {
 .add-header-btn:hover {
   color: var(--aw-ink);
   border-color: var(--aw-ink-muted);
+}
+
+/* 插入凭据控件：内嵌在值输入框 suffix 里的小文字按钮，尽量少占值输入框宽度 */
+.insert-cred-btn {
+  border: none;
+  background: transparent;
+  color: var(--aw-ink-muted);
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 3px;
+  border-radius: var(--aw-radius-xs);
+  cursor: pointer;
+}
+
+.insert-cred-btn:hover {
+  color: var(--aw-primary);
+  background: var(--aw-surface-hover);
 }
 
 .field-hint {

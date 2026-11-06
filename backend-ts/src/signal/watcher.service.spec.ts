@@ -6,6 +6,7 @@ import type { SignalWatcher, SignalWatcherCheck } from './types.js';
 import type { MysqlSignalCheckRepository, MysqlSignalWatcherRepository } from './signal.repository.js';
 import { SignalSecretCipher } from './signal-cipher.js';
 import type { ProbeResult } from './probe-client.js';
+import type { WatcherCredentialResolver } from './watcher-credential-resolver.js';
 import {
   WATCHER_DISABLE_AFTER_FAILURES,
   WATCHER_MAX_TRIGGERS_PER_HOUR,
@@ -88,6 +89,8 @@ function harness(options: {
   sessions?: WatcherSessionLookup[];
   /** 覆盖 getSession 行为，用于复刻生产 wiring（行不存在时抛 SESSION_NOT_FOUND）。 */
   getSession?: (id: number) => Promise<WatcherSessionLookup | null>;
+  /** 凭据占位符 resolver（缺省不传 = 未装配路径）。 */
+  credentialResolver?: WatcherCredentialResolver | null;
 } = {}): Harness {
   const watchers = new Map<number, SignalWatcher>();
   const initial = options.watcher ?? watcher();
@@ -217,6 +220,7 @@ function harness(options: {
     probe: { execute: probeExecute as never },
     disableNotifier: { notifyWatcherDisabled: notify } satisfies WatcherDisableNotifier,
     getSession,
+    credentialResolver: options.credentialResolver,
   });
 
   return { service, watchers, sessions, checks, probeExecute, openRun, notify, markChecked, recordFailure, getSession, nextCheckId };
@@ -1355,5 +1359,131 @@ describe('WatcherService 管理后台只读', () => {
     const page = await h.service.listChecksForAdmin(created.id, 1, 20);
     expect(page.total).toBe(1);
     expect(page.rows[0]).toMatchObject({ watcherId: created.id, triggeredSessionId: 42 });
+  });
+});
+
+// ── 凭据占位符（2026-11-06 技术方案）────────────────────────────────────────
+
+function placeholderHeadersWatcher(): SignalWatcher {
+  const cipher = makeCipher();
+  return watcher({
+    headersJson: cipher.encrypt(JSON.stringify({
+      Authorization: 'Bearer {{MAO_TOKEN}}',
+      'X-Ecp': 'E {{ECP_TOKEN}}',
+      Accept: 'application/json',
+    })),
+  });
+}
+
+describe('WatcherService 凭据占位符解析', () => {
+  it('runCheck 在探针前把占位符替换为 resolver 现取的 token', async () => {
+    const h = harness({
+      watcher: placeholderHeadersWatcher(),
+      credentialResolver: { resolve: vi.fn(async (_userId, kind) => (kind === 'MAO_TOKEN' ? 'tok-mao' : 'tok-ecp')) },
+    });
+    await h.service.runCheck(1);
+    expect(h.probeExecute).toHaveBeenCalledTimes(1);
+    expect(h.probeExecute.mock.calls[0]![0].headers).toEqual({
+      Authorization: 'Bearer tok-mao',
+      'X-Ecp': 'E tok-ecp',
+      Accept: 'application/json',
+    });
+  });
+
+  it('runCheck 解析失败只丢凭据头：探针照常执行、不计失败（D2/D3）', async () => {
+    const h = harness({
+      watcher: placeholderHeadersWatcher(),
+      credentialResolver: { resolve: vi.fn(async () => null) },
+    });
+    await h.service.runCheck(1);
+    expect(h.probeExecute).toHaveBeenCalledTimes(1);
+    expect(h.probeExecute.mock.calls[0]![0].headers).toEqual({ Accept: 'application/json' });
+    expect(h.recordFailure).not.toHaveBeenCalled();
+    expect(h.checks).toHaveLength(1);
+    expect(h.checks[0]!.error).toBeNull();
+  });
+
+  it('runCheck resolver 抛错不冒泡：与 null 同口径丢头，探针照常（§5.1.2）', async () => {
+    const h = harness({
+      watcher: placeholderHeadersWatcher(),
+      credentialResolver: { resolve: vi.fn(async () => { throw new Error('db down'); }) },
+    });
+    await expect(h.service.runCheck(1)).resolves.toBeUndefined();
+    expect(h.probeExecute).toHaveBeenCalledTimes(1);
+    expect(h.probeExecute.mock.calls[0]![0].headers).toEqual({ Accept: 'application/json' });
+    expect(h.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it('runCheck 无 resolver：占位符字面量直发（D6 缺省路径，告警由 resolveProbeHeaders 打）', async () => {
+    const h = harness({ watcher: placeholderHeadersWatcher() });
+    await h.service.runCheck(1);
+    expect(h.probeExecute.mock.calls[0]![0].headers).toEqual({
+      Authorization: 'Bearer {{MAO_TOKEN}}',
+      'X-Ecp': 'E {{ECP_TOKEN}}',
+      Accept: 'application/json',
+    });
+  });
+
+  it('test 与 runCheck 同口径：立即测试也解析占位符（§8.4）', async () => {
+    const h = harness({
+      watcher: placeholderHeadersWatcher(),
+      credentialResolver: { resolve: vi.fn(async (_userId, kind) => (kind === 'MAO_TOKEN' ? 'tok-mao' : null)) },
+    });
+    const result = await h.service.test(7, 1);
+    expect(h.probeExecute.mock.calls[0]![0].headers).toEqual({
+      Authorization: 'Bearer tok-mao',
+      Accept: 'application/json',
+    });
+    expect(result.httpStatus).toBe(200);
+  });
+
+  it('create/update：纯占位符值原样落库（密文）、回显不打码、编辑回传不被当掩码（D5/§8.5）', async () => {
+    const h = harness();
+    const view = await h.service.create(7, { ...baseInput, headers: { Authorization: '{{MAO_TOKEN}}', 'X-Trace': '1' } });
+    expect(view.headers).toEqual({ Authorization: '{{MAO_TOKEN}}', 'X-Trace': '1' });
+    const stored = h.watchers.get(view.id)!;
+    expect(stored.headersJson).not.toContain('{{MAO_TOKEN}}');
+    expect(h.service.decryptHeadersForCompare(stored.headersJson)).toEqual({ Authorization: '{{MAO_TOKEN}}', 'X-Trace': '1' });
+
+    // 编辑态原样回传（前端 headerPairsFromView 给的就是占位符原值）
+    const updated = await h.service.update(7, view.id, { headers: { Authorization: '{{MAO_TOKEN}}', 'X-Trace': '1' } });
+    expect(updated.headers).toEqual({ Authorization: '{{MAO_TOKEN}}', 'X-Trace': '1' });
+    expect(h.service.decryptHeadersForCompare(h.watchers.get(view.id)!.headersJson))
+      .toEqual({ Authorization: '{{MAO_TOKEN}}', 'X-Trace': '1' });
+  });
+
+  it('混合值 Bearer {{MAO_TOKEN}} 回显仍打码，掩码回传还原库内原值（D5）', async () => {
+    const h = harness();
+    const view = await h.service.create(7, { ...baseInput, headers: { Authorization: 'Bearer {{MAO_TOKEN}}' } });
+    expect(view.headers.Authorization).toBe('******');
+    const updated = await h.service.update(7, view.id, { headers: { Authorization: '******' } });
+    expect(updated.headers.Authorization).toBe('******');
+    expect(h.service.decryptHeadersForCompare(h.watchers.get(view.id)!.headersJson).Authorization)
+      .toBe('Bearer {{MAO_TOKEN}}');
+  });
+
+  it('update 与 create 同一道 D4 闸：未识别占位符拒绝', async () => {
+    const h = harness();
+    const created = await h.service.create(7, baseInput);
+    await expect(h.service.update(7, created.id, { headers: { 'X-A': '{{EVIL}}' } }))
+      .rejects.toThrow(/不支持的占位符/);
+  });
+
+  it('复制继承：源哨兵的占位符头随掩码行继承到副本，副本执行时各自解析（§2 复制态回归）', async () => {
+    const h = harness({
+      credentialResolver: { resolve: vi.fn(async () => 'tok-copy') },
+    });
+    const source = await h.service.create(7, { ...baseInput, headers: { Authorization: 'Bearer {{MAO_TOKEN}}' } });
+    // 复制预填：敏感头按回显（掩码行）回传
+    const copy = await h.service.create(7, {
+      ...baseInput, name: 'copy', headers: { Authorization: '******' }, copyFrom: source.id,
+    });
+    expect(copy.id).not.toBe(source.id);
+    expect(h.service.decryptHeadersForCompare(h.watchers.get(copy.id)!.headersJson).Authorization)
+      .toBe('Bearer {{MAO_TOKEN}}');
+    // 副本执行时解析出的是副本自己那一次的 token
+    await h.service.runCheck(copy.id);
+    expect(h.probeExecute).toHaveBeenCalledTimes(1);
+    expect(h.probeExecute.mock.calls[0]![0].headers).toEqual({ Authorization: 'Bearer tok-copy' });
   });
 });

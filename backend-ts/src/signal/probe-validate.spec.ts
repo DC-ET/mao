@@ -4,9 +4,12 @@ import {
   MAX_PROBE_HEADERS,
   assertProbeHeaders,
   assertProbeUrl,
+  containsUnsupportedPlaceholder,
   isForbiddenProbeHeader,
+  isPlaceholderOnlyValue,
   isSensitiveProbeHeader,
   maskProbeHeaders,
+  replaceCredentialPlaceholders,
 } from './probe-validate.js';
 
 describe('assertProbeUrl', () => {
@@ -91,5 +94,71 @@ describe('masking helpers', () => {
   it('flags forbidden headers case-insensitively', () => {
     expect(isForbiddenProbeHeader('HOST')).toBe(true);
     expect(isForbiddenProbeHeader('X-Api-Key')).toBe(false);
+  });
+});
+
+describe('credential placeholders（2026-11-06 凭据占位符方案）', () => {
+  it('assertProbeHeaders 放行白名单占位符值（落库的就是占位符本身）', () => {
+    expect(assertProbeHeaders({ Authorization: 'Bearer {{MAO_TOKEN}}' }))
+      .toEqual({ Authorization: 'Bearer {{MAO_TOKEN}}' });
+    expect(assertProbeHeaders({ 'X-Multi': '{{ECP_TOKEN}}{{MAO_TOKEN}}' }))
+      .toEqual({ 'X-Multi': '{{ECP_TOKEN}}{{MAO_TOKEN}}' });
+    expect(assertProbeHeaders({ 'X-Plain': '{{MAO_TOKEN}}' }))
+      .toEqual({ 'X-Plain': '{{MAO_TOKEN}}' });
+  });
+
+  it('assertProbeHeaders 拒绝未识别占位符：未知名/小写/带空格/白名单混黑名单（D4）', () => {
+    expect(() => assertProbeHeaders({ 'X-A': '{{EVIL}}' })).toThrow(/不支持的占位符/);
+    expect(() => assertProbeHeaders({ 'X-A': '{{mao_token}}' })).toThrow(/不支持的占位符/);
+    expect(() => assertProbeHeaders({ 'X-A': '{{ MAO_TOKEN }}' })).toThrow(/不支持的占位符/);
+    expect(() => assertProbeHeaders({ 'X-A': '{{MAO_TOKEN}} {{BAD}}' })).toThrow(/不支持的占位符/);
+    expect(() => assertProbeHeaders({ 'X-A': '{{EVIL}}' })).toThrow(/X-A/);
+  });
+
+  it('containsUnsupportedPlaceholder：无占位符/白名单 false，黑名单 true，跨调用不受 lastIndex 影响', () => {
+    expect(containsUnsupportedPlaceholder('plain value')).toBe(false);
+    expect(containsUnsupportedPlaceholder('{{MAO_TOKEN}}')).toBe(false);
+    expect(containsUnsupportedPlaceholder('Bearer {{ECP_TOKEN}}')).toBe(false);
+    expect(containsUnsupportedPlaceholder('{{EVIL}}')).toBe(true);
+    expect(containsUnsupportedPlaceholder('{{MAO_TOKEN}} {{EVIL}}')).toBe(true);
+    // 交替调用两次：模块级复用同一正则对象若带 g 标志会因 lastIndex 漏匹配（方案 §8.1）
+    expect(containsUnsupportedPlaceholder('{{EVIL}}')).toBe(true);
+    expect(containsUnsupportedPlaceholder('{{MAO_TOKEN}}')).toBe(false);
+  });
+
+  it('isPlaceholderOnlyValue：纯占位符 true；混合形态/明文 false（D5 例外判据）', () => {
+    expect(isPlaceholderOnlyValue('{{MAO_TOKEN}}')).toBe(true);
+    expect(isPlaceholderOnlyValue('{{ECP_TOKEN}}{{MAO_TOKEN}}')).toBe(true);
+    expect(isPlaceholderOnlyValue('Bearer {{MAO_TOKEN}}')).toBe(false);
+    // D5 反例：真实 token 与占位符混存必须判 false，否则明文会泄露到回显
+    expect(isPlaceholderOnlyValue('Bearer sk-real {{MAO_TOKEN}}')).toBe(false);
+    expect(isPlaceholderOnlyValue('sk-real')).toBe(false);
+  });
+
+  it('maskProbeHeaders：敏感头的纯占位符值不打码，混合值仍打码', () => {
+    expect(maskProbeHeaders({ Authorization: '{{MAO_TOKEN}}', 'X-Api-Key': 'Bearer {{ECP_TOKEN}}', Accept: 'json' }))
+      .toEqual({ Authorization: '{{MAO_TOKEN}}', 'X-Api-Key': '******', Accept: 'json' });
+    expect(maskProbeHeaders({ Authorization: 'Bearer sk-real {{MAO_TOKEN}}' }))
+      .toEqual({ Authorization: '******' });
+  });
+
+  it('replaceCredentialPlaceholders：白名单替换；同 kind 多次出现只 resolve 一次且两处值一致（D8）', () => {
+    const calls: string[] = [];
+    const out = replaceCredentialPlaceholders('{{MAO_TOKEN}} {{MAO_TOKEN}}-{{ECP_TOKEN}}', (kind) => {
+      calls.push(kind);
+      return kind === 'MAO_TOKEN' ? 'tok-1' : 'ecp-1';
+    });
+    expect(out).toBe('tok-1 tok-1-ecp-1');
+    expect(calls).toEqual(['MAO_TOKEN', 'ECP_TOKEN']);
+  });
+
+  it('replaceCredentialPlaceholders：任一 kind 失败整值返回 null（D2 丢整个头的依据）', () => {
+    expect(replaceCredentialPlaceholders('Bearer {{MAO_TOKEN}}', () => null)).toBeNull();
+    expect(replaceCredentialPlaceholders('Bearer {{MAO_TOKEN}}', () => '')).toBeNull();
+    expect(replaceCredentialPlaceholders('{{MAO_TOKEN}}-{{ECP_TOKEN}}', (kind) => kind === 'ECP_TOKEN' ? null : 'ok')).toBeNull();
+  });
+
+  it('replaceCredentialPlaceholders：无占位符原样返回', () => {
+    expect(replaceCredentialPlaceholders('no placeholder', () => 'x')).toBe('no placeholder');
   });
 });

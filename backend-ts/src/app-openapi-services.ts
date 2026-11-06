@@ -13,6 +13,10 @@ import type { FixedWindowRateLimiter } from './openapi/rate-limiter.js';
 import type { WebhookSecretCipher } from './notification/task/webhook-secret-cipher.js';
 import type { OutboundSubscriptionService } from './openapi/outbound-subscription.service.js';
 import type { HarnessService } from './harness/core/harness-service.js';
+import type { JwtService } from './crypto/jwt.service.js';
+import type { MysqlUserRepository } from './user/user.repository.js';
+import type { MysqlEcpSessionRepository } from './auth/ecp-session.repository.js';
+import { createEcpCredentialsInjector } from './auth/ecp-credentials-injector.js';
 import { createAgentExecutor } from './harness/core/agent-executor.js';
 
 import { OpenRunService, type OpenRunDeps } from './openapi/open-run.service.js';
@@ -24,6 +28,7 @@ import { WebhookTriggerService, type WebhookTriggerDeps } from './openapi/webhoo
 import { SignalSecretCipher } from './signal/signal-cipher.js';
 import { MysqlSignalWatcherRepository, MysqlSignalCheckRepository } from './signal/signal.repository.js';
 import { WatcherService } from './signal/watcher.service.js';
+import { createWatcherCredentialResolver } from './signal/watcher-credential-resolver.js';
 import { WatcherScheduler } from './signal/watcher-scheduler.js';
 import { SignalCheckCleanup } from './signal/signal-check-cleanup.js';
 import { DigestRepository } from './digest/repository.js';
@@ -51,6 +56,10 @@ export interface OpenApiServicesDeps {
   openCallLogHolder: { current: OpenApiCallLogService | null };
   openTriggerSettle: { current: ((triggerId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED') => Promise<void>) | null };
   openCallSettle: { current: ((callLogId: number, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED', queueWaitMs: number | null, messageId: number | null) => Promise<void>) | null };
+  /** 哨兵凭据占位符（{{MAO_TOKEN}}/{{ECP_TOKEN}}）签发依赖（2026-11-06 方案 §5.1.4）。 */
+  jwt: JwtService;
+  userRepo: MysqlUserRepository;
+  ecpSessionRepo: MysqlEcpSessionRepository;
 }
 
 export interface OpenApiServicesResult {
@@ -67,7 +76,7 @@ export interface OpenApiServicesResult {
 }
 
 export function assembleOpenApiServices(deps: OpenApiServicesDeps): OpenApiServicesResult {
-  const { db, cfg, sessionService, messageQueueService, taskTerminal, agentRepo, wsHandler, budgetService, apiTokenService, inboxService, settingService, openApiRateLimiter, notifCipher, outboundSubscriptionService, holder, agentExecutor, openCallLogHolder, openTriggerSettle, openCallSettle } = deps;
+  const { db, cfg, sessionService, messageQueueService, taskTerminal, agentRepo, wsHandler, budgetService, apiTokenService, inboxService, settingService, openApiRateLimiter, notifCipher, outboundSubscriptionService, holder, agentExecutor, openCallLogHolder, openTriggerSettle, openCallSettle, jwt, userRepo, ecpSessionRepo } = deps;
 
   const openRunService = new OpenRunService({
     sessionService: sessionService as unknown as OpenRunDeps['sessionService'],
@@ -118,6 +127,15 @@ export function assembleOpenApiServices(deps: OpenApiServicesDeps): OpenApiServi
   const signalCipher = new SignalSecretCipher(cfg.app.signal.secretKey);
   const signalWatcherRepo = new MysqlSignalWatcherRepository(db);
   const signalCheckRepo = new MysqlSignalCheckRepository(db);
+  // 哨兵凭据占位符 resolver（2026-11-06 方案 §5.1.4）：MAO_TOKEN 用生产签发链（jwt + userRepo），
+  // ECP_TOKEN 必须在装配层新建**只读** injector——resolveUserHome 返回 null 时写/清 AccessOne
+  // 布局的分支全部跳过。不能传 create-app 里的 ecpInjector（带文件副作用，探针跑一轮会把
+  // 用户 shell 的 ECP 布局清掉），只传 ecpSessionRepo 让这里自己建。
+  const watcherCredentialResolver = createWatcherCredentialResolver({
+    tokenIssuer: jwt,
+    userLookup: userRepo,
+    ecpInjector: createEcpCredentialsInjector(ecpSessionRepo, () => null),
+  });
   const watcherService = new WatcherService({
     watcherRepo: signalWatcherRepo,
     checkRepo: signalCheckRepo,
@@ -130,6 +148,7 @@ export function assembleOpenApiServices(deps: OpenApiServicesDeps): OpenApiServi
         await inboxService.recordWatcherDisabled(input);
       },
     },
+    credentialResolver: watcherCredentialResolver,
   });
   const watcherScheduler = new WatcherScheduler({
     watcherRepo: signalWatcherRepo,

@@ -62,6 +62,8 @@ const SET_STATUSES = new Set(['ACTIVE', 'PAUSED']);
 const ADMIN_STATUSES = new Set(['ACTIVE', 'PAUSED', 'DISABLED']);
 const FORBIDDEN_HEADERS = new Set(['host', 'content-length', 'transfer-encoding', 'connection']);
 const MAX_PROBE_HEADERS = 20;
+/** 凭据占位符白名单（与后端 probe-validate 同口径）：值支持 {{MAO_TOKEN}} / {{ECP_TOKEN}}。 */
+const WHITELISTED_PLACEHOLDER_RE = /^\{\{(MAO_TOKEN|ECP_TOKEN)\}\}$/;
 const MAX_BODY_BYTES = 64 * 1024;
 const MIN_INTERVAL_MINUTES = 1;
 const MAX_INTERVAL_MINUTES = 1440;
@@ -128,6 +130,13 @@ function parseHeaders(raw) {
     const value = typeof rawValue === 'string' ? rawValue : String(rawValue ?? '');
     if (/[\r\n]/.test(value)) {
       throw createCliError(`请求头 ${key.trim()} 的值包含非法字符`);
+    }
+    // 与后端 assertProbeHeaders 的 D4 校验同口径：出现 {{...}} 形态且不是白名单
+    // 占位符时本地直接报错，否则要等一次请求往返才拿到 PARAM_INVALID。
+    for (const candidate of value.match(/\{\{[^{}]*\}\}/g) || []) {
+      if (!WHITELISTED_PLACEHOLDER_RE.test(candidate)) {
+        throw createCliError(`请求头 ${key.trim()} 含不支持的占位符（仅支持 {{MAO_TOKEN}} / {{ECP_TOKEN}}）: ${candidate}`);
+      }
     }
     headers[key.trim()] = value;
   }

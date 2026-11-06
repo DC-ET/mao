@@ -19,6 +19,71 @@ const SENSITIVE_HEADER_PATTERNS = ['authorization', 'cookie', 'x-api-key', 'toke
 
 export const SECRET_MASK = '******';
 
+/**
+ * 凭据占位符白名单（2026-11-06 技术方案 §5.1.1）：请求头值支持 `{{MAO_TOKEN}}` / `{{ECP_TOKEN}}`。
+ * 落库的是占位符本身（随 headersJson 整体加密，不含任何明文 token），探针执行时由后端
+ * 替换为当时有效 token（解析失败跳过整个头，D2）。
+ */
+export const CREDENTIAL_PLACEHOLDERS = ['MAO_TOKEN', 'ECP_TOKEN'] as const;
+export type CredentialPlaceholderKind = (typeof CREDENTIAL_PLACEHOLDERS)[number];
+
+/**
+ * 白名单占位符匹配（非全局正则）。带 `g` 的模块级正则有 lastIndex 状态，
+ * `.test()` / `.exec()` 跨调用复用会漏匹配（方案 §8.1），需要全量匹配时在调用点新建全局字面量。
+ */
+const WHITELISTED_PLACEHOLDER_RE = /\{\{(MAO_TOKEN|ECP_TOKEN)\}\}/;
+
+/** 值含 `{{...}}` 形态且内部不是白名单名 → true（D4：静默放过会让占位符字面量发往目标服务）。 */
+export function containsUnsupportedPlaceholder(value: string): boolean {
+  // 正向扫全部 `{{...}}` 候选再逐一比对白名单：反过来只扫白名单会漏掉 `{{EVIL}}`（§8.1）。
+  const candidates = value.match(/\{\{[^{}]*\}\}/g);
+  if (candidates == null) return false;
+  return candidates.some((candidate) => !WHITELISTED_PLACEHOLDER_RE.test(candidate));
+}
+
+/** 值是否含白名单占位符（执行态短路与 resolver 缺省告警的触发条件，D6）。 */
+export function containsCredentialPlaceholder(value: string): boolean {
+  return WHITELISTED_PLACEHOLDER_RE.test(value);
+}
+
+/**
+ * 值是否「只由白名单占位符组成」（D5 打码例外判据）：剥掉全部白名单占位符后为空串。
+ * 判据不能写成「值里含占位符」——那会让 `Bearer sk-real {{MAO_TOKEN}}`（真实 token 与
+ * 占位符混存）一并不打码，把明文泄露到回显里；混合形态剥完非空 → 仍打码。
+ */
+export function isPlaceholderOnlyValue(value: string): boolean {
+  return value.replace(/\{\{(?:MAO_TOKEN|ECP_TOKEN)\}\}/g, '') === '';
+}
+
+/**
+ * 替换值里的全部白名单占位符（执行态，方案 §5.1.2）。校验层与替换层共用同一正则口径（§8.2）：
+ * 用 String.replace 函数式单遍替换（单遍、不递归、无 lastIndex 问题），同一 kind 出现多次
+ * 只 resolve 一次（D8：MAO_TOKEN 每次调用都重新签发，去重避免一个值里两处 token 不一致）。
+ * 任一 kind 解析失败 → 整值返回 null，调用方丢弃整个头（D2：把 `Bearer {{MAO_TOKEN}}`
+ * 字面量发出去毫无意义，还会污染判定值）。
+ */
+export function replaceCredentialPlaceholders(
+  value: string,
+  resolve: (kind: CredentialPlaceholderKind) => string | null,
+): string | null {
+  let failed = false;
+  const cache = new Map<CredentialPlaceholderKind, string>();
+  const result = value.replace(/\{\{(MAO_TOKEN|ECP_TOKEN)\}\}/g, (match, kind: CredentialPlaceholderKind) => {
+    let resolved = cache.get(kind);
+    if (resolved === undefined) {
+      const token = resolve(kind);
+      if (token == null || token === '') {
+        failed = true;
+        return match;
+      }
+      resolved = token;
+      cache.set(kind, resolved);
+    }
+    return resolved;
+  });
+  return failed ? null : result;
+}
+
 /** 校验探针 URL 并返回规范化字符串；不合法抛 PARAM_INVALID。 */
 export function assertProbeUrl(raw: string): string {
   if (raw == null || raw.trim() === '') {
@@ -70,6 +135,11 @@ export function assertProbeHeaders(headers: Record<string, string>): Record<stri
     if (isForbiddenProbeHeader(key)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, `请求头 ${key} 不允许覆盖`);
     }
+    // D4（2026-11-06 方案）：值里出现 `{{...}}` 且不是白名单占位符直接拒绝——
+    // 静默放行会让占位符字面量发往目标服务，用户还以为注入生效了。
+    if (containsUnsupportedPlaceholder(value)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, `请求头 ${key} 含不支持的占位符（仅支持 {{MAO_TOKEN}} / {{ECP_TOKEN}}）`);
+    }
     result[key] = value;
   }
   return result;
@@ -85,7 +155,10 @@ export function isSensitiveProbeHeader(name: string): boolean {
 export function maskProbeHeaders(headers: Record<string, string>): Record<string, string> {
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers ?? {})) {
-    result[key] = isSensitiveProbeHeader(key) ? SECRET_MASK : value;
+    // D5（2026-11-06 方案）：值只由白名单凭据占位符组成时不打码——占位符不含明文密文，
+    // 打码反而让用户回显时看不到自己配了什么而误删重配；混合形态（Bearer {{MAO_TOKEN}}）
+    // 剥完非空 → 仍打码（isPlaceholderOnlyValue 的判据已防真实 token 混存泄露）。
+    result[key] = isSensitiveProbeHeader(key) && !isPlaceholderOnlyValue(value) ? SECRET_MASK : value;
   }
   return result;
 }

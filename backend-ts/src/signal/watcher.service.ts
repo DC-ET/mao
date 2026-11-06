@@ -8,6 +8,8 @@ import type { MysqlSignalWatcherRepository, MysqlSignalCheckRepository } from '.
 import type { SignalSecretCipher } from './signal-cipher.js';
 import { assertProbeHeaders, assertProbeUrl, isSensitiveProbeHeader, maskProbeHeaders, SECRET_MASK } from './probe-validate.js';
 import { executeProbe, type ProbeResult } from './probe-client.js';
+import { resolveProbeHeaders, type WatcherCredentialResolver } from './watcher-credential-resolver.js';
+import { harnessLog } from '../harness/log.js';
 import {
   buildDiff,
   computeValueHash,
@@ -66,6 +68,12 @@ export interface WatcherServiceDeps {
   getSession: (id: number) => Promise<WatcherSessionLookup | null>;
   /** 探针执行器（测试可注入假实现）。 */
   probe?: { execute: typeof executeProbe };
+  /**
+   * 凭据占位符解析（2026-11-06 方案 D6，可选）：头值里的 {{MAO_TOKEN}} / {{ECP_TOKEN}}
+   * 在 runCheck / test 执行探针前按属主身份现取有效 token。缺省（未装配）时占位符
+   * 字面量直发——装配遗漏不能静默，resolveProbeHeaders 会在确有占位符时打告警。
+   */
+  credentialResolver?: WatcherCredentialResolver | null;
 }
 
 /** 新建 / 编辑的入参（请求头与 body 为明文，服务层负责加密）。 */
@@ -333,7 +341,14 @@ export class WatcherService {
   /** 立即执行一次探针并返回判定预览：不触发、不写库。 */
   async test(userId: number, id: number): Promise<WatcherTestResult> {
     const watcher = await this.requireOwned(userId, id);
-    const headers = this.decryptHeadersStrict(watcher.headersJson);
+    // 占位符解析与调度轮询同口径（方案 §8.4）：「立即测试」看到的必须与 runCheck 一致，
+    // 否则「测试通过但轮询一直 401」会变成新的排查成本。resolveProbeHeaders 不抛错
+    // （resolver 异常按 D2 跳对应头），失败只丢凭据头、探针照常执行。
+    const headers = await resolveProbeHeaders(
+      this.decryptHeadersStrict(watcher.headersJson),
+      watcher.userId,
+      this.deps.credentialResolver,
+    );
     const body = this.decryptBodyStrict(watcher.body);
     const probe = this.deps.probe ?? { execute: executeProbe };
     const result = await probe.execute({
@@ -397,6 +412,16 @@ export class WatcherService {
     } catch (e) {
       await this.recordFailure(watcher, e);
       return;
+    }
+
+    // 凭据占位符解析（2026-11-06 方案 §5.1.3）：解密之后、executeProbe 之前替换。
+    // 解析失败只跳对应头（D2/D3），不能把整轮探针判失败——「需要用户重新登录」不是
+    // 「目标服务故障」，计连败会把哨兵误停用。resolveProbeHeaders 契约上不抛错，
+    // 这里单独兜住防将来改动破坏契约后异常冒泡出 runCheck（调度器要求任何异常不上抛）。
+    try {
+      headers = await resolveProbeHeaders(headers, watcher.userId, this.deps.credentialResolver);
+    } catch (e) {
+      harnessLog('warn', `[signal] resolve probe headers failed unexpectedly, keep headers unresolved, watcherId=${watcher.id}: ${errorMessage(e)}`);
     }
 
     const probe = this.deps.probe ?? { execute: executeProbe };

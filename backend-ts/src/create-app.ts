@@ -895,6 +895,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     budgetService, apiTokenService, inboxService, settingService, openApiRateLimiter,
     notifCipher, outboundSubscriptionService, holder, agentExecutor,
     openCallLogHolder, openTriggerSettle, openCallSettle,
+    // 哨兵凭据占位符签发依赖（均构造于本调用点之前，时序无碍）
+    jwt, userRepo, ecpSessionRepo,
   });
   const { openRunService, callLogService, callLogCleanup, webhookTriggerService, watcherService, watcherScheduler, signalCheckCleanup, digestService, digestScheduler, signalWatcherRepo } = openApiServices;
 

@@ -189,6 +189,28 @@ describe('buildWatcherPayload 复制态（copyFrom）', () => {
   })
 })
 
+describe('凭据占位符值往返（2026-11-06 方案 §5.3）', () => {
+  it('纯占位符值不是掩码：headerPairsFromView 原样回显（后端 D5 例外不打码）', () => {
+    expect(headerPairsFromView({ Authorization: '{{MAO_TOKEN}}' })).toEqual([
+      { key: 'Authorization', value: '{{MAO_TOKEN}}', masked: false }
+    ])
+  })
+
+  it('纯占位符值编辑回传：collectHeaders 原样下发（不被当掩码吞掉）', () => {
+    expect(collectHeaders([pair('Authorization', '{{MAO_TOKEN}}')]))
+      .toEqual({ Authorization: '{{MAO_TOKEN}}' })
+    const payload = buildWatcherPayload(form({ headers: [pair('Authorization', '{{MAO_TOKEN}}')] }), true)
+    expect(payload.headers).toEqual({ Authorization: '{{MAO_TOKEN}}' })
+  })
+
+  it('混合值（回显为掩码行）里填入占位符：照常下发新值（插入凭据 = 显式改值）', () => {
+    // Bearer {{MAO_TOKEN}} 在回显侧是打码行；用户点「插入凭据」后值非空，
+    // collectHeaders 下发新值而非 SECRET_MASK 占位
+    expect(collectHeaders([pair('Authorization', 'Bearer {{MAO_TOKEN}}', true)]))
+      .toEqual({ Authorization: 'Bearer {{MAO_TOKEN}}' })
+  })
+})
+
 describe('copyFormFromView 复制预填', () => {
   it('name 带「副本」后缀、非敏感字段原值、敏感头为掩码行、body 留空、triggerMode 随源', () => {
     const view = {

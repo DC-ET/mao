@@ -1,6 +1,6 @@
 # 信号哨兵凭据占位符注入技术方案（`{{MAO_TOKEN}}` / `{{ECP_TOKEN}}`）
 
-- 状态：已评审（2026-11-06，结论：可行，补充见 §8；未实施）
+- 状态：已实施（2026-11-07 合入 main；范围见 CHANGELOG 0.0.467；评审补充见 §8，逐条已落实）
 - 日期：2026-11-06
 - 需求来源：用户提案「创建信号哨兵时支持勾选注入 Mao 系统中已有的信息，如 MAO_TOKEN、ECP_TOKEN」（会话沟通；附图：新建哨兵表单截图）
 - 上游设计：`docs/plan/2026-10-11-signal-watcher-technical-design.md`、`docs/plan/2026-10-27-selection-quote-technical-design.md`（复制继承）
