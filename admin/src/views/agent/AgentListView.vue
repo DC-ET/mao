@@ -42,6 +42,11 @@
             <el-option v-for="model in modelOptions" :key="model.id" :label="model.name" :value="model.id" />
           </el-select>
         </el-form-item>
+        <el-form-item label="Git 凭据域">
+          <el-select v-model="gitDomainFilter" clearable placeholder="全部" style="width: 120px" @change="handleGitDomainFilter">
+            <el-option label="未配置" value="missing" />
+          </el-select>
+        </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="handleSearch">查询</el-button>
         </el-form-item>
@@ -98,6 +103,7 @@
                 <div>技能：{{ capabilityText(row.skillNames) }}</div>
                 <div>MCP：{{ capabilityText(resolveNames(row.mcpServerIds, mcpNameById)) }}</div>
                 <div>自定义工具：{{ capabilityText(resolveNames(row.httpToolIds, toolNameById)) }}</div>
+                <div>Git 域：{{ gitDomainText(row.gitAllowedDomains) }}</div>
               </template>
               <span>{{ capabilitySummary(row) }}</span>
             </el-tooltip>
@@ -252,6 +258,8 @@ const statusFilter = ref('')
  * 注意 element-plus clearable select 清空时置 undefined 而非 ''，两种空值都要放行。
  */
 const modelFilter = ref<number | '' | undefined>('')
+/** Git 凭据域筛选（技术方案 2026-11-06）：'missing'=只看未配置（后端过滤），其余为空不过滤。 */
+const gitDomainFilter = ref<'' | 'missing'>('')
 const modelOptions = ref<Array<{ id: number; name: string }>>([])
 const currentPage = ref(1)
 const pageSize = ref(10)
@@ -276,7 +284,12 @@ async function fetchAgents() {
   loading.value = true
   try {
     const { data } = await api.get('/agents', {
-      params: { keyword: searchQuery.value, includeDisabled: true }
+      params: {
+        keyword: searchQuery.value,
+        includeDisabled: true,
+        // 「未配置」筛选走后端（git_allowed_domains IS NULL），状态/模型筛选仍是前端过滤
+        ...(gitDomainFilter.value === 'missing' ? { missingGitDomains: true } : {})
+      }
     })
     if (seq !== fetchAgentsSeq) return
     allAgents.value = data || []
@@ -331,6 +344,11 @@ function handleModelFilter() {
   currentPage.value = 1
 }
 
+function handleGitDomainFilter() {
+  currentPage.value = 1
+  fetchAgents()
+}
+
 /** 默认模型列：启用模型显示名称；指向已停用 / 已删除模型时以 #id 兜底。 */
 function resolveModelName(modelId: number): string {
   const found = modelOptions.value.find((model) => model.id === modelId)
@@ -346,6 +364,13 @@ function resolveNames(ids: unknown, map: Map<number, string>): string[] {
 
 function capabilityText(names: string[]): string {
   return names.length > 0 ? names.join('、') : '—'
+}
+
+/** 能力概览：Git 凭据域三态文案（null=未配置、[]=已禁止、非空=N 个域）。 */
+function gitDomainText(domains: string[] | null | undefined): string {
+  if (domains == null) return '未配置'
+  if (domains.length === 0) return '已禁止'
+  return `${domains.length} 个域`
 }
 
 function capabilitySummary(row: any): string {

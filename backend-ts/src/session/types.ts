@@ -264,8 +264,17 @@ export interface UserCommandLookup {
   listAvailableForUser(userId: number): Promise<UserCommandRef[]>;
 }
 
-export interface GitCredentialLookup {
-  getTokenMapByUser(userId: number): Promise<Record<string, string>>;
+/**
+ * Git 凭据统一解析器（技术方案 2026-11-06 §3.3）：
+ * 把「注入给会话/Agent 的 token 集合」从「用户全部 token」收敛为「用户 token ∩ Agent 允许域」。
+ * - resolveForSession：按会话上下文（查 session.agent_id）解析，故障（查不到/归属不符）fail-closed；
+ * - resolveForAgent：按 Agent 上下文解析，未配置（NULL）时按全局策略（gitToken.scopePolicy）兜底。
+ */
+export interface GitTokenResolver {
+  /** 按会话上下文解析：查 session.agent_id 后委托 resolveForAgent。 */
+  resolveForSession(userId: number, sessionId: number | null): Promise<Record<string, string>>;
+  /** 按 Agent 上下文解析：用户 token ∩ Agent 允许域，再按全局策略兜底。 */
+  resolveForAgent(userId: number, agentId: number | null): Promise<Record<string, string>>;
 }
 
 export interface ApprovalRegistry {

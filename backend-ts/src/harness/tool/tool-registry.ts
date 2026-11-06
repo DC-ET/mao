@@ -6,7 +6,7 @@ import type { AgentMapper, MessageMapper, SessionCompactionService, SessionMappe
 import type { ScheduledTaskService } from '../../schedule/scheduled-task.service.js';
 import type { ShellSessionManager, OutputManager } from '../shell/shell-session-manager.js';
 import type { BackgroundTaskManager } from '../core/background-task-manager.js';
-import type { GitCredentialLookup } from '../../session/types.js';
+import type { GitTokenResolver } from '../../session/types.js';
 import type { WebSearchConfig } from '../../settings/types.js';
 import type { WebPageConfig } from './impl/open-web-page-tool.js';
 import type { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
@@ -73,7 +73,7 @@ export interface DefaultToolRegistryDeps {
   shellSessionManager: ShellSessionManager;
   outputManager: OutputManager;
   backgroundTaskManager: BackgroundTaskManager;
-  gitCredentialService?: GitCredentialLookup | null;
+  gitTokenResolver?: GitTokenResolver | null;
   jwtService?: ShellTokenIssuer | null;
   shellUserLookup?: ShellUserLookup | null;
   shellEcpInjector?: ShellEcpInjector | null;
@@ -145,7 +145,7 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     new GrepSearchTool(deps.pathSandbox),
     new ShellSessionTool(
       deps.pathSandbox, deps.shellSessionManager, deps.outputManager,
-      deps.backgroundTaskManager, deps.gitCredentialService,
+      deps.backgroundTaskManager, deps.gitTokenResolver,
       deps.jwtService, deps.shellUserLookup, deps.shellEcpInjector,
       deps.shellLarkUatInjector, deps.shellBaseUrlProvider,
     ),

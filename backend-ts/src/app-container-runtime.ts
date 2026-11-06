@@ -1,6 +1,7 @@
 import type { AppConfig } from './config/app-config.js';
 import type { JwtService } from './crypto/jwt.service.js';
 import type { SessionRepository } from './session/session.repository.js';
+import type { GitTokenResolver } from './session/types.js';
 import type { MysqlUserRepository } from './user/user.repository.js';
 import type { SystemSettingService } from './settings/settings.service.js';
 import type { RuntimeDataResolver } from './harness/runtime/runtime-data-resolver.js';
@@ -35,7 +36,7 @@ export interface ContainerRuntimeDeps {
   userRepo: MysqlUserRepository;
   settingService: SystemSettingService;
   runtimeResolver: RuntimeDataResolver;
-  gitLookup: { getTokenMapByUser: (userId: number) => Promise<Record<string, string>> };
+  gitTokenResolver: GitTokenResolver;
   envVariableService: EnvVariableService;
   uploadDir: string;
   userSkillsDir: string;
@@ -70,7 +71,7 @@ export interface ContainerRuntimeResult {
 }
 
 export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Promise<ContainerRuntimeResult> {
-  const { cfg, ctx, jwt, sessionRepo, userRepo, settingService, runtimeResolver, gitLookup, envVariableService, uploadDir, userSkillsDir, shareDir, mcpClient, activityHeartbeat, ecpInjector, larkUatInjector } = deps;
+  const { cfg, ctx, jwt, sessionRepo, userRepo, settingService, runtimeResolver, gitTokenResolver, envVariableService, uploadDir, userSkillsDir, shareDir, mcpClient, activityHeartbeat, ecpInjector, larkUatInjector } = deps;
 
   const cloudRuntimeCfg = cfg.app.cloudRuntime;
   const containerChannelHolder: { registry: ContainerRegistry | null } = { registry: null };
@@ -140,7 +141,7 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
   };
   const envelopeBuilder = new SessionEnvelopeBuilder({
     runtimeResolver,
-    gitCredentialService: gitLookup,
+    gitTokenResolver,
     jwtService: jwt,
     userLookup: { findById: (id: number) => userRepo.findById(id) as Promise<{ username?: string | null } | null> },
     ecpInjector,

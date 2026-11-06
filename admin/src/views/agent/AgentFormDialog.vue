@@ -99,6 +99,28 @@
           在「自定义工具」页停用的工具对所有 Agent 立即失效。
         </div>
       </el-form-item>
+      <el-form-item label="Git 凭据域">
+        <el-switch v-model="form.gitAllowedDomainsEnabled" />
+        <span class="form-hint">启用后，仅允许列出的 Git 服务域在会话中注入凭据</span>
+        <el-select
+          v-if="form.gitAllowedDomainsEnabled"
+          v-model="form.gitAllowedDomains"
+          multiple
+          filterable
+          allow-create
+          default-first-option
+          clearable
+          :loading="optionsLoading"
+          placeholder="输入或选择域名，如 git.acg.team（留空 = 禁止注入）"
+          style="width: 100%; margin-top: 8px"
+        >
+          <el-option v-for="domain in gitDomainOptions" :key="domain" :label="domain" :value="domain" />
+        </el-select>
+        <div class="form-hint">
+          注入给会话的 Git 凭据 = 用户自己配置的凭据域 ∩ 此处允许域（空列表 = 禁止注入任何 Git 凭据）。
+          关闭开关表示不限制（跟随系统设置的「Git 凭据域策略」）。收紧后已打开的终端 / MCP 连接需重开才生效。
+        </div>
+      </el-form-item>
       <el-form-item label="默认 Agent">
         <el-switch v-model="form.isDefault" />
         <span class="form-hint">开启后，新建会话未指定 Agent 时将使用该智能体</span>
@@ -265,6 +287,7 @@ import { api } from '../../api'
 import { resolveAgentAvatarUrl } from '../../utils/agent-avatar'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 import AgentPromptHistoryDialog from './AgentPromptHistoryDialog.vue'
+import { gitDomainsEnabledOf, gitDomainsListOf, gitDomainsPayload } from './gitDomains'
 
 interface ExperienceFormItem {
   _key: string
@@ -368,12 +391,18 @@ const form = reactive({
   skillNames: [] as string[],
   mcpServerIds: [] as number[],
   httpToolIds: [] as number[],
+  // Git 凭据域（技术方案 2026-11-06）：enabled=false → null（不限制）；enabled=true + 空列表 → []（禁止注入）
+  gitAllowedDomainsEnabled: false,
+  gitAllowedDomains: [] as string[],
   experiences: [] as ExperienceFormItem[],
   suggestedQuestions: [] as SuggestedQuestionFormItem[],
   isDefault: false,
   defaultModelId: null as number | null,
   clientVisible: true
 })
+
+/** 域名候选：当前管理员自己配置的 Git 凭据域（零新端点；加载失败不阻塞手工输入）。 */
+const gitDomainOptions = ref<string[]>([])
 
 const rules: FormRules = {
   name: [{ required: true, message: '请输入 Agent 名称', trigger: 'blur' }],
@@ -420,6 +449,8 @@ function resetForm() {
     skillNames: [],
     mcpServerIds: [],
     httpToolIds: [],
+    gitAllowedDomainsEnabled: false,
+    gitAllowedDomains: [],
     experiences: [],
     suggestedQuestions: [],
     isDefault: false,
@@ -641,6 +672,9 @@ watch(() => props.visible, async (val) => {
       skillNames: props.agentData.skillNames || [],
       mcpServerIds: props.agentData.mcpServerIds || [],
       httpToolIds: props.agentData.httpToolIds || [],
+      // 回显要区分后端返回的 null（未配置=关闭）与 []（显式禁止=开启+空列表），否则「开启+空」会显示成关闭
+      gitAllowedDomainsEnabled: gitDomainsEnabledOf(props.agentData.gitAllowedDomains),
+      gitAllowedDomains: gitDomainsListOf(props.agentData.gitAllowedDomains),
       experiences: mapExperiences(props.agentData.experiences, props.mode === 'edit'),
       suggestedQuestions: mapSuggestedQuestions(props.agentData.suggestedQuestions, props.mode === 'edit'),
       isDefault: props.mode === 'copy' ? false : !!props.agentData.isDefault,
@@ -711,6 +745,20 @@ async function loadOptions() {
   } catch {
     models.value = []
     failed.push('模型')
+  }
+  try {
+    // 候选来源：当前管理员自己配置的 Git 凭据域（D4：不做全站枚举接口，避免横向枚举面）；
+    // 加载失败不提示也不阻塞表单——仍可手工输入域名。
+    const { data: credentialData } = await api.get('/user/git-credentials')
+    gitDomainOptions.value = Array.isArray(credentialData)
+      ? [...new Set(
+          credentialData
+            .map((item: any) => String(item?.domain ?? '').trim())
+            .filter((domain: string) => domain !== ''),
+        )]
+      : []
+  } catch {
+    gitDomainOptions.value = []
   }
   optionsLoading.value = false
   if (failed.length > 0) {
@@ -791,6 +839,8 @@ async function handleSubmit() {
     skillNames: form.skillNames,
     mcpServerIds: form.mcpServerIds,
     httpToolIds: form.httpToolIds,
+    // 三态（技术方案 2026-11-06）：关闭开关 = null（不限制）；开启 + 空列表 = []（禁止注入）；非空 = 白名单
+    gitAllowedDomains: gitDomainsPayload(form.gitAllowedDomainsEnabled, form.gitAllowedDomains),
     isDefault: form.isDefault ? 1 : 0,
     defaultModelId: form.defaultModelId || null,
     clientVisible: form.clientVisible,

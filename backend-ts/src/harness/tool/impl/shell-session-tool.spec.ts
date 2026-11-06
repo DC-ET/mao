@@ -38,7 +38,10 @@ describe('ShellSessionTool', () => {
     }),
   };
   const background = { submit: vi.fn(() => 'task-1') };
-  const git = { getTokenMapByUser: vi.fn(async () => ({ 'github.com': 'tok' })) };
+  const git = {
+    resolveForSession: vi.fn(async () => ({ 'github.com': 'tok' })),
+    resolveForAgent: vi.fn(async () => ({ 'github.com': 'tok' })),
+  };
   const tool = new ShellSessionTool(pathSandbox as never, sessionManager as never, outputManager as never, background as never, git);
 
   beforeEach(() => {

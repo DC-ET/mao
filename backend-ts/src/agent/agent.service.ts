@@ -25,8 +25,15 @@ export class AgentService {
     private readonly modelLookup?: AgentModelLookup,
   ) {}
 
-  listAgents(_userId: number, keyword?: string | null, includeDisabled = false, clientVisibleOnly = false): Promise<Agent[]> {
-    return this.agentRepo.selectList(keyword, includeDisabled, clientVisibleOnly);
+  listAgents(
+    _userId: number,
+    keyword?: string | null,
+    includeDisabled = false,
+    clientVisibleOnly = false,
+    /** true=仅返回未配置 git_allowed_domains 的 Agent（管理后台筛选）。 */
+    missingGitAllowedDomains = false,
+  ): Promise<Agent[]> {
+    return this.agentRepo.selectList(keyword, includeDisabled, clientVisibleOnly, missingGitAllowedDomains);
   }
 
   async getAgent(id: number): Promise<Agent> {
@@ -64,6 +71,7 @@ export class AgentService {
     avatarUrl?: string | null,
     clientVisible?: boolean | null,
     experienceLibraryEnabled?: boolean | null,
+    gitAllowedDomains?: string[] | null,
   ): Promise<Agent> {
     validateAgentAvatarUrl(avatarUrl);
     const clientVisibleFlag = clientVisible === false ? 0 : 1;
@@ -95,6 +103,10 @@ export class AgentService {
     if (httpToolIds != null && httpToolIds.length > 0) {
       agent.httpToolIds = JSON.stringify(httpToolIds);
     }
+    if (gitAllowedDomains != null) {
+      // '[]'（显式禁止）必须保留，不做「空数组 → null」折叠（技术方案 2026-11-06 三态语义）
+      agent.gitAllowedDomains = JSON.stringify(gitAllowedDomains);
+    }
     await this.agentRepo.insert(agent);
 
     if (experiences != null) {
@@ -123,6 +135,7 @@ export class AgentService {
     avatarUrl?: string | null,
     clientVisible?: boolean | null,
     experienceLibraryEnabled?: boolean | null,
+    gitAllowedDomains?: string[] | null,
   ): Promise<Agent> {
     validateAgentAvatarUrl(avatarUrl);
     const agent = await this.getAgent(id);
@@ -156,6 +169,11 @@ export class AgentService {
     }
     if (experienceLibraryEnabled != null) {
       agent.experienceLibraryEnabled = experienceLibraryEnabled ? 1 : 0;
+    }
+    if (gitAllowedDomains !== undefined) {
+      // 四态（技术方案 2026-11-06 §3.6）：undefined=不修改；null=清空；[]=显式禁止；非空=白名单。
+      // 不能用 `!= null` 判断，否则 null 与 [] 都会被当成「不修改」——三态语义失效。
+      agent.gitAllowedDomains = gitAllowedDomains == null ? null : JSON.stringify(gitAllowedDomains);
     }
     if (isDefault != null) {
       if (isDefault === 1) {

@@ -89,7 +89,7 @@ async function newManager(overrides: Partial<TerminalManagerConfig> = {}, extra:
   const manager = new TerminalManager({
     pathSandbox: sandbox,
     runtimeResolver: RuntimeDataResolver.forTest(join(root, 'runtime'), join(root, 'users')),
-    gitCredentials: extra.tokenMap ? { getTokenMapByUser: async () => extra.tokenMap! } : undefined,
+    gitTokenResolver: extra.tokenMap ? { resolveForSession: async () => extra.tokenMap!, resolveForAgent: async () => extra.tokenMap! } : undefined,
     shellToken: { generateShellToken: (userId, username) => `tok-${userId}-${username}` },
     userLookup: { findById: async (id) => ({ id, username: `user${id}` }) },
     ecpInjector: extra.ecpInjector,
@@ -317,7 +317,7 @@ describe('TerminalManager', () => {
     const manager = new TerminalManager({
       pathSandbox: new PathSandbox(root),
       runtimeResolver: RuntimeDataResolver.forTest(join(root, 'runtime'), join(root, 'users')),
-      gitCredentials: { getTokenMapByUser: async () => { await gate; return {}; } },
+      gitTokenResolver: { resolveForSession: async () => { await gate; return {}; }, resolveForAgent: async () => ({}) },
       config: config({ maxSessionsPerTask: 1, maxSessionsGlobal: 1 }),
       ptyFactory: fakeFactory,
     });
@@ -357,7 +357,7 @@ describe('TerminalManager', () => {
     const manager = new TerminalManager({
       pathSandbox: new PathSandbox(root),
       runtimeResolver: RuntimeDataResolver.forTest(join(root, 'runtime'), join(root, 'users')),
-      gitCredentials: { getTokenMapByUser: async () => { await gate; return {}; } },
+      gitTokenResolver: { resolveForSession: async () => { await gate; return {}; }, resolveForAgent: async () => ({}) },
       config: config(),
       ptyFactory: fakeFactory,
     });
@@ -590,7 +590,7 @@ describe('TerminalManager', () => {
     const manager = new TerminalManager({
       pathSandbox: new PathSandbox(root),
       runtimeResolver: RuntimeDataResolver.forTest(join(root, 'runtime'), join(root, 'users')),
-      gitCredentials: { getTokenMapByUser: async () => { throw new Error('db down'); } },
+      gitTokenResolver: { resolveForSession: async () => { throw new Error('db down'); }, resolveForAgent: async () => ({}) },
       config: config(),
       ptyFactory: fakeFactory,
     });

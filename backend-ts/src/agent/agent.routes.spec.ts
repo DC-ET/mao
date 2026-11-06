@@ -97,12 +97,12 @@ describe('CRUD routes', () => {
     expect((await app.inject({
       method: 'POST', url: '/v1/agents', payload: { name: 'A', systemPrompt: 'p', avatarUrl: agent.avatarUrl },
     })).json().data.avatarUrl).toBe(agent.avatarUrl);
-    expect(agentService.createAgent.mock.calls[0]?.at(-3)).toBe(agent.avatarUrl);
-    expect(agentService.createAgent.mock.calls[0]?.at(-1)).toBeUndefined();
+    expect(agentService.createAgent.mock.calls[0]?.at(-4)).toBe(agent.avatarUrl);
+    expect(agentService.createAgent.mock.calls[0]?.at(-2)).toBeUndefined();
     expect((await app.inject({
       method: 'PUT', url: '/v1/agents/1', payload: { name: 'B', avatarUrl: null },
     })).statusCode).toBe(200);
-    expect(agentService.updateAgent.mock.calls[0]?.at(-3)).toBeNull();
+    expect(agentService.updateAgent.mock.calls[0]?.at(-4)).toBeNull();
     expect((await app.inject({ method: 'DELETE', url: '/v1/agents/1' })).statusCode).toBe(200);
     expect((await app.inject({ method: 'GET', url: '/v1/agents/1/experiences' })).statusCode).toBe(200);
     expect((await app.inject({
@@ -112,7 +112,7 @@ describe('CRUD routes', () => {
       method: 'PUT', url: '/v1/agents/1/experiences/1', payload: { content: 'u' },
     })).statusCode).toBe(200);
     expect((await app.inject({ method: 'DELETE', url: '/v1/agents/1/experiences/1' })).statusCode).toBe(200);
-    expect(agentService.listAgents).toHaveBeenCalledWith(7, undefined, false, false);
+    expect(agentService.listAgents).toHaveBeenCalledWith(7, undefined, false, false, false);
     await app.close();
   });
 
@@ -142,7 +142,7 @@ describe('CRUD routes', () => {
       const cleared = await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { mcpServerIds: [] } });
       expect(cleared.statusCode).toBe(200);
       expect(agentService.updateAgent).toHaveBeenCalledWith(
-        7, 1, undefined, undefined, undefined, undefined, [], undefined, null, null, undefined, undefined, undefined, undefined, undefined,
+        7, 1, undefined, undefined, undefined, undefined, [], undefined, null, null, undefined, undefined, undefined, undefined, undefined, undefined,
       );
       expect(mcpServerValidator.validateForAgent).not.toHaveBeenCalled();
 
@@ -185,17 +185,17 @@ describe('CRUD routes', () => {
     }));
     try {
       await app.inject({ method: 'GET', url: '/v1/agents?includeDisabled=true' });
-      expect(agentService.listAgents).toHaveBeenCalledWith(7, undefined, false, false);
+      expect(agentService.listAgents).toHaveBeenCalledWith(7, undefined, false, false, false);
       expect((await app.inject({ method: 'PATCH', url: '/v1/agents/1/enabled', payload: { enabled: false } })).statusCode).toBe(403);
       expect(agentService.setEnabled).not.toHaveBeenCalled();
 
       permissionService.hasPermission.mockImplementation(async (_userId: number, code: string) => code === 'agent:read' || code === 'agent:write');
       await app.inject({ method: 'GET', url: '/v1/agents?includeDisabled=true&keyword=coder' });
-      expect(agentService.listAgents).toHaveBeenLastCalledWith(7, 'coder', true, false);
+      expect(agentService.listAgents).toHaveBeenLastCalledWith(7, 'coder', true, false, false);
 
       // 客户端新建会话：只取客户端可见的 Agent
       await app.inject({ method: 'GET', url: '/v1/agents?scope=client' });
-      expect(agentService.listAgents).toHaveBeenLastCalledWith(7, undefined, false, true);
+      expect(agentService.listAgents).toHaveBeenLastCalledWith(7, undefined, false, true, false);
 
       // 非法 scope 直接拒绝，避免拼写错误静默退化成全量（项目约定：业务错误 HTTP 200 + code≠0）
       const badScope = await app.inject({ method: 'GET', url: '/v1/agents?scope=admin' });
@@ -208,6 +208,66 @@ describe('CRUD routes', () => {
       const toggled = await app.inject({ method: 'PATCH', url: '/v1/agents/1/enabled', payload: { enabled: false } });
       expect(toggled.json().data.enabled).toBe(false);
       expect(agentService.setEnabled).toHaveBeenCalledWith(1, false);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('validates gitAllowedDomains 四态与边界（技术方案 2026-11-06）', async () => {
+    const agent = { id: 1, name: 'A', systemPrompt: 'p', isDefault: 0, gitAllowedDomains: null };
+    const agentService = {
+      getAgent: vi.fn(async () => agent),
+      createAgent: vi.fn(async () => agent),
+      updateAgent: vi.fn(async () => agent),
+      getAgentExperiences: vi.fn(async () => []),
+      getAgentSuggestedQuestions: vi.fn(async () => []),
+    };
+    const permissionService = { hasPermission: vi.fn(async () => true) };
+    const app = await appWithUser(f => registerAgentRoutes(f, {
+      agentService: agentService as never,
+      experienceService: {} as never,
+      suggestedQuestionService: {} as never,
+      userRepo: { findById: vi.fn(async () => null) } as never,
+      mcpServerValidator: {} as never,
+      httpToolValidator: {} as never,
+      permissionService,
+    }));
+    try {
+      // 规范化：去协议 / 去路径 / 小写 / 去重，最后一位参数（gitAllowedDomains）为规范化结果
+      const normalized = await app.inject({
+        method: 'PUT', url: '/v1/agents/1',
+        payload: { gitAllowedDomains: ['https://Git.ACG.Team/foo', 'git.acg.team'] },
+      });
+      expect(normalized.statusCode).toBe(200);
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-1)).toEqual(['git.acg.team']);
+
+      // null 清空 / [] 显式禁止 / 未传不改
+      await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { gitAllowedDomains: null } });
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-1)).toBeNull();
+      await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { gitAllowedDomains: [] } });
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-1)).toEqual([]);
+      await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { name: 'B' } });
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-1)).toBeUndefined();
+
+      // 非法：空串 / 格式不符 / 非字符串 / 超过 32 条 / 总长超过 1024（最终闸门）
+      const callsBefore = agentService.updateAgent.mock.calls.length;
+      const blank = await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { gitAllowedDomains: [''] } });
+      expect(blank.json().code).not.toBe(0);
+      const bad = await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { gitAllowedDomains: ['not a domain'] } });
+      expect(bad.json().code).not.toBe(0);
+      const notString = await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { gitAllowedDomains: [123] } });
+      expect(notString.json().code).not.toBe(0);
+      const tooMany = await app.inject({
+        method: 'PUT', url: '/v1/agents/1',
+        payload: { gitAllowedDomains: Array.from({ length: 33 }, (_, i) => `git${i}.example.com`) },
+      });
+      expect(tooMany.json().code).not.toBe(0);
+      // 单条合法（≤253）但合计超过 1024：必须被总长闸门拦下（防「分项都过但列宽超限」）
+      const longList = Array.from({ length: 14 }, (_, i) => `${'a'.repeat(60)}${i}.example.com`);
+      const overflow = await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { gitAllowedDomains: longList } });
+      expect(overflow.json().code).not.toBe(0);
+      // 非法输入不得触达 service
+      expect(agentService.updateAgent.mock.calls.length).toBe(callsBefore);
     } finally {
       await app.close();
     }
