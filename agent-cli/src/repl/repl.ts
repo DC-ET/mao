@@ -1,5 +1,6 @@
 import type { AskAnswer, AskQuestion } from '../ws/event-types';
 import type { SessionRunner } from '../session/session-runner';
+import type { SessionVO } from '../rest/types';
 import type { InkTuiRenderer } from '../tui/ink-renderer';
 import type { TuiHandle } from '../tui/types';
 import { PromptQueue } from '../ui/prompt-queue';
@@ -20,6 +21,12 @@ export interface ReplOptions {
    * 恢复既有会话/打印模式不传——此时会话在进入 REPL 前已就绪。
    */
   ensureSession?: (currentModelId?: number) => Promise<void>;
+  /** 可切换会话列表（已按模式/工作区过滤、按最近排序、已截断）。query 为空取最近。 */
+  listSwitchableSessions?: (query?: string) => Promise<SessionVO[]>;
+  /** 切换会话（chat.ts 内完成守卫、重挂与状态刷新）。失败抛 CliError。 */
+  switchSession?: (id: number) => Promise<SessionVO>;
+  /** 会话选择面板；缺省时 /resume 打印列表并提示 /resume <id>（非 TUI / 单测场景）。 */
+  pickSession?: (items: SessionVO[]) => Promise<number | null>;
   firstPrompt?: string;
   queuedInput?: boolean;
   onInputReady?: () => void;
@@ -154,22 +161,11 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
 
   if (opts.firstPrompt) {
     if (opts.runner.snapshotIsActive) {
-      hint('该会话仍在执行，先续接当前输出…');
-      try {
-        await opts.runner.waitForCurrentRun();
-      } catch (err) {
-        print(err instanceof Error ? err.message : String(err), 'err');
-      }
+      await resumeActiveRun(opts, { hint, print }, '该会话仍在执行，先续接当前输出…');
     }
     await handleSubmit(opts.firstPrompt);
   } else if (opts.runner.snapshotIsActive) {
-    hint('该会话仍在执行，续接当前输出。可用 /cancel 中止。');
-    opts.renderer.startRound();
-    try {
-      await opts.runner.waitForCurrentRun();
-    } catch (err) {
-      print(err instanceof Error ? err.message : String(err), 'err');
-    }
+    await resumeActiveRun(opts, { hint, print }, '该会话仍在执行，续接当前输出。可用 /cancel 中止。');
   }
 
   // 挂住直到退出：由 requestExit 直接 resolve，不做轮询
@@ -185,6 +181,20 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
 interface SlashIo {
   hint: (s: string) => void;
   print: (s: string, tone?: 'dim' | 'err' | 'ok' | 'warn' | 'info') => void;
+}
+
+/**
+ * 续接一个正在执行的会话：等当前一轮跑完（不 cancel 对方）。
+ * 启动段（firstPrompt / 进入即运行中）与 `/resume` 切换后共用。
+ */
+async function resumeActiveRun(opts: ReplOptions, io: SlashIo, tip: string): Promise<void> {
+  io.hint(tip);
+  opts.renderer.startRound();
+  try {
+    await opts.runner.waitForCurrentRun();
+  } catch (err) {
+    io.print(err instanceof Error ? err.message : String(err), 'err');
+  }
 }
 
 export async function handleSlash(
@@ -288,14 +298,71 @@ export async function handleSlash(
     case 'session': {
       const s = opts.runner.getSession();
       if (!s) {
-        io.print('尚未创建会话：发送第一条消息时创建。\n换会话: mao-agent resume | mao-agent ls');
+        io.print('尚未创建会话：发送第一条消息时创建。\n换会话: /resume（本进程内切换） | mao-agent resume <id>');
         return;
       }
       io.print(
         `sessionId=${s?.id ?? '-'}  agent=${s?.agentName ?? s?.agentId ?? '-'}  model=${s?.modelName ?? s?.modelId ?? '-'}` +
           `  workspace=${s?.workspace ?? '-'}  phase=${s?.phase ?? '-'}\n` +
-          '换会话: mao-agent resume | mao-agent ls',
+          '换会话: /resume（本进程内切换） | mao-agent resume <id>',
       );
+      return;
+    }
+    case 'resume': {
+      if (!opts.switchSession || !opts.listSwitchableSessions) {
+        io.print('当前模式不支持在本进程内切换会话。', 'warn');
+        return;
+      }
+      if (opts.runner.isRunning()) {
+        io.hint('当前任务还在执行：等它结束或 /cancel 后再切换。');
+        return;
+      }
+
+      const byId = /^\d+$/.test(arg);
+      const items = byId ? [] : await opts.listSwitchableSessions(arg || undefined);
+      let targetId: number | null = byId ? Number(arg) : null;
+
+      if (!byId) {
+        if (items.length === 1) {
+          targetId = items[0].id!; // 关键词命中 1 条：直接切换
+        } else if (items.length > 1) {
+          if (!opts.pickSession) {
+            io.print(
+              items
+                .map((s) => `  #${s.id}  ${(s.title ?? '未命名会话').slice(0, 40)}  ${s.agentName ?? ''}`)
+                .join('\n'),
+            );
+            io.hint('用 /resume <id> 切换到指定会话。');
+            return;
+          }
+          targetId = await opts.pickSession(items);
+        }
+      }
+
+      if (targetId == null) {
+        if (!byId && items.length === 0) {
+          io.print(
+            arg
+              ? `没有匹配「${arg}」的会话（按标题匹配）。`
+              : '没有可切换的会话。会话需与当前进程模式一致；LOCAL 还要求工作区在启动目录内。',
+          );
+        } else {
+          io.hint('已取消。');
+        }
+        return;
+      }
+
+      try {
+        const switched = await opts.switchSession(targetId);
+        // 下一条消息必须带新会话的模型，否则会把新会话模型改回旧值。
+        opts.modelId = switched.modelId ?? opts.modelId;
+        io.hint(`已切换到会话 #${switched.id}${switched.title ? ` · ${switched.title}` : ''}`);
+        if (opts.runner.snapshotIsActive) {
+          await resumeActiveRun(opts, io, '该会话仍在执行，续接当前输出。可用 /cancel 中止。');
+        }
+      } catch (err) {
+        io.print(err instanceof Error ? err.message : String(err), 'err');
+      }
       return;
     }
     case 'model': {

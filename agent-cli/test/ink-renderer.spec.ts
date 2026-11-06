@@ -245,6 +245,26 @@ describe('InkTuiRenderer status line and footer', () => {
     await tick();
     expect(t.renderer.getLastAssistantText()).toContain('回复正文');
   });
+
+  it('resetSessionMetrics clears todo, context and last round text after a session switch', async () => {
+    const t = mount();
+    t.renderer.seedChrome();
+    t.renderer.startRound();
+    t.renderer.onEvent({ type: 'todo_updated', todos: [{ status: 'pending' }] });
+    t.renderer.onEvent({ type: 'context_window', estimated: 128_000, actual: 128_000 });
+    t.renderer.onEvent({ type: 'content_delta', delta: '上一回合\n' });
+    t.renderer.finish(runResult());
+    await tick();
+    expect(t.frame()).toContain('Todo 0/1');
+    expect(t.frame()).toContain('50%');
+    expect(t.renderer.getLastAssistantText()).toContain('上一回合');
+
+    t.renderer.resetSessionMetrics();
+    await tick();
+    expect(t.frame()).not.toContain('Todo');
+    expect(t.frame()).not.toContain('50%');
+    expect(t.renderer.getLastAssistantText()).toBe('');
+  });
 });
 
 describe('InkTuiRenderer thinking', () => {

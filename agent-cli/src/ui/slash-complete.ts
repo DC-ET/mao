@@ -11,6 +11,7 @@ export interface SlashItem {
 export const SLASH_ITEMS: SlashItem[] = [
   { cmd: 'help', hint: '查看斜杠命令' },
   { cmd: 'session', hint: '当前会话信息', help: 'sessionId、Agent、模型、workspace、phase' },
+  { cmd: 'resume', hint: '切换会话', usage: '[id|关键词]', help: '列出最近会话并切换；也可直接给会话 id 或关键词' },
   { cmd: 'model', hint: '切换模型', needsArg: true, usage: '<id|name>', help: '切换当前会话模型（持久写库）' },
   { cmd: 'todo', hint: '查看 Todo' },
   { cmd: 'context', hint: '上下文占用', help: '最近一次 context_window 用量' },
