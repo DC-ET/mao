@@ -16,7 +16,7 @@ import { classifyMdLine, type MdLine } from './markdown-parse';
 import { createTuiApp, type TuiMount } from './app';
 import { allocateLive, computeBudget, tailRows, wrapByWidth } from './layout';
 import { InputController } from './input-controller';
-import { ApprovalController, AskController, type ApprovalChoice } from './modal-controller';
+import { ApprovalController, AskController, SessionPickController, pickSessionWindow, type ApprovalChoice, type SessionPickItem } from './modal-controller';
 import { BRACKETED_PASTE_OFF, BRACKETED_PASTE_ON, KeyDecoder, type KeyEvent } from './keydecode';
 import { pickSymbols, type UiSymbols } from '../ui/symbols';
 import { formatTodoSummary } from '../ui/todo-summary';
@@ -24,6 +24,7 @@ import { formatContextPercent } from '../util/context';
 import { randomUUID } from '../util/uuid';
 import { summarizeToolArgs } from '../ui/tool-format';
 import { truncateToWidth } from '../ui/width';
+import { formatRelativeTime } from '../ui/relative-time';
 import { appendInputHistory, loadInputHistory } from '../config/input-history';
 import type { ApprovalRequest } from './types';
 
@@ -63,7 +64,8 @@ const ESC_FLUSH_MS = 40;
 
 type ModalEntry =
   | { kind: 'ask'; requestId: string; controller: AskController }
-  | { kind: 'approval'; controller: ApprovalController };
+  | { kind: 'approval'; controller: ApprovalController }
+  | { kind: 'session-pick'; controller: SessionPickController };
 
 /**
  * 交互式 TUI 渲染器。
@@ -612,6 +614,18 @@ export class InkTuiRenderer implements Renderer {
     });
   }
 
+  /** 会话选择面板：用户选中后 resolve 会话 id；Esc / Ctrl+C 返回 null。 */
+  pickSession(items: SessionPickItem[]): Promise<number | null> {
+    return new Promise((resolve) => {
+      const controller = new SessionPickController(items, (id) => {
+        this.closeModal((m) => m.kind === 'session-pick' && m.controller === controller);
+        resolve(id);
+      });
+      this.modalQueue = [...this.modalQueue, { kind: 'session-pick', controller }];
+      this.render(true);
+    });
+  }
+
   // === 兼容 REPL 的读写接口 ===
 
   getLastAssistantText(): string {
@@ -642,6 +656,17 @@ export class InkTuiRenderer implements Renderer {
     if (meta.modelName) this.modelName = meta.modelName;
     if (meta.executionMode) this.executionMode = meta.executionMode;
     if (meta.contextWindowTokens && meta.contextWindowTokens > 0) this.contextWindowTokens = meta.contextWindowTokens;
+    this.render(true);
+  }
+
+  /**
+   * 会话切换后复位「会话级指标」：footer 的 Todo / 上下文占用与 `/copy` 的上一回合文本。
+   * 服务端 session_snapshot 不带这些字段，不复位会一直显示上一个会话的数据。
+   */
+  resetSessionMetrics(): void {
+    this.todos = [];
+    this.contextPct = undefined;
+    this.lastRoundText = '';
     this.render(true);
   }
 
@@ -782,7 +807,9 @@ export class InkTuiRenderer implements Renderer {
     const cols = Math.max(20, this.budget.columns - 4);
     const panel = head.kind === 'ask'
       ? this.buildAskPanel(head.controller, cols, maxRows)
-      : this.buildApprovalPanel(head.controller, cols, maxRows);
+      : head.kind === 'approval'
+        ? this.buildApprovalPanel(head.controller, cols, maxRows)
+        : this.buildSessionPickPanel(head.controller, cols, maxRows);
     if (queued > 0) {
       panel.lines.push({ text: `  （还有 ${queued} 个待处理）`, tone: 'dim' });
     }
@@ -858,5 +885,39 @@ export class InkTuiRenderer implements Renderer {
       });
     }
     return { kind: 'approval', borderColor: 'yellow', lines };
+  }
+
+  private buildSessionPickPanel(controller: SessionPickController, cols: number, maxRows: number): PanelView {
+    const s = controller.state;
+    const lines: PanelLine[] = [];
+    lines.push({ text: `切换会话（共 ${s.total} 条 · ↑↓ 选择 · Enter 确认 · Esc 取消）`, tone: 'info', bold: true });
+
+    const overhead = 2; // 标题 + 底部按键提示
+    let room = Math.max(1, maxRows - overhead);
+    const showOverflow = s.total > room;
+    if (showOverflow) room = Math.max(1, room - 1);
+    // 可见行数取「实际预算」与「会话数」的较小值；窗口保证高亮项一定可见。
+    const { offset, size } = pickSessionWindow(s.total, s.cursor, room);
+
+    for (let i = 0; i < size; i++) {
+      const idx = offset + i;
+      const item = s.items[idx];
+      if (!item) break;
+      const pointer = idx === s.cursor ? `${this.symbols.pointer} ` : '  ';
+      const title = (item.title ?? '未命名会话').replace(/\s+/g, ' ').slice(0, 40);
+      const agent = (item.agentName ?? '').slice(0, 12);
+      const updated = formatRelativeTime(item.updatedAt);
+      const flags = `${item.running ? '  ● 运行中' : ''}${item.unread ? '  ● 未读' : ''}`;
+      lines.push({
+        text: truncateToWidth(`${pointer}#${item.id}  ${title}  ${agent}  ${updated}${flags}`, cols),
+        active: idx === s.cursor,
+      });
+    }
+    if (showOverflow) lines.push({ text: `  … 共 ${s.total} 条（↑↓ 滚动）`, tone: 'dim' });
+    lines.push({
+      text: this.asciiOnly ? '  Up/Down 选择  Enter 确认  Esc 取消' : '  ↑↓ 选择  Enter 确认  Esc 取消',
+      tone: 'dim',
+    });
+    return { kind: 'session-pick', borderColor: 'cyan', lines };
   }
 }

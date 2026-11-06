@@ -99,6 +99,13 @@ describe('slash commands', () => {
       expect(help).toContain(`/${item.cmd}`);
     }
   });
+
+  it('/resume without arguments submits immediately (opens the picker)', () => {
+    const picks = slashPalette('/resume');
+    expect(picks).toHaveLength(1);
+    expect(picks[0].value).toBe('/resume');
+    expect(picks[0].submit).toBe(true);
+  });
 });
 
 describe('formatTodoSummary', () => {

@@ -75,7 +75,7 @@ export interface PanelLine {
 
 /** 弹窗视图：已按宽度裁剪，行数即终端行数（不含边框）。 */
 export interface PanelView {
-  kind: 'ask' | 'approval';
+  kind: 'ask' | 'approval' | 'session-pick';
   borderColor: string;
   lines: PanelLine[];
 }

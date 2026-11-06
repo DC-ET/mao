@@ -272,3 +272,94 @@ export class ApprovalController {
     }
   }
 }
+
+export interface SessionPickItem {
+  id: number;
+  title?: string | null;
+  agentName?: string | null;
+  updatedAt?: string | null;
+  running?: boolean;
+  unread?: boolean;
+}
+
+export interface SessionPickViewState {
+  kind: 'session-pick';
+  items: SessionPickItem[];
+  /** 当前高亮项在列表中的绝对下标。 */
+  cursor: number;
+  total: number;
+}
+
+/**
+ * 会话选择窗口：在 total 条里算出可见区间，保证 cursor 一定落在 [offset, offset+size) 内。
+ * 可见行数由渲染层按终端实际预算传入（终端很矮时也不能把高亮项滚出屏幕）。
+ */
+export function pickSessionWindow(
+  total: number,
+  cursor: number,
+  maxVisible: number,
+): { offset: number; size: number } {
+  const size = Math.max(0, Math.min(Math.max(0, maxVisible), Math.max(0, total)));
+  if (size === 0) return { offset: 0, size: 0 };
+  const c = Math.min(Math.max(0, cursor), total - 1);
+  const offset = Math.min(Math.max(0, c - Math.floor(size / 2)), Math.max(0, total - size));
+  return { offset, size };
+}
+
+/**
+ * `/resume` 会话选择面板的键盘状态机：↑↓ / j k 移动、Enter 确认、Esc / Ctrl+C 取消。
+ * 与 AskController / ApprovalController 一样，由 InkTuiRenderer 的 modalQueue 统一分发。
+ */
+export class SessionPickController {
+  private cursor = 0;
+
+  constructor(
+    readonly items: SessionPickItem[],
+    private readonly onDone: (id: number | null) => void,
+  ) {}
+
+  get state(): SessionPickViewState {
+    return {
+      kind: 'session-pick',
+      items: this.items,
+      cursor: this.cursor,
+      total: this.items.length,
+    };
+  }
+
+  handleKey(ev: KeyEvent): void {
+    if (ev.kind === 'ctrl' && ev.letter === 'c') {
+      this.onDone(null);
+      return;
+    }
+    if (ev.kind === 'escape') {
+      this.onDone(null);
+      return;
+    }
+    if (ev.kind === 'enter') {
+      const item = this.items[this.cursor];
+      this.onDone(item ? item.id : null);
+      return;
+    }
+    if (ev.kind === 'up') {
+      this.move(-1);
+      return;
+    }
+    if (ev.kind === 'down') {
+      this.move(1);
+      return;
+    }
+    if (ev.kind === 'char') {
+      for (const ch of ev.text.toLowerCase()) {
+        if (ch === 'k') this.move(-1);
+        else if (ch === 'j') this.move(1);
+      }
+    }
+  }
+
+  private move(delta: number): void {
+    if (this.items.length === 0) return;
+    const next = this.cursor + delta;
+    this.cursor = Math.min(Math.max(0, next), this.items.length - 1);
+  }
+}

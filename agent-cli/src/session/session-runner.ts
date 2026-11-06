@@ -250,6 +250,67 @@ export class SessionRunner {
     this.opts.ws.close();
   }
 
+  /**
+   * 只换会话、不关进程：退订旧会话并把旧会话标记已读，然后挂载新会话。
+   * 与 shutdown() 的区别：不断 WS、不关本地执行器、不解除事件监听。
+   * 新会话挂载失败时 best-effort 回挂原会话（保留其 todo / context 等数据）；
+   * 回挂也失败则解除挂载，由调用方提示退出重开，避免半挂载状态。
+   */
+  async switchTo(session: SessionVO): Promise<void> {
+    if (session.id == null) throw new CliError('会话缺少 id');
+    if (this.busy) throw new CliError('当前任务仍在执行。请等待结束或 /cancel 再切换会话。');
+
+    const prev = this.session;
+    const prevId = this.sessionId;
+
+    this.disarmMaxDuration();
+    // 必须清空：否则 attach 内的 waitForSnapshot 会因旧会话快照立即返回，
+    // snapshotIsActive 等判断会继续沿用旧会话的相位。
+    this.snapshotPhase = null;
+
+    if (prevId && prevId !== session.id) {
+      this.opts.ws.unsubscribe(prevId);
+      try {
+        await this.opts.rest.markRead(prevId);
+      } catch {
+        // 切换不因「标记已读」失败而中断
+      }
+    }
+
+    try {
+      await this.attach(session);
+    } catch (err) {
+      // 回挂原会话：成功后保留原会话的 todo / context（清空放在切换成功之后）。
+      let rolledBack = false;
+      if (prev?.id != null) {
+        try {
+          await this.attach(prev);
+          rolledBack = true;
+        } catch {
+          // ignore
+        }
+      }
+      if (!rolledBack) {
+        // 草稿态（没有可回挂的原会话）或回挂失败：解除挂载。
+        // attach() 会先把 session/sessionId 指向目标再订阅，失败时必须复位，
+        // 否则会留下「声称挂在目标上、实际没订阅」的半挂载状态。
+        this.session = null;
+        this.sessionId = 0;
+        this.snapshotPhase = null;
+        if (prev?.id != null) {
+          throw new CliError(
+            `${err instanceof Error ? err.message : String(err)}\n会话已解除挂载，请退出后重开 mao-agent。`,
+          );
+        }
+      }
+      throw err;
+    }
+
+    // 切换成功后才清会话级聚合数据（失败回挂时保留原会话的 todo / context）。
+    this.todos = [];
+    this.lastContext = {};
+  }
+
   getSentCancelPayload(): { type: string; sessionId: number } {
     return { type: 'cancel', sessionId: this.sessionId };
   }

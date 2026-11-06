@@ -1,9 +1,11 @@
 import type { CliConfig } from '../args';
 import { rememberLastSession, resolveConfig, type ResolvedConfig } from '../config/config-store';
 import type { RestClient } from '../rest/rest-client';
-import type { CreateSessionRequest, SessionVO } from '../rest/types';
+import type { CreateSessionRequest, SafeModelVO, SessionVO } from '../rest/types';
 import { WsClient } from '../ws/ws-client';
 import { SessionRunner, exitCodeFor, pickLatestSession, resolveAgent, resolveModelId } from '../session/session-runner';
+import { filterSwitchableSessions, isLocalWorkspaceAllowed } from '../session/session-filter';
+import { isRunningPhase } from '../ws/event-filter';
 import { TextRenderer } from '../render/text-renderer';
 import { JsonRenderer } from '../render/json-renderer';
 import type { Renderer, RunResult } from '../render/types';
@@ -65,20 +67,21 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
   const session: SessionVO = target.kind === 'existing' ? target.session : target.draft;
   if (target.kind === 'existing') rememberLastSession(session.id!);
 
-  const modelId = await resolveModelId(rest, cfg.model, resolved.defaultModelId);
+  let modelId = await resolveModelId(rest, cfg.model, resolved.defaultModelId);
   let contextWindowTokens = resolveContextWindowTokens(session, undefined, modelId);
   let modelNames: string[] = [];
+  let modelsCache: SafeModelVO[] = [];
   try {
-    const models = await rest.listActiveModels();
+    modelsCache = await rest.listActiveModels();
     // 只放显示名：同一厂商串常对应多条配置，混进补全会让用户选到无法唯一定位的候选。
     // 同时 trim，库里有带尾随空格的显示名，补全填进去会与解析侧的归一化不一致。
-    modelNames = [...new Set(models.map((m) => (m.name ?? '').trim()).filter((n) => n !== ''))];
+    modelNames = [...new Set(modelsCache.map((m) => (m.name ?? '').trim()).filter((n) => n !== ''))];
     if (!(session.contextWindowTokens != null && session.contextWindowTokens > 0)) {
-      contextWindowTokens = resolveContextWindowTokens(session, models, modelId);
+      contextWindowTokens = resolveContextWindowTokens(session, modelsCache, modelId);
     }
     // 延迟创建的草稿只有 modelId：补上显示名，banner / 状态栏与真实会话一致。
     if (session.modelName == null && session.modelId != null) {
-      const found = models.find((m) => Number(m.id) === Number(session.modelId));
+      const found = modelsCache.find((m) => Number(m.id) === Number(session.modelId));
       if (found?.name) session.modelName = found.name;
     }
   } catch {
@@ -272,6 +275,88 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
       inkRenderer?.announce(`已创建会话 #${createdSession.id}`);
     };
 
+    /** 可切换会话：拉全量活跃会话，按模式 / 工作区过滤，按最近更新排序并截断。 */
+    const listSwitchableSessions = async (query?: string): Promise<SessionVO[]> => {
+      const all = await rest.listSessions({ status: 'ACTIVE', keyword: query || undefined });
+      return filterSwitchableSessions(all, {
+        currentId: runner.getSession()?.id,
+        localMode,
+        localWorkspace,
+      });
+    };
+
+    /**
+     * 切换到已有会话（供 REPL `/resume` 调用）：只换会话、不关进程。
+     * 任一步失败都保持当前会话不变（runner.switchTo 内部负责回挂）。
+     */
+    const switchSession = async (id: number): Promise<SessionVO> => {
+      // 1. 本进程忙 → 拒绝（REPL 层已先拦一道，这里兜底）
+      if (runner.isRunning()) {
+        throw new CliError('当前任务仍在执行：等它结束或 /cancel 后再切换会话。');
+      }
+      // 2. 目标 = 当前会话
+      if (runner.getSession()?.id === id) {
+        throw new CliError(`已经是当前会话 #${id}`);
+      }
+      // 3. 取会话（不存在 / 非本人 → 后端 3002）
+      const next = await rest.getSession(id);
+
+      // 4. 模式必须一致：LOCAL 进程只能切 LOCAL 会话，反之亦然
+      const nextLocal = next.executionMode === 'LOCAL';
+      if (nextLocal !== localMode) {
+        throw new CliError(
+          `无法切换：该会话是 ${next.executionMode ?? 'CLOUD'} 模式，当前进程是 ${localMode ? 'LOCAL' : 'CLOUD'} 模式。\n` +
+            `请退出后用 mao-agent resume ${id} 打开。`,
+        );
+      }
+
+      // 5. LOCAL 会话的 workspace 必须落在启动工作区内（与本地执行器信任边界一致）
+      if (nextLocal && !isLocalWorkspaceAllowed(next.workspace, localWorkspace)) {
+        throw new CliError(
+          `无法切换：该会话的本地工作区是 ${next.workspace ?? '(空)'}，不在当前工作区 ${localWorkspace} 内。\n` +
+            `请退出后用 mao-agent resume ${id} 打开。`,
+        );
+      }
+
+      // 6. --if-running=fail 时尊重显式选择（默认 wait：切进去续接输出）
+      if (cfg.ifRunning === 'fail' && (next.running || isRunningPhase(next.phase))) {
+        throw new CliError(`该会话仍在执行（--if-running=fail）：#${id}`);
+      }
+
+      // 7. 真正切换（旧会话退订 + 标记已读；失败回挂）
+      try {
+        await runner.switchTo(next);
+      } catch (err) {
+        // 回挂也失败时 runner 已解除挂载：回到「未挂载」状态，避免后续消息发往无效会话。
+        if (!runner.getSession()) attached = false;
+        throw err;
+      }
+      attached = true;
+      createdSession = undefined;
+
+      // 8. 会话级外部状态同步
+      rememberLastSession(id);
+      modelId = next.modelId ?? modelId;
+      contextWindowTokens = resolveContextWindowTokens(next, modelsCache, modelId);
+      inkRenderer?.setMeta({
+        agentName: next.agentName,
+        modelName: next.modelName,
+        executionMode: nextLocal ? 'LOCAL' : 'CLOUD',
+        contextWindowTokens,
+      });
+      // footer 的 Todo / 上下文占用与 /copy 的上一回合文本都属于旧会话，必须复位。
+      inkRenderer?.resetSessionMetrics();
+
+      // 9. 留痕输出：分隔行 + 最近 3 轮摘要（摘要失败不影响切换结果）
+      const recent = await loadHistory(rest, id, false).catch(() => [] as string[]);
+      inkRenderer?.print(
+        `── 已切换到会话 #${id}${next.title ? ` · ${next.title}` : ''} ──` +
+          (recent.length > 0 ? `\n${recent.join('\n')}` : ''),
+      );
+
+      return next;
+    };
+
     await runRepl({
       runner,
       renderer: inkRenderer!,
@@ -296,6 +381,19 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
         await runner.shutdown();
       },
       ensureSession,
+      listSwitchableSessions,
+      switchSession,
+      pickSession: (items) =>
+        inkRenderer!.pickSession(
+          items.map((s) => ({
+            id: s.id!,
+            title: s.title,
+            agentName: s.agentName,
+            updatedAt: s.updatedAt,
+            running: s.running,
+            unread: s.unread,
+          })),
+        ),
       firstPrompt: cfg.prompt || undefined,
       queuedInput: resolved.ui.queuedInput,
     });
