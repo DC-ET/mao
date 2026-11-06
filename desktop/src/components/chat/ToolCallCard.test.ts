@@ -774,4 +774,28 @@ describe('ToolCallCard 执行中耗时', () => {
       vi.useRealTimers()
     }
   })
+
+  it('耗时不足 1s 不显示，跨过 1s 阈值才出现', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_000_000)
+      // 已耗时 800ms：不渲染，避免一闪而过的 ms 数字
+      mounted = mountCard(makeShellCall({
+        status: 'running',
+        result: undefined,
+        startedAtMs: 1_000_000 - 800,
+      }))
+      await nextTick()
+      expect(elapsedText()).toBeNull()
+
+      // 推进到累计 1.8s（首个 1s tick 落点）：阈值已跨过，出现
+      vi.advanceTimersByTime(1000)
+      await nextTick()
+      expect(elapsedText()).toBe('1s')
+    } finally {
+      mounted?.destroy()
+      mounted = null
+      vi.useRealTimers()
+    }
+  })
 })

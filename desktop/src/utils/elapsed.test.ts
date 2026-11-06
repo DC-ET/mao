@@ -2,11 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { elapsedBaseMs, formatElapsedMs } from './elapsed'
 
 describe('formatElapsedMs', () => {
-  it('秒以下用 ms', () => {
-    expect(formatElapsedMs(0)).toBe('0ms')
-    expect(formatElapsedMs(999)).toBe('999ms')
-  })
-
   it('一分钟内用秒', () => {
     expect(formatElapsedMs(1000)).toBe('1s')
     expect(formatElapsedMs(59_999)).toBe('59s')
