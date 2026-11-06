@@ -2,7 +2,7 @@
 
 > 后端把置顶、收藏、标题过滤都做好了，前端一个入口都没接；长会话回访时「上次那段结论在哪」只能滚动硬找。会话是 Mao 的核心资产，列表超过两屏后就既排不开也找不回。
 
-- 状态：已细化，技术方案待评审（第十六批）：[docs/plan/2026-10-26-session-list-navigation-technical-design.md](../plan/2026-10-26-session-list-navigation-technical-design.md)
+- 状态：已落地（见 [README](README.md)）
 - 日期：2026-10-25
 - 提案总览：见 [docs/proposals/README.md](README.md)
 - 规模：小~中（P1 约 2-3 人日、P2 约 1 人日、P3 约 2-3 人日；纯前端为主，零迁移）

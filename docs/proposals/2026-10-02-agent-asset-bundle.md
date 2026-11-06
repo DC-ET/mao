@@ -1,6 +1,6 @@
 # 提案：Agent 资产化 —— 导出 / 导入 / 克隆 / 团队共享目录
 
-- 状态：提案，未评审
+- 状态：已落地（见 [README](README.md)）
 - 日期：2026-10-02
 - 提案总览：见 `docs/proposals/README.md`
 

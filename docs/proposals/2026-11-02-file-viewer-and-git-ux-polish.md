@@ -5,7 +5,7 @@
 > 2. **Diff 查看器写死「左右并排（Side-by-Side）」，窄屏或三栏全开时代码被挤成两条缝**：`FileDiffViewer.vue:136` 硬编码了 `renderSideBySide: true`——当用户同时开着左栏任务列表和右栏检查器时，中间区域只有 600~700px 宽，左右分栏后每边只剩 300px，稍微长一点的代码行根本没法看；而 Monaco Diff Editor 原生就支持一键切换「并排 / 行内（Inline）」视图与「上一处 / 下一处变更」跳转。
 > 3. **Git 历史与对比视图跟「对话」断联**：在 Git 管理器「历史」Tab 里看到某个历史提交改出了 bug，只能点复制 7 位 hash 再切回聊天框手打说明；而且提交展开后**只显示单行标题（`%s`），提交正文的详细说明（`%b`）完全看不到**；想按提交信息里的关键词搜一个「印象中改过」的提交也搜不了（前端从未传过后端已有的 `path` 过滤，关键词搜索则前后端都没有），只能一页页翻；在「分支」Tab 里也只能从已有的远端分支建跟踪分支，不能基于当前 HEAD 新建一个本地分支。
 
-- 状态：已立项（技术方案见 [docs/plan/2026-11-03-file-viewer-and-git-ux-polish-technical-design.md](../plan/2026-11-03-file-viewer-and-git-ux-polish-technical-design.md)；§8 两条评审定案均已采纳落地）
+- 状态：已落地（见 [README](README.md)）
 - 日期：2026-11-02
 - 提案总览见 [docs/proposals/README.md](README.md)
 - 规模：小~中（三项合计约 2~3 人日；**零数据库迁移**，90% 为前端既有能力暴露，后端 Git 扩展 3 处极薄参数：提交正文 / 关键词搜索 / 新建本地分支）

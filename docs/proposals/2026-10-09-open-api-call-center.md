@@ -1,6 +1,6 @@
 # 提案：开放接口调用中心（Open API Call Center）—— 外部系统驱动 Agent，不能是个黑盒
 
-- 状态：待评审
+- 状态：已落地（见 [README](README.md)）
 - 日期：2026-10-09
 - 提案总览：见 `docs/proposals/README.md`
 

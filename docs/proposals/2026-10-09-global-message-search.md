@@ -1,6 +1,6 @@
 # 提案：跨会话全文检索（Global Search）—— 那个答案 Agent 上周明明说过
 
-- 状态：待评审
+- 状态：已落地（见 [README](README.md)）
 - 日期：2026-10-09
 - 提案总览：见 `docs/proposals/README.md`
 

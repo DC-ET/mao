@@ -2,7 +2,7 @@
 
 > 一个自托管产品的真实漏斗：装起来 → 打开网页 → 默认密码没改 / 模型 Key 没配 / 不知道该让 Agent 干什么 → 关掉，再也没回来。功能已经 340 多个版本了，「第一次跑通一个任务」这件事却没人管。
 
-- 状态：方向已认可（2026-10-25），已细化技术方案待评审：[docs/plan/2026-10-25-first-run-onboarding-technical-design.md](../plan/2026-10-25-first-run-onboarding-technical-design.md)
+- 状态：已落地（见 [README](README.md)）
 - 日期：2026-10-25
 - 提案总览：见 [docs/proposals/README.md](README.md)
 - 规模：小~中（检测服务 + 向导组件 + 种子内容；零核心链路改动）

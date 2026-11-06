@@ -2,7 +2,7 @@
 
 > 后端 PUT 早支持全字段修改，admin 有完整表单、mao-cli 有 `scheduled-task update`，唯独日常承载定时任务管理的桌面端面板只能启停和删除——改个周期、改句提示词，只能删掉让 Agent 用自然语言重建。三个入口三种能力，最常用的那个最弱。
 
-- 状态：已细化，技术方案待评审（第十七批）：[docs/plan/2026-10-26-scheduled-task-editing-technical-design.md](../plan/2026-10-26-scheduled-task-editing-technical-design.md)（含 §0 八项待确认决策与 §7 十八条冲突风险表）
+- 状态：已落地（见 [README](README.md)）
 - 日期：2026-10-26
 - 提案总览见 [docs/proposals/README.md](README.md)
 - 规模：小（P1 约 2 人日、P2 约 1 人日、P3 约 0.5-1 人日；零迁移，后端仅权限门一行）

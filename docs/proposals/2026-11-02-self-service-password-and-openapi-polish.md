@@ -5,7 +5,7 @@
 > 这直接带来两个问题：① 普通本地账号用户（无 `user:write` 权限）在桌面端「设置 → 个人信息」里**根本没有修改密码的入口**，管理员建号发了初始密码后，用户自己改不掉；② 管理后台如果给某个运营角色不开 `user:write`，连管理员自己在后台顶栏点「修改密码」都会 403，而开了 `user:write` 改自己密码居然连旧密码都不校验。
 > 与此同时，同属「账号与外部接入配置」的「设置 → 开放接口」里也有两处明显断层：Webhook 触发器建好后**列表里只能停用/删除，改不了名称、换不了 Agent 或绑定会话**（后端 `PUT /v1/open/triggers/:id` 早已支持全字段修改，前端却只用来切 `enabled` 开关）；出站订阅建好后**没有像「消息通知 → 发送测试通知」那样的「发送测试事件」按钮**，用户配完 HTTPS 回调地址只能干等真实任务跑完才知道签名验没验过。
 
-- 状态：已立项（技术方案见 [docs/plan/2026-11-02-self-service-password-and-openapi-polish-technical-design.md](../plan/2026-11-02-self-service-password-and-openapi-polish-technical-design.md)；2026-11-02 待决策 2 项已按推荐定案，见 §8）
+- 状态：已落地（见 [README](README.md)）
 - 日期：2026-11-02
 - 提案总览见 [docs/proposals/README.md](README.md)
 - 规模：小~中（三项合计约 2 人日；**零迁移**，不动执行内核）

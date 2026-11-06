@@ -2,7 +2,7 @@
 
 > 信号哨兵轮询记录里，「详情」列只展示 `valueHash` 的一小段切片或 `error`。用户想回答「到底变了什么」的问题仍然要去猜：变的是哪个字段、旧值多少、新值多少。要回答「为什么会被触发」，记录里只有一句「变化」——与同批的失败原因透出（`errorSummary`）断点同构：后端早就存了值，只是没有展示。
 
-- 状态：待评审
+- 状态：已落地（见 [README](README.md)）
 - 日期：2026-11-04
 - ⚠️ **§5 的「数据库迁移：无（零迁移）」已由技术方案修订**：旧值无现成落点（`lastValueSnippet` 是单值、每轮被覆盖，读取时与新值是同一个字符串），必须新增两条迁移 `V183__signal_watcher_check_add_value_snippets.sql` / `V184__signal_watcher_add_last_change_snippets.sql`，见 [docs/plan/2026-11-04-signal-watcher-check-value-compare-technical-design.md](../plan/2026-11-04-signal-watcher-check-value-compare-technical-design.md)。后续勿按本提案「零迁移」实施。
 - 提案总览见 [docs/proposals/README.md](README.md)

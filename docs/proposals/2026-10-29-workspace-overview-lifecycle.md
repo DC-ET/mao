@@ -2,7 +2,7 @@
 
 > 文件直管（0.0.281）解决的是「**一个工作区里面**」的操作，Git 管理器（0.0.375）解决的是「一个工作区里面的版本」，但「**我的所有工作区**」至今没有一块面板：新建任务时那个「复用已有工作区」下拉（`/v1/sessions/cloud-projects`）只是一次同步 `readdir` 的目录名平铺——多大、被哪些会话用着、多久没动过、能不能删，一概不知。自托管跑上几个月，git clone 的仓库、试验性目录、机器人通道的工作区越积越多，磁盘只进不出，唯一的清理方式是管理员 ssh 上去 `du` + `rm`。
 
-- 状态：**已细化，技术方案待评审**（[../plan/2026-10-29-workspace-overview-lifecycle-technical-design.md](../plan/2026-10-29-workspace-overview-lifecycle-technical-design.md)，11 项决策已定案；方案对提案有一处关键收窄：通道工作区（feishu-chat / dingtalk-chat，位于全局根、按机器人聚合）明确不做总览与清理）
+- 状态：已落地（见 [README](README.md)）
 - 日期：2026-10-29
 - 提案总览见 [docs/proposals/README.md](README.md)
 - 规模：中（P1 约 2~3 人日、P2 约 1~2 人日；零迁移）
