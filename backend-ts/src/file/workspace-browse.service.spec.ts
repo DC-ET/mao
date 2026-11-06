@@ -183,7 +183,7 @@ describe('WorkspaceBrowseService experience mount', () => {
     await expect(service.readFile(ws, '团队经验/../../elsewhere/secret.txt', 0, 10, lib))
       .rejects.toMatchObject({ code: ErrorCode.FORBIDDEN.code });
 
-    rmSync(join(ws, '团队经验'));
+    rmSync(join(ws, '团队经验'), { recursive: true, force: true });
     const hijacked = join(root, 'hijacked');
     mkdirSync(hijacked);
     writeFileSync(join(hijacked, 'x.md'), 'x');

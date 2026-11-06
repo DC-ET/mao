@@ -7,7 +7,7 @@ import { ContainerMcpBridge } from './container-mcp-bridge.js';
 import { PathSandbox } from '../safety/path-sandbox.js';
 import type { ContainerPty, ContainerPtyFactory } from './pty-hub.js';
 import type { RuntimeEnvelope } from './runtime-channel-protocol.js';
-import { useTmpDir } from '../../testing/tmp-dir.js';
+import { useTmpDir, useTmpDirOutsideRepo } from '../../testing/tmp-dir.js';
 
 /**
  * 容器内 runtime agent 的通道行为回归（round-01 BUG-1 / BUG-6 / BUG-7）：
@@ -62,8 +62,11 @@ describe('runtime agent channel behavior', () => {
     agentBuild?: string | null,
     hellos?: Array<{ build: string | null }>,
   ) {
-    const channelDir = join(base, 'channels');
-    mkdirSync(channelDir, { recursive: true });
+    // Unix socket 路径上限 108 字节（sun_path）：仓库内夹具根已 63 字节，再拼
+    // channels/<uid>/runtime.sock 会超限导致 listen EINVAL。channelDir 与路径沙箱
+    // 夹具（workspace/runtime/users/...）互不依赖，单独放系统临时目录。
+    // useTmpDirOutsideRepo 已 mkdtemp 建好目录，无需再 mkdirSync。
+    const channelDir = useTmpDirOutsideRepo('mao-agent-chan-');
     server = new RuntimeChannelServer({
       channelDir,
       tokenOf: () => 'probe-token',

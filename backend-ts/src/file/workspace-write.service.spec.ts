@@ -49,7 +49,7 @@ describe('workspace write service', () => {
     expect(written).toMatchObject({ code: ErrorCode.FORBIDDEN.code, message: EXPERIENCE_READONLY_MESSAGE });
     expect(lstatSync(join(workspace, '团队经验')).isSymbolicLink()).toBe(true);
 
-    rmSync(join(workspace, '团队经验'));
+    rmSync(join(workspace, '团队经验'), { recursive: true, force: true });
     mkdirSync(join(workspace, '团队经验'));
     await service.write(1, workspace, '团队经验/note.md', 'hello');
     expect(readFileSync(join(workspace, '团队经验', 'note.md'), 'utf8')).toBe('hello');

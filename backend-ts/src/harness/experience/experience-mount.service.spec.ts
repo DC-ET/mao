@@ -92,7 +92,7 @@ describe('ExperienceMountService', () => {
     mountService.syncForSession(workspace, 31, true, false);
     expect(readFileSync(join(root, '31', 'INDEX.md'), 'utf8')).toBe(staleIndex);
     // 链接缺失（存量会话首遇）→ 完整挂载：索引被重建
-    rmSync(join(workspace, MOUNT));
+    rmSync(join(workspace, MOUNT), { recursive: true, force: true });
     writeFileSync(join(root, '31', '2026-10-24-a.md'), '---\ntitle: A\n---\n');
     mountService.syncForSession(workspace, 31, true, false);
     expect(readFileSync(join(root, '31', 'INDEX.md'), 'utf8')).toContain('2026-10-24-a.md');

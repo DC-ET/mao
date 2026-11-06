@@ -191,6 +191,9 @@ describe('TerminalManager', () => {
   });
 
   it('leaves MAO_BASE_URL unset when the site address is not configured', async () => {
+    // 宿主机 process.env 可能带 MAO_BASE_URL（部署链路注入），而 buildEnv 会整包继承
+    // 未剥离的非敏感键——stub 掉才能验证「无 provider 时确实不注入」
+    vi.stubEnv('MAO_BASE_URL', undefined);
     const { manager, root } = await newManager();
     await manager.create({ sessionId: 10, userId: 7, workspace: root });
     expect(FakePty.instances[0].options.env.MAO_BASE_URL).toBeUndefined();

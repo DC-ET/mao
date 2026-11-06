@@ -116,6 +116,8 @@ test('all three tabs preserve values and save the complete payload', async ({ pa
     avatarUrl: null, name: '跨页签 Agent', description: '保留描述', systemPrompt: '保留角色定义',
     skillNames: ['mock-skill'], mcpServerIds: [21], isDefault: 1, defaultModelId: 11,
     clientVisible: true, httpToolIds: [],
+    // 凭据域开关未开 = null（不限制）；见 AgentFormDialog.gitDomainsPayload 三态
+    gitAllowedDomains: null,
     experiences: [{ id: null, content: '保留经验', sortOrder: 0, enabled: false }],
     suggestedQuestions: [],
   } }])
