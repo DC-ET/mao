@@ -366,6 +366,60 @@ describe('TaskIndexPanel 新建会话入口', () => {
   })
 })
 
+describe('TaskIndexPanel 分组「+」新建任务的工作区沿用', () => {
+  const feishuRow = (id: string) => ({
+    ...row(id),
+    workspace: '/opt/mao-data/workspace/feishu-chat/2/oc_4fc3cb715272aae592213f167743846d',
+    projectKey: 'feishu-chat-2-oc_4fc3cb715272aae592213f167743846d',
+  })
+  const groupAddBtn = (host: HTMLElement) =>
+    qa(host, '.group-add-btn').find(b => b.title === '在该分组新建任务')!
+
+  it('飞书群分组点「+」：带出该群工作区与复用标记（回归：掉到临时工作区）', async () => {
+    store.sessions = [feishuRow('1')]
+    const onNewTaskFromGroup = vi.fn()
+    const { host, app } = mountPanel('standard', { onNewTaskFromGroup })
+    await tick()
+    groupAddBtn(host).click()
+    await tick()
+    expect(onNewTaskFromGroup).toHaveBeenCalledTimes(1)
+    const payload = onNewTaskFromGroup.mock.calls[0][0]
+    expect(payload.workspace).toBe('/opt/mao-data/workspace/feishu-chat/2/oc_4fc3cb715272aae592213f167743846d')
+    expect(payload.reuseWorkspace).toBe(true)
+    // 通道 projectKey 是通道标识不是项目 slug，不得带给后端（曾致「工作区不存在」）
+    expect(payload.cloudProjectKey).toBeUndefined()
+    app.unmount()
+  })
+
+  it('共享云项目分组点「+」：仍带项目键，不预填工作区', async () => {
+    store.sessions = [{ ...row('1'), workspace: '/opt/mao-data/workspace/2/projects/mao', projectKey: 'mao' }]
+    const onNewTaskFromGroup = vi.fn()
+    const { host, app } = mountPanel('standard', { onNewTaskFromGroup })
+    await tick()
+    groupAddBtn(host).click()
+    await tick()
+    const payload = onNewTaskFromGroup.mock.calls[0][0]
+    expect(payload.cloudProjectKey).toBe('mao')
+    expect(payload.workspace).toBeUndefined()
+    expect(payload.reuseWorkspace).toBeUndefined()
+    app.unmount()
+  })
+
+  it('临时工作区分组点「+」：不预填任何工作区', async () => {
+    store.sessions = [row('1')]
+    const onNewTaskFromGroup = vi.fn()
+    const { host, app } = mountPanel('standard', { onNewTaskFromGroup })
+    await tick()
+    groupAddBtn(host).click()
+    await tick()
+    const payload = onNewTaskFromGroup.mock.calls[0][0]
+    expect(payload.workspace).toBeUndefined()
+    expect(payload.reuseWorkspace).toBeUndefined()
+    expect(payload.cloudProjectKey).toBeUndefined()
+    app.unmount()
+  })
+})
+
 describe('TaskIndexPanel 右键菜单删除路径', () => {
   it('多选态下右键「删除」改走确认弹窗，不落入无宿主的内联确认（回归：删除死路）', async () => {
     store.sessions = [row('1')]

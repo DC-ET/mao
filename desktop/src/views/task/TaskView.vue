@@ -1451,7 +1451,7 @@ async function handleNewTask() {
   await navigateToNewTask(getCurrentNewTaskDefaults())
 }
 
-async function handleNewTaskFromGroup(payload: { agentId: string; executionMode: string; workspace?: string; cloudProjectKey?: string; permissionLevel?: string; modelId?: number }) {
+async function handleNewTaskFromGroup(payload: { agentId: string; executionMode: string; workspace?: string; reuseWorkspace?: boolean; cloudProjectKey?: string; permissionLevel?: string; modelId?: number }) {
   await navigateToNewTask(payload)
 }
 

@@ -220,7 +220,7 @@ import { useTerminal } from '../../composables/useTerminal'
 import { removeSessionTabsFor } from '../../composables/useCenterTabs'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import { useRelativeTime, formatRelativeTime } from '../../composables/useRelativeTime'
-import { cloudGroupKey, isEmbedGroupKey, isGroupRenameable, isSharedCloudProject, resolveGroupLabel, SIGNAL_GROUP_KEY } from '../../utils/cloud-project'
+import { cloudGroupKey, cloudProjectKeyForNewTask, isEmbedGroupKey, isGroupRenameable, newTaskWorkspaceFromSession, resolveGroupLabel, SIGNAL_GROUP_KEY } from '../../utils/cloud-project'
 import { planFocusReveal, planGroupReveal } from '../../utils/taskSidebarReveal'
 import { sessionToFocusCandidate, sortByFocusPriority, isHistoryEligible } from '../../utils/focusSort'
 import TaskSessionGroupList from './TaskSessionGroupList.vue'
@@ -240,7 +240,7 @@ const emit = defineEmits<{
   toggle: []
   newTask: []
   'update:listMode': [mode: 'standard' | 'focus']
-  newTaskFromGroup: [payload: { agentId: string; executionMode: string; workspace?: string; cloudProjectKey?: string; permissionLevel?: string; modelId?: number }]
+  newTaskFromGroup: [payload: { agentId: string; executionMode: string; workspace?: string; reuseWorkspace?: boolean; cloudProjectKey?: string; permissionLevel?: string; modelId?: number }]
 }>()
 
 const router = useRouter()
@@ -931,13 +931,15 @@ async function onGroupNewTask(group: { sessions: Session[] }) {
     ? group.sessions.find(s => String(s.id) === String(activeId))
     : undefined
   const source = activeInGroup || last
+  // 与「新会话」宽按钮同口径：共享云项目沿用项目，通道会话（飞书群/私聊、钉钉）沿用
+  // 该群/私聊工作区，临时与其他目录不沿用。通道那一支以前漏了，点分组「+」会掉到临时工作区。
+  const carriedWorkspace = newTaskWorkspaceFromSession(source)
   emit('newTaskFromGroup', {
     agentId: String(source.agentId),
     executionMode: source.executionMode,
-    cloudProjectKey: source.executionMode === 'CLOUD' && isSharedCloudProject(source)
-      ? source.projectKey
-      : undefined,
-    workspace: source.executionMode === 'LOCAL' ? source.workspace : undefined,
+    cloudProjectKey: cloudProjectKeyForNewTask(source),
+    workspace: carriedWorkspace || undefined,
+    reuseWorkspace: carriedWorkspace ? true : undefined,
     permissionLevel: source.permissionLevel,
     modelId: source.modelId
   })
