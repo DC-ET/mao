@@ -691,9 +691,10 @@ export function useStreamWS() {
           sessionStore.setStreaming(sessionId, false)
           sessionStore.appendToolCallStart(sessionId, data)
           sessionStore.clearLlmRetry(sessionId)
-          // 轨迹 tab 的进行中计时：duration_ms 要等工具结束才有，起表由客户端时钟负责
+          // 轨迹 tab 的进行中计时：实时事件以收包时刻起表（≈服务端发送时刻）；订阅重放的
+          // 在途调用带 elapsed_ms（服务端已耗时），基座换算到真正的开始时刻，刷新/重连不从 0 计
           if (typeof data?.executionId === 'string') {
-            sessionStore.applyLiveToolStart(sessionId, data.executionId, data.tool_call_id, data.tool_name)
+            sessionStore.applyLiveToolStart(sessionId, data.executionId, data.tool_call_id, data.tool_name, data.elapsed_ms)
           }
         }
         break

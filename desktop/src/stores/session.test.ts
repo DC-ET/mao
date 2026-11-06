@@ -141,6 +141,27 @@ describe('session store 实体/投影模型', () => {
     expect(call?.startedAtMs).toBeLessThanOrEqual(after)
   })
 
+  it('订阅重放的在途调用按服务端已耗时起表，刷新/重连后不从 0 计', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_000_000)
+      const store = useSessionStore()
+      store.addUserMessage('1', { id: 'u1', role: 'user', content: '跑构建', createdAt: '2026-11-06 10:00:00' })
+      // 后端重放在途调用时带 elapsed_ms（服务端已耗时 90s）：基座应回退到 910s 处
+      store.appendToolCallStart('1', {
+        tool_call_id: 't1', tool_name: 'shell', arguments: '{"command":"ls"}', elapsed_ms: 90_000,
+      })
+
+      expect(store.getMessages('1').at(-1)?.toolCalls?.[0].startedAtMs).toBe(910_000)
+
+      // 轨迹 tab 同源：live 工具起表基座一样按服务端已耗时换算
+      store.applyLiveToolStart('1', 'exec-1', 't1', 'shell', 90_000)
+      expect(store.getLiveTools('1', 'exec-1')[0].startedAt).toBe(910_000)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('fetchSessions 填充实体与标准投影；unread 以服务端为准（不保留旧本地 false）', async () => {
     const store = useSessionStore()
     mockGet.mockResolvedValueOnce({

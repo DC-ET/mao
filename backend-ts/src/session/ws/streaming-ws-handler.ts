@@ -628,7 +628,14 @@ export class StreamingWsHandler {
     }));
     if (active) {
       for (const toolCall of this.deps.registry.getActiveToolCalls(sessionId)) {
-        this.deps.registry.send(userId, wsEvent('tool_call_start', sessionId, toolCall));
+        this.deps.registry.send(userId, wsEvent('tool_call_start', sessionId, {
+          ...toolCall,
+          // 在途调用重放带回服务端已耗时：前端据此把「执行中」计时的基座挪到真正的开始时刻，
+          // 页面刷新 / 网络重连不再从 0 起表。给相对耗时而非绝对 started_at，避开两端时钟偏差。
+          ...(typeof toolCall.started_at === 'number'
+            ? { elapsed_ms: Date.now() - toolCall.started_at }
+            : {}),
+        }));
       }
       for (const pq of this.deps.askUserQuestionsRegistry.getPendingForSession(sessionId)) {
         const payload: Record<string, unknown> = { requestId: pq.requestId, questions: pq.questions ?? [] };

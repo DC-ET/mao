@@ -59,6 +59,21 @@ describe('StreamingWsRegistry', () => {
     expect(registry.getActiveToolCalls(10)).toEqual([]);
   });
 
+  it('records started_at on first sighting and keeps it across argument updates', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000_000);
+      registry.trackActiveToolCall(10, 'exec-1', 'call-1', 'shell', '{"command":"np');
+      vi.setSystemTime(1_002_000);
+      // 参数增量对同一 id 再次到达：起表时刻不重置——订阅重放据此算已耗时
+      registry.trackActiveToolCall(10, 'exec-1', 'call-1', 'shell', '{"command":"npm test"}');
+
+      expect(registry.getActiveToolCalls(10)).toEqual([expect.objectContaining({ started_at: 1_000_000 })]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reportsFailureWhenAllWritesFail', async () => {
     const session = mockSocket('ws-2', () => { throw new Error('closed'); });
     registry.register(session, 1, 'electron');

@@ -8,6 +8,7 @@ import type {
   UnattributedGroup
 } from '../../types/trace'
 import { DEFAULT_TRACE_THRESHOLDS } from '../../types/trace'
+import { elapsedBaseMs } from '../../utils/elapsed'
 import { safeSetItem } from '../../utils/safe-storage'
 
 /**
@@ -216,7 +217,7 @@ export function createTraceModule() {
     }
   }
 
-  function applyLiveToolStart(sessionId: string, executionId: string, toolCallId: string, name: string) {
+  function applyLiveToolStart(sessionId: string, executionId: string, toolCallId: string, name: string, elapsedMs?: number) {
     if (!toolCallId) return
     const key = liveKey(sessionId, executionId)
     const list = [...(liveTools.value.get(key) ?? [])]
@@ -224,7 +225,9 @@ export function createTraceModule() {
     if (existing) {
       existing.name = name || existing.name
     } else {
-      list.push({ toolCallId, name, startedAt: Date.now() })
+      // elapsedMs 为订阅重放带回的服务端已耗时：刷新/重连后基座挪到真正的开始时刻；
+      // 实时事件不带的，以收包时刻起表
+      list.push({ toolCallId, name, startedAt: elapsedBaseMs(elapsedMs) })
     }
     liveTools.value.set(key, list)
     liveTools.value = new Map(liveTools.value)

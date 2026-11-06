@@ -801,6 +801,27 @@ describe('StreamingWsHandler', () => {
     expect(snapshot?.data).not.toHaveProperty('thinking');
   });
 
+  it('subscribeReplaysActiveToolCallsWithServerElapsed', async () => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(600_000);
+      registry.getUserId.mockReturnValue(7);
+      sessionService.getSession.mockResolvedValue(session('CLOUD', 'RUNNING'));
+      // 在途调用 5s 前开始：重放带回服务端已耗时，客户端据此把「执行中」计时基座挪到真正开始时刻
+      registry.getActiveToolCalls.mockReturnValueOnce([{
+        tool_call_id: 'call-1', tool_name: 'shell', arguments: '{}', executionId: 'exec-1', started_at: 595_000,
+      }]);
+      await handler.handleTextMessage(ws, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+      expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+        type: 'tool_call_start', sessionId: 11,
+        data: expect.objectContaining({ tool_call_id: 'call-1', elapsed_ms: 5_000 }),
+      }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('sessionOperationsRejectNonOwner', async () => {
     vi.clearAllMocks();
     registry.getUserId.mockReturnValue(7);

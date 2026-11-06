@@ -324,11 +324,15 @@ export class StreamingWsRegistry {
       calls = new Map();
       this.activeToolCalls.set(sessionId, calls);
     }
+    // started_at 只认首次 sighting：参数增量到达时 onToolCallStart 会对同一 id 再次进来，
+    // 不能重置起表——订阅重放据此算「已耗时」，刷新/重连后前端计时才接得上真正的开始时刻
+    const startedAt = calls.get(toolCallId)?.started_at ?? Date.now();
     calls.set(toolCallId, {
       tool_call_id: toolCallId,
       tool_name: toolName,
       arguments: args,
       executionId,
+      started_at: startedAt,
     });
   }
 

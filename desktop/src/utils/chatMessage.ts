@@ -219,6 +219,9 @@ export function appendToolCallStart(msg: ChatMessage, call: ToolCall) {
   if (existing) {
     if (call.name && (!existing.name || existing.name === 'tool')) existing.name = call.name
     if (call.input) existing.input = call.input
+    // 起表时刻只认首次、缺省才补：刷新后 REST 先建出无计时字段的在途调用，紧随其后的
+    // 订阅重放（带服务端换算过的基座）补上；已在跑的调用不被重置
+    if (existing.startedAtMs == null && call.startedAtMs != null) existing.startedAtMs = call.startedAtMs
     if (call.status === 'running' || call.status === 'pending') {
       existing.status = call.status
       existing.argsStreaming = call.argsStreaming

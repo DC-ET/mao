@@ -16,3 +16,15 @@ export function formatElapsedMs(ms: number): string {
   const minutes = Math.floor((ms % 3_600_000) / 60_000)
   return minutes > 0 ? `${hours}h${minutes}m` : `${hours}h`
 }
+
+/**
+ * 把服务端「已耗时」换算成客户端起表基座（epoch ms）：订阅重放的在途 tool_call_start 带
+ * elapsed_ms（服务端口径）——页面刷新 / 网络重连后计时接得上真正的开始时刻，不再从 0 起表；
+ * 缺失（实时事件的收包时刻即开始时刻）或非法值时退回当前时刻。
+ * 用相对耗时而非绝对时刻传递，两端时钟偏差不影响结果。
+ */
+export function elapsedBaseMs(elapsedMs?: number | null): number {
+  return typeof elapsedMs === 'number' && Number.isFinite(elapsedMs) && elapsedMs >= 0
+    ? Date.now() - elapsedMs
+    : Date.now()
+}

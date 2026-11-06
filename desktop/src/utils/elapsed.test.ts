@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { formatElapsedMs } from './elapsed'
+import { describe, expect, it, vi } from 'vitest'
+import { elapsedBaseMs, formatElapsedMs } from './elapsed'
 
 describe('formatElapsedMs', () => {
   it('秒以下用 ms', () => {
@@ -25,5 +25,31 @@ describe('formatElapsedMs', () => {
     expect(formatElapsedMs(5_400_000)).toBe('1h30m')
     // 59.9m 不能进位成 1h60m
     expect(formatElapsedMs(3_599_000 - 1)).toBe('59m58s')
+  })
+})
+
+describe('elapsedBaseMs', () => {
+  it('带服务端已耗时：基座回退到「现在 − 已耗时」', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_000_000)
+      expect(elapsedBaseMs(90_000)).toBe(910_000)
+      expect(elapsedBaseMs(0)).toBe(1_000_000)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('缺失 / 非法值：退回当前时刻（实时事件收包即开始）', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_000_000)
+      expect(elapsedBaseMs()).toBe(1_000_000)
+      expect(elapsedBaseMs(null)).toBe(1_000_000)
+      expect(elapsedBaseMs(-1)).toBe(1_000_000)
+      expect(elapsedBaseMs(Number.NaN)).toBe(1_000_000)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

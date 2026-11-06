@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import type { ChatMessage, TodoItem, ContextWindowInfo, CompactionEvent, QueueMessage, FileChange, PendingQuestion } from '../../types/chat'
 import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil, discardAbortedStreamTail } from '../../utils/chatMessage'
+import { elapsedBaseMs } from '../../utils/elapsed'
 import { stripImageUrlLines } from '../../utils/imageUrlAnnotation'
 import { nowDateTime } from '../../utils/datetime'
 import { toRelativeWorkspacePath } from '../../utils/workspace-path'
@@ -478,7 +479,7 @@ export function createMessageRuntimeModule(ctx: {
   const TASK_TOOL_NAMES = new Set(['task_create', 'task_update', 'task_delete', 'task_list'])
   const filteredToolCallIds = new Set<string>()
 
-  function appendToolCallStart(sessionId: string, data: { tool_call_id: string; tool_name: string; arguments?: string }) {
+  function appendToolCallStart(sessionId: string, data: { tool_call_id: string; tool_name: string; arguments?: string; elapsed_ms?: number }) {
     if (isHistoryAnchored(sessionId)) return
     if (TASK_TOOL_NAMES.has(data.tool_name)) {
       filteredToolCallIds.add(data.tool_call_id)
@@ -509,8 +510,9 @@ export function createMessageRuntimeModule(ctx: {
       isExpanded: false,
       argsStreaming: true,
       argumentsText: data.arguments || '',
-      // 执行中耗时起表：与结果到达时刻都在客户端打表，无时钟偏差；历史回放无此字段
-      startedAtMs: Date.now()
+      // 执行中耗时起表：实时事件以收包时刻为准；订阅重放的在途调用带 elapsed_ms（服务端
+      // 已耗时），基座换算到真正的开始时刻，页面刷新/重连后不再从 0 起表
+      startedAtMs: elapsedBaseMs(data.elapsed_ms)
     })
     const list = sessionMessages.value.get(sid) ?? []
     sessionMessages.value.set(sid, [...list])

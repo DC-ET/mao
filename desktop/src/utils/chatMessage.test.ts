@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ToolCall } from '../types/chat'
-import { discardAbortedStreamTail, mapApiMessagesToChat, extractCitationsFromMetadata, extractResultTruncatedFromMetadata } from './chatMessage'
+import { appendToolCallStart, discardAbortedStreamTail, mapApiMessagesToChat, extractCitationsFromMetadata, extractResultTruncatedFromMetadata } from './chatMessage'
 
 function tool(id: string, status: ToolCall['status']): ToolCall {
   return { id, name: 'shell', status, isExpanded: false, argsStreaming: false }
@@ -165,5 +165,20 @@ describe('extractCitationsFromMetadata', () => {
   it('metadata 已是对象（非 string）时同样解析', () => {
     const out = extractCitationsFromMetadata({ citations: [{ n: 1, url: 'https://a.example.com', title: 'A' }] })
     expect(out).toEqual([{ n: 1, url: 'https://a.example.com', title: 'A' }])
+  })
+})
+
+describe('appendToolCallStart 起表时刻', () => {
+  it('缺 startedAtMs 的既有调用（如 REST 先建的在途调用）被重放事件补上', () => {
+    const m = msg({ toolCalls: [tool('t1', 'running')], segments: [{ type: 'tool', callId: 't1' }] })
+    appendToolCallStart(m, { ...tool('t1', 'running'), startedAtMs: 9_000 })
+    expect(m.toolCalls?.[0].startedAtMs).toBe(9_000)
+  })
+
+  it('已有起表时刻的调用不被后来事件重置', () => {
+    const existing = { ...tool('t1', 'running'), startedAtMs: 9_000 }
+    const m = msg({ toolCalls: [existing], segments: [{ type: 'tool', callId: 't1' }] })
+    appendToolCallStart(m, { ...tool('t1', 'running'), startedAtMs: 12_000 })
+    expect(m.toolCalls?.[0].startedAtMs).toBe(9_000)
   })
 })
