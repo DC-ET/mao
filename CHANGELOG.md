@@ -1,3 +1,15 @@
+## 0.0.468 (2026-11-07)
+
+### 后端
+- **15 处工具失败摘要统一接上原因**（纯展示文案，成功路径输出逐字节不变）：`tool-result-summarizer.ts` 此前失败可读性三档并存——file/search 五类带 40 字原因、8 处只有裸 `(失败)`（图片×2、微信×2、钉钉、飞书、MCP×2）、7 个函数压根不查 `error` 键。现在任何工具失败都能从卡片头看出「失败了 + 为什么」：shell 的 exec/write_stdin 段失败此前分别误报 `(exit -1)` / 毫无标识，现在显示 `(失败: 原因)`（`completed=false` 超时维持「未完成/超时」、非零退出码维持 `(exit N)` 不变）；web_search 失败不再误报 `(0 条结果)`；open_web_page 失败带上 url；定时任务四兄弟失败带上原因；裸 `(失败)` 的 8 处换成 `(失败: 原因)`（图片两处失败路径顺带带上 prompt；钉钉/飞书 `success=false` 且无 `error` 键的形态兜底保留裸 `(失败)`）。摘要只落 `tool_calls.summary` 展示列，模型上下文与工具成败判定不受影响。
+
+### 前端（桌面 / Web）
+- **`generate_image` / `edit_image` 卡片渲染图片网格**：画图后不用再展开原始 JSON 找图。prompt 头行 + 网格缩略（`el-image` lazy + 固定 160px 高 + 点击原生放大，单次最多渲染 9 张、超出显示「共 N 张，其余 N-9 张略」）+ 大小/mime 角标 + 底栏摘要（`N 张图 · model · size`）；`/uploads/` 静态地址不可达时（LOCAL/反代）error 槽降级显示路径与「复制路径」按钮，不白屏。空 `images`/非数组/解析失败回落原始 JSON。
+- **`ask_user_questions` 已回答问答对富视图**：回答落库后回看会话不再是一坨转义 JSON。每组问答渲染问题行 + 选中标签 chip（多选全展示，样式对齐 QuestionPanel）+ 自定义输入引用块；底栏摘要「N 组问答」。
+- **`check_subagent` / `wait_subagents`（超时分支）子代理进度行富视图**：每行 = `#taskId` + agentType + status 徽标（RUNNING 蓝 / COMPLETED 绿 / FAILED 红 / 其余灰）+ 轮数/工具数/token 统计 + `recentOutput` 折叠区（默认单行省略，「展开/收起」切换，展开态 160px 滚动）；底栏摘要 check 给「N 个任务」、wait 给「完成 N 个 · 全部完成/已超时」。`wait_subagents` 的自由格式 `results[]` 保持原始 JSON 展开。
+- **7 个工具的执行中卡片不再显示「参数加载中...」假象**：`getToolInputPreview` 补 `check_subagent`/`cancel_subagent`（`任务 #N`）、`create_scheduled_task`（name 截 30）、`update_scheduled_task`（name 优先，否则 `任务 #N`）、`delete_scheduled_task`（`任务 #N`）、`send_wechat_image`/`send_wechat_file`（与飞书同口径）的输入预览，流式期间卡片头直接显示任务名/任务号/文件名。
+- **LOCAL 模式 MCP 审批标题不再通用化**：审批堆叠卡此前对 `mcp:<server>` 形态的工具名全部显示「操作待审批」，现在解析为「MCP <server> 待审批」，能看出在等哪个 server（标题解析抽为 `approvalTitle.ts` 纯函数）。
+
 ## 0.0.467 (2026-11-07)
 
 ### 后端

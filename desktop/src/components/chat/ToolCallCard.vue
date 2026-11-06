@@ -102,6 +102,15 @@
               @open-file="handleOpenToolFile"
             />
           </template>
+          <template v-else-if="imageGenView">
+            <ToolImageGenView :view="imageGenView" />
+          </template>
+          <template v-else-if="askUserView">
+            <ToolAskUserView :view="askUserView" />
+          </template>
+          <template v-else-if="subagentProgressView">
+            <ToolSubagentProgressView :view="subagentProgressView" />
+          </template>
           <div class="diff-footer-row">
             <span v-if="richBadge" class="exit-badge" :class="richBadge.ok ? 'ok' : 'fail'">
               {{ richBadge.text }}
@@ -190,6 +199,10 @@ import ToolGlobView from './ToolGlobView.vue'
 import ToolGrepView from './ToolGrepView.vue'
 import ToolWebSearchView from './ToolWebSearchView.vue'
 import ToolWebPageView from './ToolWebPageView.vue'
+import ToolImageGenView from './ToolImageGenView.vue'
+import ToolAskUserView from './ToolAskUserView.vue'
+import ToolSubagentProgressView from './ToolSubagentProgressView.vue'
+import { parseAskUserPairs, parseImageGenItems, parseSubagentProgressRows } from '../../utils/toolRichView'
 
 /** 工具结果 JSON 的安全解析：非 JSON / 非对象返回 null，富视图据此回退原始展示。 */
 function parseResultNode(result?: string): Record<string, unknown> | null {
@@ -582,14 +595,70 @@ const webPageView = computed(() => {
   }
 })
 
+/**
+ * 图片生成富视图：generate_image / edit_image 的 images 网格。这两个工具结果无顶层
+ * media_type/data_uri，imagePreviewUrl 恒为空，与既有图片预览链路无冲突；
+ * 空 images / 非数组 / 解析失败回落原始 JSON。
+ */
+const imageGenView = computed(() => {
+  if (props.toolCall.name !== 'generate_image' && props.toolCall.name !== 'edit_image') return null
+  return parseImageGenItems(parseResultNode(props.toolCall.result))
+})
+
+/**
+ * 问答回放富视图：ask_user_questions 回答落库后的问答对回放（等待态由 QuestionPanel 覆盖）。
+ */
+const askUserView = computed(() => {
+  if (props.toolCall.name !== 'ask_user_questions') return null
+  return parseAskUserPairs(parseResultNode(props.toolCall.result))
+})
+
+/**
+ * 子代理进度富视图：check_subagent 全形态与 wait_subagents 超时分支的
+ * background_subagents[]（wait 非超时结果只有自由格式 results[]，不在此渲染，D3 定案）。
+ */
+const subagentProgressView = computed(() => {
+  if (props.toolCall.name !== 'check_subagent' && props.toolCall.name !== 'wait_subagents') return null
+  return parseSubagentProgressRows(parseResultNode(props.toolCall.result))
+})
+
 const richView = computed(() =>
   editDiffView.value ?? shellView.value ?? fileView.value
-  ?? writeView.value ?? globView.value ?? grepView.value ?? webSearchView.value ?? webPageView.value)
+  ?? writeView.value ?? globView.value ?? grepView.value ?? webSearchView.value ?? webPageView.value
+  ?? imageGenView.value ?? askUserView.value ?? subagentProgressView.value)
 const richSummary = computed(() =>
   editDiffView.value?.summary ?? shellView.value?.summary ?? fileView.value?.summary
   ?? writeView.value?.summary ?? globView.value?.summary ?? grepView.value?.summary
-  ?? webSearchView.value?.summary ?? webPageView.value?.summary ?? '')
+  ?? webSearchView.value?.summary ?? webPageView.value?.summary
+  ?? imageGenSummary.value ?? askUserSummary.value ?? subagentSummary.value ?? '')
 const richBadge = computed(() => shellView.value?.badge ?? null)
+
+/** 图片视图底栏摘要：N 张图 · model · size（缺项跳过）。 */
+const imageGenSummary = computed(() => {
+  const view = imageGenView.value
+  if (!view) return ''
+  const parts = [`${view.items.length + view.hiddenCount} 张图`]
+  if (view.model) parts.push(view.model)
+  if (view.size) parts.push(view.size)
+  return parts.join(' · ')
+})
+
+const askUserSummary = computed(() => {
+  const view = askUserView.value
+  return view ? `${view.length} 组问答` : ''
+})
+
+/** 子代理进度底栏摘要：check 给 N 个任务，wait 给 完成 N 个 · 全部完成/已超时。 */
+const subagentSummary = computed(() => {
+  const view = subagentProgressView.value
+  if (!view) return ''
+  if (props.toolCall.name === 'check_subagent') return `${view.length} 个任务`
+  const node = parseResultNode(props.toolCall.result)
+  if (!node) return ''
+  const completed = typeof node.completed === 'number' && Number.isFinite(node.completed) ? node.completed : view.length
+  const outcome = node.timed_out === true ? '已超时' : node.all_completed === true ? '全部完成' : ''
+  return outcome ? `完成 ${completed} 个 · ${outcome}` : `完成 ${completed} 个`
+})
 
 const showRawIo = ref(false)
 

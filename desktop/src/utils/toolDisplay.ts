@@ -96,6 +96,36 @@ export function getToolInputPreview(name: string, input?: Record<string, unknown
         .join(', ')
       return `${tool}(${summary}${keys.length > 3 ? ', ...' : ''})`
     }
+    case 'check_subagent':
+    case 'cancel_subagent': {
+      // check 无 task_id = 列出全部（无可展示）；cancel 的 task_id 为 schema required
+      if (typeof input.task_id === 'number' && Number.isInteger(input.task_id) && input.task_id > 0) {
+        return `任务 #${input.task_id}`
+      }
+      return ''
+    }
+    case 'create_scheduled_task': {
+      const name = input.name
+      return typeof name === 'string' && name.trim() ? (name.length > 30 ? name.slice(0, 30) + '...' : name) : ''
+    }
+    case 'update_scheduled_task': {
+      const name = input.name
+      if (typeof name === 'string' && name.trim()) return name.length > 30 ? name.slice(0, 30) + '...' : name
+      // update/delete 不要求 name：按 task_id 兜底（scheduled-task-tools.ts 的 task_id 入参键）
+      const taskId = input.task_id
+      return typeof taskId === 'number' && Number.isInteger(taskId) && taskId > 0 ? `任务 #${taskId}` : ''
+    }
+    case 'delete_scheduled_task': {
+      const taskId = input.task_id
+      return typeof taskId === 'number' && Number.isInteger(taskId) && taskId > 0 ? `任务 #${taskId}` : ''
+    }
+    case 'send_wechat_image':
+      // 与 feishu_send_image / dingtalk_send_image case 同口径：原值展示
+      return typeof input.image === 'string' ? input.image : ''
+    case 'send_wechat_file':
+      // 与 feishu_send_file case 同口径：file_name 优先，否则 file
+      if (typeof input.file_name === 'string' && input.file_name.trim()) return input.file_name
+      return typeof input.file === 'string' ? input.file : ''
     case 'generate_image':
     case 'edit_image': {
       const prompt = input.prompt

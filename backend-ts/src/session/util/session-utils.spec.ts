@@ -280,10 +280,10 @@ describe('ToolResultSummarizer', () => {
 
   it('summarizesWechatMediaTools', () => {
     expect(ToolResultSummarizer.summarize('send_wechat_image', '{"image":"/tmp/sunset.png"}', '{"success":true,"media_type":"image","sent_to":"wx-1"}')).toBe('发送微信图片: tmp/sunset.png (成功)');
-    expect(ToolResultSummarizer.summarize('send_wechat_image', '{"image":"https://a.com/pic.jpg"}', '{"error":"图片上传微信 CDN 失败"}')).toBe('发送微信图片 (失败)');
+    expect(ToolResultSummarizer.summarize('send_wechat_image', '{"image":"https://a.com/pic.jpg"}', '{"error":"图片上传微信 CDN 失败"}')).toBe('发送微信图片: a.com/pic.jpg (失败: 图片上传微信 CDN 失败)');
     expect(ToolResultSummarizer.summarize('send_wechat_file', '{"file":"/tmp/report.pdf"}', '{"success":true,"file_name":"report.pdf","sent_to":"wx-1"}')).toBe('发送微信文件: report.pdf (成功)');
     expect(ToolResultSummarizer.summarize('send_wechat_file', '{"file":"/tmp/report.pdf","file_name":"季度报告.pdf"}', '{"success":true,"file_name":"季度报告.pdf"}')).toBe('发送微信文件: 季度报告.pdf (成功)');
-    expect(ToolResultSummarizer.summarize('send_wechat_file', '{"file":"/tmp/report.pdf"}', '{"error":"文件发送失败"}')).toBe('发送微信文件 (失败)');
+    expect(ToolResultSummarizer.summarize('send_wechat_file', '{"file":"/tmp/report.pdf"}', '{"error":"文件发送失败"}')).toBe('发送微信文件: tmp/report.pdf (失败: 文件发送失败)');
   });
 
   it('summarizesFeishuToolsUsingTheirActualSchemas', () => {
@@ -295,7 +295,7 @@ describe('ToolResultSummarizer', () => {
     expect(ToolResultSummarizer.summarize('feishu_download_file', '{"message_id":"om_123"}', null)).toBe('下载飞书文件: om_123');
     expect(ToolResultSummarizer.summarize('dingtalk_send_image', '{"image":"/tmp/chart.png"}', '{"success":true,"filename":"chart.png"}')).toBe('发送钉钉图片: chart.png (成功)');
     expect(ToolResultSummarizer.summarize('dingtalk_send_file', '{"file":"/tmp/report.pdf","filename":"季度报告.pdf"}', '{"success":true,"filename":"季度报告.pdf"}')).toBe('发送钉钉文件: 季度报告.pdf (成功)');
-    expect(ToolResultSummarizer.summarize('dingtalk_send_image', '{}', '{"error":"缺少必填参数: image"}')).toBe('发送钉钉图片 (失败)');
+    expect(ToolResultSummarizer.summarize('dingtalk_send_image', '{}', '{"error":"缺少必填参数: image"}')).toBe('发送钉钉图片 (失败: 缺少必填参数: image)');
     expect(ToolResultSummarizer.summarize('dingtalk_send_file', null, null)).toBe('发送钉钉文件');
   });
 
@@ -304,7 +304,7 @@ describe('ToolResultSummarizer', () => {
     ['feishu_send_image', '发送飞书图片'],
     ['feishu_send_file', '发送飞书文件'],
   ])('keeps %s readable without claiming success on missing or failed results', (name, label) => {
-    expect(ToolResultSummarizer.summarize(name, '{}', '{"error":"failed"}')).toBe(`${label} (失败)`);
+    expect(ToolResultSummarizer.summarize(name, '{}', '{"error":"failed"}')).toBe(`${label} (失败: failed)`);
     expect(ToolResultSummarizer.summarize(name, '{}', '{"success":false}')).toBe(`${label} (失败)`);
     expect(ToolResultSummarizer.summarize(name, null, null)).toBe(label);
     expect(ToolResultSummarizer.summarize(name, 'invalid', 'invalid')).toBe(label);

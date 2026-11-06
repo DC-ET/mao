@@ -152,3 +152,53 @@ describe('getToolInputPreview', () => {
     expect(getToolInputPreview('http_call', { tool: 'weather', arguments: { city: '上'.repeat(30) } })).toBe(`weather(city=${'上'.repeat(20)}...)`)
   })
 })
+
+describe('getToolInputPreview 子代理与定时任务/微信补全（0.0.468）', () => {
+  it('check_subagent / cancel_subagent 按任务号展示', () => {
+    expect(getToolInputPreview('check_subagent', { task_id: 3 })).toBe('任务 #3')
+    expect(getToolInputPreview('cancel_subagent', { task_id: 12 })).toBe('任务 #12')
+    // check 无 task_id = 列出全部，无可展示
+    expect(getToolInputPreview('check_subagent', {})).toBe('')
+    // 数值键非法类型/非法值回落空串
+    for (const bad of ['3', 0, -1, 1.5, null, true]) {
+      expect(getToolInputPreview('check_subagent', { task_id: bad as unknown as number })).toBe('')
+      expect(getToolInputPreview('cancel_subagent', { task_id: bad as unknown as number })).toBe('')
+    }
+  })
+
+  it('create_scheduled_task 截 30 字符展示 name', () => {
+    expect(getToolInputPreview('create_scheduled_task', { name: '日报生成' })).toBe('日报生成')
+    expect(getToolInputPreview('create_scheduled_task', { name: '长'.repeat(35) })).toBe('长'.repeat(30) + '...')
+    for (const bad of [null, 42, {}, '', '   ']) {
+      expect(getToolInputPreview('create_scheduled_task', { name: bad as unknown as string })).toBe('')
+    }
+  })
+
+  it('update_scheduled_task name 优先，否则任务号兜底；delete_scheduled_task 按任务号', () => {
+    expect(getToolInputPreview('update_scheduled_task', { name: '日报生成', task_id: 5 })).toBe('日报生成')
+    expect(getToolInputPreview('update_scheduled_task', { task_id: 5 })).toBe('任务 #5')
+    expect(getToolInputPreview('update_scheduled_task', {})).toBe('')
+    expect(getToolInputPreview('delete_scheduled_task', { task_id: 8 })).toBe('任务 #8')
+    expect(getToolInputPreview('delete_scheduled_task', { task_id: '8' })).toBe('')
+    expect(getToolInputPreview('delete_scheduled_task', {})).toBe('')
+  })
+
+  it('send_wechat_image / send_wechat_file 与飞书同口径', () => {
+    expect(getToolInputPreview('send_wechat_image', { image: 'images/photo.png' })).toBe('images/photo.png')
+    expect(getToolInputPreview('send_wechat_image', { image: 42 })).toBe('')
+    expect(getToolInputPreview('send_wechat_file', { file: '/tmp/a.pdf', file_name: '报告.pdf' })).toBe('报告.pdf')
+    expect(getToolInputPreview('send_wechat_file', { file: '/tmp/a.pdf' })).toBe('/tmp/a.pdf')
+    expect(getToolInputPreview('send_wechat_file', { file_name: '   ' })).toBe('')
+    expect(getToolInputPreview('send_wechat_file', {})).toBe('')
+  })
+
+  it('subagent_followup 依赖通用回落（task 键），不被新 case 拦截', () => {
+    expect(getToolInputPreview('subagent_followup', { child_session_id: 9, task: '继续分析日志' })).toBe('继续分析日志')
+    expect(getToolInputPreview('subagent_followup', { child_session_id: 9, task: '继续分析日志', agent_type: 'explore' })).toBe('explore: 继续分析日志')
+  })
+
+  it('list_scheduled_tasks / wait_subagents 不加 case，走通用回落', () => {
+    expect(getToolInputPreview('list_scheduled_tasks', {})).toBe('')
+    expect(getToolInputPreview('wait_subagents', { timeout_seconds: 60 })).toBe('')
+  })
+})

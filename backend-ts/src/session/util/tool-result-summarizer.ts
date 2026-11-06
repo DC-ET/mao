@@ -244,6 +244,8 @@ function summarizeShell(argumentsJson: string | null | undefined, result: string
       label += `: ${truncate(input, 30)}`;
     }
     const node = asObj(parseJson(result ?? null));
+    const failure = failureSuffix(node);
+    if (failure) return `${label}${failure}`;
     if (node && has(node, 'completed') && !node.completed) {
       label += ' (未完成/超时)';
     }
@@ -255,6 +257,10 @@ function summarizeShell(argumentsJson: string | null | undefined, result: string
   if (result == null) return label;
   const node = asObj(parseJson(result));
   if (!node) return label;
+  // errorJson 失败不含 async/completed/exit_code 键，error 优先于一切退出码口径；
+  // completed=false 超时与 {exit_code:N≠0} 的既有显示不受影响
+  const failure = failureSuffix(node);
+  if (failure) return `${label}${failure}`;
   if (node.async === true) return `${label} (后台)`;
   // L-16：exec 超时未完成时 completed=false，与 write_stdin 分支口径一致，避免把超时误报为真实退出码 -1
   if (has(node, 'completed') && !node.completed) return `${label} (未完成/超时)`;
@@ -400,16 +406,22 @@ function summarizeAskUserQuestions(result: string | null | undefined): string {
 
 function summarizeWebSearch(argumentsJson: string | null | undefined, result: string | null | undefined): string {
   const query = extractJsonString(argumentsJson, 'query');
+  const label = `搜索 ${query != null ? truncate(query, 30) : ''}`;
   const node = asObj(parseJson(result ?? null));
-  if (!node) return `搜索 ${query != null ? truncate(query, 30) : ''}`;
+  if (!node) return label;
+  const failure = failureSuffix(node);
+  if (failure) return `${label}${failure}`;
   const count = has(node, 'total_results') ? Number(node.total_results) : 0;
-  return `搜索 ${truncate(query, 30)} (${count} 条结果)`;
+  return `${label} (${count} 条结果)`;
 }
 
 function summarizeOpenWebPage(argumentsJson: string | null | undefined, result: string | null | undefined): string {
   const url = extractJsonString(argumentsJson, 'url');
+  const label = `打开网页 ${url != null ? formatUrl(url) : ''}`;
   const node = asObj(parseJson(result ?? null));
-  if (!node) return `打开网页 ${url != null ? formatUrl(url) : ''}`;
+  if (!node) return label;
+  const failure = failureSuffix(node);
+  if (failure) return `${label}${failure}`;
   const title = has(node, 'title') ? String(node.title) : '';
   const truncated = node.truncated === true;
   return `打开网页${title ? ` ${truncate(title, 30)}` : ''}${truncated ? ' (内容已截断)' : ''}`;
@@ -440,7 +452,10 @@ function summarizeGenerateImage(argumentsJson: string | null | undefined, result
   if (result == null) return label;
   const node = asObj(parseJson(result));
   if (!node) return label;
-  if (has(node, 'error')) return '生成图片 (失败)';
+  if (has(node, 'error')) {
+    const suffix = failureSuffix(node);
+    return suffix ? `${label}${suffix}` : `${label} (失败)`;
+  }
   const count = Array.isArray(node.images) ? node.images.length : 0;
   if (count > 0) return `${label} (${count} 张)`;
   return label;
@@ -452,7 +467,10 @@ function summarizeEditImage(argumentsJson: string | null | undefined, result: st
   if (result == null) return label;
   const node = asObj(parseJson(result));
   if (!node) return label;
-  if (has(node, 'error')) return '编辑图片 (失败)';
+  if (has(node, 'error')) {
+    const suffix = failureSuffix(node);
+    return suffix ? `${label}${suffix}` : `${label} (失败)`;
+  }
   const count = Array.isArray(node.images) ? node.images.length : 0;
   if (count > 0) return `${label} (${count} 张)`;
   return label;
@@ -464,7 +482,10 @@ function summarizeSendWechatImage(argumentsJson: string | null | undefined, resu
   if (result == null) return label;
   const node = asObj(parseJson(result));
   if (!node) return label;
-  if (has(node, 'error')) return '发送微信图片 (失败)';
+  if (has(node, 'error')) {
+    const suffix = failureSuffix(node);
+    return suffix ? `${label}${suffix}` : `${label} (失败)`;
+  }
   if (node.success === true) return `${label} (成功)`;
   return label;
 }
@@ -483,7 +504,10 @@ function summarizeSendWechatFile(argumentsJson: string | null | undefined, resul
   if (result == null) return label;
   const node = asObj(parseJson(result));
   if (!node) return label;
-  if (has(node, 'error')) return '发送微信文件 (失败)';
+  if (has(node, 'error')) {
+    const suffix = failureSuffix(node);
+    return suffix ? `${label}${suffix}` : `${label} (失败)`;
+  }
   if (node.success === true) {
     const sentName = has(node, 'file_name') ? String(node.file_name) : null;
     return sentName != null && sentName.trim().length > 0
@@ -495,9 +519,12 @@ function summarizeSendWechatFile(argumentsJson: string | null | undefined, resul
 
 function summarizeCreateScheduledTask(argumentsJson: string | null | undefined, result: string | null | undefined): string {
   const name = extractJsonString(argumentsJson, 'name');
-  if (result == null) return name != null ? `创建定时任务 ${truncate(name, 20)}` : '创建定时任务';
+  const label = name != null ? `创建定时任务 ${truncate(name, 20)}` : '创建定时任务';
+  if (result == null) return label;
   const node = asObj(parseJson(result));
-  if (!node) return name != null ? `创建定时任务 ${truncate(name, 20)}` : '创建定时任务';
+  if (!node) return label;
+  const failure = failureSuffix(node);
+  if (failure) return `${label}${failure}`;
   if (has(node, 'message')) return String(node.message);
   const resultName = has(node, 'name') ? String(node.name) : null;
   if (resultName != null) return `创建定时任务 ${truncate(resultName, 20)}`;
@@ -508,6 +535,8 @@ function summarizeUpdateScheduledTask(result: string | null | undefined): string
   if (result == null) return '更新定时任务';
   const node = asObj(parseJson(result));
   if (!node) return '更新定时任务';
+  const failure = failureSuffix(node);
+  if (failure) return `更新定时任务${failure}`;
   if (has(node, 'message')) return String(node.message);
   const name = has(node, 'name') ? String(node.name) : null;
   const status = has(node, 'status') ? String(node.status) : null;
@@ -523,6 +552,8 @@ function summarizeDeleteScheduledTask(result: string | null | undefined): string
   if (result == null) return '删除定时任务';
   const node = asObj(parseJson(result));
   if (!node) return '删除定时任务';
+  const failure = failureSuffix(node);
+  if (failure) return `删除定时任务${failure}`;
   if (has(node, 'message')) return String(node.message);
   return '删除定时任务';
 }
@@ -531,6 +562,8 @@ function summarizeListScheduledTasks(result: string | null | undefined): string 
   if (result == null) return '查询定时任务';
   const node = asObj(parseJson(result));
   if (!node) return '查询定时任务';
+  const failure = failureSuffix(node);
+  if (failure) return `查询定时任务${failure}`;
   if (has(node, 'message')) return String(node.message);
   if (has(node, 'total')) return `定时任务列表 (${Number(node.total)} 个)`;
   if (Array.isArray(node.tasks)) return `定时任务列表 (${node.tasks.length} 个)`;
@@ -544,7 +577,11 @@ function summarizeDingtalkTool(toolName: string, argumentsJson: string | null | 
     dingtalk_send_file: '发送钉钉文件',
   };
   const label = labels[toolName];
-  if (has(node, 'error') || node?.success === false) return `${label} (失败)`;
+  if (has(node, 'error') || node?.success === false) {
+    // success===false 且无 error 键时没有原因可给，兜底保留裸 (失败)
+    const suffix = failureSuffix(node);
+    return suffix ? `${label}${suffix}` : `${label} (失败)`;
+  }
   const named = extractJsonString(result, 'filename');
   const argName = toolName === 'dingtalk_send_file'
     ? (extractJsonString(argumentsJson, 'filename') || extractJsonString(argumentsJson, 'file'))
@@ -563,7 +600,11 @@ function summarizeFeishuTool(toolName: string, argumentsJson: string | null | un
     feishu_send_file: '发送飞书文件',
   };
   const label = labels[toolName];
-  if (has(node, 'error') || node?.success === false) return `${label} (失败)`;
+  if (has(node, 'error') || node?.success === false) {
+    // success===false 且无 error 键时没有原因可给，兜底保留裸 (失败)
+    const suffix = failureSuffix(node);
+    return suffix ? `${label}${suffix}` : `${label} (失败)`;
+  }
 
   let detail = '';
   switch (toolName) {
@@ -593,7 +634,10 @@ function summarizeMcpCall(argumentsJson: string | null | undefined, result: stri
   const target = extractMcpTarget(argumentsJson);
   const label = target != null ? `调用 MCP 工具 ${target}` : '调用 MCP 工具';
   const node = asObj(parseJson(result ?? null));
-  if (node != null && has(node, 'error')) return `${label} (失败)`;
+  if (node != null && has(node, 'error')) {
+    const suffix = failureSuffix(node);
+    return suffix ? `${label}${suffix}` : `${label} (失败)`;
+  }
   return label;
 }
 
@@ -601,7 +645,10 @@ function summarizeMcpDescribe(argumentsJson: string | null | undefined, result: 
   const target = extractMcpTarget(argumentsJson);
   const label = target != null ? `查询 MCP 工具 ${target}` : '查询 MCP 工具';
   const node = asObj(parseJson(result ?? null));
-  if (node != null && has(node, 'error')) return `${label} (失败)`;
+  if (node != null && has(node, 'error')) {
+    const suffix = failureSuffix(node);
+    return suffix ? `${label}${suffix}` : `${label} (失败)`;
+  }
   return label;
 }
 
