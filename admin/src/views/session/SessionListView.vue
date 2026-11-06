@@ -4,6 +4,11 @@
       <template #header>
         <div class="card-header">
           <span>会话管理</span>
+          <el-tooltip content="扫描最近一段时间内因 402/403（额度不足等）失败的主会话，一键发起恢复" placement="top">
+            <el-button v-if="canWrite" type="warning" plain size="small" @click="openRecoveryDialog">
+              恢复 402/403 失败会话
+            </el-button>
+          </el-tooltip>
         </div>
       </template>
 
@@ -251,11 +256,89 @@
         @size-change="handleSizeChange"
       />
     </el-card>
+
+    <!-- 恢复 402/403 失败会话（技术方案 2026-11-06）：预览清单 + 勾选 + 一键发起 -->
+    <el-dialog
+      v-model="recoveryVisible"
+      title="恢复 402/403 失败会话"
+      width="960px"
+      :close-on-click-modal="false"
+    >
+      <div class="recovery-desc">
+        扫描最近一段时间内活跃、当前失败、且最后一次模型调用因 402/403 中断的主会话，一键在后台续跑（不插入新消息）。
+        恢复后原飞书/钉钉进度卡片会原地复活并持续更新；无卡片的会话在完成后推送最终回复。发起前请先确认模型额度已恢复。
+      </div>
+      <div class="recovery-filters">
+        <el-select v-model="recovery.windowHours" style="width: 150px" @change="fetchRecoveryPreview">
+          <el-option label="最近 24 小时" :value="24" />
+          <el-option label="最近 3 天" :value="72" />
+          <el-option label="最近 7 天" :value="168" />
+        </el-select>
+        <el-select v-model="recovery.scope" style="width: 170px" @change="fetchRecoveryPreview">
+          <el-option label="仅额度类错误" value="QUOTA" />
+          <el-option label="全部 402/403" value="ALL_402_403" />
+        </el-select>
+        <el-button type="primary" plain :loading="recoveryLoading" @click="fetchRecoveryPreview">重新扫描</el-button>
+      </div>
+      <el-table
+        ref="recoveryTableRef"
+        :data="recoveryItems"
+        v-loading="recoveryLoading"
+        max-height="420"
+        @selection-change="onRecoverySelectionChange"
+      >
+        <template #empty>
+          <el-empty description="没有符合条件的失败会话" :image-size="60" />
+        </template>
+        <el-table-column type="selection" width="42" :selectable="(row: RecoveryItem) => row.willRecover" />
+        <el-table-column prop="sessionId" label="ID" width="70" />
+        <el-table-column label="会话标题" min-width="170" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span>{{ row.title || `#${row.sessionId}` }}</span>
+            <el-tooltip
+              v-if="row.scheduledTask"
+              :content="`该会话由定时任务「${row.scheduledTask.name}」触发，恢复不会修正任务运行记录`"
+              placement="top"
+            >
+              <el-tag size="small" type="warning" style="margin-left: 4px">定时任务</el-tag>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column prop="userName" label="用户" width="110" show-overflow-tooltip />
+        <el-table-column prop="failedAt" label="失败时间" width="165" :formatter="formatDateTimeColumn" />
+        <el-table-column prop="errorSummary" label="错误摘要" min-width="230" show-overflow-tooltip />
+        <el-table-column prop="lastUserMessage" label="最后用户消息" min-width="170" show-overflow-tooltip />
+        <el-table-column label="卡片续更" width="88">
+          <template #default="{ row }">
+            <el-tag :type="row.hasProgressCard ? 'success' : 'info'" size="small">
+              {{ row.hasProgressCard ? '有' : '无' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="跳过原因" width="130">
+          <template #default="{ row }">
+            <span v-if="row.skipReason">{{ recoverySkipLabel(row.skipReason) }}</span>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="recoveryVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="recoverySubmitting"
+          :disabled="recoverySelected.length === 0"
+          @click="submitRecovery"
+        >
+          确认恢复 {{ recoverySelected.length }} 个
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, reactive, onMounted, onActivated, watch } from 'vue'
+import { computed, ref, reactive, onMounted, onActivated, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../api'
@@ -489,6 +572,106 @@ async function handleDelete(row: any) {
   } catch { /* 拦截器已提示失败 */ }
 }
 
+// ---- 恢复 402/403 失败会话（技术方案 2026-11-06）----
+
+interface RecoveryItem {
+  sessionId: number
+  userName: string | null
+  title: string | null
+  failedAt: string | null
+  errorSummary: string
+  lastUserMessage: string
+  scheduledTask: { id: number; name: string } | null
+  hasProgressCard: boolean
+  willRecover: boolean
+  skipReason: string | null
+}
+
+/** 跳过原因中文案（与后端 FailedRecoverySkipReason 枚举对齐） */
+const RECOVERY_SKIP_LABELS: Record<string, string> = {
+  NOT_FAILED: '非失败状态',
+  LOCAL_MODE: '本地执行模式',
+  NON_NORMAL_SESSION: '非主会话',
+  NOT_402_403: '非 402/403 错误',
+  NON_QUOTA_ERROR: '非额度类错误',
+  PENDING_TASK_RETRY: '定时任务待重试',
+  ALREADY_RUNNING: '执行中',
+  RECOVERING: '恢复中',
+  EXECUTOR_BUSY: '执行池繁忙',
+  SUBMIT_FAILED: '提交失败'
+}
+
+function recoverySkipLabel(reason: string): string {
+  return RECOVERY_SKIP_LABELS[reason] ?? reason
+}
+
+const recoveryVisible = ref(false)
+const recovery = reactive({ windowHours: 24, scope: 'QUOTA' })
+const recoveryItems = ref<RecoveryItem[]>([])
+const recoverySelected = ref<RecoveryItem[]>([])
+const recoveryLoading = ref(false)
+const recoverySubmitting = ref(false)
+const recoveryTableRef = ref()
+
+function openRecoveryDialog() {
+  recoveryVisible.value = true
+  recoverySelected.value = []
+  fetchRecoveryPreview()
+}
+
+let fetchRecoverySeq = 0
+async function fetchRecoveryPreview() {
+  const seq = ++fetchRecoverySeq
+  recoveryLoading.value = true
+  try {
+    const { data } = await api.get('/admin/sessions/recover-failed/preview', {
+      params: { windowHours: recovery.windowHours, scope: recovery.scope }
+    })
+    if (seq !== fetchRecoverySeq) return
+    recoveryItems.value = data?.items || []
+    recoverySelected.value = []
+    // 默认全选可恢复项（技术方案 §4.6），不可恢复行 selectable 已禁用不会进勾选
+    await nextTick()
+    recoveryItems.value
+      .filter((item) => item.willRecover)
+      .forEach((item) => recoveryTableRef.value?.toggleRowSelection(item, true))
+  } catch { /* 拦截器已提示失败 */ } finally {
+    if (seq === fetchRecoverySeq) recoveryLoading.value = false
+  }
+}
+
+function onRecoverySelectionChange(rows: RecoveryItem[]) {
+  recoverySelected.value = rows
+}
+
+async function submitRecovery() {
+  const ids = recoverySelected.value.map((item) => item.sessionId)
+  if (ids.length === 0) return
+  try {
+    await ElMessageBox.confirm(
+      `确认对选中的 ${ids.length} 个会话发起恢复？恢复在后台异步执行，原渠道卡片会持续更新；请先确认模型额度已恢复。`,
+      '确认恢复',
+      { confirmButtonText: '发起恢复', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  recoverySubmitting.value = true
+  try {
+    const { data } = await api.post('/admin/sessions/recover-failed/run', {
+      sessionIds: ids,
+      scope: recovery.scope
+    })
+    const accepted = data?.accepted?.length ?? 0
+    const skipped = data?.skipped?.length ?? 0
+    ElMessage.success(`已发起 ${accepted} 个恢复，跳过 ${skipped} 个，恢复进度将更新到原会话卡片`)
+    recoveryVisible.value = false
+    fetchSessions()
+  } catch { /* 拦截器已提示失败 */ } finally {
+    recoverySubmitting.value = false
+  }
+}
+
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 256000
 
 function tokenPercent(row: { contextTokens?: number; contextWindowTokens?: number }) {
@@ -532,6 +715,22 @@ onActivated(() => {
 .card-header {
   font-size: 16px;
   font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.recovery-desc {
+  margin-bottom: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+}
+
+.recovery-filters {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
 .search-form {

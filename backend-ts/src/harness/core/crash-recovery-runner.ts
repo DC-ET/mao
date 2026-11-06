@@ -7,6 +7,7 @@ import type {
   SessionService, StreamingWsRegistry, TaskTerminalService,
 } from '../deps.js';
 import type { AgentEventListener } from './agent-event-listener.js';
+import { AgentExecutorRejectedError } from './agent-executor.js';
 import type { AgentLoop } from './agent-loop.js';
 import type { HarnessService } from './harness-service.js';
 import { CompositeAgentEventListener } from './composite-agent-event-listener.js';
@@ -30,6 +31,17 @@ export interface RecoveryExtraListener extends AgentEventListener {
   complete?(finalContent: string): Promise<boolean>;
   /** 恢复续跑失败时的终态通知（如飞书进度卡片 PATCH「已失败」）。 */
   fail?(message: string): Promise<boolean>;
+}
+
+/** 批量恢复单会话受理结果：accepted 为空壳，skipped 携带原因（§4.7）。 */
+export type FailedRecoverySubmitOutcome =
+  | { kind: 'accepted' }
+  | { kind: 'skipped'; reason: 'NOT_FAILED' | 'LOCAL_MODE' | 'ALREADY_RUNNING' | 'RECOVERING' | 'EXECUTOR_BUSY' | 'SUBMIT_FAILED' };
+
+/** 恢复续跑结果：终态相位 + 是否挂上了渠道卡片续更监听（供降级推送判定，§4.8）。 */
+export interface RecoveryRunOutcome {
+  terminalPhase: 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  hadExtraListeners: boolean;
 }
 
 export class CrashRecoveryRunner {
@@ -81,6 +93,13 @@ export class CrashRecoveryRunner {
   private static readonly DEPLOY_SWEEP_GRACE_SEC = 60;
   /** deferred pass 被部署窗口推迟后的重试间隔（重试本身不查库，成本很低）。 */
   private static readonly DEFERRED_RETRY_DELAY_SEC = 15;
+  /** 崩溃恢复允许进入的相位（现有行为，不得改动）。 */
+  private static readonly DEFAULT_ALLOWED_PHASES: readonly string[] = ['RUNNING', 'RESUMING'];
+  /**
+   * 批量恢复（因 402/403 失败）允许进入的相位：仅 FAILED，且重查时仍要求 FAILED——
+   * 预览到执行之间用户可能已手动重试（phase 变 RUNNING）或会话被收尾，重查是最后一道闸（§4.7 L2）。
+   */
+  private static readonly FAILED_ALLOWED_PHASES: readonly string[] = ['FAILED'];
 
   constructor(
     private readonly sessionMapper: SessionMapper,
@@ -369,15 +388,116 @@ export class CrashRecoveryRunner {
     }
   }
 
-  private async runRecovery(snapshot: Session, sessionId: number): Promise<void> {
+  /**
+   * 批量恢复因 402/403 失败、已被人工选中的会话（技术方案 2026-11-06 §4.4）。
+   * 与崩溃恢复共用 runRecovery 的续跑流程，差异仅在于：
+   *   1) 允许进入时 phase=FAILED（且任务开跑重查时仍要求 FAILED，防预览后状态变化）；
+   *   2) 执行前额外校验「实例内不在恢复 / 不在跑」；
+   *   3) 执行池拒绝（AgentExecutorRejectedError）以 skipped 回报而不是抛出。
+   * 渠道卡片续更（createExtraListeners）照常挂载，与崩溃恢复完全一致。
+   *
+   * @param opts.onSessionFinished 单会话执行终态回调（供降级推送判定：完成且未挂卡片 → 推送最终回复）
+   */
+  async recoverFailedSessions(
+    sessionIds: number[],
+    opts: {
+      onSessionFinished?: (
+        sessionId: number,
+        outcome: { phase: 'COMPLETED' | 'FAILED' | 'CANCELLED'; hadProgressCard: boolean },
+      ) => Promise<void>;
+    } = {},
+  ): Promise<{ accepted: number[]; skipped: Array<{ id: number; reason: string }> }> {
+    const accepted: number[] = [];
+    const skipped: Array<{ id: number; reason: string }> = [];
+    const seen = new Set<number>();
+    for (const id of sessionIds) {
+      // 请求内去重（§4.7 L1）；非法 id 直接忽略。
+      if (!Number.isSafeInteger(id) || id <= 0 || seen.has(id)) continue;
+      seen.add(id);
+      const skip = (reason: string): void => {
+        harnessLog('info', `[failed-session-recovery] Session ${id}: skipped, reason=${reason}`);
+        skipped.push({ id, reason });
+      };
+      // L3/L4：同一实例内在恢复中（提交后、开跑前的窗口由本 Set 兜住）。
+      if (this.recovering.has(id)) {
+        skip('RECOVERING');
+        continue;
+      }
+      // L2：执行前重查当前状态——预览后用户可能已手动重试或会话已收尾。
+      let current: Session | null = null;
+      try {
+        current = await this.sessionMapper.selectById(id);
+      } catch (e) {
+        harnessLog('warn', `[failed-session-recovery] Session ${id}: reload failed, skipped`, e);
+        skip('NOT_FAILED');
+        continue;
+      }
+      if (current == null || current.phase !== 'FAILED') {
+        skip('NOT_FAILED');
+        continue;
+      }
+      if (current.executionMode === 'LOCAL') {
+        // 服务端无法续跑 LOCAL 会话（工具在桌面端执行），预览已排除，此处兜底。
+        skip('LOCAL_MODE');
+        continue;
+      }
+      // 本实例已在执行（AgentLoop 挂了 cancel flag）或任务已在跑：防并发双跑。
+      if (this.isSessionLocallyActive?.(id) === true) {
+        skip('ALREADY_RUNNING');
+        continue;
+      }
+      this.recovering.add(id);
+      try {
+        const session = current;
+        this.agentExecutor.submit(() => this.runFailedRecovery(session, opts.onSessionFinished));
+        accepted.push(id);
+      } catch (e) {
+        this.recovering.delete(id);
+        skip(e instanceof AgentExecutorRejectedError ? 'EXECUTOR_BUSY' : 'SUBMIT_FAILED');
+      }
+    }
+    return { accepted, skipped };
+  }
+
+  /** 批量恢复单会话的执行壳：claim 已在提交前持有，结束后释放并回报终态。 */
+  private async runFailedRecovery(
+    session: Session,
+    onSessionFinished?: (
+      sessionId: number,
+      outcome: { phase: 'COMPLETED' | 'FAILED' | 'CANCELLED'; hadProgressCard: boolean },
+    ) => Promise<void>,
+  ): Promise<void> {
+    const sessionId = session.id!;
+    let outcome: RecoveryRunOutcome;
+    try {
+      outcome = await this.runRecovery(session, sessionId, CrashRecoveryRunner.FAILED_ALLOWED_PHASES);
+    } finally {
+      this.recovering.delete(sessionId);
+    }
+    if (onSessionFinished == null) return;
+    try {
+      await onSessionFinished(sessionId, {
+        phase: outcome.terminalPhase,
+        hadProgressCard: outcome.hadExtraListeners,
+      });
+    } catch (e) {
+      harnessLog('warn', `[failed-session-recovery] Session ${sessionId}: post-finish callback failed`, e);
+    }
+  }
+
+  private async runRecovery(
+    snapshot: Session,
+    sessionId: number,
+    allowedPhases: readonly string[] = CrashRecoveryRunner.DEFAULT_ALLOWED_PHASES,
+  ): Promise<RecoveryRunOutcome> {
     const userId = snapshot.userId ?? null;
     let extra: RecoveryExtraListener | null = null;
     // 恢复前重查当前状态：候选来自启动时（或延迟恢复的初始）快照，蓝绿排空期间
     // 会话可能已被旧实例正常收尾进入终态，直接重放会把已完成会话误判为 FAILED。
     const current = await this.sessionMapper.selectById(sessionId);
-    if (current == null || (current.phase !== 'RUNNING' && current.phase !== 'RESUMING')) {
+    if (current == null || !allowedPhases.includes(current.phase ?? '')) {
       harnessLog('info', `Skip recovery for session ${sessionId}: current phase=${current?.phase ?? 'deleted'}`);
-      return;
+      return { terminalPhase: 'FAILED', hadExtraListeners: false };
     }
     const session = current;
     const executionId = randomUUID();
@@ -393,7 +513,7 @@ export class CrashRecoveryRunner {
         harnessLog('warn', `Session ${sessionId}: recovery skipped, local target unreachable`);
         await this.taskTerminalService.finishExecution(sessionId, userId, 'FAILED', executionId, reason);
         this.notifyClient(userId, sessionId, 'FAILED');
-        return;
+        return { terminalPhase: 'FAILED', hadExtraListeners: false };
       }
       const deleted = await this.sessionService.cleanupIncompleteTail(sessionId);
       if (deleted > 0) {
@@ -465,6 +585,8 @@ export class CrashRecoveryRunner {
         }
       }
     }
+    // hadExtraListeners：渠道卡片续更监听是否挂载成功——无卡片会话完成后的降级推送据此判定（§4.8）。
+    return { terminalPhase, hadExtraListeners: extra != null };
   }
 
   /** LOCAL 会话的执行端是否可达：绑定设备在线，或（未绑定时）存在可用的本地客户端连接。 */

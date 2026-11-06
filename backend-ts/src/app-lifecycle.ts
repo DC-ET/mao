@@ -175,6 +175,9 @@ export function assembleLifecycle(deps: LifecycleDeps): LifecycleResult {
     cfg.server.port,
     d.localToolSessions,
   );
+  // 因 402/403 失败会话的批量恢复（技术方案 2026-11-06）：服务在 create-app 构造并注入路由，
+  // 此处把崩溃恢复内核接给它——批量恢复与崩溃恢复共用同一续跑流程与并发防护。
+  d.failedSessionRecovery?.attachKernel(crash);
   void crash.run().catch((e: unknown) => console.error('Crash recovery failed', e)).then(async () => {
     await d.dingtalk.hydrate().catch((error: unknown) => console.error('钉钉入站队列启动恢复失败', error));
     const sessionIds = await d.feishuTaskQueue.hydrate();

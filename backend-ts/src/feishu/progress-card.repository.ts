@@ -13,6 +13,11 @@ export interface FeishuProgressCardRow {
 export interface FeishuProgressCardRepository {
   upsert(row: FeishuProgressCardRow): Promise<void>;
   findBySessionId(sessionId: number): Promise<FeishuProgressCardRow | null>;
+  /**
+   * 按会话批量查映射（失败会话批量恢复的预览用，技术方案 2026-11-06 §4.5.1）。
+   * 可选成员：窄 fake 可不实现，调用方逐会话降级。
+   */
+  findBySessionIds?(sessionIds: number[]): Promise<Map<number, FeishuProgressCardRow>>;
   deleteBySessionId(sessionId: number): Promise<void>;
 }
 
@@ -56,6 +61,23 @@ export class MysqlFeishuProgressCardRepository implements FeishuProgressCardRepo
     );
     if (row == null) return null;
     return mapProgressCardRow(row);
+  }
+
+  async findBySessionIds(sessionIds: number[]): Promise<Map<number, FeishuProgressCardRow>> {
+    const out = new Map<number, FeishuProgressCardRow>();
+    const ids = [...new Set(sessionIds.filter((id) => Number.isSafeInteger(id) && id > 0))];
+    if (ids.length === 0) return out;
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = await this.db.query<Record<string, unknown>>(
+      `SELECT session_id, bot_id, card_message_id, chat_type, chat_id, sender_open_id
+       FROM feishu_progress_card WHERE session_id IN (${placeholders})`,
+      ids,
+    );
+    for (const row of rows) {
+      const mapped = mapProgressCardRow(row);
+      if (mapped != null) out.set(mapped.sessionId, mapped);
+    }
+    return out;
   }
 
   async deleteBySessionId(sessionId: number): Promise<void> {

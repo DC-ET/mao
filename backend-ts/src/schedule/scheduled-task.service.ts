@@ -1263,6 +1263,15 @@ export class ScheduledTaskService {
   }
 
   /**
+   * 会话终态后把最终 ASSISTANT 回复推到原飞书会话（无渠道卡片映射时的降级推送，
+   * 技术方案 2026-11-06 §4.8）：复用定时任务的结果回流链路，非飞书会话空转。
+   * 推送失败仅记日志（sendFeishuReplyIfApplicable 内部消化），调用方无需处理。
+   */
+  async pushFinalReplyIfApplicable(sessionId: number): Promise<void> {
+    await this.sendFeishuReplyIfApplicable(sessionId);
+  }
+
+  /**
    * 停机期间错过的触发点补历史记录。`processStartedAt` 既是「已错过」的判定上界，
    * 也是遍历的上界：只认进程启动前落下的点，启动后该交给定时器正常跑，不能提前吃掉。
    */

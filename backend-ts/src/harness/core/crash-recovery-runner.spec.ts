@@ -18,6 +18,7 @@ vi.mock('../../session/ws/ws-streaming-event-listener.js', () => {
 });
 
 import type { AgentEventListener } from './agent-event-listener.js';
+import { AgentExecutorRejectedError } from './agent-executor.js';
 import { CompositeAgentEventListener } from './composite-agent-event-listener.js';
 import { CrashRecoveryRunner, type RecoveryExtraListener } from './crash-recovery-runner.js';
 
@@ -843,5 +844,142 @@ describe('CrashRecoveryRunner orphan sweep', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('CrashRecoveryRunner.recoverFailedSessions', () => {
+  /** 批量恢复专用 harness：executor 只收集任务不执行（手动放跑），便于构造提交窗口内的并发场景。 */
+  function makeFailedRunner(options: {
+    phase?: string;
+    executionMode?: string;
+    extra?: (sessionId: number, userId: number | null, executionId: string) => Promise<RecoveryExtraListener | null>;
+    isSessionLocallyActive?: (sessionId: number) => boolean;
+    submitThrows?: Error;
+  } = {}) {
+    const session = {
+      id: 7, userId: 42, sessionType: 'NORMAL', phase: options.phase ?? 'FAILED',
+      executionMode: options.executionMode ?? 'CLOUD', modelId: null,
+      lastRuntimeUserId: 67,
+    };
+    const sessionMapper = {
+      selectByPhase: vi.fn().mockResolvedValue([]),
+      selectById: vi.fn().mockResolvedValue(session),
+    };
+    const sessionService = {
+      cleanupIncompleteTail: vi.fn().mockResolvedValue(0),
+      updatePhase: vi.fn().mockResolvedValue(undefined),
+      getMessages: vi.fn().mockResolvedValue([]),
+      extractVisibleText: (content: string | null) => content,
+    };
+    const taskTerminalService = { finishExecution: vi.fn().mockResolvedValue(undefined) };
+    const harnessService = { execute: vi.fn().mockResolvedValue(undefined) };
+    const agentLoop = {
+      registerCancelFlag: vi.fn().mockReturnValue({ get: () => false, set: () => undefined }),
+      removeCancelFlag: vi.fn(),
+    };
+    const registry = { send: vi.fn() };
+    const onExecutionFinished = vi.fn().mockResolvedValue(undefined);
+    const submitted: Array<() => Promise<void>> = [];
+    const agentExecutor = options.submitThrows != null
+      ? { submit: vi.fn(() => { throw options.submitThrows; }) }
+      : { submit: vi.fn((fn: () => Promise<void>) => { submitted.push(fn); }) };
+    const runner = new CrashRecoveryRunner(
+      sessionMapper as never,
+      sessionService as never,
+      taskTerminalService as never,
+      harnessService as never,
+      agentLoop as never,
+      registry as never,
+      {} as never,
+      { clear: vi.fn() } as never,
+      { selectBySessionId: vi.fn().mockResolvedValue([]) } as never,
+      { selectById: vi.fn().mockResolvedValue(null), selectDefault: vi.fn().mockResolvedValue(null) } as never,
+      '/tmp/mao-crash-recovery-spec-runtime-missing',
+      agentExecutor,
+      onExecutionFinished,
+      undefined,
+      options.extra,
+      options.isSessionLocallyActive,
+    );
+    return { runner, sessionMapper, harnessService, taskTerminalService, onExecutionFinished, submitted, agentExecutor };
+  }
+
+  it('acceptsFailedSessionAndRunsRecovery', async () => {
+    const { runner, submitted, harnessService, onExecutionFinished } = makeFailedRunner();
+    const result = await runner.recoverFailedSessions([7]);
+    expect(result).toEqual({ accepted: [7], skipped: [] });
+    expect(harnessService.execute).not.toHaveBeenCalled();
+    await Promise.all(submitted.map((fn) => fn()));
+    expect(harnessService.execute).toHaveBeenCalled();
+    expect(onExecutionFinished).toHaveBeenCalledWith(7, 42, 'COMPLETED');
+  });
+
+  it('skipsWhenPhaseRecheckShowsRunning', async () => {
+    const { runner, submitted } = makeFailedRunner({ phase: 'RUNNING' });
+    const result = await runner.recoverFailedSessions([7]);
+    expect(result).toEqual({ accepted: [], skipped: [{ id: 7, reason: 'NOT_FAILED' }] });
+    expect(submitted).toHaveLength(0);
+  });
+
+  it('skipsLocalModeAndLocallyActiveSessions', async () => {
+    const localMode = await makeFailedRunner({ executionMode: 'LOCAL' }).runner.recoverFailedSessions([7]);
+    expect(localMode.skipped).toEqual([{ id: 7, reason: 'LOCAL_MODE' }]);
+
+    const busy = await makeFailedRunner({ isSessionLocallyActive: () => true }).runner.recoverFailedSessions([7]);
+    expect(busy.skipped).toEqual([{ id: 7, reason: 'ALREADY_RUNNING' }]);
+  });
+
+  it('skipsSecondSubmitWhileFirstStillQueuedAndDedupesWithinRequest', async () => {
+    const { runner, submitted } = makeFailedRunner();
+    const first = await runner.recoverFailedSessions([7]);
+    expect(first.accepted).toEqual([7]);
+    // 第一批已提交、尚未开跑：recovering Set 兜住提交窗口内的二次提交（§4.7 L3）
+    const second = await runner.recoverFailedSessions([7]);
+    expect(second.accepted).toEqual([]);
+    expect(second.skipped).toEqual([{ id: 7, reason: 'RECOVERING' }]);
+    expect(submitted).toHaveLength(1);
+    // 开跑并结束（claim 释放）后可再次受理
+    await Promise.all(submitted.map((fn) => fn()));
+    // 同请求内重复 id 只提交一次
+    const third = await runner.recoverFailedSessions([7, 7]);
+    expect(third.accepted).toEqual([7]);
+    expect(submitted).toHaveLength(2);
+    await Promise.all(submitted.map((fn) => fn()));
+  });
+
+  it('mapsExecutorRejectionToExecutorBusyAndReleasesClaim', async () => {
+    const { runner } = makeFailedRunner({
+      submitThrows: new AgentExecutorRejectedError(4, 8, 4, 8),
+    });
+    const result = await runner.recoverFailedSessions([7]);
+    expect(result.accepted).toEqual([]);
+    expect(result.skipped).toEqual([{ id: 7, reason: 'EXECUTOR_BUSY' }]);
+  });
+
+  it('reportsOutcomeToOnSessionFinishedWithoutCard', async () => {
+    const onSessionFinished = vi.fn().mockResolvedValue(undefined);
+    const { runner, submitted } = makeFailedRunner();
+    await runner.recoverFailedSessions([7], { onSessionFinished });
+    await Promise.all(submitted.map((fn) => fn()));
+    expect(onSessionFinished).toHaveBeenCalledWith(7, { phase: 'COMPLETED', hadProgressCard: false });
+  });
+
+  it('reportsHadProgressCardWhenExtraListenersAttached', async () => {
+    const onSessionFinished = vi.fn().mockResolvedValue(undefined);
+    const extra: RecoveryExtraListener = { onContentDelta: () => {} };
+    const { runner, submitted } = makeFailedRunner({ extra: async () => extra });
+    await runner.recoverFailedSessions([7], { onSessionFinished });
+    await Promise.all(submitted.map((fn) => fn()));
+    expect(onSessionFinished).toHaveBeenCalledWith(7, { phase: 'COMPLETED', hadProgressCard: true });
+  });
+
+  it('releasesClaimAfterRunSoFailedSessionCanBeRecoveredAgain', async () => {
+    const { runner, submitted } = makeFailedRunner();
+    const first = await runner.recoverFailedSessions([7]);
+    expect(first.accepted).toEqual([7]);
+    await Promise.all(submitted.map((fn) => fn()));
+    const second = await runner.recoverFailedSessions([7]);
+    expect(second.accepted).toEqual([7]);
+    await Promise.all(submitted.map((fn) => fn()));
   });
 });

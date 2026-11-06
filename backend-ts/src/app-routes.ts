@@ -134,6 +134,7 @@ import { MysqlSessionShareRepository } from './session/session-share.repository.
 import { SessionShareService } from './session/session-share.service.js';
 import { SessionExportService } from './session/session-export.service.js';
 import { registerAdminSessionRoutes } from './session/admin-session.routes.js';
+import type { FailedSessionRecoveryService } from './session/failed-session-recovery.service.js';
 import { registerAdminSessionFilesRoutes } from './session/admin-session-files.routes.js';
 import { registerTerminalRoutes } from './session/terminal.routes.js';
 import { WorkspaceWriteService } from './file/workspace-write.service.js';
@@ -249,6 +250,8 @@ export interface RouteDeps {
   askUserQuestionsRegistry: AskUserQuestionsRegistry;
   /** 正在执行的工具调用（内存态），管理后台会话详情补进行中卡片 */
   inFlightToolRegistry: InFlightToolRegistry;
+  /** 因 402/403 失败会话的批量恢复（技术方案 2026-11-06）：可选，未注入时管理端入口返回空清单/报错。 */
+  failedSessionRecovery?: FailedSessionRecoveryService;
   /** LOCAL 设备在线判定（技术方案 2026-11-05 §4.1-7）：会话 VO 的 targetDeviceOnline 快照用。 */
   hasDeviceConnection?: (userId: number, deviceId: string) => boolean;
   treeSignalPublisher: SessionTreeSignalPublisher;
@@ -545,6 +548,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       permissionService,
       askUserQuestionsRegistry,
       inFlightToolRegistry,
+      failedSessionRecovery: deps.failedSessionRecovery,
     });
     const experienceDirForAgent = (agentId: number) => experienceIndexService.dirFor(agentId);
     registerAdminSessionFilesRoutes(api, {

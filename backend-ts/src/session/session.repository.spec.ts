@@ -269,3 +269,58 @@ describe('FileChangeRepository', () => {
     expect(String(db.query.mock.calls.at(-1)?.[0])).toContain('m.source_session_id <> ?');
   });
 });
+
+describe('SessionRepository failed-session recovery queries', () => {
+  it('listFailedSessionsWithLastAgentError 按窗口/ids 组装 SQL，且空 ids 短路不查库', async () => {
+    const db = mockDb(null, [{ sessionId: 431, errorMessage: 'LLM API returned 403: x' }]);
+    const repo = new SessionRepository(db as never);
+    const rows = await repo.listFailedSessionsWithLastAgentError({ windowStart: '2026-11-06 00:00:00' });
+    expect(rows).toEqual([{ sessionId: 431, errorMessage: 'LLM API returned 403: x' }]);
+    const [sql, params] = db.query.mock.calls[0];
+    expect(String(sql)).toContain("s.phase = 'FAILED'");
+    expect(String(sql)).toContain("s.session_type = 'NORMAL'");
+    expect(String(sql)).toContain("l2.scene = 'agent'");
+    expect(String(sql)).toContain("l.error_message LIKE 'LLM API returned 402%'");
+    expect(String(sql)).toContain('s.last_activity_at >= ?');
+    expect(params).toEqual(['2026-11-06 00:00:00']);
+
+    await repo.listFailedSessionsWithLastAgentError({ ids: [431, 473] });
+    const [idsSql, idsParams] = db.query.mock.calls[1];
+    expect(String(idsSql)).toContain('s.id IN (?,?)');
+    expect(String(idsSql)).not.toContain('s.last_activity_at >= ?');
+    expect(idsParams).toEqual([431, 473]);
+
+    const emptyDb = mockDb(null, []);
+    const emptyRepo = new SessionRepository(emptyDb as never);
+    expect(await emptyRepo.listFailedSessionsWithLastAgentError({ ids: [] })).toEqual([]);
+    expect(emptyDb.query).not.toHaveBeenCalled();
+  });
+
+  it('listSessionIdsWithPendingTaskRetry 返回 next_retry_at 非空的会话集合', async () => {
+    const db = mockDb(null, [{ sessionId: 431 }, { sessionId: 473 }, { sessionId: 'bad' }]);
+    const repo = new SessionRepository(db as never);
+    const ids = await repo.listSessionIdsWithPendingTaskRetry([431, 473, 431]);
+    expect(ids).toEqual(new Set([431, 473]));
+    const [sql, params] = db.query.mock.calls[0];
+    expect(String(sql)).toContain('scheduled_task_run');
+    expect(String(sql)).toContain('next_retry_at IS NOT NULL');
+    expect(params).toEqual([431, 473]);
+    expect(await new SessionRepository(mockDb() as never).listSessionIdsWithPendingTaskRetry([])).toEqual(new Set());
+  });
+
+  it('listScheduledTaskRefsBySessionIds 按会话归组任务引用', async () => {
+    const db = mockDb(null, [
+      { id: 77, name: '每日库存播报', sessionId: 431 },
+      { id: 80, name: '周报汇总', sessionId: 431 },
+      { id: 81, name: '其他任务', sessionId: 473 },
+    ]);
+    const repo = new SessionRepository(db as never);
+    const refs = await repo.listScheduledTaskRefsBySessionIds([431, 473]);
+    expect(refs.get(431)).toEqual([{ id: 77, name: '每日库存播报' }, { id: 80, name: '周报汇总' }]);
+    expect(refs.get(473)).toEqual([{ id: 81, name: '其他任务' }]);
+    const [sql, params] = db.query.mock.calls[0];
+    expect(String(sql)).toContain('FROM scheduled_task');
+    expect(String(sql)).toContain('deleted = 0');
+    expect(params).toEqual([431, 473]);
+  });
+});
