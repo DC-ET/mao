@@ -59,6 +59,7 @@
       <PermissionLevelSwitcher
         v-if="executionMode === 'LOCAL'"
         :current-level="permissionLevel"
+        :compact="isMobileViewport"
         @update:permission-level="$event => emit('update:permissionLevel', $event)"
       />
     </div>

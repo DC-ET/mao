@@ -2,10 +2,12 @@
   <div class="permission-switcher">
     <el-tooltip :content="levelDescriptions[currentLevel]" placement="top">
       <el-dropdown trigger="click" @command="handleSwitch">
-        <span class="level-badge" :class="currentLevel.toLowerCase()">
+        <span class="level-badge" :class="[currentLevel.toLowerCase(), { compact }]">
           <el-icon :size="14"><component :is="levelIcons[currentLevel]" /></el-icon>
-          {{ levelLabels[currentLevel] || '只读' }}
-          <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          <template v-if="!compact">
+            {{ levelLabels[currentLevel] || '只读' }}
+            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </template>
         </span>
         <template #dropdown>
           <el-dropdown-menu>
@@ -67,6 +69,8 @@ const levelDescriptions: Record<string, string> = {
 
 const props = defineProps<{
   currentLevel: string
+  /** 移动端 / 窄屏：只显示图标，文案与下拉箭头省略（完整文案见 tooltip 与下拉选项） */
+  compact?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -96,6 +100,10 @@ function handleSwitch(level: string) {
   cursor: pointer;
   transition: all 0.15s;
   user-select: none;
+}
+
+.level-badge.compact {
+  padding: 2px 4px;
 }
 
 .level-badge.read_only {
