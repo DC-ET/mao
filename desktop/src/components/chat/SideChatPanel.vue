@@ -670,6 +670,20 @@ async function loadSideSessionMeta() {
   }
 }
 
+/**
+ * 是否应保留本地正在流式的内容，避免被可能滞后的历史回放整表覆盖。
+ * 刷新/重连后 onMounted 先 subscribe 后拉历史：服务端订阅重放的「执行中」工具
+ * 先于 REST 历史写入缓存，不保留就会被整表吞掉（与 SubagentChatPanel 同口径）。
+ */
+function shouldPreserveLiveStream(msgs: ReturnType<typeof sessionStore.getMessages>): boolean {
+  if (sessionStore.isSessionStreaming(String(realSessionId.value))) return true
+  const last = msgs[msgs.length - 1]
+  if (last && last.role === 'assistant') {
+    return last.toolCalls?.some(tc => tc.status === 'pending' || tc.status === 'running') ?? false
+  }
+  return false
+}
+
 async function fetchMessages() {
   if (!hasRealSession.value) return
   const sid = String(realSessionId.value)
@@ -682,7 +696,12 @@ async function fetchMessages() {
     const raw: Array<Record<string, unknown>> = data?.messages || []
     const { messages, allChanges } = mapMessagesWithFileChanges(raw)
     if (messages.length > 0) {
-      sessionStore.applyFetchedMessages(sid, messages)
+      // 在 REST 响应到达后判定：订阅重放的执行中工具若在请求期间写入缓存也能被认出。
+      // 保留的流式气泡继续承接后续 tool_call_result / content_delta 并随之收尾；
+      // 服务端只在会话活跃时才重放在途调用，不会保留出无人收尾的幻影转圈。
+      sessionStore.applyFetchedMessages(sid, messages, {
+        preserveStreamingAssistant: shouldPreserveLiveStream(sessionStore.getMessages(sid)),
+      })
       sessionStore.setFileChanges(sid, allChanges)
     }
     if (Array.isArray(data?.compactionEvents)) {
