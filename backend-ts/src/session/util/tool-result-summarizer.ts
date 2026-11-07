@@ -88,7 +88,12 @@ function has(node: Record<string, unknown> | null, key: string): boolean {
  */
 function failureSuffix(node: Record<string, unknown> | null): string {
   if (!has(node, 'error')) return '';
-  return ` (失败: ${truncate(String(node!.error), 40)})`;
+  const error = node!.error;
+  // error 顶层是字符串（file/search 等工具的失败形状）。非字符串 error（如 CLOUD mcp_call
+  // 透传的 structuredContent 顶层 error 对象）没有可直接展示的原因，回落空串由调用方兜底裸 (失败)，
+  // 避免输出 "[object Object]"
+  if (typeof error !== 'string') return '';
+  return ` (失败: ${truncate(error, 40)})`;
 }
 
 export function summarize(toolName: string | null | undefined, argumentsJson: string | null | undefined, result: string | null | undefined): string | null {

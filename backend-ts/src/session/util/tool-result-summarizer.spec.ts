@@ -139,6 +139,16 @@ describe('tool-result-summarizer failure suffix (B 类: 裸 (失败) → 带原�
     expect(ToolResultSummarizer.summarize('mcp_describe', args, JSON.stringify({ error: '工具不存在' })))
       .toBe('查询 MCP 工具 github.search (失败: 工具不存在)');
   });
+
+  it('非字符串 error（CLOUD mcp_call 透传 structuredContent 的对象 error）不输出 [object Object]，兜底裸 (失败)', () => {
+    const args = JSON.stringify({ server: 'github', tool: 'search' });
+    expect(ToolResultSummarizer.summarize('mcp_call', args, JSON.stringify({ error: { message: 'boom', code: -32000 } })))
+      .toBe('调用 MCP 工具 github.search (失败)');
+    expect(ToolResultSummarizer.summarize('mcp_call', args, JSON.stringify({ error: 123 })))
+      .toBe('调用 MCP 工具 github.search (失败)');
+    expect(ToolResultSummarizer.summarize('generate_image', JSON.stringify({ prompt: 'p' }), JSON.stringify({ error: { message: 'x' } })))
+      .toBe('生成图片: p (失败)');
+  });
 });
 
 describe('tool-result-summarizer failure reason truncation', () => {

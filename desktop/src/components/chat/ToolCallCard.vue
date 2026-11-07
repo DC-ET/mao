@@ -633,30 +633,31 @@ const richSummary = computed(() =>
   ?? imageGenSummary.value ?? askUserSummary.value ?? subagentSummary.value ?? '')
 const richBadge = computed(() => shellView.value?.badge ?? null)
 
-/** 图片视图底栏摘要：N 张图 · model · size（缺项跳过）。 */
-const imageGenSummary = computed(() => {
+/** 图片视图底栏摘要：N 张图 · model · size（缺项跳过）。视图为 null 返回 null，让 ?? 链能跳过。 */
+const imageGenSummary = computed<string | null>(() => {
   const view = imageGenView.value
-  if (!view) return ''
+  if (!view) return null
   const parts = [`${view.items.length + view.hiddenCount} 张图`]
   if (view.model) parts.push(view.model)
   if (view.size) parts.push(view.size)
   return parts.join(' · ')
 })
 
-const askUserSummary = computed(() => {
+const askUserSummary = computed<string | null>(() => {
   const view = askUserView.value
-  return view ? `${view.length} 组问答` : ''
+  return view ? `${view.length} 组问答` : null
 })
 
 /** 子代理进度底栏摘要：check 给 N 个任务，wait 给 完成 N 个 · 全部完成/已超时。 */
-const subagentSummary = computed(() => {
+const subagentSummary = computed<string | null>(() => {
   const view = subagentProgressView.value
-  if (!view) return ''
+  if (!view) return null
   if (props.toolCall.name === 'check_subagent') return `${view.length} 个任务`
   const node = parseResultNode(props.toolCall.result)
-  if (!node) return ''
-  const completed = typeof node.completed === 'number' && Number.isFinite(node.completed) ? node.completed : view.length
-  const outcome = node.timed_out === true ? '已超时' : node.all_completed === true ? '全部完成' : ''
+  const completed = node && typeof node.completed === 'number' && Number.isFinite(node.completed)
+    ? node.completed
+    : view.length
+  const outcome = node?.timed_out === true ? '已超时' : node?.all_completed === true ? '全部完成' : ''
   return outcome ? `完成 ${completed} 个 · ${outcome}` : `完成 ${completed} 个`
 })
 
