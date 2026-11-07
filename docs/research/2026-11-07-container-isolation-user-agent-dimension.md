@@ -1,6 +1,6 @@
 # Docker 容器隔离维度从「人」到「人+Agent」的可行性调研
 
-> 状态：调研完成（2026-11-07），仅调研，未改任何代码。方案方向与全部 6 项决策点已于 2026-11-07 对话拍板（见 §6.8 决策记录），调研收口。
+> 状态：调研完成（2026-11-07），仅调研，未改任何代码。方案方向与全部 6 项决策点已于 2026-11-07 对话拍板（见 §6.8 决策记录；技术方案评审追加决策 13：share 维持整根 rw），调研收口。
 > 技术方案：[2026-11-07-user-agent-container-isolation-technical-design.md](../plan/2026-11-07-user-agent-container-isolation-technical-design.md)（已据此方案核实修正本文 §3.4/§8 的群聊路由身份表述）。
 > 上游讨论：2026-11-07 与用户的架构对话。
 > 核心前置：[2026-10-14-user-runtime-container-isolation-design.md](../plan/2026-10-14-user-runtime-container-isolation-design.md)（当前按用户隔离容器的设计）、[2026-10-24-agent-experience-library-technical-design.md](../plan/2026-10-24-agent-experience-library-technical-design.md)（团队经验库）、[2026-10-21-shared-directory-technical-design.md](../plan/2026-10-21-shared-directory-technical-design.md)（share 目录）、[2026-10-29-in-session-agent-switch-technical-design.md](../plan/2026-10-29-in-session-agent-switch-technical-design.md)（会话内切换 Agent，已实施）。
@@ -276,6 +276,7 @@
 | 4 | 群聊 bot 热切换口径（§6.2） | 与决策点 1 **同口径类推**：热切换保持可用、接受中断 |
 | 5 | 容器命名与 gc 约定 | `mao-user-{userId}-agent-{agentId}`，保持 `mao-user-` 前缀使 `scripts/container-gc.sh` 免改 |
 | 6 | 资源上限 | **暂不调整**，沿用默认 2G/容器、2CPU；多 Agent 活跃场景如遇瓶颈随技术方案/运维再议 |
+| 13 | share 目录挂载（技术方案评审追加） | **维持整根 rw**：本调研 §7.2 建议「经验库收窄为子目录挂载」隐含了「share 当前内容只有经验库」的判断，**不成立**——share 还有管理员宿主机投放与运维手工放置的共享文件（2026-10-21 共享目录方案的产品语义），按 Agent 收窄会砍掉既有共享能力。经验库不做容器级隔离，跨 Agent 收口维持软链 + 提示词现状 |
 
 ---
 
@@ -296,7 +297,7 @@
 
 1. **若立项，采用形态 A**，其中两个关键形态选择直接决定改造质量：
    - skill 视图走 **Agent 维度物化目录**（`{skillViewsDir}/{userId}/{agentId}/`，宿主机按 skillNames 维护内容），挂载路径恒定，skillNames 增删/技能源更新都只是宿主机目录内容变化，容器 ro 即见，**零容器重建**（规避 §3.2/§6.7 的重建风暴）；
-   - 经验库挂载从 `shareDir` 整根收窄为 `shareDir/agent-experience/{agentId}` 子目录（固定路径，天然适配挂载定型约束）。
+   - ~~经验库挂载从 `shareDir` 整根收窄为 `shareDir/agent-experience/{agentId}` 子目录~~（**已撤回，决策 13**：share 还有管理员投放与运维共享文件，须整根共享；经验库不做容器级隔离）。
 2. **切 Agent 口径（已拍板，取代初稿建议的"拒绝切换"）**：接受中断、不禁止，路由按轮快照 + 切换即预热（详见 §6.1 决策记录）；host 模式不受影响保持现状。
 3. **分期路径**（若立项后细化）：① 数据面先行——Agent 维度物化目录 + 经验子目录挂载（在现有用户容器上即可先实现"挂载路径恒定"的铺垫，但不产生隔离收益）；② 容器键切换 + 通道层复合键（一次性，灰度靠 `user.runtime_mode` 类比新增用户级开关）；③ admin 面板与运维收尾。
 4. **明确写进方案文档的隔离承诺**：隔离的是同用户跨 Agent 的 skill 视图与团队经验库；deps/HOME/tmp/workspace/userSkills 维持用户级共享（决策点 2/3，2026-11-07 拍板）；不承诺会话间隔离。

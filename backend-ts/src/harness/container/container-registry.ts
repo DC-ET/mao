@@ -10,7 +10,6 @@ import { containerHostsFingerprint, EMPTY_CONTAINER_HOSTS_FINGERPRINT } from '..
 import type { ContainerHostsResolution } from './container-hosts-resolver.js';
 import type { RuntimeStatus } from './runtime-channel-server.js';
 import { readRuntimeBuildManifest } from './runtime-build.js';
-import { EXPERIENCE_ROOT_SUBDIR } from '../experience/experience-index.service.js';
 
 /**
  * 容器生命周期注册表（宿主机单例，技术方案 §5.2；2026-11-07 起容器键为 (userId, agentId)）。
@@ -166,7 +165,7 @@ export interface ContainerRegistryOptions {
   skillViewsDir: string;
   /** 图片产物上传根（FILE_UPLOAD_DIR）：按用户挂 {uploadDir}/{userId} 并注入容器 env。 */
   uploadDir: string;
-  /** 公共共享目录根（共享目录方案 §4.3）：容器只挂 {shareDir}/agent-experience/{agentId} 并注入容器 env。 */
+  /** 公共共享目录根（共享目录方案 §4.3；2026-11-07 决策 13 维持整根 rw 挂载）并注入容器 env。 */
   shareDir: string;
   /** 创建前确保宿主机 socket server 已监听（先 listen 再 docker run），返回 socket 路径。 */
   ensureChannelListening(userId: number, agentId: number): Promise<string>;
@@ -258,11 +257,6 @@ export class ContainerRegistry {
   /** 当前 (user, agent) 的技能视图目录（挂载源，创建前显式就位）。 */
   private skillViewsAgentDir(userId: number, agentId: number): string {
     return path.join(path.resolve(this.opts.skillViewsDir), String(userId), String(agentId));
-  }
-
-  /** 当前 Agent 的经验库子目录（挂载源，创建前显式就位）。 */
-  private experienceAgentDir(agentId: number): string {
-    return path.join(path.resolve(this.opts.shareDir), EXPERIENCE_ROOT_SUBDIR, String(agentId));
   }
 
   get mountsPlanner(): ContainerMountPlanner {
@@ -755,11 +749,10 @@ export class ContainerRegistry {
     this.cleanupExpiredTmp();
     const name = ContainerRegistry.containerName(userId, agentId);
     const c = this.opts.config.container;
-    // agent 维度挂载源显式就位（容器内 ro/rw 挂载的根）：预热窗口可能早于首轮技能同步
-    // （ensureView 物化视图）与首轮经验挂载（ensureFresh 建库目录），不预创建会让 docker
-    // 以隐式行为自动建宿主目录（2026-11-07 方案 §5.1）
+    // agent 维度挂载源显式就位（容器内 ro 挂载的根）：预热窗口可能早于首轮技能同步
+    // （ensureView 物化视图），不预创建会让 docker 以隐式行为自动建宿主目录
+    // （2026-11-07 方案 §5.1）。share 根由 create-app 启动时 mkdirSync，无需在此创建
     mkdirSync(this.skillViewsAgentDir(userId, agentId), { recursive: true });
-    mkdirSync(this.experienceAgentDir(agentId), { recursive: true });
     // 会话工作区（通道会话）并入挂载清单。统一按通道根过滤：web 会话工作区在
     // {workspaceRoot}/{userId} 之内、由标准清单覆盖，显式传入也不需要附加挂载
     const sessionWorkspaces = [...new Set([
@@ -813,10 +806,9 @@ export class ContainerRegistry {
       // 配置为相对值时容器内（cwd=/）也能命中真实挂载点（round-1 review I-1）
       '-e', `MAO_SKILL_VIEWS_DIR=${this.skillViewsAgentDir(userId, agentId)}`,
       '-e', `MAO_UPLOAD_DIR=${this.opts.uploadDir}`,
-      // 共享目录根保留（容器内 ExperienceIndexService 的 root 构造依赖）；
-      // 容器内沙箱经验允许根用 MAO_EXPERIENCE_AGENT_DIR（当前 Agent 的库子目录，挂载清单同源）
+      // 共享目录根（共享目录方案 2026-10-21；2026-11-07 决策 13 维持整根 rw 挂载）：
+      // 容器内沙箱允许根同为 share 根，ExperienceIndexService 的 root 构造依赖
       '-e', `MAO_SHARE_DIR=${this.opts.shareDir}`,
-      '-e', `MAO_EXPERIENCE_AGENT_DIR=${this.experienceAgentDir(agentId)}`,
       ...this.planner.toDockerArgs(mounts),
       // 容器不暴露任何端口：进出只走 Unix socket（§5.2）
       '--restart', 'no',

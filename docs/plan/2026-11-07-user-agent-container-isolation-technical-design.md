@@ -1,6 +1,6 @@
 # 人+Agent 维度容器隔离（User+Agent Container Isolation）技术方案
 
-> 状态：已实施（2026-11-07 开发完成；一期/二期全量落地，backend 5699 用例全绿、admin 构建通过）
+> 状态：已实施（2026-11-07 开发完成；一期/二期全量落地，backend 5703 用例全绿、admin 构建通过。同日修订：决策 13 撤回经验库容器级收口，share 维持整根 rw，见 §10）
 > 日期：2026-11-07
 > 覆盖端：后端 backend-ts、管理后台 admin。桌面端 desktop、安卓 android、`shared/contracts`、agent-cli、部署脚本**不改**。
 > 上游调研：[2026-11-07-container-isolation-user-agent-dimension.md](../research/2026-11-07-container-isolation-user-agent-dimension.md)（可行性、6 项决策已拍板，见本文 §10）。
@@ -14,12 +14,12 @@ docker 模式下容器按「人」维度创建复用（`mao-user-{userId}`，一
 
 | 事项 | 现状问题 | 证据 |
 |---|---|---|
-| 团队经验库 | `shareDir` 整根 rw 挂进每个容器，容器内 Agent 可**直读并直写**任何 Agent 的经验库（软链只防误碰不防主动越界） | `container-mount-planner.ts:105`、`experience-index.service.ts:7-8` |
+| 团队经验库 | `shareDir` 整根 rw 挂进每个容器，容器内 Agent 可**直读并直写**任何 Agent 的经验库（软链只防误碰不防主动越界）——**本项维持现状不收口（决策 13，见 §10）** | `container-mount-planner.ts:105`、`experience-index.service.ts:7-8` |
 | skill 视图 | `skillViews/{userId}` 整根 ro 挂载，容器内可读该用户所有 Agent 关联过的技能视图，绕过会话软链白名单 | `container-mount-planner.ts:109`、`prompt-engine.ts:466-471` |
 | 资源隔离 | 同用户所有 Agent 共享单容器的 2G/2CPU，一个 Agent 失控拖累其他 Agent | `container-registry.ts:736-739` |
 | 重建爆炸半径 | 用户容器一次重建杀掉该用户**全部**会话的 shell/终端 | `container-registry.ts:583-590` |
 
-会话可见面（软链 + 提示词白名单）今天是收窄的，但只防混淆不防越读。本方案把容器隔离维度从「人」改为「人 + Agent」，使数据归属维度与隔离维度对齐。
+会话可见面（软链 + 提示词白名单）今天是收窄的，但只防混淆不防越读。本方案把容器隔离维度从「人」改为「人 + Agent」，使数据归属维度与隔离维度对齐；其中团队经验库所在的 share 目录经决策 13 维持整根共享（share 还有管理员投放与运维共享文件，不能按 Agent 收窄），本次实际收窄的是 skill 视图。
 
 ## 2. 需求描述
 
@@ -27,7 +27,7 @@ docker 模式下容器按「人」维度创建复用（`mao-user-{userId}`，一
 
 1. **容器键改复合**：容器标识从 userId 改为 `(userId, agentId)` 二元组，容器名 `mao-user-{userId}-agent-{agentId}`；一用户多 Agent 并存多容器。
 2. **skill 视图按 (user, agent) 物化**：视图路径从 `{skillViewsDir}/{userId}/{skillName}` 改为 `{skillViewsDir}/{userId}/{agentId}/{skillName}`，容器只 ro 挂载当前 (user, agent) 的视图目录。
-3. **经验库按 Agent 收窄挂载**：容器从「挂 `shareDir` 整根」改为「只挂 `<shareDir>/agent-experience/{agentId}` 子目录（rw）」，容器内无法触达其他 Agent 的经验库。
+3. **经验库不做容器级隔离（决策 13，原定案撤回）**：share 维持整根 rw 挂载不变——share 除经验库外还有管理员投放与运维共享文件，须继续全员共享；经验库跨 Agent 的收口仍由工作区软链 + 提示词承担（现状能力）。
 4. **通道层复合键**：socket 目录、连接表、token、PTY hub 全部改为 `(userId, agentId)` 键。
 5. **派发链路穿线 agentId**：`ToolInvocation` 增加 `agentId`（按轮快照），docker 路由、`read_bytes`、MCP 派发全部携带。
 6. **预热双触发**：心跳预热与"会话内切换 Agent"均按 (userId, agentId) 预热。
@@ -40,6 +40,7 @@ docker 模式下容器按「人」维度创建复用（`mao-user-{userId}`，一
 |---|---|
 | deps/HOME/tmp/workspace 拆分 | **维持用户级共享**（决策 2）：`deps/{userId}`、`users/{userId}`、`{tmpDir}/{userId}`、workspace（含 (userId, slug) 项目工作区）继续整目录挂进该用户的每个 Agent 容器 |
 | userSkills 引入 Agent 绑定 | **不做**（决策 3）：`userskills/{userId}` 保持用户级 rw 挂载，个人技能对所有 Agent 开放的现有产品语义不变 |
+| 经验库容器级隔离 / share 收窄 | **不做**（决策 13，2026-11-07 修订）：share 目录还有管理员投放与运维共享文件，`{shareDir}` 整根继续 rw 挂进每个容器；其他 Agent 的经验库在容器内仍可经 share 根直读直写，收口依赖软链 + 提示词（接受项） |
 | 禁止会话内切 Agent | **不做**（决策 1/4）：web 端切换入口、飞书/钉钉 bot 热切换均保持现状语义；切换的容器侧代价按 §5.9 行为链接受 |
 | 资源上限调整 | **不做**（决策 6）：沿用 `MAO_CONTAINER_MEMORY_MB=2048` / cpus=2 / pids-limit=512 全局默认 |
 | host 模式改造 | **不做**：`DockerToolRouter` 整体短路的行为不变，host 模式代码路径零变化 |
@@ -80,10 +81,10 @@ docker label = mao.runtime=user、mao.user={userId}、mao.agent={agentId}
 | tmp | `{tmpDir}/{userId}` | 不变（决策 2） | rw |
 | dist | `{distDir}` | 不变 | ro |
 | **skillViews** | **`{skillViewsDir}/{userId}`** | **`{skillViewsDir}/{userId}/{agentId}`** | ro |
-| **share** | **`{shareDir}` 整根** | **`{shareDir}/agent-experience/{agentId}`** | rw |
+| **share** | **`{shareDir}` 整根** | **不变**（决策 13：整根共享，经验库不做容器级隔离） | rw |
 | sessionWorkspace | 通道会话工作区，按 DB user_id 过滤 | 按 DB (user_id, agent_id) 过滤（§5.2） | rw |
 
-隔离效果：容器内可见的 skill 视图 = 当前 (user, agent) 的技能；可见的经验库 = 当前 Agent 的库目录；其他 Agent 的视图与经验在容器文件系统层面不存在。
+隔离效果：容器内可见的 skill 视图 = 当前 (user, agent) 的技能，其他 Agent 的视图在容器文件系统层面不存在。share 维持整根共享（决策 13）：管理员投放文件与本 Agent 经验库照常可读写，其他 Agent 的经验库亦经 share 根可达，属已拍板接受项。
 
 ### 3.3 一次工具调用的链路变化
 
@@ -105,8 +106,8 @@ AgentLoop（宿主机，每轮 buildContext 定快照：context.agentId = agent.
 | agentId 的线程传递 | `ToolInvocation` 加字段（对象式入口 `dispatchInvocation`，唯一调用点 `agent-loop.ts:817`） | 按轮快照语义天然成立（buildContext 每轮重算）；避开 `dispatchFull` 十参位置签名的强转风险 | 每次 `ensureRunning` 时按 sessionId 查库（轮中切 Agent 会读到新值，产生"半轮 A 半轮 B"分裂） |
 | dispatcher 对 null agentId 的兜底 | 按 sessionId 查库一次（新增轻量依赖），仍 null 则返回明确工具错误 | 防未来新增调用方漏传；`session.agent_id NOT NULL` 保证兜底必中 | 静默跳过 docker 路由（违反"容器不可达不静默降级"既定原则） |
 | skill 视图物化维度 | `{skillViewsDir}/{userId}/{agentId}/{skillName}` | 挂载路径恒定：skillNames 增删/技能源更新只改目录内容（容器 ro 即见），**零容器重建** | 按 skillNames 枚举挂载（集合一变即触发整容器重建） |
-| 经验库挂载 | `<shareDir>/agent-experience/{agentId}` 子目录 rw | 固定路径适配挂载定型约束；容器内写路径 realpath 后仍命中该子目录，`ExperienceIndexService` 的 `refreshIfUnderRoot` 首段数字校验照常工作 | 实体副本同步（双写一致性问题，2026-10-24 设计依赖双端直写同目录） |
-| 容器内经验沙箱根 | env 新增 `MAO_CONTAINER_AGENT_ID`，沙箱允许根从 `shareDir` 收窄为 `<shareDir>/agent-experience/{agentId}` | 文件系统层（挂载）+ 沙箱层（允许根）双重收口；`ExperienceIndexService` 构造不变（root 仍为 `<shareDir>/agent-experience`） | 改造 `ExperienceIndexService` 接受 agent 目录为根（dirFor 会二次拼接，改动面更大） |
+| 经验库挂载 | 维持 `{shareDir}` 整根 rw（决策 13） | share 除经验库外还有管理员投放与运维共享文件，按 Agent 收窄会砍掉既有共享能力 | 仅挂 `agent-experience/{agentId}` 子目录（已实现后评审撤回）；实体副本同步（双写一致性问题） |
+| 容器内经验沙箱根 | 维持 `shareDir` 整根登记为允许根（决策 13）；`MAO_CONTAINER_AGENT_ID` env 仍注入作容器身份标识（无运行时消费方） | 挂载面整根共享下沙箱收窄只制造「挂载可见但沙箱拒绝」的双口径行为 | 允许根收窄为经验子目录（已实现后评审撤回） |
 | 通道连接键 | `Map<string>` 键 `userId:agentId`，socket 目录 `{channelDir}/{userId}/{agentId}/` | 单连接踢旧逻辑按键隔离，两容器并存互不干扰；`SO_PEERCRED` 反查容器名与路径双段比对 | 复用用户级 socket（第二连接踢旧 → 同用户多容器互踢死循环） |
 | agentless 会话 | **不存在**，无需哨兵值 | `session.agent_id BIGINT NOT NULL`（V001:151），每个会话必有 Agent | agentId=0 哨兵桶（无必要） |
 | 挂载源目录 | `createAndStart` 在 `docker run` 前对视图目录与经验子目录显式 `mkdirSync(recursive)` | 预热窗口可能早于首轮技能同步/经验挂载，消除 docker 自动建目录的隐式行为 | 依赖 docker 自动创建（隐式、不可测） |
@@ -121,20 +122,19 @@ AgentLoop（宿主机，每轮 buildContext 定快照：context.agentId = agent.
 - 入口签名：`ensureRunning(userId, agentId, requiredWorkspace?)`；`recycleUser(userId, opts?: { force?: boolean; agentId?: number })`——指定 `agentId` 回收单个，缺省遍历回收该用户全部容器（busy 且未 force 的跳过，聚合返回结果）。`withUserLock` 的锁粒度从 userId 改为复合键（同用户两个 Agent 容器的生命周期操作并行互不阻塞）。
 - 生命周期逻辑（创建/复用/漂移重建/idle 回收/`stopAllForShutdown`）全部按复合键运作，判定逻辑不变；idle 与 lifetime 阈值沿用全局配置。
 - `createAndStart(userId, agentId, extraWorkspaces, existing?)`：
-  - docker args 增加 `--label mao.agent={agentId}` 与 `-e MAO_CONTAINER_AGENT_ID={agentId}`（容器内硬依赖，缺失 `exit(1)`，与 `MAO_CONTAINER_USER_ID` 同口径）；
+  - docker args 增加 `--label mao.agent={agentId}` 与 `-e MAO_CONTAINER_AGENT_ID={agentId}`（容器身份标识；决策 13 撤回经验沙箱收口后无运行时消费方，不做缺失 `exit(1)` 硬依赖）；
   - `MAO_SKILL_VIEWS_DIR` 的值从视图根改为 `{skillViewsDir}/{userId}/{agentId}`（消费方 `runtime-agent` 的沙箱登记代码不变，值变了根就变了）；
-  - 新增 `-e MAO_EXPERIENCE_AGENT_DIR=<shareDir>/agent-experience/{agentId}`；
   - `ensureChannelListening(userId, agentId)`、`issueChannelToken(userId, agentId)`、`requestShutdown(key)` 按复合键；
-  - `docker run` 前对 `{skillViewsDir}/{userId}/{agentId}` 与 `<shareDir>/agent-experience/{agentId}` 执行 `mkdirSync(recursive)`（预热窗口可能早于首轮技能同步/经验挂载，见 §4 选型）。
+  - `docker run` 前对 `{skillViewsDir}/{userId}/{agentId}` 执行 `mkdirSync(recursive)`（预热窗口可能早于首轮技能同步，见 §4 选型）。
 - `listEntries()`：每行增加 `agentId`，按 `(userId, agentId)` 升序。
 - 挂载指纹：`standardMountsFingerprint` 覆盖的标准挂载含两个新的 agent 维度条目（路径按 key 恒定），skillNames 变化不进指纹、不触发重建。
 
 ### 5.2 挂载计划（`container-mount-planner.ts`）
 
-- `plan(userId, agentId, sessionWorkspaces)`；skillViews 条目改 `{skillViewsDir}/{userId}/{agentId}`（ro），share 条目改 `<shareDir>/agent-experience/{agentId}`（rw），channel 条目改 `{channelDir}/{userId}/{agentId}`（rw）。
+- `plan(userId, agentId, sessionWorkspaces)`；skillViews 条目改 `{skillViewsDir}/{userId}/{agentId}`（ro），channel 条目改 `{channelDir}/{userId}/{agentId}`（rw）；share 条目维持 `{shareDir}` 整根 rw（决策 13）。
 - `assertSafe` 规则修订：
-  - rw 项"必须含 `/{userId}/` 段"的既有规则对新增 agent 维度条目按结构豁免的方式与通道工作区一致，另加**agentId 段校验**：skillViews/share 条目的源路径必须恰为 `{登记根}/{userId}/{agentId}`（share 为 `{shareDir}/agent-experience/{agentId}`，第三段必须为纯数字且等于入参 agentId）；
-  - `purpose === 'share'` 的"必须恰为登记的 shareDir 根"改为"必须恰为登记的经验子目录"，杜绝借 purpose 挂 share 根或其他 Agent 子目录；
+  - rw 项"必须含 `/{userId}/` 段"的既有规则对新增 agent 维度条目按结构豁免的方式与通道工作区一致，另加**agentId 段校验**：skillViews 条目的源路径必须恰为 `{登记根}/{userId}/{agentId}`（第三段必须为纯数字且等于入参 agentId）；
+  - `purpose === 'share'` 的"必须恰为登记的 shareDir 根"维持不变（决策 13：整根共享是唯一合法形态，经验子目录形态因无 userId 段会被既有规则拒绝）；
   - `assertShareDirIndependent`（shareDir 不得等值/包含于按用户数据根）与"skillViewsDir 不得位于 shareDir 之内"两条互斥校验保留，语义不变；
   - 符号链接 realpath、父目录防护、只读项不可覆写等既有规则保留。
 - 通道会话工作区归属过滤：`sessionWorkspacesOf(userId)` 回调改为 `(userId, agentId)`，底层新增仓库方法 `listWorkspacesByUserAndAgent(userId, agentId)`（`SELECT workspace FROM session WHERE user_id = ? AND agent_id = ? AND workspace IS NOT NULL`），容器只挂"该用户 + 该 Agent"的会话的通道工作区；私聊叶子 `private-{userId}` / `p2p-{userId}` 的本人校验保留。群聊工作区由 `requiredWorkspace` 显式传入的既有路径挂入，行为不变。
@@ -153,10 +153,11 @@ AgentLoop（宿主机，每轮 buildContext 定快照：context.agentId = agent.
 - `skill-sync-service.ts` 的 `syncToSession` 已持有 `agent`（`:371` 调用点传参不变），内部调用 `ensureView` 时传 `agent.id`。
 - 旧路径产物（`{skillViewsDir}/{userId}/{skillName}` 与 `.meta/{userId}/`）：不迁移、不清理、不读取（§2.2）。
 
-### 5.5 经验库容器内收口（`runtime-agent.ts` / `container-tool-executor.ts`）
+### 5.5 经验库容器内访问（`runtime-agent.ts` / `container-tool-executor.ts`，决策 13 撤回收口）
 
-- 沙箱允许根：经验相关登记从 `MAO_SHARE_DIR`（shareDir 整根）改为 `MAO_EXPERIENCE_AGENT_DIR`（当前 Agent 的库子目录）；`MAO_SHARE_DIR` env 保留（`ExperienceIndexService` root 构造依赖，见 §5.1）。
-- `ExperienceIndexService` 在容器内的构造与索引刷新逻辑**零改动**：写路径 realpath 后落在本容器唯一挂载的 `{agentId}` 子目录内，`refreshIfUnderRoot` 的首段数字校验照常命中。
+- 沙箱允许根维持 `MAO_SHARE_DIR`（shareDir 整根）登记不变；`MAO_EXPERIENCE_AGENT_DIR` env 不引入——挂载面整根共享下，沙箱收窄经验子目录只会制造「挂载可见但沙箱拒绝」的双口径行为。
+- `MAO_CONTAINER_AGENT_ID` env 由 registry 注入作容器身份标识（`docker inspect` 可查）；容器内代码不读取、不设硬依赖。
+- `ExperienceIndexService` 在容器内的构造与索引刷新逻辑**零改动**（与现状一致，写路径经 share 根命中本 Agent 的 `{agentId}` 子目录）。
 - 宿主机侧 `pathSandbox.addAllowedRoot(shareDir)`（`create-app.ts:468`）与 admin 经验库管理接口不变（宿主进程本就持有全库权限）。
 
 ### 5.6 派发链路穿线 agentId
@@ -200,14 +201,14 @@ AgentLoop（宿主机，每轮 buildContext 定快照：context.agentId = agent.
 | 文件 | 改动 |
 |---|---|
 | `harness/container/container-registry.ts` | 复合键/容器名/label/env/锁/指纹/回收/listEntries/挂载源 mkdir/`ensureRunning(userId, agentId, …)` |
-| `harness/container/container-mount-planner.ts` | `plan(userId, agentId, …)`、skillViews/share/channel 三条挂载改路径、assertSafe agentId 段校验、审计日志加 agentId |
+| `harness/container/container-mount-planner.ts` | `plan(userId, agentId, …)`、skillViews/channel 两条挂载改路径（share 维持整根，决策 13）、assertSafe agentId 段校验、assertShareDirIndependent 补 distDir 校验、审计日志加 agentId |
 | `harness/container/runtime-channel-server.ts` | 连接键/socket 目录/token/`ensureListening(userId, agentId)`/peer 双段校验 |
 | `harness/container/docker-tool-router.ts` | `DockerDispatchContext.agentId`、`ensureRunning`/`getConnection`/`readBytes`/`mcpConnect`/`mcpCall` 穿线 |
 | `harness/container/runtime-channel-protocol.ts` | 无帧格式改动；`RuntimeEnvelope` 不变（确认项） |
 | `harness/container/read-bytes-bridge.ts` | 入参加 agentId 透传 |
 | `harness/container/routing-mcp-client-manager.ts` | `mcpConnect`/`mcpCall` 入参加 agentId |
-| `harness/container/runtime-agent.ts` | `MAO_CONTAINER_AGENT_ID` 硬依赖（缺失 exit 1）、经验沙箱根改 `MAO_EXPERIENCE_AGENT_DIR` |
-| `harness/container/container-tool-executor.ts` | 经验沙箱根消费方对齐 |
+| `harness/container/runtime-agent.ts` | skillViews 允许根消费 `MAO_SKILL_VIEWS_DIR` per-agent 值（经验沙箱根维持 shareDir 整根，决策 13） |
+| `harness/container/container-tool-executor.ts` | skillViews 允许根取 `MAO_SKILL_VIEWS_DIR` 值本身（per-agent 目录）；share 允许根维持整根（决策 13） |
 | `harness/tool/tool-invocation.ts` | `ToolInvocation.agentId` 字段 |
 | `harness/core/agent-loop.ts` | `dispatchInvocation` 填充 `agentId: context.agentId` |
 | `harness/tool/tool-dispatcher.ts` | `dispatchFullOutcome` 穿线 routeAgentId + 查库兜底依赖；send 工具 ctx 加 agentId |
@@ -247,8 +248,8 @@ desktop、android、`shared/contracts`、agent-cli、`scripts/deploy-*.sh`、`Do
 ## 7. 测试要点
 
 **挂载清单**
-- 容器 (U, A) 的挂载表：skillViews 恰为 `{views}/{U}/{A}` ro、share 恰为 `{share}/agent-experience/{A}` rw、channel 恰为 `{channel}/{U}/{A}` rw；断言不含其他 userId 尾段、不含其他 agentId 段。
-- `assertSafe` 拒绝：share 根整挂、`agent-experience/{其他agentId}`、skillViews 挂到用户根（缺 agentId 段）、agentId 段与入参不一致、符号链接逃逸、只读项覆写（既有用例全保留）。
+- 容器 (U, A) 的挂载表：skillViews 恰为 `{views}/{U}/{A}` ro、share 恰为 `{share}` 整根 rw（决策 13）、channel 恰为 `{channel}/{U}/{A}` rw；断言不含其他 userId 尾段、不含其他 agentId 段。
+- `assertSafe` 拒绝：`agent-experience` 子目录形态挂载（无 userId 段，share 根整挂为唯一放行例外）、skillViews 挂到用户根（缺 agentId 段）、agentId 段与入参不一致、符号链接逃逸、只读项覆写（既有用例全保留）。
 - `createAndStart` 前视图目录与经验子目录已存在（预热早于首轮同步的场景）。
 
 **生命周期**
@@ -270,9 +271,9 @@ desktop、android、`shared/contracts`、agent-cli、`scripts/deploy-*.sh`、`Do
 - 同用户双 Agent 各自物化视图互不可见（目录与 meta 双断言）；并发 `ensureView` 同键串行；指纹变化原子重建。
 - skillNames 增删只改目录内容，容器挂载指纹不变（零重建断言）。
 
-**经验库**
-- 容器 (U, A) 内读 `agent-experience/{B}/...` 路径不存在；沙箱对经验子目录外路径拒绝。
-- 容器内写经验文档 → 索引刷新命中（`refreshIfUnderRoot` 首段校验）；宿主机 admin 读写不受影响。
+**经验库（决策 13：整根共享）**
+- share 挂载整根 rw：容器内可读写管理员投放文件、本 Agent 经验文档；其他 Agent 的库目录同样可达（已拍板接受项，断言可达而非拒绝）。
+- share 内指向外部的 symlink 被逃逸检测拒绝；容器内写经验文档 → 索引刷新命中（`refreshIfUnderRoot` 首段校验）；宿主机 admin 读写不受影响。
 
 **功能回归**
 - keep_session / 终端 / git clone / `/deps` 持久化 / 读图 / `/tmp` 读写：沿用 2026-10-14 §7 用例口径，断言在新命名容器下全绿。
@@ -285,7 +286,7 @@ desktop、android、`shared/contracts`、agent-cli、`scripts/deploy-*.sh`、`Do
    **旧命名孤儿容器**：升级前已存在的 `mao-user-{userId}` 容器在后端重启后脱离 Registry 管控，运行中的不会被现有 gc 规则（只清 exited/dead）回收。对策：`scripts/container-gc.sh` 新增规则——stop+rm 名称匹配 `mao-user-{纯数字}`（无 `-agent-` 段）的运行中容器；升级后该命名模式必为孤儿，新容器恒含 agent 段，无误伤。
 2. **容器数与磁盘增长**：容器数 = Σ(用户 × 使用中的 Agent 数)；stopped 容器只占元数据。决策 6 已接受暂不调资源上限，多 Agent 活跃场景如遇瓶颈随运维再议。
 3. **切换预热依赖 PATCH 链路**：切换预热挂在 `updateSessionAgent` 之后的监听器上，若 PATCH 与下一轮执行竞争（切换后立即发消息），预热可能未完成——首轮工具调用落在 `ensureRunning` 上，等价于现状冷启动，可接受。
-4. **`MAO_CONTAINER_AGENT_ID` 为容器内硬依赖**：旧镜像 + 新宿主代码的组合会因 env 缺失 exit(1)——镜像与后端同批发布（部署脚本本就同批），`container-gc.sh` 兜底清理半成品。
+4. **`MAO_CONTAINER_AGENT_ID` 为容器身份标识**：由 `docker run` 注入、`docker inspect` 可查；决策 13 撤回经验沙箱收口后容器内无消费方，不做硬依赖校验，旧镜像兼容性风险消除。
 5. **群聊发言者冷启动**：与现状同粒度（今天发言者首次执行同样冷启动），不新增恶化。
 6. **开放问题**：无。6 项决策点已全部拍板（§10）。
 
@@ -300,13 +301,13 @@ desktop、android、`shared/contracts`、agent-cli、`scripts/deploy-*.sh`、`Do
 
 **二期：容器键与挂载切换**
 
-3. `container-mount-planner.ts`：`plan(userId, agentId, …)` + 三条挂载改路径 + `assertSafe` agentId 段校验 + 审计日志。
-4. `container-registry.ts`：复合键/容器名/锁/指纹/`createAndStart`（label、三个 env、mkdir 源目录）/`recycleUser`/`listEntries`。
+3. `container-mount-planner.ts`：`plan(userId, agentId, …)` + skillViews/channel 两条挂载改路径（share 维持整根，决策 13）+ `assertSafe` agentId 段校验 + 审计日志。
+4. `container-registry.ts`：复合键/容器名/锁/指纹/`createAndStart`（label、两个 env、视图源目录 mkdir）/`recycleUser`/`listEntries`。
 5. `runtime-channel-server.ts`：连接键/socket 目录/token/peer 校验。
 6. 派发链路：`tool-invocation.ts` → `agent-loop.ts` → `tool-dispatcher.ts` → `docker-tool-router.ts` → `read-bytes-bridge.ts` / `routing-mcp-client-manager.ts`（§5.6 全部穿线点）。
 7. 终端与 PTY：`terminal.routes.ts` / `terminal-manager.ts` / `app-utils.ts` / `pty-bridge.ts` 复合键。
 8. 预热：心跳加 agentId、切换监听器（`session.service.ts` + `app-container-runtime.ts` + `session.routes.ts`）、`session.repository.ts` 新增 `listWorkspacesByUserAndAgent`。
-9. `runtime-agent.ts` / `container-tool-executor.ts`：`MAO_CONTAINER_AGENT_ID` 硬依赖、经验沙箱根。
+9. `runtime-agent.ts` / `container-tool-executor.ts`：skillViews 允许根 per-agent 消费（经验沙箱根维持 shareDir 整根，决策 13）。
 10. admin：`container-admin.routes.ts` VO、`user.routes.ts` recycle body、`ContainerRebuildPanel.vue`。
 11. `scripts/container-gc.sh` 旧命名孤儿清理规则 + 全量测试（§7）+ 构建验证。
 12. 文档：CHANGELOG、README、DEPLOY、`skills/mao-cli/reference/deploy.md`、本方案状态改"已确认"。
@@ -326,6 +327,7 @@ desktop、android、`shared/contracts`、agent-cli、`scripts/deploy-*.sh`、`Do
 | 7 | 容器键用户维度 | runtimeUserId（运行身份），沿用现状路由口径 | 本方案定案 |
 | 8 | agentId 穿线 | `ToolInvocation` 字段 + 按轮快照 + 查库兜底 | 本方案定案 |
 | 9 | skill 视图物化 | `{skillViewsDir}/{userId}/{agentId}/`，挂载路径恒定 | 本方案定案 |
-| 10 | 经验库挂载 | 仅挂 `<shareDir>/agent-experience/{agentId}` 子目录 | 本方案定案 |
+| 10 | 经验库挂载 | 原「仅挂 `<shareDir>/agent-experience/{agentId}` 子目录」**撤回**，维持 `{shareDir}` 整根 rw（见决策 13） | 决策 13 修订 2026-11-07 |
 | 11 | 通道键 | `userId:agentId` 复合键，socket 三级目录 | 本方案定案 |
 | 12 | 上线方式 | 两期：宿主机数据面先行，容器键一次性切换 | 本方案定案 |
+| 13 | share 目录挂载 | **维持整根 rw**：share 还有管理员投放与运维共享文件，不能按 Agent 收窄；经验库不做容器级隔离，跨 Agent 收口靠软链 + 提示词（round-4 修订，已实现并回归测试） | 用户拍板 2026-11-07 |

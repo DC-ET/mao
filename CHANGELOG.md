@@ -1,9 +1,9 @@
 ## 0.0.473 (2026-11-07)
 
 ### 后端
-- **Docker 容器隔离维度从「人」升级为「人 + Agent」**（方案 docs/plan/2026-11-07-user-agent-container-isolation-technical-design.md，决策与调研见 docs/research/2026-11-07-container-isolation-user-agent-dimension.md）：同一用户的不同 Agent 各自独占一个容器（`mao-user-{userId}-agent-{agentId}`），容器内从此读不到其他 Agent 的技能视图与团队经验库——此前 `shareDir` 整根 rw 挂载使任意 Agent 可读写他人经验库、`skillViews/{userId}` 整根挂载可读全部技能视图。skill 视图按 (user, agent) 物化为恒定路径（`{skillViewsDir}/{userId}/{agentId}/`），skillNames 增删/技能源更新只改目录内容、零容器重建；团队经验库只挂当前 Agent 的子目录；Unix socket 通道、PTY 终端、预热、admin 容器管理全部按复合键隔离。同用户多 Agent 并存互不挤占单容器资源上限；重建的爆炸半径从「该用户全部会话」缩小到「单个 Agent 的会话」。
+- **Docker 容器隔离维度从「人」升级为「人 + Agent」**（方案 docs/plan/2026-11-07-user-agent-container-isolation-technical-design.md，决策与调研见 docs/research/2026-11-07-container-isolation-user-agent-dimension.md）：同一用户的不同 Agent 各自独占一个容器（`mao-user-{userId}-agent-{agentId}`），其他 Agent 的技能视图在容器内从此不可见——此前 `skillViews/{userId}` 整根挂载可读该用户全部 Agent 关联过的技能视图。skill 视图按 (user, agent) 物化为恒定路径（`{skillViewsDir}/{userId}/{agentId}/`），skillNames 增删/技能源更新只改目录内容、零容器重建；share 目录维持整根 rw 共享（含团队经验库与管理员投放的共享文件，不做按 Agent 收窄，经验库跨 Agent 收口仍靠工作区软链 + 提示词）；Unix socket 通道、PTY 终端、预热、admin 容器管理全部按复合键隔离。同用户多 Agent 并存互不挤占单容器资源上限；重建的爆炸半径从「该用户全部会话」缩小到「单个 Agent 的会话」。
 - **会话内切换 Agent 的容器侧行为**（已拍板接受中断）：切换不打断当前轮（agentId 按轮快照），下一轮路由到新容器（PATCH 成功即预热、无冷启动等待）；旧持久 shell 的 session_id 失效并报「请重新创建 shell 会话」，已 attach 终端随旧容器存活到关闭或回收，async 后台任务在旧容器成孤儿。群聊（飞书/钉钉）路由与技能同步本就按发言者运行身份，与复合键天然一致；bot 热切换 Agent 与会话内切换同口径。
-- **用户级共享数据维持不变**（已拍板）：deps/HOME//tmp/workspace/用户个人技能继续按用户挂载共享；host 模式、LOCAL 模式、桌面端零变化；无 DB 迁移。
+- **用户级共享数据维持不变**（已拍板）：deps/HOME/tmp/workspace/用户个人技能与 share 目录（整根）继续共享挂载；host 模式、LOCAL 模式、桌面端零变化；无 DB 迁移。
 - **升级自动收敛**：上线后存量容器首次使用时按新挂载指纹自动重建一次（既有机制）；`container-gc.sh` 新增旧命名孤儿容器（`mao-user-{纯数字}`，升级后必为孤儿）与三级 socket 目录的清理规则。
 
 ### admin

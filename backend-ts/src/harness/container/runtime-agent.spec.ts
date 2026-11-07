@@ -212,16 +212,13 @@ describe('runtime agent channel behavior', () => {
     process.env.MAO_USER_HOME_DIR = join(base, 'users');
     process.env.MAO_USER_SKILLS_DIR = join(base, 'userskills');
     delete process.env.MAO_SHARE_DIR;
-    // 2026-11-07：经验允许根 = {shareDir}/agent-experience/{agentId}（MAO_EXPERIENCE_AGENT_DIR
-    // 未设置时按容器键兜底计算）；shareDir 整根不再登记为允许根
-    process.env.MAO_CONTAINER_AGENT_ID = '5';
     const registered: string[] = [];
     const spy = vi.spyOn(PathSandbox.prototype, 'addAllowedRoot')
       .mockImplementation((root: string) => { registered.push(root); });
     const agent = new RuntimeAgent('/tmp/mao-probe.sock', 'probe-token', 7);
     try {
-      expect(registered).toContain('/opt/mao-data/share/agent-experience/5');
-      expect(registered).not.toContain('/opt/mao-data/share');
+      // 2026-11-07 决策 13 维持：share 根整根 rw 挂载并登记为允许根
+      expect(registered).toContain('/opt/mao-data/share');
     } finally {
       agent.dispose();
       spy.mockRestore();
