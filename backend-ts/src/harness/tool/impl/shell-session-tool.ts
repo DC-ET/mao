@@ -318,7 +318,7 @@ export class ShellSessionTool extends BaseTool {
     const waitFor = this.parseWaitFor(args);
     if (typeof waitFor === 'string') return errorJson(waitFor);
     const session = this.sessionManager.getSession(shellId, { conversationId: conversationId ?? 0 });
-    if (!session) return errorJson('会话不存在或已关闭：' + shellId);
+    if (!session) return errorJson('会话不存在或已失效（可能因切换 Agent 或容器回收）：' + shellId + '，请用 action:"create" 重新创建 shell 会话');
     const pending = session.pendingCommand;
     if (pending?.taskId != null) {
       return errorJson(`会话的输出正由后台任务 ${pending.taskId} 读取，请先 await_async 该任务。`);
@@ -373,7 +373,7 @@ export class ShellSessionTool extends BaseTool {
     const taskId = asText(args.task_id);
     if (taskId) {
       const awaited = await this.backgroundTaskManager.awaitResult(taskId, yieldTimeMs, conversationId);
-      if (awaited.status === 'not_found') return errorJson('后台任务不存在或已被消费：' + taskId);
+      if (awaited.status === 'not_found') return errorJson('后台任务不存在或已失效（可能因切换 Agent 或容器回收）：' + taskId + '，请重新提交后台任务');
       if (awaited.status === 'pending') {
         return toJson({
           task_id: taskId,
@@ -387,7 +387,7 @@ export class ShellSessionTool extends BaseTool {
     if (!shellId) return errorJson("await_async 必须提供 session_id 或 task_id");
     // 进程可能刚因 exit 退出，仍要读出最后输出，不能把死会话当成「不存在」
     const session = this.sessionManager.getSession(shellId, { allowDead: true, conversationId: conversationId ?? 0 });
-    if (!session) return errorJson('会话不存在或已关闭：' + shellId);
+    if (!session) return errorJson('会话不存在或已失效（可能因切换 Agent 或容器回收）：' + shellId + '，请用 action:"create" 重新创建 shell 会话');
     const pending = session.pendingCommand;
     if (!pending) return errorJson('该会话没有未结束的命令：' + shellId);
     if (pending.taskId != null) {
@@ -519,7 +519,7 @@ export class ShellSessionTool extends BaseTool {
     // 归属不一致（持他人 id）或会话已不在时按「不存在」处理：既避免越权关闭，
     // 也不泄露会话是否存在，与 write_stdin / await_async 口径一致
     const owned = this.sessionManager.getSession(shellId, { allowDead: true, conversationId: conversationId ?? 0 });
-    if (!owned) return errorJson('会话不存在或已关闭：' + shellId);
+    if (!owned) return errorJson('会话不存在或已失效（可能因切换 Agent 或容器回收）：' + shellId + '，请用 action:"create" 重新创建 shell 会话');
     this.sessionManager.close(shellId, { conversationId: conversationId ?? 0 });
     return toJson({ success: true, session_id: shellId });
   }

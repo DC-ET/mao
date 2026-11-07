@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { useTmpDir } from '../../testing/tmp-dir.js';
 import { DockerSendBytesBridge } from './read-bytes-bridge.js';
 import type { DockerToolRouter } from './docker-tool-router.js';
+import { sendToolRoundContext } from '../tool/impl/send-file-bytes.js';
 
 function makeBridge(uploadOriginProvider?: () => Promise<string | null>, sessionAgentIdOf?: (sessionId: number) => Promise<number | null>) {
   const base = useTmpDir('mao-bridge-');
@@ -49,6 +50,20 @@ describe('DockerSendBytesBridge', () => {
     readBytes.mockClear();
     expect(await bridge.readBytes({ ...input, userId: null })).toBeNull();
     expect(readBytes).not.toHaveBeenCalled();
+  });
+
+  it('readBytes: 轮快照存在时优先于按会话查库兜底（切 Agent 不路由分裂）', async () => {
+    // round-1 review Bug 1 回归：dispatcher 经 AsyncLocalStorage 注入按轮快照的 agentId；
+    // 会话行已是新 Agent（9）时桥仍用快照 5 路由——同一轮 docker-only 工具与 send 工具同容器
+    const { bridge, readBytes } = makeBridge(undefined, async () => 9);
+    const input = { userId: 7, sessionId: 11, workspace: '/ws/7', path: 'a.png', maxBytes: 1024 };
+    await sendToolRoundContext.run({ agentId: 5 }, async () => {
+      await bridge.readBytes(input);
+    });
+    expect(readBytes).toHaveBeenCalledWith({ ...input, agentId: 5 });
+    // 无快照（host 用户路径）时回落查库值
+    await bridge.readBytes(input);
+    expect(readBytes).toHaveBeenLastCalledWith({ ...input, agentId: 9 });
   });
 
   it('readBytes: 会话不存在（agentId 不可得）时明确报错不派发', async () => {

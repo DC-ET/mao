@@ -66,6 +66,23 @@ describe('ShellSessionTool', () => {
     expect(unknown.error).toContain('未知动作');
   });
 
+  it('stale shell / async task errors carry recreate guidance (agent switch)', async () => {
+    // 2026-11-07 复合容器方案 §5.9 / round-1 review Bug 2 回归：切 Agent 后旧容器内的
+    // keep_session shell 与 async 后台任务失效，报错必须带「引导重建」语义，不能与普通
+    // 过期文案相同（否则模型误判偶发故障重试旧 id，多耗一轮才恢复）
+    sessionManager.getSession.mockReturnValueOnce(null);
+    const gone = JSON.parse(await tool.execute(JSON.stringify({ action: 'write_stdin', session_id: 'x', input: 'a' }), 11, null, null));
+    expect(gone.error).toContain('已失效');
+    expect(gone.error).toContain('切换 Agent');
+    expect(gone.error).toContain('重新创建 shell 会话');
+
+    (background as unknown as Record<string, unknown>).awaitResult = vi.fn(async () => ({ status: 'not_found' }));
+    const taskGone = JSON.parse(await tool.execute(JSON.stringify({ action: 'await_async', task_id: 'task-9' }), 11, null, null));
+    expect(taskGone.error).toContain('已失效');
+    expect(taskGone.error).toContain('切换 Agent');
+    expect(taskGone.error).toContain('重新提交后台任务');
+  });
+
   it('passes the conversation id on every session lookup so foreign ids cannot be used', async () => {
     sessionManager.getSession.mockClear();
     sessionManager.close.mockClear();

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { DockerToolRouter } from './docker-tool-router.js';
-import type { SendBytesSupport } from '../tool/impl/send-file-bytes.js';
+import { sendToolRoundContext, type SendBytesSupport } from '../tool/impl/send-file-bytes.js';
 import type { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
 
 /**
@@ -96,10 +96,15 @@ export class DockerSendBytesBridge implements SendBytesSupport {
     userId: number | null; sessionId: number | null; workspace: string | null; path: string; maxBytes: number;
   }): Promise<Buffer | null> {
     if (input.userId == null) return null;
-    // 容器键第二维：send 工具上下文无 agentId，按会话解析（send 工具必在会话内执行）。
-    // 解析失败明确报错，不静默降级到宿主机读（容器内 /tmp 文件宿主机不存在，静默降级
-    // 会把「无法路由」误导为「文件不存在」）。
-    const agentId = input.sessionId != null ? await this.deps.sessionAgentIdOf(input.sessionId) : null;
+    // 容器键第二维（2026-11-07 复合容器方案 §5.6）：优先取 dispatcher 按轮快照放入
+    // AsyncLocalStorage 的 agentId——轮中切 Agent 后与同轮 docker-only 工具路由到同一
+    // 容器；快照缺失（host 用户 / 旧调用方）时按会话查库兜底。解析失败明确报错，不
+    // 静默降级到宿主机读（容器内 /tmp 文件宿主机不存在，静默降级会把「无法路由」
+    // 误导为「文件不存在」）。
+    const fromRound = sendToolRoundContext.getStore()?.agentId;
+    const agentId = fromRound != null
+      ? fromRound
+      : input.sessionId != null ? await this.deps.sessionAgentIdOf(input.sessionId) : null;
     if (agentId == null) {
       throw new Error(`容器读字节无法路由：会话不存在或缺少 Agent 维度 (sessionId=${input.sessionId})`);
     }

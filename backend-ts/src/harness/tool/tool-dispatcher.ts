@@ -14,6 +14,7 @@ import type { ApprovalModelResolver } from './approval-model-resolver.js';
 import type { ProxyApprover } from './proxy-approver.js';
 import type { Tool } from './tool.js';
 import { callTool } from './tool.js';
+import { sendToolRoundContext } from './impl/send-file-bytes.js';
 import type { ToolRegistry } from './tool-registry.js';
 import type { ToolDescriptor } from './tool-descriptor.js';
 import type { ToolInvocation } from './tool-invocation.js';
@@ -304,6 +305,18 @@ export class ToolDispatcher {
       if (tool) {
         // 产物/缓存类工具按运行身份寻址（§5.5）：dump_user_messages、open_web_page、
         // generate_image、edit_image、send_wechat_* 均在 SERVER_ONLY 分支。
+        // 容器用户（2026-11-07 复合容器方案 §5.6）：把按轮快照的 agentId 放进
+        // AsyncLocalStorage，send 工具的 read_bytes 与同轮 docker-only 工具路由到
+        // 同一容器（轮中切 Agent 不产生路由分裂）；快照缺失按会话查库兜底一次。
+        if (this.dockerRouter && runtimeUserId != null && await this.dockerRouter.enabledFor(runtimeUserId)) {
+          const roundAgentId = routeAgentId
+            ?? (sessionId != null ? (await this.sessionMapper.selectById(sessionId))?.agentId ?? null : null);
+          if (roundAgentId != null) {
+            const raw = await sendToolRoundContext.run({ agentId: roundAgentId },
+              () => callTool(tool, argumentsJson, sessionId, runtimeToolUserId, workspace));
+            return { raw, llmVerdict: null };
+          }
+        }
         return { raw: await callTool(tool, argumentsJson, sessionId, runtimeToolUserId, workspace), llmVerdict: null };
       }
       throw new IllegalArgumentException('Unknown tool: ' + toolName);

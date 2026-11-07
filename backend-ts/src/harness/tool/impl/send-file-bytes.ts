@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { fetchBytesWithLimits } from './fetch-bytes.js';
 import type { PathSandbox } from '../../safety/path-sandbox.js';
 import { StrictPathResolver } from '../../safety/strict-path.js';
@@ -34,6 +35,15 @@ export interface SendBytesSupport {
    */
   foreignPathMessage?(src: string, userId: number | null, hint?: string | null): Promise<string | null> | string | null;
 }
+
+/**
+ * 发送工具本轮的容器键快照（2026-11-07 复合容器方案 §5.6/§5.9）：dispatcher 在
+ * SERVER_ONLY 分支把按轮快照的 agentId 放进 AsyncLocalStorage，read-bytes-bridge
+ * 读取它路由 read_bytes——保证轮中切 Agent 后同一轮的 docker-only 工具与 send 工具
+ * 路由到同一容器（禁止在工具调用点现读 session.agentId 的不变量）。
+ * 桥侧在快照缺失（host 用户 / 旧调用方）时保留按会话查库兜底。
+ */
+export const sendToolRoundContext = new AsyncLocalStorage<{ agentId: number }>();
 
 export interface SendBytesCallContext {
   userId: number | null;
