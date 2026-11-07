@@ -6,7 +6,7 @@ import type { TuiHandle } from '../src/tui/types';
 import type { SessionVO } from '../src/rest/types';
 
 /**
- * BUGCHECK（2026-11-07 逻辑 BUG 审查，详见 docs/code-review/2026-11-07-logic-bug-review-01.md BUG-8）。
+ * BUGCHECK（2026-11-07 逻辑 BUG 审查，详见 docs/code-review/2026-11-07-logic-bug-review-01.md BUG-7）。
  *
  * BUG：`/resume` 切入（或启动即 attach）运行中会话后，等待期间排队的输入永不消费。
  *

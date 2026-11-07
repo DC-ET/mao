@@ -6,51 +6,45 @@
 >
 > 验证口径：所有用例断言「正确行为」，当前实现必然失败。默认 `it.fails` 固化；把 `bugIt` 改成 `it` 再运行即得真实失败输出（复现命令见下）。
 >
-> 本次审查**不修改任何产品代码**，只新增 3 个测试文件与 1 份报告：
+> 复核（2026-11-07 晚，本次更新）：全部条目重新实跑复核——原 BUG-7 经真实 Chromium 实测**不成立**已移除（原 BUG-8 顺延为 BUG-7）；BUG-1 补第二触发点；候选清单收敛为「代码链路已核实且修复价值 ≥ 中」的 9 条。详见文末「复核记录」。
+>
+> 本次审查**不修改任何产品代码**，当前保留 2 个测试文件与 1 份报告：
 > - `backend-ts/src/logic-bug-review-2026-11-07.spec.ts`（BUG-1 ~ BUG-6）
-> - `desktop/src/composables/searchJumpFocus.bugcheck.test.ts`（BUG-7）
-> - `agent-cli/test/repl-queue-drain.bugcheck.spec.ts`（BUG-8）
+> - `agent-cli/test/repl-queue-drain.bugcheck.spec.ts`（BUG-7）
 
 ## 复现
 
 ```bash
-# 形态一：真实失败（证明 BUG 存在）——9 条全部失败
+# 形态一：真实失败（证明 BUG 存在）——9 个用例全部失败（backend 7 + agent-cli 2）
 cd backend-ts
 sed -i '' 's/^const bugIt = it.fails;$/const bugIt = it;/' src/logic-bug-review-2026-11-07.spec.ts
-npx vitest run src/logic-bug-review-2026-11-07.spec.ts        # 7 failed
-cd ../desktop
-sed -i '' 's/^const bugIt = it.fails$/const bugIt = it/' src/composables/searchJumpFocus.bugcheck.test.ts
-npx vitest run src/composables/searchJumpFocus.bugcheck.test.ts  # 1 failed
+npx vitest run src/logic-bug-review-2026-11-07.spec.ts        # 7 failed（BUG-1 需环境装有 rg，无 rg 走 JS 回退不复现）
 cd ../agent-cli
 sed -i '' 's/^const bugIt = it.fails;$/const bugIt = it;/' test/repl-queue-drain.bugcheck.spec.ts
 npx vitest run test/repl-queue-drain.bugcheck.spec.ts         # 2 failed
 
 # 形态二：恢复 expected-failure（CI 绿色）
-cd backend-ts
+cd ../backend-ts
 sed -i '' 's/^const bugIt = it;$/const bugIt = it.fails;/' src/logic-bug-review-2026-11-07.spec.ts
-npx vitest run src/logic-bug-review-2026-11-07.spec.ts        # 7 passed
-cd ../desktop
-sed -i '' 's/^const bugIt = it$/const bugIt = it.fails/' src/composables/searchJumpFocus.bugcheck.test.ts
-npx vitest run src/composables/searchJumpFocus.bugcheck.test.ts  # 1 expected fail
+npx vitest run src/logic-bug-review-2026-11-07.spec.ts        # 7 passed (expected fail)
 cd ../agent-cli
 sed -i '' 's/^const bugIt = it;$/const bugIt = it.fails;/' test/repl-queue-drain.bugcheck.spec.ts
 npx vitest run test/repl-queue-drain.bugcheck.spec.ts         # 2 passed (expected fail)
 ```
 
-本机实跑记录：真实形态 `7 failed (backend) + 1 failed (desktop) + 2 failed (agent-cli)`；固化形态后全量回归 `backend-ts 5710 passed`、`desktop 1753 passed + 1 expected fail`、`agent-cli 674 passed`（均含各自 expected-fail），三端 `npm test` 与 backend/agent-cli `tsc` 构建全部 exit 0。
+复核实跑记录（2026-11-07 晚，HEAD `07544295`）：真实形态 `7 failed (backend) + 2 failed (agent-cli)`；固化形态（`it.fails`）backend `7 passed (7)`、agent-cli `2 passed (2)`；`desktop` 全量（删除误报用例后）`182 files / 1753 passed`、`agent-cli` 全量 `60 files / 674 passed`，均 exit 0。首版全量回归（`backend-ts 5710 passed`）不受本次更新影响（未改后端产品代码与用例）。
 
 ## 汇总
 
 | 编号 | 标题 | 位置 | 严重度 | 用户可见后果 |
 |------|------|------|--------|--------------|
-| BUG-1 | grep_search rg 分支把 `-` 开头的 pattern 当 flag：静默 0 命中 / 误报搜索失败 | `harness/tool/impl/grep-search-tool.ts:97` | 高 | 模型搜 `-n`、`--force` 等字面串得到「0 命中成功」，在错误前提下继续推进 |
+| BUG-1 | grep_search rg 分支把 `-` 开头的 pattern 当 flag：静默 0 命中 / 误报搜索失败 | `harness/tool/impl/grep-search-tool.ts:97`；同型缺陷另见 `agent-cli/src/local/tools/search.ts:274` | 高 | 模型搜 `-n`、`--force` 等字面串得到「0 命中成功」，在错误前提下继续推进（触发前提：环境装有 rg） |
 | BUG-2 | 容器 read_bytes 把 0 字节文件判成读取失败 | `harness/container/docker-tool-router.ts:131` | 高 | docker 用户发送/编辑空文件（如 `touch` 的占位文件）必报「容器内文件读取失败」，host 模式却正常 |
 | BUG-3 | 哨兵复制（copyFrom）在 headers 键未下发时静默丢弃源哨兵全部请求头 | `signal/watcher.service.ts:780-782` | 高 | 官方 CLI 文档示例复制的哨兵无凭据，401 错误页被当成正常基线，哨兵静默失效 |
 | BUG-4 | 重试入口不消费 pendingCancels：提交前窗口的「停止」被静默吞掉 | `session/ws/streaming-ws-handler.ts:1577-1587` | 高 | FAILED 会话点「重试」后立刻点「停止」，任务照常全量执行 |
 | BUG-5 | 容器 agent 重连后 connectionDead 永不清除：健康容器被强制重建 | `harness/container/container-registry.ts:639,648-652` | 高 | 一次通道抖动（已自动重连）后，下次工具调用把健康容器 stop+rm+run，shell/PTY/后台任务/MCP stdio 全部丢失 |
 | BUG-6 | 工具结果摘要失败/超时语义失真（wait_subagents 谎报完成、ask_user 即时失败标成超时） | `session/util/tool-result-summarizer.ts:790-797,403-410` | 中 | 轨迹、活动记录、admin 会话详情读到失真摘要：30 分钟超时显示「已完成」 |
-| BUG-7 | 搜索跳转「停驻判定」被不可聚焦点击永久卡住：切会话后输入框不再自动聚焦 | `desktop/src/composables/searchJumpFocus.ts:39-41` | 中 | 搜索跳转后点侧栏切会话，焦点停在顶栏搜索按钮上，键入无落点（0.0.471 引入回归） |
-| BUG-8 | `/resume` 切入运行中会话后，等待期间排队的输入永不消费 | `agent-cli/src/repl/repl.ts:167-169,190-198,360-362` | 高 | 排队消息静默滞留；下一条消息提交后旧消息反被先行发出（乱序），全程无提示 |
+| BUG-7 | `/resume` 切入运行中会话后，等待期间排队的输入永不消费 | `agent-cli/src/repl/repl.ts:167-169,190-198,360-362` | 高 | 排队消息静默滞留；下一条消息提交后旧消息反被先行发出（乱序），全程无提示 |
 
 与既有报告的关系：每条均已对照 `docs/code-review/` 全部既有文档查重（含 2026-10-02 / 11-04 对 grep 的两轮、2026-11-07 容器隔离 round1/2/4、2026-11-06 多端审批 review），均为未报告过的新问题。
 
@@ -58,13 +52,13 @@ npx vitest run test/repl-queue-drain.bugcheck.spec.ts         # 2 passed (expect
 
 ## BUG-1【高】grep_search rg 分支：pattern 以 `-` 开头被 rg 当成命令行 flag
 
-**位置**：`backend-ts/src/harness/tool/impl/grep-search-tool.ts:97`
+**位置**：`backend-ts/src/harness/tool/impl/grep-search-tool.ts:97`；**同型第二触发点**：`agent-cli/src/local/tools/search.ts:274`（LOCAL 模式的本地 grep 分支，同一 argv 构造，修复时须两处同步）
 
 ```ts
 cmd.push(pattern, scope.rgTarget);   // pattern 与目标路径之间没有 -e / -- 分隔
 ```
 
-**触发条件 → 期望 vs 实际**：模型搜索以 `-` 开头的字面串/正则（搜 CLI 输出、diff、配置注释极常见：`-n`、`-i`、`-v`、`--force`）。期望按该 pattern 搜索；实际 rg 按 clap 约定把首个 `-` 开头参数解析为 flag：
+**触发条件 → 期望 vs 实际**（前提：运行环境装有 ripgrep；无 rg 时走 JS 回退分支、不复现——本机以 ripgrep 13.0.0 复核复现）：模型搜索以 `-` 开头的字面串/正则（搜 CLI 输出、diff、配置注释极常见：`-n`、`-i`、`-v`、`--force`）。期望按该 pattern 搜索；实际 rg 按 clap 约定把首个 `-` 开头参数解析为 flag：
 
 - pattern=`-n`（合法 flag）→ `-n` 被吃成 line-numbers，`rgTarget` 被降级为 pattern，**path 位空缺**。而 `spawnSync` 的 stdin 默认是管道 → rg 读空 stdin 立即 EOF → exit 1（无匹配，不算失败）→ **静默返回「0 命中成功」**，无 error、无 truncated。本机实测 `spawnSync('rg', ['--json','-n','.'])` → `status=1`、`bytes_searched=0`；同目录 `rg --json -e '-n' .` 正确命中 1 行；
 - pattern=`--foo`（非法 flag）→ rg exit 2 → 走 ：104-108 抛「ripgrep 搜索失败（exit 2）：rg: unrecognized flag --foo」，把合法搜索请求报成工具故障。
@@ -207,32 +201,7 @@ AssertionError: expected '向用户提问 (超时或取消)' not to contain '超
 
 ---
 
-## BUG-7【中】搜索跳转「停驻判定」被不可聚焦点击永久卡住（desktop，0.0.471 引入）
-
-**位置**：`desktop/src/composables/searchJumpFocus.ts:39-41`；消费点 `desktop/src/components/chat/ChatInput.vue:1234`；触发面 `desktop/src/components/task/TaskSessionGroupList.vue:97-107`（`.session-item` 是**无 tabindex 的 div**）
-
-**触发条件 → 期望 vs 实际**：让位窗口（jumpInFlight）会正常关闭；问题在第二个条件 `document.activeElement === searchToggle`——它以「焦点停在触发按钮」代理「用户尚未移焦」。但 Chromium 里**点击不可聚焦元素不移动 activeElement**，而搜索跳转后的最高频后续操作恰是点侧栏会话项（生产 DOM 是无 tabindex 的 div，点击不产生焦点迁移）：
-
-1. 全局搜索跳转 → `restoreFocus()` 把焦点落到触发按钮；
-2. 点侧栏另一会话 → activeElement 仍在触发按钮；
-3. 会话切换联动最终汇入 `ChatInput.focusInput` → `shouldDeferFocusToSearchJump()` 仍 true → **直接 return**，输入框不聚焦、键入无落点；
-4. 在用户点到任何可聚焦元素之前，**后续每一次切会话/新建态的自动聚焦都被静默吞掉**。
-
-`searchJumpFocus.ts` 头注释声明的语义「用户一旦移焦，条件自然失效」在该路径上不成立。round2 review 的「无误伤」穷举只覆盖了可聚焦目标（其回归测试用 `<button>` 建模侧栏项），测试建模与生产 DOM 背离，恰好漏掉这条路径。
-
-**验证证据**（真实形态实跑输出）：
-
-```
-AssertionError: expected true to be false // Object.is equality
-```
-
-jsdom 下对无 tabindex 的 div 派发 click 后，停驻判定仍返回 true。
-
-**修复方向**：停驻态加一次性清除——「跳转完成后首次 pointerdown/keydown 即清除停驻判定」，或给停驻加短 TTL；只让「联动晚于 restoreFocus」的窄窗口受益。
-
----
-
-## BUG-8【高】`/resume` 切入运行中会话后，等待期间排队的输入永不消费（agent-cli）
+## BUG-7【高】`/resume` 切入运行中会话后，等待期间排队的输入永不消费（agent-cli）
 
 **位置**：`agent-cli/src/repl/repl.ts`——排队承诺在 `handleSubmit`（:120-127，`isRunning()` 即入队并提示「已排队（第 n 条）」）；**唯一的排水循环**在直发分支尾部（:130-142）；而 `resumeActiveRun`（:190-198，启动分支 :163-169 与 `/resume` 切换分支 :360-362 共用）`await waitForCurrentRun()` 结束后直接返回——两条路径结束后都无人消费队列。
 
@@ -253,25 +222,28 @@ AssertionError: expected "spy" to be called with arguments: [ 'hello', 9 ]
 
 ---
 
-## 未列入正榜的候选（分区审查发现，未写验证用例，供后续复查）
+## 补充核实（代码链路已核实，未固化用例）
 
-以下候选经代码链路核实「结构与触发面成立」，但本轮未补存在性用例，不计入已验证结论：
+以下条目在本次复核中经代码链路逐条核实成立（未补存在性用例），修复价值 ≥ 中，按价值排序，并注明配套条件与已兜底边界：
 
-| 候选 | 位置 | 置信度 | 摘要 |
-|------|------|--------|------|
-| 容器内单槽 currentEnvelope 最后写赢 | `container-tool-executor.ts:57,174-191`、`shell-session-manager.ts:518-524` | 中 | 同容器多会话并发时 envVars 串号（workspace 级变量）；11-04 的 envelopeRef 修复只防「提前清空」，不防「后到覆盖在途」 |
-| 容器内 MCP stdio connect 无超时、失败不清理 | `container-mcp-bridge.ts:42-59`（对照宿主机 `mcp-client-manager.ts:24-25,66-83`） | 中低 | 挂死的 MCP server 每轮泄漏一个子进程，`--pids-limit 512` 下逐渐耗尽 |
-| updateTask 换 cron 绕过 pendingOnceWork 不变量 | `schedule/scheduled-task.service.ts:438-457,791-795` | 中 | 一次性任务待重试期间换 cron：无条件开新档期，随后被旧档期重试链杀掉，新计划从不触发 |
-| deleteSession 运行中拒删守卫是 check-then-act | `session/session.service.ts:645-653` | 中 | 锁后不复查相位，执行启动窗口内可删掉运行中会话（同文件 `promoteSideTaskToMainSession`:717-727 是正确写法） |
-| POST 探针恒 chunked 且用户无法自救 | `signal/probe-client.ts:100-103` + `probe-validate.ts:12` | 中 | 对要求 Content-Length 的目标必败（411/400 → 连败停用，或错误页建假基线）；服务端明知 body 长度却不代填 |
-| 失败退避用 MySQL NOW() 与 Node 时钟混用 | `signal/signal.repository.ts:215-226` vs `:142-151` | 中低（条件性） | MySQL 时区非 +08:00 时退避整体漂移 8h，`interval ≤ 4min` 的哨兵失败后被高频重试 |
-| edit_file/write_file 混合行尾整文件归一 | `harness/tool/impl/file-eol.ts:11-13` + `edit-file-tool.ts:78-90` | 中低 | 只要含一行 CRLF，整文件（含 LF 行）被改写成 CRLF；file_change 行数与 git diff 严重不符 |
-| SideChatPanel 收尾无条件 clearInput+clearDraft | `desktop/src/components/chat/SideChatPanel.vue:885-896,1040-1048` | 中高 | 等待上传/重连期间继续打字被静默清掉；主会话已有 `clearInputIfUnedited` 守卫，边路面板未跟进 |
-| useChat.sendMessage 完成回调按「当前活跃会话」收尾 | `desktop/src/composables/useChat.ts:585-612` | 中 | 2026-10-13 以「无生产调用方」豁免，实际 `sendMessageWithQueue` 一直在生产调用；切会话后完成回调对 B 做非 preserve 重拉，丢已流出的回复 |
-| 打印模式（text / 非 stream json）丢弃 `error` 帧内容 | `agent-cli/src/render/json-renderer.ts:24-28`、`text-renderer.ts:8-16` | 中高 | FAILED 终态无任何错误信息（stream-json 有 `case 'error'`，两个打印 renderer 落空），脚本消费方无法诊断 |
-| 审批模态「已提交」态吞掉 Ctrl+C，回声永久丢失时无键盘逃生 | `agent-cli/src/tui/modal-controller.ts:250-251` + `ink-renderer.ts:279-289` | 中 | 投票上行后回声不到（后端在投票与回声间重启）时，收敛前数分钟内 Ctrl+C 完全无效，只能 Ctrl+\ / kill |
-| `switchTo` markRead 等待窗口内旧会话相位帧回填 snapshotPhase | `agent-cli/src/session/session-runner.ts:263-316,480-491,737-738` | 中低（竞态） | 切换瞬间旧会话 eid-less `session_status` 在途 → `waitForSnapshot` 短路沿用旧相位：旧相位 RUNNING 时 REPL 卡在「续接当前输出」且 busy=true |
-| MCP HTTP `tools/call` 无超时，与 stdio 路径（120s）口径分叉 | `agent-cli/src/local/tools/mcp.ts:269-293` | 低 | 病态 HTTP MCP server（持续 trickle body）可无限挂住，tool_result 永不上行 |
+| 条目 | 位置 | 修复价值 | 摘要（复核后表述） |
+|------|------|----------|------|
+| 边路面板收尾无条件清空输入 | `desktop/src/components/chat/SideChatPanel.vue:885-896,1040-1048` | 高 | 边路发送收尾无条件 `clearInput()`+`clearDraft()`：上传/连接/等待保存窗口（上限 60s）内继续打字被静默清空且不可恢复；主会话已有 `clearInputIfUnedited` 守卫（`ChatPanel.vue:765-767,781`），边路未跟进 |
+| 容器内 MCP stdio connect 无超时、失败不清理 | `backend-ts/src/harness/container/container-mcp-bridge.ts:42-59` | 中 | connect/listTools 无超时、抛错不关 transport：能 spawn 但不响应 initialize 的 server 每轮执行泄漏一个子进程（对照宿主机 `mcp-client-manager.ts:24-25,49-101` 有 60s 连接超时与失败清理） |
+| updateTask 换 cron 绕过 pendingOnceWork 不变量 | `backend-ts/src/schedule/scheduled-task.service.ts:438-457,789-806` | 中 | 一次性任务待重试/重试运行中（`next_retry_at` 已清）改 cron——包括改成另一个一次性日期——无条件开新档期，随后被旧档期重试链抹掉：新计划永不触发、任务被标 finished |
+| deleteSession 运行中拒删是 check-then-act | `backend-ts/src/session/session.service.ts:645-653` | 中 | 锁前判相位、锁后不复查（且 `lockActiveSessionById` 的行锁在事务外、语句即释放）：执行体被池排队/等锁期间 phase 仍为 IDLE，会话可被删掉，执行继续在已删会话上跑（对照 `promoteSideTaskToMainSession:717-729` 的事务内复查写法） |
+| POST 探针恒 chunked 且用户无法自救 | `backend-ts/src/signal/probe-client.ts:100-103` + `probe-validate.ts:12` | 中 | 有 body 时从不写 Content-Length（恒 chunked），且该头在禁填名单：对要求 Content-Length 的目标必败（411；错误页会被建成假基线），服务端明知 body 长度却不代填 |
+| 失败退避用 MySQL NOW() 与 Node 时钟混用 | `backend-ts/src/signal/signal.repository.ts:215-226` vs `:142-151` | 中（条件性） | 失败退避 `DATE_ADD(NOW(), …)`（DB 钟）、成功回写与到期比较用 Node 钟，`db.ts` 未钉 MySQL 会话时区：DB 时区 ≠ +08:00 时退避整体漂移（落后→退避被旁路、约每 30s 重试；超前→一次失败后静默停摆）。需在生产连接核验 `SELECT @@session.time_zone` |
+| 打印模式丢弃 error 帧内容 | `agent-cli/src/render/json-renderer.ts:24-28`、`text-renderer.ts:8-16` | 中 | text / 非 stream json 打印模式丢弃 `error` 帧、`RunResult.error` 也未回填（`session-runner.ts:644-648`）：FAILED 终态 stdout 无任何原因文本（stream-json 有 `case 'error'`），脚本消费方无法诊断 |
+| 审批模态「已提交」态吞掉 Ctrl+C | `agent-cli/src/tui/modal-controller.ts:250-251` + `ink-renderer.ts:279-289` | 中 | 投票上行后（submittedFlag）吞掉全部按键含 Ctrl+C；回声丢失时无键盘逃生。后端未重启由服务端 900s 超时兜底收敛；后端在投票与回声间重启时该轮永不收敛 |
+| MCP HTTP `tools/call` 无超时 | `agent-cli/src/local/tools/mcp.ts:269-293` | 中 | HTTP 分支 fetch 无超时（stdio 路径 120s）：病态 trickle 响应可让本地 fetch 永不返回、tool_result 永不上行（服务端 900s 超时只让该轮失败，CLI 侧连接/Promise 泄漏仍在） |
+
+## 复核记录（2026-11-07 晚，本次更新）
+
+- **原 BUG-7（搜索跳转「停驻判定」）不成立，已移除**：真实 Chromium（本机 Chrome 153，Playwright 实测）点击不可聚焦元素会移动焦点——mousedown 时焦点仍在触发按钮、click 事件到达时已落到 `body`，「焦点停驻」条件在该路径上随后自然失效，`ChatInput.focusInput` 不会被吞。原用例以 jsdom + 合成 `click` 事件建模（jsdom 不实现点击焦点迁移），与真实浏览器行为背离，属测试建模误报；对应测试文件已删除。0.0.471 的让位机制本身按原样保留。
+- **BUG-1 补第二触发点**：agent-cli 本地工具存在同一 argv 构造缺陷（`agent-cli/src/local/tools/search.ts:274`），修复须两处同步（已并入 BUG-1 与汇总表）。
+- **候选清单剔除 4 条**（不成立或修复价值低于「中」）：容器 envelope「后到覆盖在途」（仅同容器同 user+agent 的 workspace 级 envVars、需同 socket chunk 多帧或抢锁窗口）；edit/write 行尾整文件归一（跨端刻意对齐的移植语义、需混合行尾前提）；useChat.sendMessage 按活跃会话收尾（`!isActive` 分支生产不可达，2026-10-13 豁免仍成立）；`switchTo` 旧相位回填（窗口仅数十 ms、且有二次 Ctrl+C 逃生）。
+- 保留条目全部重新实跑：真实形态 `7 failed (backend) + 2 failed (agent-cli)`；固化形态 `7 + 2` 全绿；`desktop` / `agent-cli` 全量套件均绿。
 
 ## 审查覆盖度与边界
 
