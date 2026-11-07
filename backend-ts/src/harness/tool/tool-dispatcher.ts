@@ -80,6 +80,18 @@ const SERVER_ONLY_TOOLS = new Set([
   'http_describe', 'http_call',
 ]);
 const WRITE_TOOLS = new Set(['write_file', 'edit_file']);
+/**
+ * 消费 SendBytesSupport（loadSendFileBytes → read_bytes）的工具全集（2026-11-07
+ * 复合容器方案 §5.6）：这些工具在容器用户的执行路径上需要按轮快照的 agentId 路由
+ * read_bytes，分布在 SERVER_ONLY 分支（send_wechat_* / edit_image）与兜底分支
+ * （feishu/dingtalk 发送四件套），两个分支统一经 dispatchWithRoundAgent 注入。
+ */
+const SEND_BYTES_TOOLS = new Set([
+  'send_wechat_image', 'send_wechat_file',
+  'feishu_send_image', 'feishu_send_file',
+  'dingtalk_send_image', 'dingtalk_send_file',
+  'edit_image',
+]);
 
 /**
  * 执行期资源类工具（技术方案 2026-11-04 §5.5）：读/写按「运行身份」寻址
@@ -305,19 +317,9 @@ export class ToolDispatcher {
       if (tool) {
         // 产物/缓存类工具按运行身份寻址（§5.5）：dump_user_messages、open_web_page、
         // generate_image、edit_image、send_wechat_* 均在 SERVER_ONLY 分支。
-        // 容器用户（2026-11-07 复合容器方案 §5.6）：把按轮快照的 agentId 放进
-        // AsyncLocalStorage，send 工具的 read_bytes 与同轮 docker-only 工具路由到
-        // 同一容器（轮中切 Agent 不产生路由分裂）；快照缺失按会话查库兜底一次。
-        if (this.dockerRouter && runtimeUserId != null && await this.dockerRouter.enabledFor(runtimeUserId)) {
-          const roundAgentId = routeAgentId
-            ?? (sessionId != null ? (await this.sessionMapper.selectById(sessionId))?.agentId ?? null : null);
-          if (roundAgentId != null) {
-            const raw = await sendToolRoundContext.run({ agentId: roundAgentId },
-              () => callTool(tool, argumentsJson, sessionId, runtimeToolUserId, workspace));
-            return { raw, llmVerdict: null };
-          }
-        }
-        return { raw: await callTool(tool, argumentsJson, sessionId, runtimeToolUserId, workspace), llmVerdict: null };
+        const raw = await this.dispatchWithRoundAgent(toolName, runtimeUserId, sessionId, routeAgentId,
+          () => callTool(tool, argumentsJson, sessionId, runtimeToolUserId, workspace));
+        return { raw, llmVerdict: null };
       }
       throw new IllegalArgumentException('Unknown tool: ' + toolName);
     }
@@ -446,9 +448,35 @@ export class ToolDispatcher {
     if (tool) {
       // shell 与执行期资源类工具（发送等）按运行身份读字节；其余保持会话归属（§5.5）。
       const toolUserId = (toolName === 'shell' || RUNTIME_SCOPED_TOOLS.has(toolName)) ? runtimeUserId : userId;
-      return { raw: await callTool(tool, argumentsJson, sessionId, toolUserId, workspace), llmVerdict: null };
+      const raw = await this.dispatchWithRoundAgent(toolName, runtimeUserId, sessionId, routeAgentId,
+        () => callTool(tool, argumentsJson, sessionId, toolUserId, workspace));
+      return { raw, llmVerdict: null };
     }
     throw new IllegalArgumentException('Unknown tool: ' + toolName);
+  }
+
+  /**
+   * send 工具的容器键快照注入（2026-11-07 复合容器方案 §5.6）：docker 用户的
+   * SEND_BYTES_TOOLS 执行包在 AsyncLocalStorage 里，read-bytes-bridge 读取快照路由
+   * read_bytes——轮中切 Agent 后与同轮 docker-only 工具路由到同一容器；快照缺失按
+   * 会话查库兜底一次。host 用户 / 非 send 工具直通，零额外开销。
+   */
+  private async dispatchWithRoundAgent(
+    toolName: string,
+    runtimeUserId: number | null,
+    sessionId: number | null,
+    routeAgentId: number | null,
+    run: () => Promise<string>,
+  ): Promise<string> {
+    if (this.dockerRouter && runtimeUserId != null && SEND_BYTES_TOOLS.has(toolName)
+      && await this.dockerRouter.enabledFor(runtimeUserId)) {
+      const roundAgentId = routeAgentId
+        ?? (sessionId != null ? (await this.sessionMapper.selectById(sessionId))?.agentId ?? null : null);
+      if (roundAgentId != null) {
+        return sendToolRoundContext.run({ agentId: roundAgentId }, run);
+      }
+    }
+    return run();
   }
 
   private async dispatchAskUserQuestions(argumentsJson: string, sessionId: number | null): Promise<string> {

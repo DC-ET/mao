@@ -3,6 +3,7 @@ import { AskUserQuestionsRegistry } from './ask-user-questions-registry.js';
 import { DangerAssessor } from './danger-assessor.js';
 import { ToolDispatcher, IllegalArgumentException, type InboxRecorder } from './tool-dispatcher.js';
 import { ToolRegistry } from './tool-registry.js';
+import { sendToolRoundContext } from './impl/send-file-bytes.js';
 import type { Tool } from './tool.js';
 import type { LocalToolExecutor } from '../local/local-tool-executor.js';
 import type { LocalToolSessionRegistry } from '../local/local-tool-session-registry.js';
@@ -1043,6 +1044,46 @@ describe('ToolDispatcher docker routing', () => {
     cloudTool.execute.mockReset();
     mcpTool.execute.mockReset();
     localToolExecutor.execute.mockReset();
+  });
+
+  it('send 工具走兜底分支时也注入轮快照（ALS，round-2 Bug 1 回归）', async () => {
+    // feishu/dingtalk 发送四件套不在 SERVER_ONLY_TOOLS、走兜底分支：
+    // docker 用户的 read_bytes 必须拿到按轮快照的 agentId（优先于会话查库兜底），
+    // 轮中切 Agent 后与同轮 docker-only 工具路由到同一容器
+    let seen: number | null | undefined = undefined;
+    const sendTool = mockTool('feishu_send_image');
+    sendTool.execute.mockImplementation(async () => {
+      seen = sendToolRoundContext.getStore()?.agentId ?? null;
+      return 'ok';
+    });
+    const registryWithSend = new ToolRegistry([cloudTool, mcpTool, sendTool]);
+    sessionMapper.selectById.mockResolvedValue({ agentId: 9 });
+    const dockerDispatcher = new ToolDispatcher(
+      registryWithSend, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher,
+      null, null, null, null, null, null, null, null,
+      { enabledFor: vi.fn(async () => true), dispatch: vi.fn() } as never,
+    );
+    await dockerDispatcher.dispatchInvocation({
+      callId: 'c', toolName: 'feishu_send_image', argumentsJson: '{}',
+      executionMode: 'CLOUD', sessionId: 11, userId: 7, executionUserId: 7,
+      runtimeUserId: 7, agentId: 5, workspace: '/ws', permissionLevel: null, modelConfig: null, sessionTools: null,
+    } as never);
+    expect(seen).toBe(5);
+    // 非容器用户（enabledFor=false）：不注入 ALS（快照 undefined），工具照常执行
+    const plainDispatcher = new ToolDispatcher(
+      registryWithSend, localToolExecutor, dangerAssessor, sessionMapper, streamingWsRegistry,
+      askUserQuestionsRegistry, localToolSessionRegistry, treeSignalPublisher,
+      null, null, null, null, null, null, null, null,
+      { enabledFor: vi.fn(async () => false), dispatch: vi.fn() } as never,
+    );
+    seen = undefined;
+    await plainDispatcher.dispatchInvocation({
+      callId: 'c', toolName: 'feishu_send_image', argumentsJson: '{}',
+      executionMode: 'CLOUD', sessionId: 11, userId: 7, executionUserId: 7,
+      runtimeUserId: 7, agentId: 5, workspace: '/ws', permissionLevel: null, modelConfig: null, sessionTools: null,
+    } as never);
+    expect(seen).toBeNull();
   });
 
   it('routesDockerOnlyToolsToContainer', async () => {
