@@ -636,7 +636,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     envVariableService, uploadDir, userSkillsDir, shareDir, mcpClient, activityHeartbeat,
     ecpInjector, larkUatInjector,
   });
-  const { cloudRuntimeCfg, containerChannelHolder, channelServer, containerRegistry, containerHostsResolver, runtimeModeResolver, containerAutoUpgradeResolver, activateContainerRuntime, envelopeBuilder, dockerRouter, sendBytesBridge, mcpRuntimeProbe, routingMcpClient, ptyChannelHubs, ptyHubGeneration, containerPtyFactory, bootRuntimeMode } = containerRuntime;
+  const { cloudRuntimeCfg, containerChannelHolder, channelServer, containerRegistry, containerHostsResolver, runtimeModeResolver, containerAutoUpgradeResolver, activateContainerRuntime, envelopeBuilder, dockerRouter, sendBytesBridge, mcpRuntimeProbe, routingMcpClient, ptyChannelHubs, ptyHubGeneration, containerPtyFactory, bootRuntimeMode, notifyAgentSwitched } = containerRuntime;
+  // 会话内切换 Agent → 预热新 (userId, agentId) 容器（2026-11-07 复合容器方案 §5.8）
+  sessionService.onAgentSwitched = notifyAgentSwitched;
 
   const terminalManager = new TerminalManager({
     pathSandbox,

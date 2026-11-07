@@ -25,16 +25,18 @@ vi.mock('node:fs', async (importOriginal) => {
       const isStageSwap = from.includes(`${pathMod.sep}.tmp${pathMod.sep}`)
         && !to.includes(`${pathMod.sep}.tmp${pathMod.sep}`);
       if (isStageSwap) {
-        const viewsRoot = pathMod.dirname(pathMod.dirname(pathMod.dirname(from)));
+        // 新布局 stage = {viewsRoot}/.tmp/{userId}/{agentId}/{stage}，逐级上溯取根
+        const viewsRoot = pathMod.dirname(pathMod.dirname(pathMod.dirname(pathMod.dirname(from))));
         const trigger = pathMod.join(viewsRoot, 'inject-winner-once');
         if (actual.existsSync(trigger)) {
           actual.rmSync(trigger, { force: true }); // 一次性注入
-          const userId = pathMod.basename(pathMod.dirname(from));
+          const agentId = pathMod.basename(pathMod.dirname(from));
+          const userId = pathMod.basename(pathMod.dirname(pathMod.dirname(from)));
           const skillName = pathMod.basename(from).split('-').slice(0, -2).join('-');
           // 胜者的完整成果：非空视图 + 与视图内容配对的 meta（指纹故意用占位值）
           actual.mkdirSync(to, { recursive: true });
           actual.writeFileSync(pathMod.join(to, 'SKILL.md'), 'winner-body');
-          const winnerMetaDir = pathMod.join(viewsRoot, '.meta', userId);
+          const winnerMetaDir = pathMod.join(viewsRoot, '.meta', userId, agentId);
           actual.mkdirSync(winnerMetaDir, { recursive: true });
           actual.writeFileSync(
             pathMod.join(winnerMetaDir, `${skillName}.json`),
@@ -62,7 +64,7 @@ describe('SkillViewService 蓝绿并发（round-3 I-1 回归）', () => {
     const svc = new SkillViewService(viewsRoot);
 
     // 1) 首次物化（v1）
-    const view = await svc.ensureView(7, 'java', source);
+    const view = await svc.ensureView(7, 5, 'java', source);
     expect(readFileSync(path.join(view!, 'SKILL.md'), 'utf8')).toContain('body-v1');
 
     // 2) 源更新（长度变化，指纹必然变化）→ 下一次 ensureView 会走物化；顺带布置一次性「胜者注入」
@@ -70,22 +72,22 @@ describe('SkillViewService 蓝绿并发（round-3 I-1 回归）', () => {
     writeFileSync(path.join(viewsRoot, 'inject-winner-once'), 'x');
 
     // 3) 竞态②：rename(stage → view) 前胜者先到（注入），真实 rename 以 ENOTEMPTY 失败
-    const after = await svc.ensureView(7, 'java', source);
+    const after = await svc.ensureView(7, 5, 'java', source);
     expect(after).toBe(view);
     // 视图归胜者：败者不得用自己拷贝的内容覆盖
     expect(readFileSync(path.join(view!, 'SKILL.md'), 'utf8')).toBe('winner-body');
     // meta 保留胜者的（不得被败者指纹覆盖——被覆盖即 I-1）
-    const winnerMeta = JSON.parse(readFileSync(path.join(viewsRoot, '.meta', '7', 'java.json'), 'utf8'));
+    const winnerMeta = JSON.parse(readFileSync(path.join(viewsRoot, '.meta', '7', '5', 'java.json'), 'utf8'));
     expect(winnerMeta.fingerprint).toBe('0-0-0');
     // 败者的 stage/.old 全部清理，无残留
-    expect(readdirSync(path.join(viewsRoot, '.tmp', '7'))).toEqual([]);
+    expect(readdirSync(path.join(viewsRoot, '.tmp', '7', '5'))).toEqual([]);
     // 注入一次性生效（触发文件已消费）
     expect(existsSync(path.join(viewsRoot, 'inject-winner-once'))).toBe(false);
 
     // 4) 下一轮：胜者 meta 与当前源不匹配 → 重建为最新内容（修复生效：不会短路钉死 winner-body）
-    await svc.ensureView(7, 'java', source);
+    await svc.ensureView(7, 5, 'java', source);
     expect(readFileSync(path.join(view!, 'SKILL.md'), 'utf8')).toContain('body-v2-longer');
-    const rebuiltMeta = JSON.parse(readFileSync(path.join(viewsRoot, '.meta', '7', 'java.json'), 'utf8'));
+    const rebuiltMeta = JSON.parse(readFileSync(path.join(viewsRoot, '.meta', '7', '5', 'java.json'), 'utf8'));
     expect(rebuiltMeta.fingerprint).toMatch(/^\d+-\d+-\d+$/);
   });
 });

@@ -19,6 +19,11 @@ export class DockerSendBytesBridge implements SendBytesSupport {
       /** 图片产物上传根（FILE_UPLOAD_DIR）：host 模式放行本人 {uploadDir}/{userId} 子目录。 */
       uploadDir: string;
       /**
+       * 会话 Agent id 查询（容器键第二维，2026-11-07 复合容器方案 §5.8）：send 工具的
+       * 执行上下文只有 sessionId，容器路由所需的 agentId 由这里按会话解析。
+       */
+      sessionAgentIdOf(sessionId: number): Promise<number | null>;
+      /**
        * uploads 产物公开 URL 的 origin 提供者（best-effort，形如 https://host）：
        * 缺省/失败时跨成员文案不带具体 URL（技术方案 2026-11-04 §5.9 第 3 条）。
        */
@@ -91,8 +96,16 @@ export class DockerSendBytesBridge implements SendBytesSupport {
     userId: number | null; sessionId: number | null; workspace: string | null; path: string; maxBytes: number;
   }): Promise<Buffer | null> {
     if (input.userId == null) return null;
+    // 容器键第二维：send 工具上下文无 agentId，按会话解析（send 工具必在会话内执行）。
+    // 解析失败明确报错，不静默降级到宿主机读（容器内 /tmp 文件宿主机不存在，静默降级
+    // 会把「无法路由」误导为「文件不存在」）。
+    const agentId = input.sessionId != null ? await this.deps.sessionAgentIdOf(input.sessionId) : null;
+    if (agentId == null) {
+      throw new Error(`容器读字节无法路由：会话不存在或缺少 Agent 维度 (sessionId=${input.sessionId})`);
+    }
     return this.deps.router.readBytes({
       userId: input.userId,
+      agentId,
       sessionId: input.sessionId,
       workspace: input.workspace,
       path: input.path,

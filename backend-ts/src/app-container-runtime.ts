@@ -64,10 +64,16 @@ export interface ContainerRuntimeResult {
   sendBytesBridge: DockerSendBytesBridge;
   mcpRuntimeProbe: unknown;
   routingMcpClient: McpClientManager;
-  ptyChannelHubs: Map<number, PtyChannelHub>;
-  ptyHubGeneration: Map<number, number>;
+  ptyChannelHubs: Map<string, PtyChannelHub>;
+  ptyHubGeneration: Map<string, number>;
   containerPtyFactory: (options: SpawnPtyOptions) => Promise<PtyLike>;
   bootRuntimeMode: string;
+  /**
+   * 会话内切换 Agent 后的容器预热（2026-11-07 复合容器方案 §5.8，已拍板决策 1）：
+   * fire-and-forget ensureRunning(userId, agentId, workspace)，消除切换后下一轮的冷启动。
+   * 由 sessionService 的 onAgentSwitched 监听器调用；host 模式（enabledFor=false）静默跳过。
+   */
+  notifyAgentSwitched: (sessionId: number, userId: number, agentId: number) => void;
 }
 
 export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Promise<ContainerRuntimeResult> {
@@ -86,10 +92,10 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
   });
   const channelServer = new RuntimeChannelServer({
     channelDir: cloudRuntimeCfg.container.channelDir,
-    tokenOf: (userId): string => channelServer.issueToken(userId),
-    onConnectionDead: (userId) => containerChannelHolder.registry?.markConnectionDead(userId),
-    onRuntimeStatus: (userId, status) => containerChannelHolder.registry?.reportRuntimeStatus(userId, status),
-    onAgentHello: (userId, info) => containerChannelHolder.registry?.reportAgentHello(userId, info.build),
+    tokenOf: (userId, agentId): string => channelServer.issueToken(userId, agentId),
+    onConnectionDead: (userId, agentId) => containerChannelHolder.registry?.markConnectionDead(userId, agentId),
+    onRuntimeStatus: (userId, agentId, status) => containerChannelHolder.registry?.reportRuntimeStatus(userId, agentId, status),
+    onAgentHello: (userId, agentId, info) => containerChannelHolder.registry?.reportAgentHello(userId, agentId, info.build),
   });
   const containerRegistry = new ContainerRegistry({
     config: cloudRuntimeCfg,
@@ -103,26 +109,26 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
     shareDir,
     // 容器域名解析注入：宿主机 /etc/hosts 继承 + 后台自定义规则（Docker 模式）
     resolveHostsInjection: () => containerHostsResolver.resolveWithMeta(),
-    ensureChannelListening: async (userId) => channelServer.ensureListening(userId),
-    issueChannelToken: (userId) => channelServer.issueToken(userId),
-    waitSocketReady: async (userId, timeoutMs) => {
+    ensureChannelListening: async (userId, agentId) => channelServer.ensureListening(userId, agentId),
+    issueChannelToken: (userId, agentId) => channelServer.issueToken(userId, agentId),
+    waitSocketReady: async (userId, agentId, timeoutMs) => {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
-        if (channelServer.getConnection(userId)) return;
+        if (channelServer.getConnection(userId, agentId)) return;
         await new Promise((resolve) => setTimeout(resolve, 200));
       }
-      throw new Error(`容器运行时通道连接超时: userId=${userId} (${timeoutMs}ms)`);
+      throw new Error(`容器运行时通道连接超时: userId=${userId}, agentId=${agentId} (${timeoutMs}ms)`);
     },
-    requestShutdown: async (userId) => {
-      const conn = channelServer.getConnection(userId);
+    requestShutdown: async (userId, agentId) => {
+      const conn = channelServer.getConnection(userId, agentId);
       return conn ? conn.requestShutdown(5000) : false;
     },
     // 容器内代码漂移自动收敛（技术方案 §3.4/§3.5）：总开关 + 蓝绿 draining 守卫
     autoUpgradeEnabled: () => containerAutoUpgradeResolver.resolve(),
     isDraining: () => isDrainingInstance(cfg.app.harness.runtimeDir, cfg.server.port),
-    sessionWorkspacesOf: async (userId) => {
-      const all = await sessionRepo.listWorkspacesByUser(userId).catch((e) => {
-        console.debug(`Session workspace lookup skipped for user ${userId}: ${(e as Error).message}`);
+    sessionWorkspacesOf: async (userId, agentId) => {
+      const all = await sessionRepo.listWorkspacesByUserAndAgent(userId, agentId).catch((e) => {
+        console.debug(`Session workspace lookup skipped for user ${userId} agent ${agentId}: ${(e as Error).message}`);
         return [] as string[];
       });
       return all.filter((w) => isChannelWorkspace(w, cfg.app.harness.workspaceRoot));
@@ -167,6 +173,11 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
     runtimeResolver,
     runtimeDir: cfg.app.harness.runtimeDir,
     uploadDir,
+    // 容器键第二维（2026-11-07 复合容器方案 §5.8）：send 工具上下文无 agentId，按会话解析
+    sessionAgentIdOf: async (sessionId) => {
+      const session = await sessionRepo.findById(sessionId).catch(() => null);
+      return session?.agentId ?? null;
+    },
     // uploads 公开 URL origin（技术方案 2026-11-04 §5.9 第 3 条）：与 generate_image 同口径
     // 派生静态 origin（upload.baseUrl 去 contextPath 后缀）；失败时文案降级为不带 URL。
     uploadOriginProvider: async () => {
@@ -189,14 +200,19 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
       const session = await sessionRepo.findById(sessionId).catch(() => null);
       return session?.userId ?? null;
     },
+    // 容器键第二维（2026-11-07 复合容器方案 §5.6）：MCP 路由按 (userId, agentId) 寻址
+    agentIdOf: async (sessionId: number): Promise<number | null> => {
+      const session = await sessionRepo.findById(sessionId).catch(() => null);
+      return session?.agentId ?? null;
+    },
   };
   const routingMcpClient = new RoutingMcpClientManager({
     host: mcpClient,
     router: dockerRouter,
     probe: mcpRuntimeProbe,
   }) as unknown as McpClientManager;
-  const ptyChannelHubs = new Map<number, PtyChannelHub>();
-  const ptyHubGeneration = new Map<number, number>();
+  const ptyChannelHubs = new Map<string, PtyChannelHub>();
+  const ptyHubGeneration = new Map<string, number>();
   const containerPtyFactory = createContainerPtyFactory({
     dockerRouter, containerRegistry, channelServer, ptyChannelHubs, ptyHubGeneration, nodePtyFactory,
   });
@@ -205,11 +221,22 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
       const session = await sessionRepo.findById(sessionId).catch(() => null);
       if (session?.userId == null) return;
       if (!(await dockerRouter.enabledFor(session.userId))) return;
-      await containerRegistry.ensureRunning(session.userId, session.workspace ?? null);
+      // 容器键第二维（2026-11-07 复合容器方案 §5.8）：按会话的 (userId, agentId) 预热
+      await containerRegistry.ensureRunning(session.userId, session.agentId!, session.workspace ?? null);
     })().catch((e) => {
       console.debug(`Container prewarm skipped for session ${sessionId}: ${(e as Error).message}`);
     });
   });
+  // 会话内切换 Agent 后预热新容器（§5.8 已拍板决策 1）：host 模式静默跳过
+  const notifyAgentSwitched = (sessionId: number, userId: number, agentId: number): void => {
+    void (async () => {
+      if (!(await dockerRouter.enabledFor(userId))) return;
+      const session = await sessionRepo.findById(sessionId).catch(() => null);
+      await containerRegistry.ensureRunning(userId, agentId, session?.workspace ?? null);
+    })().catch((e) => {
+      console.debug(`Container prewarm after agent switch skipped for session ${sessionId}: ${(e as Error).message}`);
+    });
+  };
   const bootRuntimeMode = await runtimeModeResolver.resolve();
   if (bootRuntimeMode === 'docker') {
     try {
@@ -242,5 +269,6 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
     ptyHubGeneration,
     containerPtyFactory,
     bootRuntimeMode,
+    notifyAgentSwitched,
   };
 }

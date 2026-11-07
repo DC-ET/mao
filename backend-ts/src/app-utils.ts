@@ -136,8 +136,9 @@ export interface ContainerPtyFactoryDeps {
   dockerRouter: DockerToolRouter;
   containerRegistry: ContainerRegistry;
   channelServer: RuntimeChannelServer;
-  ptyChannelHubs: Map<number, PtyChannelHub>;
-  ptyHubGeneration: Map<number, number>;
+  /** 键为 containerKey(userId, agentId)（2026-11-07 复合容器方案 §5.7）。 */
+  ptyChannelHubs: Map<string, PtyChannelHub>;
+  ptyHubGeneration: Map<string, number>;
   nodePtyFactory: (options: SpawnPtyOptions) => Promise<PtyLike> | PtyLike;
 }
 
@@ -147,20 +148,27 @@ export function createContainerPtyFactory(deps: ContainerPtyFactoryDeps): (optio
   return async (options: SpawnPtyOptions): Promise<PtyLike> => {
     const userId = options.userId;
     if (userId != null && await dockerRouter.enabledFor(userId)) {
-      const entry = await containerRegistry.ensureRunning(userId, options.cwd);
-      const connection = channelServer.getConnection(userId);
-      if (!connection) throw new Error(`容器终端通道未就绪: userId=${userId}`);
-      let hub = ptyChannelHubs.get(userId);
-      if (!hub || ptyHubGeneration.get(userId) !== entry.startedAtMs) {
+      // agentId 由 terminal.routes 从会话填充；缺省（旧调用方/测试）视为无法路由，
+      // 明确报错而不是落到宿主机 node-pty（docker 用户的工作区文件宿主机不可见）
+      if (options.agentId == null) {
+        throw new Error(`容器终端缺少 Agent 维度（agentId），无法路由: userId=${userId}`);
+      }
+      const agentId = options.agentId;
+      const key = `${userId}:${agentId}`;
+      const entry = await containerRegistry.ensureRunning(userId, agentId, options.cwd);
+      const connection = channelServer.getConnection(userId, agentId);
+      if (!connection) throw new Error(`容器终端通道未就绪: userId=${userId}, agentId=${agentId}`);
+      let hub = ptyChannelHubs.get(key);
+      if (!hub || ptyHubGeneration.get(key) !== entry.startedAtMs) {
         hub?.dispose();
         hub = new PtyChannelHub(connection);
-        ptyChannelHubs.set(userId, hub);
-        ptyHubGeneration.set(userId, entry.startedAtMs);
+        ptyChannelHubs.set(key, hub);
+        ptyHubGeneration.set(key, entry.startedAtMs);
       } else {
         hub.bindConnection(connection);
       }
       const bridge = await hub.open(userId, options);
-      harnessLog('info', `[container] terminal pty opened in container: user=${userId}, pid=${bridge.pid}`);
+      harnessLog('info', `[container] terminal pty opened in container: user=${userId}, agent=${agentId}, pid=${bridge.pid}`);
       return bridge;
     }
     return nodePtyFactory(options);

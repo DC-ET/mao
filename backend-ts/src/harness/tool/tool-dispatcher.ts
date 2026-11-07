@@ -208,6 +208,7 @@ export class ToolDispatcher {
         invocation.permissionLevel, invocation.modelConfig, invocation.sessionTools,
         invocation.executionUserId ?? null, invocation.contextSnapshot ?? null,
         invocation.runtimeUserId ?? null,
+        invocation.agentId ?? null,
       );
       const result = normalizeToolResult(invocation.callId, outcome.raw, Date.now() - started);
       if (outcome.approvalMark) {
@@ -285,6 +286,11 @@ export class ToolDispatcher {
     contextSnapshot: string | null = null,
     /** 运行身份（技术方案 2026-11-04 §5.5）：由 ToolInvocation 透传；缺省回落执行用户/归属。 */
     runtimeIdentity: number | null = null,
+    /**
+     * 容器键第二维（2026-11-07 复合容器方案 §5.6）：ToolInvocation.agentId 按轮快照；
+     * 缺省时按 sessionId 查库兜底（防调用方漏传），仍缺则 docker 分支明确报错。
+     */
+    routeAgentId: number | null = null,
   ): Promise<DispatchOutcome> {
     const descriptor = this.resolveDescriptor(toolName, sessionTools);
     // 运行身份口径（§5.5）：runtimeIdentity 优先（buildContext 统一算好），否则旧口径。
@@ -399,9 +405,17 @@ export class ToolDispatcher {
     if (this.dockerRouter && routeUserId != null && isDockerOnlyTool(toolName)) {
       try {
         if (await this.dockerRouter.enabledFor(routeUserId)) {
+          // 容器键第二维（2026-11-07 复合容器方案 §5.6）：快照优先，缺省按会话查库兜底；
+          // 仍缺（会话不存在）则明确报错，不静默降级到宿主机执行
+          const agentId = routeAgentId
+            ?? (sessionId != null ? (await this.sessionMapper.selectById(sessionId))?.agentId ?? null : null);
+          if (agentId == null) {
+            harnessLog('warn', `Docker route missing agent dimension: tool=${toolName}, sessionId=${sessionId}`);
+            return { raw: JSON.stringify({ error: '容器执行环境不可用：无法确定会话 Agent，无法派发到容器' }), llmVerdict: null };
+          }
           return {
             raw: await this.dockerRouter.dispatch(toolName, argumentsJson, {
-              userId: routeUserId, sessionId, workspace,
+              userId: routeUserId, agentId, sessionId, workspace,
             }),
             llmVerdict: null,
           };

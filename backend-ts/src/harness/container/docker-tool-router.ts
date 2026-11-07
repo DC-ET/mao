@@ -24,8 +24,14 @@ export interface UserRuntimeModeLookup {
   runtimeModeOf(userId: number): Promise<'docker' | 'host' | null>;
 }
 
+/**
+ * docker 派发上下文（2026-11-07 起容器键为 (userId, agentId) 复合维度）：
+ * userId 沿用运行身份口径（runtimeUserId，见 tool-dispatcher）；agentId 为该轮
+ * buildContext 的按轮快照（ToolInvocation.agentId），轮中切换 Agent 不影响本轮路由。
+ */
 export interface DockerDispatchContext {
   userId: number;
+  agentId: number;
   sessionId: number | null;
   workspace: string | null;
 }
@@ -73,21 +79,21 @@ export class DockerToolRouter {
   }
 
   /** ensureRunning + 通道就绪（终端 pty / read_bytes / MCP 等非工具链路复用）。 */
-  async ensureReady(userId: number, workspace?: string | null): Promise<void> {
-    await this.deps.containerRegistry.ensureRunning(userId, workspace);
+  async ensureReady(userId: number, agentId: number, workspace?: string | null): Promise<void> {
+    await this.deps.containerRegistry.ensureRunning(userId, agentId, workspace);
   }
 
   async dispatch(toolName: string, argumentsJson: string, ctx: DockerDispatchContext): Promise<string> {
     const started = Date.now();
     // requiredWorkspace：通道会话工作区越出每用户根，未挂载时容器需重建后才能真正执行
-    const entry = await this.deps.containerRegistry.ensureRunning(ctx.userId, ctx.workspace);
+    const entry = await this.deps.containerRegistry.ensureRunning(ctx.userId, ctx.agentId, ctx.workspace);
     entry.lastUsedAtMs = Date.now();
     const envelope = await this.deps.envelopeBuilder.build({
       userId: ctx.userId, sessionId: ctx.sessionId, workspace: ctx.workspace,
     });
-    const connection = this.deps.channelServer.getConnection(ctx.userId);
+    const connection = this.deps.channelServer.getConnection(ctx.userId, ctx.agentId);
     if (!connection) {
-      throw new Error(`用户运行时容器未就绪（channel 未连接），请稍后重试: userId=${ctx.userId}`);
+      throw new Error(`用户运行时容器未就绪（channel 未连接），请稍后重试: userId=${ctx.userId}, agentId=${ctx.agentId}`);
     }
     const id = newFrameId('tool');
     const response = await connection.request({
@@ -98,23 +104,23 @@ export class DockerToolRouter {
     }
     if (!response.ok) {
       // 容器内执行失败：错误文本按工具结果口径回传（与 host 模式工具报错一致），不抛异常
-      harnessLog('warn', `[docker-router] tool failed in container: user=${ctx.userId}, tool=${toolName}, error=${response.error ?? 'unknown'}`);
+      harnessLog('warn', `[docker-router] tool failed in container: user=${ctx.userId}, agent=${ctx.agentId}, tool=${toolName}, error=${response.error ?? 'unknown'}`);
       return JSON.stringify({ error: response.error ?? '容器内工具执行失败' });
     }
-    harnessLog('debug', `[docker-router] tool executed in container: user=${ctx.userId}, tool=${toolName}, durationMs=${Date.now() - started}`);
+    harnessLog('debug', `[docker-router] tool executed in container: user=${ctx.userId}, agent=${ctx.agentId}, tool=${toolName}, durationMs=${Date.now() - started}`);
     return response.result ?? '';
   }
 
   /** 外部发送工具的容器读字节链路（§5.8）。用户不走容器时返回 null。 */
-  async readBytes(input: { userId: number; sessionId: number | null; workspace: string | null; path: string; maxBytes: number }): Promise<Buffer | null> {
+  async readBytes(input: { userId: number; agentId: number; sessionId: number | null; workspace: string | null; path: string; maxBytes: number }): Promise<Buffer | null> {
     if (!(await this.enabledFor(input.userId))) return null;
-    const entry = await this.deps.containerRegistry.ensureRunning(input.userId, input.workspace);
+    const entry = await this.deps.containerRegistry.ensureRunning(input.userId, input.agentId, input.workspace);
     entry.lastUsedAtMs = Date.now();
     const envelope = await this.deps.envelopeBuilder.build({
       userId: input.userId, sessionId: input.sessionId, workspace: input.workspace,
     });
-    const connection = this.deps.channelServer.getConnection(input.userId);
-    if (!connection) throw new Error(`用户运行时容器未就绪（channel 未连接）: userId=${input.userId}`);
+    const connection = this.deps.channelServer.getConnection(input.userId, input.agentId);
+    if (!connection) throw new Error(`用户运行时容器未就绪（channel 未连接）: userId=${input.userId}, agentId=${input.agentId}`);
     const id = newFrameId('bytes');
     const response = await connection.request({
       v: 1, type: 'read_bytes', id, path: input.path, maxBytes: input.maxBytes, envelope,
@@ -130,14 +136,14 @@ export class DockerToolRouter {
 
   /** MCP stdio 在容器内的 connect（§5.10）。返回 listTools 的工具引用列表。 */
   async mcpConnect(input: {
-    userId: number; sessionId: number; server: { id: number; name: string; serverType: string; command?: string | null; argsJson?: string | null; url?: string | null };
+    userId: number; agentId: number; sessionId: number; server: { id: number; name: string; serverType: string; command?: string | null; argsJson?: string | null; url?: string | null };
     env: Record<string, string>;
   }): Promise<McpToolRefLike[]> {
-    const entry = await this.deps.containerRegistry.ensureRunning(input.userId);
+    const entry = await this.deps.containerRegistry.ensureRunning(input.userId, input.agentId);
     entry.lastUsedAtMs = Date.now();
     const envelope = await this.deps.envelopeBuilder.build({ userId: input.userId, sessionId: input.sessionId, workspace: null });
-    const connection = this.deps.channelServer.getConnection(input.userId);
-    if (!connection) throw new Error(`用户运行时容器未就绪（channel 未连接）: userId=${input.userId}`);
+    const connection = this.deps.channelServer.getConnection(input.userId, input.agentId);
+    if (!connection) throw new Error(`用户运行时容器未就绪（channel 未连接）: userId=${input.userId}, agentId=${input.agentId}`);
     const id = newFrameId('mcpconn');
     const response = await connection.request({
       v: 1, type: 'mcp_connect', id, sessionId: input.sessionId, server: input.server, env: input.env, envelope,
@@ -149,11 +155,11 @@ export class DockerToolRouter {
     return (response.payload as McpToolRefLike[]) ?? [];
   }
 
-  async mcpCall(input: { userId: number; sessionId: number; serverId: number; toolName: string; argumentsJson: string }): Promise<string> {
-    const entry = await this.deps.containerRegistry.ensureRunning(input.userId);
+  async mcpCall(input: { userId: number; agentId: number; sessionId: number; serverId: number; toolName: string; argumentsJson: string }): Promise<string> {
+    const entry = await this.deps.containerRegistry.ensureRunning(input.userId, input.agentId);
     entry.lastUsedAtMs = Date.now();
-    const connection = this.deps.channelServer.getConnection(input.userId);
-    if (!connection) throw new Error(`用户运行时容器未就绪（channel 未连接）: userId=${input.userId}`);
+    const connection = this.deps.channelServer.getConnection(input.userId, input.agentId);
+    if (!connection) throw new Error(`用户运行时容器未就绪（channel 未连接）: userId=${input.userId}, agentId=${input.agentId}`);
     const id = newFrameId('mcpcall');
     const response = await connection.request({
       v: 1, type: 'mcp_call', id, sessionId: input.sessionId, serverId: input.serverId, toolName: input.toolName, argumentsJson: input.argumentsJson,
@@ -165,8 +171,8 @@ export class DockerToolRouter {
     return response.payload as string;
   }
 
-  async mcpCloseSession(input: { userId: number; sessionId: number }): Promise<void> {
-    const connection = this.deps.channelServer.getConnection(input.userId);
+  async mcpCloseSession(input: { userId: number; agentId: number; sessionId: number }): Promise<void> {
+    const connection = this.deps.channelServer.getConnection(input.userId, input.agentId);
     if (!connection) return;
     const id = newFrameId('mcpclose');
     await connection.request({

@@ -822,6 +822,8 @@ export class AgentLoop {
       userId: context.userId ?? null,
       executionUserId: context.executionUserId ?? null,
       runtimeUserId: context.runtimeUserId ?? context.executionUserId ?? context.userId ?? null,
+      // 容器键第二维（2026-11-07 复合容器方案 §5.6）：按轮快照，轮中切 Agent 不影响本轮路由
+      agentId: context.agentId ?? null,
       workspace: context.workspace ?? null,
       permissionLevel: context.permissionLevel ?? null,
       modelConfig: context.modelConfig ?? null,

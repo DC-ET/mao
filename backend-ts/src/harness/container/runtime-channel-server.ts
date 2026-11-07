@@ -38,50 +38,51 @@ export interface ChannelConnection {
 }
 
 export interface RuntimeChannelServerOptions {
-  /** Unix socket 根目录；每用户子目录 {channelDir}/{userId}/runtime.sock。 */
+  /** Unix socket 根目录；每容器子目录 {channelDir}/{userId}/{agentId}/runtime.sock。 */
   channelDir: string;
-  /** 每用户连接令牌（宿主机生成并写入用户 socket 目录，容器启动时读取回传）。 */
-  tokenOf(userId: number): string | null;
+  /** 每容器连接令牌（宿主机生成并写入容器 socket 目录，容器启动时读取回传）。 */
+  tokenOf(userId: number, agentId: number): string | null;
   /** 容器周期上报的容器内活动状态（idle 判定依据，技术方案 §5.3.1）。 */
-  onRuntimeStatus?(userId: number, status: RuntimeStatus): void;
+  onRuntimeStatus?(userId: number, agentId: number, status: RuntimeStatus): void;
   /**
    * 容器 agent 握手（hello）时回调，携带其运行时闭包版本（runtime-build.json 的 buildId；
    * 旧 agent 缺省 / 字段缺失时为 null）。宿主机据此记录容器内代码版本（ContainerRegistry.reportAgentHello）。
    */
-  onAgentHello?(userId: number, info: { build: string | null }): void;
+  onAgentHello?(userId: number, agentId: number, info: { build: string | null }): void;
   /** 连接断开（心跳超时/对端关闭）时回调，宿主机据此标记容器异常。 */
-  onConnectionDead?(userId: number): void;
+  onConnectionDead?(userId: number, agentId: number): void;
 }
 
 /**
- * 宿主机侧每用户 Unix socket server（server 角色，容器是 client）。
+ * 宿主机侧每容器键 Unix socket server（server 角色，容器是 client）。
  *
  * 连接身份校验：Node 没有原生 SO_PEERCRED 绑定，采用「文件系统权限锚定 token」的
  * 等价方案（技术方案 §5.4 的身份要求不变，实现手段替换）——socket 与 token 文件都在
- * {channelDir}/{userId}/（目录 0700，挂载清单只把该用户自己的子目录挂进容器），
- * 容器接入时必须在 hello 帧回传 token，不匹配立即断开。socket 路径可被猜到，
- * 没有属于该用户的 token 无法通过校验；其他用户的容器看不到这个目录。
+ * {channelDir}/{userId}/{agentId}/（目录 0700，挂载清单只把该容器自己的子目录挂进
+ * 容器），容器接入时必须在 hello 帧回传 token，不匹配立即断开。socket 路径可被猜到，
+ * 没有属于该容器键的 token 无法通过校验；其他用户/Agent 的容器看不到这个目录。
  */
 export class RuntimeChannelServer {
-  private readonly servers = new Map<number, Server>();
-  private readonly connections = new Map<number, ConnectionImpl>();
+  private readonly servers = new Map<string, Server>();
+  private readonly connections = new Map<string, ConnectionImpl>();
   private stopped = false;
 
   constructor(private readonly opts: RuntimeChannelServerOptions) {}
 
-  /** 确保 userId 的 socket server 在监听；返回 socket 路径（容器启动命令使用）。 */
-  async ensureListening(userId: number): Promise<string> {
+  /** 确保 (userId, agentId) 的 socket server 在监听；返回 socket 路径（容器启动命令使用）。 */
+  async ensureListening(userId: number, agentId: number): Promise<string> {
     this.assertRunning();
-    const dir = this.userDir(userId);
+    const key = `${userId}:${agentId}`;
+    const dir = this.userDir(userId, agentId);
     const socketPath = path.join(dir, 'runtime.sock');
-    if (this.servers.has(userId)) return socketPath;
+    if (this.servers.has(key)) return socketPath;
     mkdirSync(dir, { recursive: true });
     try { chmodSync(dir, 0o700); } catch { /* non-posix */ }
     if (existsSync(socketPath)) {
       // 残留 socket 文件会让 listen 报 EADDRINUSE
       rmSync(socketPath, { force: true });
     }
-    const server = createServer((socket) => this.acceptConnection(userId, socket));
+    const server = createServer((socket) => this.acceptConnection(userId, agentId, socket));
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
       server.listen(socketPath, () => {
@@ -90,18 +91,18 @@ export class RuntimeChannelServer {
         resolve();
       });
     });
-    this.servers.set(userId, server);
-    harnessLog('info', `Runtime channel server listening: userId=${userId}, path=${socketPath}`);
+    this.servers.set(key, server);
+    harnessLog('info', `Runtime channel server listening: userId=${userId}, agentId=${agentId}, path=${socketPath}`);
     return socketPath;
   }
 
-  socketPathOf(userId: number): string {
-    return path.join(this.userDir(userId), 'runtime.sock');
+  socketPathOf(userId: number, agentId: number): string {
+    return path.join(this.userDir(userId, agentId), 'runtime.sock');
   }
 
-  /** 生成并落盘用户连接 token（幂等）；容器创建时把该目录挂入容器。 */
-  issueToken(userId: number): string {
-    const dir = this.userDir(userId);
+  /** 生成并落盘容器连接 token（幂等）；容器创建时把该目录挂入容器。 */
+  issueToken(userId: number, agentId: number): string {
+    const dir = this.userDir(userId, agentId);
     mkdirSync(dir, { recursive: true });
     try { chmodSync(dir, 0o700); } catch { /* non-posix */ }
     const tokenPath = path.join(dir, '.token');
@@ -115,14 +116,14 @@ export class RuntimeChannelServer {
     return token;
   }
 
-  getConnection(userId: number): ChannelConnection | null {
-    const conn = this.connections.get(userId);
+  getConnection(userId: number, agentId: number): ChannelConnection | null {
+    const conn = this.connections.get(`${userId}:${agentId}`);
     return conn && conn.alive ? conn : null;
   }
 
-  /** 当前在线的用户 id 列表（运维排查用）。 */
-  connectedUserIds(): number[] {
-    return [...this.connections.entries()].filter(([, c]) => c.alive).map(([u]) => u);
+  /** 当前在线的容器键列表（运维排查用），形如 ["7:5"]。 */
+  connectedKeys(): string[] {
+    return [...this.connections.entries()].filter(([, c]) => c.alive).map(([k]) => k);
   }
 
   /** 停止全部监听与连接（应用关闭时调用）。 */
@@ -138,48 +139,48 @@ export class RuntimeChannelServer {
     if (this.stopped) throw new Error('RuntimeChannelServer has been stopped');
   }
 
-  private userDir(userId: number): string {
-    return path.join(this.opts.channelDir, String(userId));
+  private userDir(userId: number, agentId: number): string {
+    return path.join(this.opts.channelDir, String(userId), String(agentId));
   }
 
-  private acceptConnection(userId: number, socket: Socket): void {
+  private acceptConnection(userId: number, agentId: number, socket: Socket): void {
     // 握手超时未完成 hello 直接断开，防半开连接占位
     const timer = setTimeout(() => {
-      harnessLog('warn', `Runtime channel handshake timeout: userId=${userId}`);
+      harnessLog('warn', `Runtime channel handshake timeout: userId=${userId}, agentId=${agentId}`);
       socket.destroy();
     }, HANDSHAKE_TIMEOUT_MS);
     timer.unref?.();
     const decoder = new FrameDecoder();
     const onFirstFrame = (frame: RuntimeFrame): void => {
       if (frame.type !== 'hello') {
-        harnessLog('warn', `Runtime channel first frame is not hello: userId=${userId}, type=${frame.type}`);
+        harnessLog('warn', `Runtime channel first frame is not hello: userId=${userId}, agentId=${agentId}, type=${frame.type}`);
         socket.destroy();
         return;
       }
-      if (!this.tokenMatches(userId, frame.token)) {
+      if (!this.tokenMatches(userId, agentId, frame.token)) {
         socket.write(encodeFrame({ v: 1, type: 'error', message: 'invalid token' }));
-        harnessLog('warn', `Runtime channel token mismatch: userId=${userId}`);
+        harnessLog('warn', `Runtime channel token mismatch: userId=${userId}, agentId=${agentId}`);
         socket.destroy();
         return;
       }
       // 容器内代码版本上报（可选字段）：旧 agent 缺省传 null，由宿主机按「unknown」处理
-      this.opts.onAgentHello?.(userId, {
+      this.opts.onAgentHello?.(userId, agentId, {
         build: typeof frame.build === 'string' && frame.build !== '' ? frame.build : null,
       });
       socket.write(encodeFrame({ v: 1, type: 'hello_result' }));
       clearTimeout(timer);
       let connection: ConnectionImpl | null = null;
-      connection = new ConnectionImpl(userId, socket, {
-        onRuntimeStatus: (status) => this.publishStatus(userId, status),
-        onClosed: () => this.drop(userId, connection!),
+      connection = new ConnectionImpl(userId, agentId, socket, {
+        onRuntimeStatus: (status) => this.publishStatus(userId, agentId, status),
+        onClosed: () => this.drop(userId, agentId, connection!),
       });
-      // 单用户单连接：容器重建场景新连接接入时踢掉旧连接
-      const previous = this.connections.get(userId);
+      // 单键单连接：容器重建场景新连接接入时踢掉旧连接（跨键互不影响）
+      const previous = this.connections.get(`${userId}:${agentId}`);
       if (previous) {
-        harnessLog('info', `Runtime channel replacing stale connection: userId=${userId}`);
+        harnessLog('info', `Runtime channel replacing stale connection: userId=${userId}, agentId=${agentId}`);
         previous.close();
       }
-      this.connections.set(userId, connection);
+      this.connections.set(`${userId}:${agentId}`, connection);
       socket.on('data', (chunk: Buffer) => {
         let frames: RuntimeFrame[];
         try {
@@ -191,7 +192,7 @@ export class RuntimeChannelServer {
         }
         for (const frame of frames) connection.handleFrame(frame);
       });
-      harnessLog('info', `Runtime channel connected: userId=${userId}`);
+      harnessLog('info', `Runtime channel connected: userId=${userId}, agentId=${agentId}`);
     };
     socket.on('data', function firstData(chunk: Buffer): void {
       socket.off('data', firstData);
@@ -205,21 +206,21 @@ export class RuntimeChannelServer {
       }
       for (const frame of frames) onFirstFrame(frame);
     });
-    socket.on('error', (e) => harnessLog('debug', `Runtime channel socket error: userId=${userId}, ${e.message}`));
+    socket.on('error', (e) => harnessLog('debug', `Runtime channel socket error: userId=${userId}, agentId=${agentId}, ${e.message}`));
   }
 
-  private tokenMatches(userId: number, token: string): boolean {
-    return token !== '' && this.opts.tokenOf(userId) === token;
+  private tokenMatches(userId: number, agentId: number, token: string): boolean {
+    return token !== '' && this.opts.tokenOf(userId, agentId) === token;
   }
 
-  private publishStatus(userId: number, status: RuntimeStatus): void {
-    this.opts.onRuntimeStatus?.(userId, status);
+  private publishStatus(userId: number, agentId: number, status: RuntimeStatus): void {
+    this.opts.onRuntimeStatus?.(userId, agentId, status);
   }
 
-  private drop(userId: number, connection: ConnectionImpl): void {
-    if (this.connections.get(userId) === connection) {
-      this.connections.delete(userId);
-      this.opts.onConnectionDead?.(userId);
+  private drop(userId: number, agentId: number, connection: ConnectionImpl): void {
+    if (this.connections.get(`${userId}:${agentId}`) === connection) {
+      this.connections.delete(`${userId}:${agentId}`);
+      this.opts.onConnectionDead?.(userId, agentId);
     }
   }
 }
@@ -238,6 +239,7 @@ class ConnectionImpl implements ChannelConnection {
 
   constructor(
     readonly userId: number,
+    readonly agentId: number,
     private readonly socket: Socket,
     private readonly hooks: {
       onRuntimeStatus(status: RuntimeStatus): void;
@@ -250,7 +252,7 @@ class ConnectionImpl implements ChannelConnection {
       this.missedPongs += 1;
       // 连续 HEARTBEAT_MISS_LIMIT 次未回 pong 判定异常（§5.4：30s 一次、3 次即 90s）
       if (this.missedPongs >= HEARTBEAT_MISS_LIMIT) {
-        harnessLog('warn', `Runtime channel heartbeat lost: userId=${this.userId}`);
+        harnessLog('warn', `Runtime channel heartbeat lost: userId=${this.userId}, agentId=${this.agentId}`);
         this.close();
         return;
       }
@@ -264,7 +266,7 @@ class ConnectionImpl implements ChannelConnection {
   }
 
   async request(frame: RuntimeRequestFrame & { id: string }, timeoutMs: number): Promise<RuntimeResponseFrame> {
-    if (!this.alive) throw new Error(`Runtime channel not connected: userId=${this.userId}`);
+    if (!this.alive) throw new Error(`Runtime channel not connected: userId=${this.userId}, agentId=${this.agentId}`);
     const wait = this.pending.register(frame.id, timeoutMs, `Runtime channel request timeout: ${frame.type}`);
     this.write(encodeFrame(frame));
     return wait;
@@ -338,10 +340,10 @@ class ConnectionImpl implements ChannelConnection {
         });
         break;
       case 'error':
-        harnessLog('warn', `Runtime channel peer error: userId=${this.userId}, ${frame.message}`);
+        harnessLog('warn', `Runtime channel peer error: userId=${this.userId}, agentId=${this.agentId}, ${frame.message}`);
         break;
       default:
-        harnessLog('warn', `Runtime channel unexpected frame: userId=${this.userId}, type=${(frame as { type: string }).type}`);
+        harnessLog('warn', `Runtime channel unexpected frame: userId=${this.userId}, agentId=${this.agentId}, type=${(frame as { type: string }).type}`);
     }
   }
 

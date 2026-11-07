@@ -5,13 +5,13 @@ import { harnessLog } from '../log.js';
 import { isValidSkillName } from './skill-md.js';
 
 /**
- * 技能视图（Skill View，技术方案 2026-11-03 §4.2）：把系统技能源按需物化为
- * 「用户级只读副本」，作为容器内技能软链的稳定目标。
+ * 技能视图（Skill View，技术方案 2026-11-03 §4.2；2026-11-07 起按 (user, agent) 物化）：
+ * 把系统技能源按需物化为「用户+Agent 级只读副本」，作为容器内技能软链的稳定目标。
  *
  * 目录布局：
- *   {skillViewsDir}/{userId}/{skillName}/             ← 视图（容器内 ro 挂载的根，只含技能）
- *   {skillViewsDir}/.meta/{userId}/{skillName}.json   ← { source, fingerprint, syncedAt }（挂载外，容器不可见）
- *   {skillViewsDir}/.tmp/{userId}/                    ← 物化暂存区（不挂载，容器不可见）
+ *   {skillViewsDir}/{userId}/{agentId}/{skillName}/             ← 视图（容器内 ro 挂载的根，只含技能）
+ *   {skillViewsDir}/.meta/{userId}/{agentId}/{skillName}.json   ← { source, fingerprint, syncedAt }（挂载外，容器不可见）
+ *   {skillViewsDir}/.tmp/{userId}/{agentId}/                    ← 物化暂存区（不挂载，容器不可见）
  *
  * 关键语义：
  * - 视图路径稳定：内容更新走「暂存拷贝 + 原子 rename」，`:npm install . -g` 后的
@@ -20,9 +20,11 @@ import { isValidSkillName } from './skill-md.js';
  * - 失败（磁盘满 / 拷贝错误）：抛错并保留旧视图，调用方本轮不挂载该技能；
  * - 蓝绿并发（drain 窗口内新旧后端同时物化）：容忍 rename 竞态（ENOENT / ENOTEMPTY），
  *   任何时刻视图只能是完整旧版或完整新版。
+ * - 按 (user, agent) 物化：容器只 ro 挂载 {views}/{userId}/{agentId}（挂载路径恒定），
+ *   agent.skill_names 增删 / 技能源更新只改目录内容，不触发容器重建。
  */
 
-/** 视图元数据（.meta/{userId}/{skillName}.json，挂载根之外），指纹短路与溯源用。 */
+/** 视图元数据（.meta/{userId}/{agentId}/{skillName}.json，挂载根之外），指纹短路与溯源用。 */
 export interface SkillViewMeta {
   source: string;
   fingerprint: string;
@@ -35,7 +37,7 @@ export const SKILL_VIEW_TMP_MAX_AGE_MS = 3600_000;
 export class SkillViewService {
   /** skillViewsDir 解析后的绝对根（宿主机与容器内为同一路径空间）。 */
   readonly skillViewsRoot: string;
-  /** 进程内同键串行：同一 {userId}:{skillName} 的并发 ensureView 共享同一次物化。 */
+  /** 进程内同键串行：同一 {userId}:{agentId}:{skillName} 的并发 ensureView 共享同一次物化。 */
   private readonly inFlight = new Map<string, Promise<string | null>>();
 
   constructor(skillViewsDir: string) {
@@ -50,20 +52,20 @@ export class SkillViewService {
   }
 
   /**
-   * 确保 {views}/{userId}/{skillName} 存在且与源内容一致；返回视图目录路径。
+   * 确保 {views}/{userId}/{agentId}/{skillName} 存在且与源内容一致；返回视图目录路径。
    * - 源不存在：清理视图 + meta，返回 null（调用方降级为移除会话链接）；
    * - 指纹一致且视图存在：短路，不拷贝；
    * - 内容变化：暂存拷贝后原子替换（视图路径不变）；
    * - 拷贝 / 替换失败：抛错（保留旧视图，调用方本轮不挂载该技能）。
    */
-  async ensureView(userId: number, skillName: string, sourceFolder: string): Promise<string | null> {
+  async ensureView(userId: number, agentId: number, skillName: string, sourceFolder: string): Promise<string | null> {
     if (!isValidSkillName(skillName)) {
       throw new Error(`Unsafe skill name for view materialization: ${skillName}`);
     }
-    const key = `${userId}:${skillName}`;
+    const key = `${userId}:${agentId}:${skillName}`;
     const pending = this.inFlight.get(key);
     if (pending != null) return pending;
-    const task = this.ensureViewLocked(userId, skillName, sourceFolder);
+    const task = this.ensureViewLocked(userId, agentId, skillName, sourceFolder);
     const tracked = task.finally(() => {
       // 只摘除自己：物化期间可能有新调用已替换 map 中的 Promise
       if (this.inFlight.get(key) === tracked) this.inFlight.delete(key);
@@ -72,10 +74,10 @@ export class SkillViewService {
     return tracked;
   }
 
-  private async ensureViewLocked(userId: number, skillName: string, sourceFolder: string): Promise<string | null> {
+  private async ensureViewLocked(userId: number, agentId: number, skillName: string, sourceFolder: string): Promise<string | null> {
     const source = path.resolve(sourceFolder);
-    const viewDir = this.viewDir(userId, skillName);
-    const metaFile = this.metaFile(userId, skillName);
+    const viewDir = this.viewDir(userId, agentId, skillName);
+    const metaFile = this.metaFile(userId, agentId, skillName);
 
     // 技能根自身是软链（如 skills/ntxbiz-finance-calculate -> /data/ak-scan-repos/...）时
     // dereference 后按目录处理；源不存在 / 不可读 / 非目录 → 视为技能已下线，清理视图
@@ -85,7 +87,7 @@ export class SkillViewService {
       if (!statSync(sourceReal).isDirectory()) throw new Error('source is not a directory');
     } catch (e) {
       this.removeView(viewDir, metaFile);
-      harnessLog('warn', `[skill-view] user=${userId} skill=${skillName} source unavailable, view removed: ${(e as Error).message}`);
+      harnessLog('warn', `[skill-view] user=${userId} agent=${agentId} skill=${skillName} source unavailable, view removed: ${(e as Error).message}`);
       return null;
     }
 
@@ -96,7 +98,7 @@ export class SkillViewService {
       if (meta?.fingerprint === fingerprint) return viewDir;
     }
 
-    this.materialize(userId, skillName, sourceReal, source, viewDir, metaFile, fingerprint);
+    this.materialize(userId, agentId, skillName, sourceReal, source, viewDir, metaFile, fingerprint);
     return viewDir;
   }
 
@@ -108,6 +110,7 @@ export class SkillViewService {
    */
   private materialize(
     userId: number,
+    agentId: number,
     skillName: string,
     sourceReal: string,
     source: string,
@@ -115,7 +118,7 @@ export class SkillViewService {
     metaFile: string,
     fingerprint: string,
   ): void {
-    const userTmpDir = path.join(this.skillViewsRoot, '.tmp', String(userId));
+    const userTmpDir = this.userTmpDir(userId, agentId);
     const stageDir = path.join(userTmpDir, `${skillName}-${process.pid}-${randomBytes(4).toString('hex')}`);
     const oldDir = path.join(userTmpDir, `${skillName}.old-${Date.now()}-${randomBytes(4).toString('hex')}`);
     // 视图父目录与 meta 目录就位（视图自身由换入的暂存目录充当）
@@ -189,7 +192,7 @@ export class SkillViewService {
       } catch (e) {
         harnessLog('warn', `[skill-view] meta write failed for ${skillName}: ${(e as Error).message}`);
       }
-      harnessLog('info', `[skill-view] materialized user=${userId} skill=${skillName} fingerprint=${fingerprint} -> ${viewDir}`);
+      harnessLog('info', `[skill-view] materialized user=${userId} agent=${agentId} skill=${skillName} fingerprint=${fingerprint} -> ${viewDir}`);
     }
   }
 
@@ -215,13 +218,17 @@ export class SkillViewService {
     }
   }
 
-  private viewDir(userId: number, skillName: string): string {
-    return path.join(this.skillViewsRoot, String(userId), skillName);
+  private viewDir(userId: number, agentId: number, skillName: string): string {
+    return path.join(this.skillViewsRoot, String(userId), String(agentId), skillName);
   }
 
-  private metaFile(userId: number, skillName: string): string {
-    // 挂载根之外（{views}/{u} 是容器内 ro 挂载的根，视图目录内只允许出现技能）
-    return path.join(this.skillViewsRoot, '.meta', String(userId), `${skillName}.json`);
+  private metaFile(userId: number, agentId: number, skillName: string): string {
+    // 挂载根之外（{views}/{u}/{a} 是容器内 ro 挂载的根，视图目录内只允许出现技能）
+    return path.join(this.skillViewsRoot, '.meta', String(userId), String(agentId), `${skillName}.json`);
+  }
+
+  private userTmpDir(userId: number, agentId: number): string {
+    return path.join(this.skillViewsRoot, '.tmp', String(userId), String(agentId));
   }
 }
 
@@ -390,7 +397,9 @@ function copyDirContents(srcDir: string, destDir: string, skillRootReal: string,
 /**
  * 清理 .tmp 暂存区中超过 maxAgeMs 的残留条目（技术方案 §4.7）：
  * 物化进程崩溃 / 蓝绿并发后留下的 stage 与 .old 目录由启动与每轮 runtime 清理顺带兜底。
- * 只处理 {skillViewsDir}/.tmp/{数字 userId}/ 下的条目，单项失败不阻塞其余。
+ * 只处理 {skillViewsDir}/.tmp/{数字 userId}/ 下的条目；条目为数字目录时按新布局
+ * {userId}/{agentId}/ 下钻一层（2026-11-07 起 stage 按 agent 维度嵌套），
+ * 旧布局的平铺残留（{userId}/ 下的直接条目）一并清理，单项失败不阻塞其余。
  */
 export function cleanupStaleSkillViewTmp(skillViewsDir: string, maxAgeMs: number = SKILL_VIEW_TMP_MAX_AGE_MS): number {
   const tmpRoot = path.join(path.resolve(skillViewsDir), '.tmp');
@@ -401,18 +410,20 @@ export function cleanupStaleSkillViewTmp(skillViewsDir: string, maxAgeMs: number
   } catch {
     return 0;
   }
-  for (const userId of userIds) {
-    if (!/^\d+$/.test(userId)) continue;
-    const userTmpDir = path.join(tmpRoot, userId);
+  const sweep = (dir: string) => {
     let entries: string[];
     try {
-      entries = readdirSync(userTmpDir);
+      entries = readdirSync(dir);
     } catch {
-      continue;
+      return;
     }
     for (const name of entries) {
-      const target = path.join(userTmpDir, name);
+      const target = path.join(dir, name);
       try {
+        if (/^\d+$/.test(name) && lstatSync(target).isDirectory()) {
+          sweep(target);
+          continue;
+        }
         if (Date.now() - lstatSync(target).mtimeMs > maxAgeMs) {
           rmSync(target, { recursive: true, force: true });
           removed += 1;
@@ -421,6 +432,10 @@ export function cleanupStaleSkillViewTmp(skillViewsDir: string, maxAgeMs: number
         /* 单项失败不阻塞其余条目 */
       }
     }
+  };
+  for (const userId of userIds) {
+    if (!/^\d+$/.test(userId)) continue;
+    sweep(path.join(tmpRoot, userId));
   }
   return removed;
 }

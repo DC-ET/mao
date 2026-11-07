@@ -53,7 +53,7 @@ describe('SkillSyncService', () => {
     // 系统技能：软链指向用户级只读视图（不是源目录）
     const systemTarget = join(runtime.resolveSkillsDir(7, 31), 'java');
     expect(lstatSync(systemTarget).isSymbolicLink()).toBe(true);
-    expect(resolve(join(systemTarget, '..'), readlinkSync(systemTarget))).toBe(join(viewsRoot, '7', 'java'));
+    expect(resolve(join(systemTarget, '..'), readlinkSync(systemTarget))).toBe(join(viewsRoot, '7', '6', 'java'));
     // 用户技能：软链直指 userskills/{u}/{name}，不经视图
     const userTarget = join(runtime.resolveSkillsDir(7, 31), 'mine');
     expect(lstatSync(userTarget).isSymbolicLink()).toBe(true);
@@ -126,7 +126,7 @@ describe('SkillSyncService', () => {
     symlinkSync(systemFolder, target, 'dir');
 
     await svc.syncToSession({ id: 8, name: 'a', systemPrompt: 'p', skillNames: '["java"]' }, 7, 51);
-    expect(resolve(join(target, '..'), readlinkSync(target))).toBe(join(viewsRoot, '7', 'java'));
+    expect(resolve(join(target, '..'), readlinkSync(target))).toBe(join(viewsRoot, '7', '8', 'java'));
     expect(existsSync(join(target, 'SKILL.md'))).toBe(true);
 
     // 悬空链接：同样被修复为指向视图
@@ -135,7 +135,7 @@ describe('SkillSyncService', () => {
     const dangling = join(skillsDir2, 'java');
     symlinkSync(join(root, 'gone'), dangling, 'dir');
     await svc.syncToSession({ id: 8, name: 'a', systemPrompt: 'p', skillNames: '["java"]' }, 7, 52);
-    expect(resolve(join(dangling, '..'), readlinkSync(dangling))).toBe(join(viewsRoot, '7', 'java'));
+    expect(resolve(join(dangling, '..'), readlinkSync(dangling))).toBe(join(viewsRoot, '7', '8', 'java'));
     expect(existsSync(join(dangling, 'SKILL.md'))).toBe(true);
   });
 
@@ -152,7 +152,7 @@ describe('SkillSyncService', () => {
     rmSync(systemFolder, { recursive: true, force: true });
     const result = await svc.syncToSession(agent, 7, 61);
     expect(existsSync(target)).toBe(false);
-    expect(existsSync(join(viewsRoot, '7', 'java'))).toBe(false);
+    expect(existsSync(join(viewsRoot, '7', '9', 'java'))).toBe(false);
     // 链接已摘除 → 本轮不可读，必须计入 failed 供调用侧从清单剔除（D7：清单与路径一致）
     expect(result.failed).toContain('java');
   });
@@ -232,8 +232,8 @@ describe('SkillSyncService', () => {
       const svc = new SkillSyncService(skillLoader as never, { addAllowedRoot: vi.fn() } as never, runtime, join(root, 'users'), viewService);
       await svc.syncToSession({ id: 11, name: 'a', systemPrompt: 'p', skillNames: '["java"]' }, 7, 81);
       // 只为被引用的技能物化；已删除且未引用的 ghost 不产生视图
-      expect(spy.mock.calls.map((call) => call[1])).toEqual(['java']);
-      expect(readdirSync(join(root, 'skill-views', '7')).sort()).toEqual(['java']);
+      expect(spy.mock.calls.map((call) => call[2])).toEqual(['java']);
+      expect(readdirSync(join(root, 'skill-views', '7', '11')).sort()).toEqual(['java']);
     } finally {
       spy.mockRestore();
     }

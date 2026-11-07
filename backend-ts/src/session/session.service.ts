@@ -1603,10 +1603,25 @@ export class SessionService {
     }
   }
 
+  /**
+   * 会话内切换 Agent 后的容器预热监听（2026-11-07 复合容器方案 §5.8，已拍板决策 1）：
+   * 由装配层（app-container-runtime 的 notifyAgentSwitched）注入，docker 模式下
+   * fire-and-forget 预热新 (userId, agentId) 容器；未注入（测试/旧装配）时为空操作。
+   */
+  onAgentSwitched?: (sessionId: number, userId: number, agentId: number) => void;
+
   async updateSessionAgent(sessionId: number, agentId: number): Promise<void> {
-    await this.getSession(sessionId);
+    const session = await this.getSession(sessionId);
     await this.assertAgentSwitchable(agentId);
     await this.sessionRepo.updateFields(sessionId, { agentId });
+    // 切换即预热（fire-and-forget，不阻断 PATCH；异常由监听器内部消化）
+    if (this.onAgentSwitched != null && session?.userId != null) {
+      try {
+        this.onAgentSwitched(sessionId, session.userId, agentId);
+      } catch (e) {
+        console.warn(`agent switch prewarm trigger failed for session ${sessionId}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
   }
 
   async updateContextTokens(sessionId: number, contextTokens: number, manifestJson?: string | null): Promise<void> {

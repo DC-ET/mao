@@ -93,6 +93,12 @@ export const TERMINAL_AUDIT_META: Record<
 export interface CreateTerminalParams {
   sessionId: number;
   userId: number;
+  /**
+   * 会话 Agent（容器键第二维，2026-11-07 复合容器方案 §5.7）：docker 模式下终端绑定
+   * 创建时的 (userId, agentId) 容器，之后不随会话切 Agent 迁移。缺省 undefined 时
+   * host 模式不受影响。
+   */
+  agentId?: number | null;
   workspace: string | null | undefined;
   taskName?: string | null;
   cols?: number | null;
@@ -211,7 +217,7 @@ export class TerminalManager {
       cwd = this.deps.pathSandbox.getEffectiveWorkspaceRoot(params.workspace);
       const env = await this.buildEnv(params);
       // docker 运行时：ptyFactory 异步经 channel 把 spawn 转发到容器内 node-pty（§5.7.3）
-      pty = await this.ptyFactory({ shell: this.shell, args: ['-i'], cwd, cols, rows, env, userId });
+      pty = await this.ptyFactory({ shell: this.shell, args: ['-i'], cwd, cols, rows, env, userId, agentId: params.agentId ?? undefined });
     } catch (e) {
       this.release(sessionId, terminalId);
       harnessLog('error', `Failed to spawn terminal PTY for session ${sessionId}`, e);

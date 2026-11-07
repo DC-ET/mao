@@ -46,7 +46,8 @@
 
       <el-table :data="rows" v-loading="loading" size="small" stripe>
         <template #empty><el-empty description="当前没有在册容器" :image-size="48" /></template>
-        <el-table-column prop="userId" label="用户 ID" width="100" />
+        <el-table-column prop="userId" label="用户 ID" width="90" />
+        <el-table-column prop="agentId" label="Agent ID" width="90" />
         <el-table-column prop="containerName" label="容器名" min-width="180" show-overflow-tooltip />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
@@ -113,6 +114,7 @@ import { useAuthStore } from '../../../stores/auth'
 
 interface ContainerRow {
   userId: number
+  agentId: number
   containerName: string
   state: 'running' | 'stopped'
   busy: boolean
@@ -190,17 +192,17 @@ function formatMs(ms?: number | null): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-interface RecycleResult { userId: number; status: 'rebuilt' | 'none' | 'skipped-busy' | 'failed'; error?: string }
+interface RecycleResult { userId: number; agentId: number | null; status: 'rebuilt' | 'none' | 'skipped-busy' | 'failed'; error?: string }
 
-async function callRecycle(userId: number, force: boolean): Promise<RecycleResult> {
-  const { data } = await api.post(`/users/${userId}/container/recycle`, { force })
-  return (data ?? { userId, status: 'failed' }) as RecycleResult
+async function callRecycle(userId: number, force: boolean, agentId?: number): Promise<RecycleResult> {
+  const { data } = await api.post(`/users/${userId}/container/recycle`, { force, agentId })
+  return (data ?? { userId, agentId: agentId ?? null, status: 'failed' }) as RecycleResult
 }
 
 async function rebuildOne(row: ContainerRow) {
   try {
     await ElMessageBox.confirm(
-      `将重建用户 #${row.userId} 的容器，会中断容器内正在执行的任务。确定继续？`,
+      `将重建用户 #${row.userId}（Agent #${row.agentId}）的容器，会中断容器内正在执行的任务。确定继续？`,
       '重建容器',
       { confirmButtonText: '重建', cancelButtonText: '取消', type: 'warning' },
     )
@@ -208,11 +210,11 @@ async function rebuildOne(row: ContainerRow) {
     return
   }
   try {
-    const result = await callRecycle(row.userId, includeBusy.value)
-    if (result.status === 'rebuilt') ElMessage.success(`用户 #${row.userId} 容器已重建`)
-    else if (result.status === 'none') ElMessage.info(`用户 #${row.userId} 当前没有在册容器`)
-    else if (result.status === 'skipped-busy') ElMessage.warning(`用户 #${row.userId} 有在跑任务，已跳过`)
-    else ElMessage.error(`用户 #${row.userId} 重建失败：${result.error || '未知错误'}`)
+    const result = await callRecycle(row.userId, includeBusy.value, row.agentId)
+    if (result.status === 'rebuilt') ElMessage.success(`用户 #${row.userId}（Agent #${row.agentId}）容器已重建`)
+    else if (result.status === 'none') ElMessage.info(`用户 #${row.userId}（Agent #${row.agentId}）当前没有在册容器`)
+    else if (result.status === 'skipped-busy') ElMessage.warning(`用户 #${row.userId}（Agent #${row.agentId}）有在跑任务，已跳过`)
+    else ElMessage.error(`用户 #${row.userId}（Agent #${row.agentId}）重建失败：${result.error || '未知错误'}`)
     await fetchRows()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || e?.message || '重建失败')
@@ -246,17 +248,17 @@ async function rebuildAll() {
   const failures: string[] = []
   for (const row of targets) {
     try {
-      const result = await callRecycle(row.userId, includeBusy.value)
+      const result = await callRecycle(row.userId, includeBusy.value, row.agentId)
       if (result.status === 'rebuilt') rebuilt += 1
       else if (result.status === 'none') none += 1
       else if (result.status === 'skipped-busy') skippedBusy += 1
       else {
         failed += 1
-        failures.push(`#${row.userId}：${result.error || '未知错误'}`)
+        failures.push(`#${row.userId}/#${row.agentId}：${result.error || '未知错误'}`)
       }
     } catch (e: any) {
       failed += 1
-      failures.push(`#${row.userId}：${e?.message || '请求失败'}`)
+      failures.push(`#${row.userId}/#${row.agentId}：${e?.message || '请求失败'}`)
     } finally {
       progressCurrent.value += 1
     }

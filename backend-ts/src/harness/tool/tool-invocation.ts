@@ -18,6 +18,12 @@ export interface ToolInvocation {
    * 执行期资源类工具（产物/缓存/发送）按它寻址；缺省 null，dispatcher 回落 executionUserId/userId。
    */
   runtimeUserId?: number | null;
+  /**
+   * 会话 Agent 的按轮快照（2026-11-07 容器复合键方案 §5.6）：buildContext 每轮取
+   * agent.id 填充，docker 容器键 (runtimeUserId, agentId) 用它路由；轮中切换 Agent
+   * 不影响本轮（下一轮 buildContext 重算）。缺省 null 时 dispatcher 按 sessionId 查库兜底。
+   */
+  agentId?: number | null;
   workspace: string | null;
   permissionLevel: string | null;
   modelConfig: LlmModelConfig | null;

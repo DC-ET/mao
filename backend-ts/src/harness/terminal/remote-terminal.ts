@@ -92,6 +92,11 @@ export interface SpawnPtyOptions {
   env: NodeJS.ProcessEnv;
   /** 触发终端创建的用户：docker 运行时据此路由到该用户容器（技术方案 §5.7.3）。 */
   userId?: number;
+  /**
+   * 会话 Agent（容器键第二维，2026-11-07 复合容器方案 §5.7）：终端的容器绑定在创建时
+   * 定型，之后不随会话切 Agent 迁移（决策 1：随旧容器存活）。
+   */
+  agentId?: number;
 }
 
 /** PTY 工厂：生产用 node-pty，docker 模式返回容器桥（异步），单测注入 fake 实现。 */

@@ -22,16 +22,21 @@ export interface ContainerRoots {
   runtimeDir: string;
   userHomeDir: string;
   userSkillsDir: string;
-  /** 技能视图根（宿主机 skillViewsDir）：会话技能符号链接的目标根（skill-sync-service），
-   * 容器内按用户 ro 挂载 {skillViewsDir}/{userId}；按用户登记为文件工具允许根，否则
+  /** 技能视图目录（MAO_SKILL_VIEWS_DIR，2026-11-07 起宿主机注入值即 {skillViewsDir}/{userId}/{agentId}）：
+   * 会话技能符号链接的目标根（skill-sync-service）；按容器登记为文件工具允许根，否则
    * strict 的符号链接校验会把读 {runtimeDir}/{u}/{s}/skills/{name}/SKILL.md 判成逃逸。
    * 源目录（skillsDir）不进容器，也不再是任何链接的目标。 */
   skillViewsDir: string;
   /** 图片产物上传根：容器内放行 {uploadDir}/{userId}（宿主同名挂载）。 */
   uploadDir: string;
-  /** 公共共享目录（共享目录方案 §4.2）：唯一跨用户共享的允许根——内容对全员公开且
-   * 挂载为 ro，纵深防御层放行整根；写操作由 ro 挂载以 EROFS 拒绝。 */
+  /**
+   * 公共共享目录根（MAO_SHARE_DIR，ExperienceIndexService 的 root 构造依赖）；
+   * 文件工具允许根不登记它——2026-11-07 起容器只挂 {shareDir}/agent-experience/{agentId}，
+   * 经验允许根用 experienceAgentDir（其他 Agent 的经验库在容器内不存在）。
+   */
   shareDir: string;
+  /** 当前 Agent 的经验库子目录（MAO_EXPERIENCE_AGENT_DIR）：经验库的沙箱允许根。 */
+  experienceAgentDir: string;
 }
 
 /**
@@ -77,19 +82,20 @@ export class ContainerToolExecutor {
     this.pathSandbox.addAllowedRoot(path.join(roots.runtimeDir, u));
     this.pathSandbox.addAllowedRoot(path.join(roots.userHomeDir, u));
     this.pathSandbox.addAllowedRoot(path.join(roots.userSkillsDir, u));
-    // 技能视图（技术方案 2026-11-03 §4.5）：会话技能是 {runtimeDir}/{u}/{s}/skills/{name} ->
-    // {skillViewsDir}/{u}/{name} 的符号链接（SkillSyncService），strict 的符号链接逃逸检测
-    // 要求链接目标落在允许根内，不登记则该目录下的 SKILL.md 经 read_file / write_file /
-    // glob / grep / read_bytes 全部被拒。按用户收窄登记 {skillViewsDir}/{u}，与容器内
-    // ro 挂载口径一致（写操作由 ro 挂载以 EROFS 拒绝，不扩大隔离边界）。
-    this.pathSandbox.addAllowedRoot(path.join(roots.skillViewsDir, u));
+    // 技能视图（技术方案 2026-11-03 §4.5；2026-11-07 按 agent 收窄）：会话技能是
+    // {runtimeDir}/{u}/{s}/skills/{name} -> {skillViewsDir}/{u}/{a}/{name} 的符号链接
+    // （SkillSyncService），strict 的符号链接逃逸检测要求链接目标落在允许根内，不登记则
+    // 该目录下的 SKILL.md 经 read_file / write_file / glob / grep / read_bytes 全部被拒。
+    // roots.skillViewsDir 即当前 (user, agent) 的视图目录（宿主机注入值已按 agent 收窄），
+    // 与容器内 ro 挂载口径一致（写操作由 ro 挂载以 EROFS 拒绝，不扩大隔离边界）。
+    this.pathSandbox.addAllowedRoot(roots.skillViewsDir);
     // 图片产物（generate_image/edit_image 落盘）在宿主机按 {uploadDir}/{uid} 隔离后
     // 同名挂入容器，容器内 read_file 等按同一允许根放行
     this.pathSandbox.addAllowedRoot(path.join(roots.uploadDir, u));
-    // 公共共享目录（共享目录方案 §4.2 + 团队经验库方案 2026-10-24）：唯一跨用户共享的
-    // 允许根（/tmp 宿主机侧按 {tmpDir}/{userId} 收窄，仍属每用户）。经验库 rw 挂载后
-    // 容器内可读写；管理员投放内容靠信任 + 宿主快照兜底
-    this.pathSandbox.addAllowedRoot(roots.shareDir);
+    // 团队经验库（共享目录方案 §4.2 + 团队经验库方案 2026-10-24；2026-11-07 收口）：
+    // 允许根从 shareDir 整根收窄为当前 Agent 的经验子目录（容器也只挂该子目录），
+    // 其他 Agent 的经验库在容器内不存在；/tmp 宿主机侧按 {tmpDir}/{userId} 收窄，仍属每用户
+    this.pathSandbox.addAllowedRoot(roots.experienceAgentDir);
     this.pathSandbox.addAllowedRoot('/tmp');
     this.outputManager = new OutputManager();
     this.backgroundTasks = new BackgroundTaskManager();

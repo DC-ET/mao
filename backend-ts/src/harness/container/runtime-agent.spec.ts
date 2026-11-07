@@ -70,19 +70,19 @@ describe('runtime agent channel behavior', () => {
     server = new RuntimeChannelServer({
       channelDir,
       tokenOf: () => 'probe-token',
-      onRuntimeStatus: (_userId, status) => statuses.push(status),
-      ...(hellos ? { onAgentHello: (_userId, info) => hellos.push(info) } : {}),
+      onRuntimeStatus: (_userId, _agentId, status) => statuses.push(status),
+      ...(hellos ? { onAgentHello: (_userId, _agentId, info) => hellos.push(info) } : {}),
     });
     process.env.MAO_WORKSPACE_ROOT = join(base, 'workspace');
     process.env.MAO_RUNTIME_DIR = join(base, 'runtime');
     process.env.MAO_USER_HOME_DIR = join(base, 'users');
     process.env.MAO_USER_SKILLS_DIR = join(base, 'userskills');
     process.env.MAO_SHARE_DIR = join(base, 'share');
-    const socketPath = await server.ensureListening(7);
+    const socketPath = await server.ensureListening(7, 5);
     agent = new RuntimeAgent(socketPath, 'probe-token', 7, ptyFactory, agentBuild ?? null);
     void agent.run();
-    await vi.waitFor(() => expect(server!.getConnection(7)).not.toBeNull(), { timeout: 5000 });
-    return server!.getConnection(7)!;
+    await vi.waitFor(() => expect(server!.getConnection(7, 5)).not.toBeNull(), { timeout: 5000 });
+    return server!.getConnection(7, 5)!;
   }
 
   it('keepsConnectionStableAndAnswersInFlightToolCalls', async () => {
@@ -105,7 +105,7 @@ describe('runtime agent channel behavior', () => {
 
     // 2s 内连接对象不变（旧实现每个 500ms 周期就被换掉）
     await new Promise((resolve) => setTimeout(resolve, 2000));
-    expect(server!.getConnection(7)).toBe(conn);
+    expect(server!.getConnection(7, 5)).toBe(conn);
 
     // 就绪后立即补报一次 runtime_status（idle 忙等保护不等下一个 10s 周期）
     expect(statuses.length).toBeGreaterThanOrEqual(1);
@@ -212,12 +212,16 @@ describe('runtime agent channel behavior', () => {
     process.env.MAO_USER_HOME_DIR = join(base, 'users');
     process.env.MAO_USER_SKILLS_DIR = join(base, 'userskills');
     delete process.env.MAO_SHARE_DIR;
+    // 2026-11-07：经验允许根 = {shareDir}/agent-experience/{agentId}（MAO_EXPERIENCE_AGENT_DIR
+    // 未设置时按容器键兜底计算）；shareDir 整根不再登记为允许根
+    process.env.MAO_CONTAINER_AGENT_ID = '5';
     const registered: string[] = [];
     const spy = vi.spyOn(PathSandbox.prototype, 'addAllowedRoot')
       .mockImplementation((root: string) => { registered.push(root); });
     const agent = new RuntimeAgent('/tmp/mao-probe.sock', 'probe-token', 7);
     try {
-      expect(registered).toContain('/opt/mao-data/share');
+      expect(registered).toContain('/opt/mao-data/share/agent-experience/5');
+      expect(registered).not.toContain('/opt/mao-data/share');
     } finally {
       agent.dispose();
       spy.mockRestore();
@@ -240,7 +244,9 @@ describe('runtime agent channel behavior', () => {
       .mockImplementation((root: string) => { registered.push(root); });
     const agent = new RuntimeAgent('/tmp/mao-probe-skills.sock', 'probe-token', 7);
     try {
-      expect(registered).toContain('/opt/mao-data/skill-views/7');
+      // 2026-11-07：MAO_SKILL_VIEWS_DIR 注入值即当前 (user, agent) 视图目录，允许根 = 该值本身
+      expect(registered).toContain('/opt/mao-data/skill-views');
+      expect(registered).not.toContain('/opt/mao-data/skill-views/7');
     } finally {
       agent.dispose();
       spy.mockRestore();

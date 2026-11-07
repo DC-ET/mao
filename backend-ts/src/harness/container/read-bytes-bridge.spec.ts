@@ -4,7 +4,7 @@ import { useTmpDir } from '../../testing/tmp-dir.js';
 import { DockerSendBytesBridge } from './read-bytes-bridge.js';
 import type { DockerToolRouter } from './docker-tool-router.js';
 
-function makeBridge(uploadOriginProvider?: () => Promise<string | null>) {
+function makeBridge(uploadOriginProvider?: () => Promise<string | null>, sessionAgentIdOf?: (sessionId: number) => Promise<number | null>) {
   const base = useTmpDir('mao-bridge-');
   const uploadDir = join(base, 'uploads');
   const runtimeDir = join(base, 'runtime');
@@ -14,6 +14,8 @@ function makeBridge(uploadOriginProvider?: () => Promise<string | null>) {
     runtimeResolver: { resolveUserHomeDir: (userId: number) => join(base, 'users', String(userId)) } as never,
     runtimeDir,
     uploadDir,
+    // 容器键第二维（2026-11-07 复合容器方案 §5.8）：缺省按会话固定返回 agent 5
+    sessionAgentIdOf: sessionAgentIdOf ?? (async () => 5),
     uploadOriginProvider,
   });
   return { bridge, readBytes, uploadDir, runtimeDir, base };
@@ -41,10 +43,18 @@ describe('DockerSendBytesBridge', () => {
     const { bridge, readBytes } = makeBridge();
     const input = { userId: 7, sessionId: 11, workspace: '/ws/7', path: 'a.png', maxBytes: 1024 };
     await bridge.readBytes(input);
-    expect(readBytes).toHaveBeenCalledWith(input);
+    // agentId 由 sessionAgentIdOf 按会话解析（缺省桩恒返 5）后透传
+    expect(readBytes).toHaveBeenCalledWith({ ...input, agentId: 5 });
 
     readBytes.mockClear();
     expect(await bridge.readBytes({ ...input, userId: null })).toBeNull();
+    expect(readBytes).not.toHaveBeenCalled();
+  });
+
+  it('readBytes: 会话不存在（agentId 不可得）时明确报错不派发', async () => {
+    const { bridge, readBytes } = makeBridge(undefined, async () => null);
+    await expect(bridge.readBytes({ userId: 7, sessionId: 11, workspace: '/ws/7', path: 'a.png', maxBytes: 1024 }))
+      .rejects.toThrow(/无法路由/);
     expect(readBytes).not.toHaveBeenCalled();
   });
 

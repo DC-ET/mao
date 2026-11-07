@@ -65,8 +65,18 @@ export class SkillSyncService {
         assertInside(skillsDir, targetFolder);
         let linkSource = entry.folder;
         if (entry.system) {
-          // 系统技能先物化「用户级只读视图」，链接指向视图（路径稳定，源永进不了容器）
-          const viewPath = await this.skillViewService.ensureView(userId, skillName, entry.folder);
+          // 系统技能先物化「用户+Agent 级只读视图」，链接指向视图（路径稳定，源永进不了容器）。
+          // 视图按 (user, agent) 物化（2026-11-07）：容器只 ro 挂载当前 (user, agent) 的视图目录，
+          // 其他 Agent 的技能视图在容器内不存在。agent.id 理论不可达为空（session.agent_id NOT NULL），
+          // 空则本轮降级不挂载（failed 清单剔除），与物化失败同径。
+          if (agent.id == null) {
+            removeSkillLink(targetFolder);
+            state.delete(skillName);
+            failed.add(skillName);
+            harnessLog('warn', `Skip syncing skill ${skillName}: agent id is missing`);
+            continue;
+          }
+          const viewPath = await this.skillViewService.ensureView(userId, agent.id, skillName, entry.folder);
           if (viewPath == null) {
             // 源已下线：清掉残留链接，避免指向不存在视图的悬空（视图已由 ensureView 清理）；
             // 本轮实际不可读，计入 failed 让调用侧从可用清单剔除（D7：清单与路径一致）。

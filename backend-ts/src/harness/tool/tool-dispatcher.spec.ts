@@ -1047,10 +1047,12 @@ describe('ToolDispatcher docker routing', () => {
 
   it('routesDockerOnlyToolsToContainer', async () => {
     const router = { enabledFor: vi.fn(async () => true), dispatch: vi.fn(async () => 'container-result') };
+    // invocation 无 agentId 时按会话查库兜底（2026-11-07 复合容器方案 §5.6）
+    sessionMapper.selectById.mockResolvedValue({ agentId: 5 });
     const dockerDispatcher = makeDockerDispatcher(router);
     const result = await dockerDispatcher.dispatch('read_file', '{"path":"a.txt"}', 'CLOUD', 11, 7, '/ws', null, null, null);
     expect(result).toBe('container-result');
-    expect(router.dispatch).toHaveBeenCalledWith('read_file', '{"path":"a.txt"}', { userId: 7, sessionId: 11, workspace: '/ws' });
+    expect(router.dispatch).toHaveBeenCalledWith('read_file', '{"path":"a.txt"}', { userId: 7, agentId: 5, sessionId: 11, workspace: '/ws' });
     // 宿主机工具未被触碰
     expect(cloudTool.execute).not.toHaveBeenCalled();
   });
@@ -1294,7 +1296,7 @@ describe('ToolDispatcher runtime identity routing', () => {
       askUserQuestionsRegistry as never, localToolSessionRegistry as never, treeSignalPublisher as never,
       null, null, null, null, null, null, null, null, dockerRouter as never,
     );
-    return { dispatcher, feishuSend, generate, task, readFile, dockerRouter, localToolExecutor };
+    return { dispatcher, feishuSend, generate, task, readFile, dockerRouter, localToolExecutor, sessionMapper };
   }
 
   function invocation(toolName: string, extra: Record<string, unknown> = {}) {
@@ -1325,8 +1327,28 @@ describe('ToolDispatcher runtime identity routing', () => {
 
   it('docker 分支按运行身份路由容器', async () => {
     const { dispatcher, dockerRouter } = build({ docker: true });
-    await dispatcher.dispatchInvocation(invocation('read_file') as never);
-    expect(dockerRouter.dispatch).toHaveBeenCalledWith('read_file', '{}', { userId: 67, sessionId: 7, workspace: 'ws' });
+    // agentId 按轮快照（2026-11-07 复合容器方案 §5.6）：ToolInvocation 携带、透传给路由
+    await dispatcher.dispatchInvocation(invocation('read_file', { agentId: 5 }) as never);
+    expect(dockerRouter.dispatch).toHaveBeenCalledWith('read_file', '{}', { userId: 67, agentId: 5, sessionId: 7, workspace: 'ws' });
+  });
+
+  it('docker 分支 agentId 缺省时按会话查库兜底', async () => {
+    const { dispatcher, dockerRouter, sessionMapper } = build({ docker: true });
+    sessionMapper.selectById.mockResolvedValue({ agentId: 9 });
+    const inv = invocation('read_file');
+    delete (inv as Record<string, unknown>).agentId;
+    await dispatcher.dispatchInvocation(inv as never);
+    expect(dockerRouter.dispatch).toHaveBeenCalledWith('read_file', '{}', { userId: 67, agentId: 9, sessionId: 7, workspace: 'ws' });
+  });
+
+  it('docker 分支会话不存在（agentId 不可得）时明确报错不派发', async () => {
+    const { dispatcher, dockerRouter, sessionMapper } = build({ docker: true });
+    sessionMapper.selectById.mockResolvedValue(null);
+    const inv = invocation('read_file');
+    delete (inv as Record<string, unknown>).agentId;
+    const result = await dispatcher.dispatchInvocation(inv as never);
+    expect(JSON.parse(result.content ?? '{}').error).toContain('无法确定会话 Agent');
+    expect(dockerRouter.dispatch).not.toHaveBeenCalled();
   });
 
   it('runtimeUserId 缺省时回落 executionUserId（兼容旧调用）', async () => {

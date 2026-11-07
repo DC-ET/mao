@@ -9,6 +9,8 @@ export interface RuntimeModeProbe {
   shouldHandle(sessionId: number): Promise<boolean>;
   /** 会话归属用户的 id（用于容器请求寻址）。 */
   userIdOf(sessionId: number): Promise<number | null>;
+  /** 会话 Agent 的 id（容器键第二维，2026-11-07 复合容器方案 §5.6）。 */
+  agentIdOf(sessionId: number): Promise<number | null>;
 }
 
 /**
@@ -35,6 +37,7 @@ export class RoutingMcpClientManager {
     }
     const refs = await this.deps.router.mcpConnect({
       userId: await this.userIdOf(sessionId),
+      agentId: await this.agentIdOf(sessionId),
       sessionId,
       server: {
         id: server.id ?? 0,
@@ -55,6 +58,7 @@ export class RoutingMcpClientManager {
     }
     return this.deps.router.mcpCall({
       userId: await this.userIdOf(sessionId),
+      agentId: await this.agentIdOf(sessionId),
       sessionId,
       serverId,
       toolName,
@@ -72,8 +76,9 @@ export class RoutingMcpClientManager {
     try {
       if (await this.deps.probe.shouldHandle(sessionId)) {
         const userId = await this.tryUserIdOf(sessionId);
-        if (userId != null) {
-          await this.deps.router.mcpCloseSession({ userId, sessionId });
+        const agentId = await this.tryAgentIdOf(sessionId);
+        if (userId != null && agentId != null) {
+          await this.deps.router.mcpCloseSession({ userId, agentId, sessionId });
         }
       }
     } catch (e) {
@@ -93,8 +98,18 @@ export class RoutingMcpClientManager {
     return userId;
   }
 
+  private async agentIdOf(sessionId: number): Promise<number> {
+    const agentId = await this.tryAgentIdOf(sessionId);
+    if (agentId == null) throw new Error(`session agent not found for MCP routing: ${sessionId}`);
+    return agentId;
+  }
+
   private async tryUserIdOf(sessionId: number): Promise<number | null> {
     return this.deps.probe.userIdOf(sessionId);
+  }
+
+  private async tryAgentIdOf(sessionId: number): Promise<number | null> {
+    return this.deps.probe.agentIdOf(sessionId);
   }
 }
 

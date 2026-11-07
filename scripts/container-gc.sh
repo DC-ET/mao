@@ -22,11 +22,22 @@ if [ -n "$EXITED" ]; then
   echo "container-gc: removed exited containers: $(echo "$EXITED" | wc -l | tr -d ' ')"
 fi
 
+# 1.5 旧命名孤儿容器清理（2026-11-07 复合容器方案 §8）：容器键改为 (userId, agentId) 后，
+# 升级前遗留的 mao-user-{userId}（无 -agent- 段）在 Registry 重启后脱离管控，运行中的
+# 不会被上面的 exited 规则回收，会一直占资源。该命名模式升级后必为孤儿（新容器恒含
+# -agent- 段），按名字精确匹配清理无误伤。
+LEGACY_RUNNING="$(docker ps --filter 'name=mao-user-' --format '{{.Names}}' | grep -E '^mao-user-[0-9]+$' || true)"
+if [ -n "$LEGACY_RUNNING" ]; then
+  # shellcheck disable=SC2086
+  docker stop -t 10 $LEGACY_RUNNING >/dev/null
+  docker rm $LEGACY_RUNNING >/dev/null
+  echo "container-gc: removed legacy orphan containers: $(echo "$LEGACY_RUNNING" | wc -l | tr -d ' ')"
+fi
+
 # 2. 残留 socket 清理：目录下没有 running 状态容器对应 socket 时移除 runtime.sock
+# 2026-11-07 起目录为 {channelDir}/{userId}/{agentId}/ 两级（复合容器键），兼容旧一级布局
 if [ -d "$CHANNEL_DIR" ]; then
-  for user_dir in "$CHANNEL_DIR"/*/; do
-    [ -d "$user_dir" ] || continue
-    sock="${user_dir}runtime.sock"
+  for sock in "$CHANNEL_DIR"/*/runtime.sock "$CHANNEL_DIR"/*/*/runtime.sock; do
     [ -S "$sock" ] || continue
     # socket 有活跃连接（lsof 可见）则跳过；lsof 缺失时保守跳过清理
     if command -v lsof >/dev/null 2>&1; then

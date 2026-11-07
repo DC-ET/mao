@@ -44,13 +44,13 @@ function makeRegistry(
     uploadDir: join(base, 'uploads'),
     shareDir: join(base, 'share'),
     // 宿主机先 listen 再 docker run（BUG-2 回归）：listen/token 回调先于 run 发生
-    ensureChannelListening: async (userId) => {
+    ensureChannelListening: async (userId, _agentId) => {
       listenings.push(userId);
       log.push(`listen ${userId}`);
       return join(base, 'channels', String(userId), 'runtime.sock');
     },
-    issueChannelToken: (userId) => { tokens.push(userId); log.push(`token ${userId}`); return 'tok-' + userId; },
-    waitSocketReady: async (userId) => { waits.push(userId); },
+    issueChannelToken: (userId, _agentId) => { tokens.push(userId); log.push(`token ${userId}`); return 'tok-' + userId; },
+    waitSocketReady: async (userId, _agentId) => { waits.push(userId); },
     requestShutdown: async () => true,
     ...overrides,
   }, docker);
@@ -88,9 +88,9 @@ describe('container registry', () => {
     }
     const log: string[] = [];
     const { registry, waits, listenings, tokens } = makeRegistry(base, log);
-    const entry = await registry.ensureRunning(7);
+    const entry = await registry.ensureRunning(7, 5);
     expect(entry.state).toBe('running');
-    expect(entry.containerName).toBe('mao-user-7');
+    expect(entry.containerName).toBe('mao-user-7-agent-5');
     expect(waits).toEqual([7]);
     // 宿主机 socket 先 listen、token 先落盘，然后才 docker run（BUG-2/BUG-3 回归）
     expect(listenings).toEqual([7]);
@@ -119,8 +119,8 @@ describe('container registry', () => {
     expect(runArgs).toContain(`-e HOME=${join(base, 'users', '7')}`);
     expect(runArgs).toContain(`-e MAO_USER_SKILLS_DIR=${join(base, 'userskills')}`);
     // 技能视图根：会话技能符号链接的目标根；容器内按用户 ro 挂载（技术方案 2026-11-03）
-    expect(runArgs).toContain(`-e MAO_SKILL_VIEWS_DIR=${join(base, 'skill-views')}`);
-    expect(runArgs).toContain(`${join(base, 'skill-views', '7')}:${join(base, 'skill-views', '7')}:ro`);
+    expect(runArgs).toContain(`-e MAO_SKILL_VIEWS_DIR=${join(base, 'skill-views', '7', '5')}`);
+    expect(runArgs).toContain(`${join(base, 'skill-views', '7', '5')}:${join(base, 'skill-views', '7', '5')}:ro`);
     // 旧平台技能根（全局 rw）不再注入、不再挂载（G1/G2：技能源对容器不可见）
     expect(runArgs).not.toContain('MAO_SKILLS_DIR');
     expect(runArgs).not.toContain(`${join(base, 'skills')}:`);
@@ -129,7 +129,7 @@ describe('container registry', () => {
     expect(runArgs).toContain(`${join(base, 'uploads', '7')}:${join(base, 'uploads', '7')}:rw`);
     // 公共共享目录（共享目录方案 §4.3 + 团队经验库 2026-10-24）：env 注入 + rw 挂载，容器内路径与宿主机一致
     expect(runArgs).toContain(`-e MAO_SHARE_DIR=${join(base, 'share')}`);
-    expect(runArgs).toContain(`${join(base, 'share')}:${join(base, 'share')}:rw`);
+    expect(runArgs).toContain(`${join(base, 'share', 'agent-experience', '5')}:${join(base, 'share', 'agent-experience', '5')}:rw`);
     // socket 路径由 ensureChannelListening 返回（唯一真相）
     expect(runArgs).toContain(`--socket ${join(base, 'channels', '7', 'runtime.sock')}`);
     // 不暴露端口
@@ -141,7 +141,7 @@ describe('container registry', () => {
     // dist 只读
     expect(runArgs).toContain(':ro');
     // 并发复用：running 状态直接复用，不再创建第二个容器
-    const again = await registry.ensureRunning(7);
+    const again = await registry.ensureRunning(7, 5);
     expect(again.containerName).toBe(entry.containerName);
     expect(log.filter((line) => line.startsWith('run -d')).length).toBe(1);
   });
@@ -153,12 +153,12 @@ describe('container registry', () => {
     const base = makeBase('mao-registry-views-rel-');
     const log: string[] = [];
     const { registry } = makeRegistry(base, log, { skillViewsDir: './skill-views' });
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     const runArgs = log.find((line) => line.startsWith('run -d'))!;
     const absolute = resolve('./skill-views');
-    expect(runArgs).toContain(`-e MAO_SKILL_VIEWS_DIR=${absolute}`);
+    expect(runArgs).toContain(`-e MAO_SKILL_VIEWS_DIR=${join(absolute, '7', '5')}`);
     // env 与挂载源逐字节一致
-    expect(runArgs).toContain(`${join(absolute, '7')}:${join(absolute, '7')}:ro`);
+    expect(runArgs).toContain(`${join(absolute, '7', '5')}:${join(absolute, '7', '5')}:ro`);
   });
 
   it('appliesSkillViewsEnvOnFirstRebuildOfLegacyEntry', async () => {
@@ -167,18 +167,18 @@ describe('container registry', () => {
     const base = makeBase('mao-registry-legacy-env-');
     const log: string[] = [];
     const { registry } = makeRegistry(base, log);
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     // 模拟旧版本固化的条目（无挂载指纹）：首次复用按漂移处理，自愈重建一次
-    delete registry.getEntry(7)!.mountFingerprint;
+    delete registry.getEntry(7, 5)!.mountFingerprint;
     log.length = 0;
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     expect(dockerOps(log)).toEqual(['stop -t', 'rm -f', 'run -d']);
     const runArgs = log.find((line) => line.startsWith('run -d'))!;
-    expect(runArgs).toContain(`-e MAO_SKILL_VIEWS_DIR=${join(base, 'skill-views')}`);
+    expect(runArgs).toContain(`-e MAO_SKILL_VIEWS_DIR=${join(base, 'skill-views', '7', '5')}`);
     expect(runArgs).not.toContain('MAO_SKILLS_DIR');
     // 一次性行为：指纹一致后零 docker 动作
     log.length = 0;
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     expect(dockerOps(log)).toEqual([]);
   });
 
@@ -191,18 +191,18 @@ describe('container registry', () => {
     const log: string[] = [];
     let ready = false;
     const { registry, waits } = makeRegistry(base, log, {
-      waitSocketReady: async (userId) => {
+      waitSocketReady: async (userId, _agentId) => {
         waits.push(userId);
         if (!ready) throw new Error('容器运行时通道连接超时: userId=7 (1000ms)');
       },
     });
-    await expect(registry.ensureRunning(7)).rejects.toThrow(/容器运行时通道连接超时/);
-    expect(registry.getEntry(7)).toBeUndefined();
+    await expect(registry.ensureRunning(7, 5)).rejects.toThrow(/容器运行时通道连接超时/);
+    expect(registry.getEntry(7, 5)).toBeUndefined();
     // 半成品容器被清理
     expect(log.some((line) => line.startsWith('rm -f mao-user-7'))).toBe(true);
     // 第二次：socket 已能就绪 → 重新 docker run 并成功
     ready = true;
-    const entry = await registry.ensureRunning(7);
+    const entry = await registry.ensureRunning(7, 5);
     expect(entry.state).toBe('running');
     expect(log.filter((line) => line.startsWith('run -d')).length).toBe(2);
     expect(waits).toEqual([7, 7]);
@@ -215,10 +215,10 @@ describe('container registry', () => {
     }
     const log: string[] = [];
     const { registry } = makeRegistry(base, log);
-    const first = await registry.ensureRunning(7);
+    const first = await registry.ensureRunning(7, 5);
     // 模拟外部停止
-    (registry.getEntry(7) as { state: string }).state = 'stopped';
-    const second = await registry.ensureRunning(7);
+    (registry.getEntry(7, 5) as { state: string }).state = 'stopped';
+    const second = await registry.ensureRunning(7, 5);
     expect(second.containerName).toBe(first.containerName);
     expect(log.some((line) => line.startsWith('start mao-user-7'))).toBe(true);
     expect(log.filter((line) => line.startsWith('run -d')).length).toBe(1);
@@ -233,15 +233,15 @@ describe('container registry', () => {
     }
     const log: string[] = [];
     const { registry } = makeRegistry(base, log);
-    await registry.ensureRunning(7);
-    const entry = registry.getEntry(7)!;
+    await registry.ensureRunning(7, 5);
+    const entry = registry.getEntry(7, 5)!;
     expect(entry.mountFingerprint).toMatch(/^[0-9a-f]{16}$/);
     entry.lastUsedAtMs = Date.now() - 100 * 60_000;
     await registry.reapExpired(); // → stopped
     // 模拟 planner 升级前固化的旧条目（指纹与当前计划不符）
     entry.mountFingerprint = 'stale-fingerprint';
     log.length = 0;
-    const again = await registry.ensureRunning(7);
+    const again = await registry.ensureRunning(7, 5);
     expect(again.state).toBe('running');
     expect(again.mountFingerprint).not.toBe('stale-fingerprint');
     // rm -f → run -d：没有多余的 docker start（不会先 start 再立刻重建）
@@ -250,7 +250,7 @@ describe('container registry', () => {
     expect(runArgs).toContain(`${join(base, 'uploads', '7')}:${join(base, 'uploads', '7')}:rw`);
     // 指纹恢复一致后不再重建
     log.length = 0;
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     expect(dockerOps(log)).toEqual([]);
   });
 
@@ -262,16 +262,16 @@ describe('container registry', () => {
     }
     const log: string[] = [];
     const { registry } = makeRegistry(base, log);
-    await registry.ensureRunning(7);
-    registry.getEntry(7)!.mountFingerprint = 'stale-fingerprint';
+    await registry.ensureRunning(7, 5);
+    registry.getEntry(7, 5)!.mountFingerprint = 'stale-fingerprint';
     log.length = 0;
-    const entry = await registry.ensureRunning(7);
+    const entry = await registry.ensureRunning(7, 5);
     expect(entry.state).toBe('running');
     expect(entry.mountFingerprint).not.toBe('stale-fingerprint');
     expect(dockerOps(log)).toEqual(['stop -t', 'rm -f', 'run -d']);
     // 一次性行为：指纹一致后零 docker 动作
     log.length = 0;
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     expect(dockerOps(log)).toEqual([]);
   });
 
@@ -282,9 +282,9 @@ describe('container registry', () => {
     }
     const log: string[] = [];
     const { registry } = makeRegistry(base, log);
-    await registry.ensureRunning(7);
-    registry.markConnectionDead(7);
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
+    registry.markConnectionDead(7, 5);
+    await registry.ensureRunning(7, 5);
     expect(log.some((line) => line.startsWith('stop -t 10 mao-user-7'))).toBe(true);
     expect(log.filter((line) => line.startsWith('run -d')).length).toBe(2);
   });
@@ -296,21 +296,21 @@ describe('container registry', () => {
     }
     const log: string[] = [];
     const { registry } = makeRegistry(base, log);
-    const entry = await registry.ensureRunning(7);
+    const entry = await registry.ensureRunning(7, 5);
     entry.lastUsedAtMs = Date.now() - 100 * 60_000; // 远超 idle
     // 容器内有活跃 shell：§5.3.1 idle 不推进，不 stop
-    registry.reportRuntimeStatus(7, { shellSessions: 2, pendingTasks: 0, attachedTerminals: 0 });
+    registry.reportRuntimeStatus(7, 5, { shellSessions: 2, pendingTasks: 0, attachedTerminals: 0 });
     await registry.reapExpired();
     expect(log.some((line) => line.startsWith('stop -t 10 mao-user-7'))).toBe(false);
     // 容器内状态归零后 idle 推进 → stop（不 rm）
-    registry.reportRuntimeStatus(7, { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 });
+    registry.reportRuntimeStatus(7, 5, { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 });
     await registry.reapExpired();
     expect(log.some((line) => line.startsWith('stop -t 10 mao-user-7'))).toBe(true);
     expect(log.some((line) => line.startsWith('rm '))).toBe(false);
-    expect(registry.getEntry(7)?.state).toBe('stopped');
+    expect(registry.getEntry(7, 5)?.state).toBe('stopped');
     // idle 回收后 ensureRunning 走 start 复用
     log.length = 0;
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     expect(log.some((line) => line.startsWith('start mao-user-7'))).toBe(true);
     expect(log.filter((line) => line.startsWith('run -d')).length).toBe(0);
   });
@@ -324,27 +324,27 @@ describe('container registry', () => {
     const log: string[] = [];
     let ready = true;
     const { registry, waits } = makeRegistry(base, log, {
-      waitSocketReady: async (userId) => {
+      waitSocketReady: async (userId, _agentId) => {
         waits.push(userId);
         if (!ready) throw new Error('容器运行时通道连接超时: userId=7 (1000ms)');
       },
     });
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     // idle 回收 → stopped，下次 ensureRunning 走 dockerStart 重启路径
-    registry.getEntry(7)!.lastUsedAtMs = Date.now() - 100 * 60_000;
+    registry.getEntry(7, 5)!.lastUsedAtMs = Date.now() - 100 * 60_000;
     await registry.reapExpired();
-    expect(registry.getEntry(7)?.state).toBe('stopped');
+    expect(registry.getEntry(7, 5)?.state).toBe('stopped');
 
     ready = false; // 重启：start 成功但容器内 agent 永不连接
     log.length = 0;
-    await expect(registry.ensureRunning(7)).rejects.toThrow(/容器运行时通道连接超时/);
+    await expect(registry.ensureRunning(7, 5)).rejects.toThrow(/容器运行时通道连接超时/);
     // 毒化条目被清理（旧行为：残留 state=running，后续 ensureRunning 直接复用、永不重试）
-    expect(registry.getEntry(7)).toBeUndefined();
+    expect(registry.getEntry(7, 5)).toBeUndefined();
     expect(log.some((line) => line.startsWith('rm -f mao-user-7'))).toBe(true);
     // 根因恢复后：完整 docker run 重建（自愈），不再无限复用死条目
     ready = true;
     log.length = 0;
-    const entry = await registry.ensureRunning(7);
+    const entry = await registry.ensureRunning(7, 5);
     expect(entry.state).toBe('running');
     expect(log.filter((line) => line.startsWith('run -d')).length).toBe(1);
     expect(waits).toEqual([7, 7, 7]);
@@ -363,12 +363,12 @@ describe('container registry', () => {
     const log: string[] = [];
     const seenByLookup: number[] = [];
     const { registry } = makeRegistry(base, log, {
-      sessionWorkspacesOf: async (userId) => {
+      sessionWorkspacesOf: async (userId, _agentId) => {
         seenByLookup.push(userId);
         return [feishuWs, dingtalkWs, join(base, 'workspace', '7', 'web-session')];
       },
     });
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     const runArgs = log.find((line) => line.startsWith('run -d'))!;
     expect(runArgs).toContain(`${feishuWs}:${feishuWs}:rw`);
     expect(runArgs).toContain(`${dingtalkWs}:${dingtalkWs}:rw`);
@@ -376,7 +376,7 @@ describe('container registry', () => {
     expect(runArgs).not.toContain(`${join(base, 'workspace', '7', 'web-session')}:`);
     expect(seenByLookup).toEqual([7]);
     // 条目记录挂载集合，供后续 isMounted 判定
-    const entry = registry.getEntry(7)!;
+    const entry = registry.getEntry(7, 5)!;
     expect([...entry.mountedPaths]).toContain(feishuWs);
     expect([...entry.sessionWorkspaces]).toEqual([feishuWs, dingtalkWs]);
   });
@@ -392,12 +392,12 @@ describe('container registry', () => {
     const log: string[] = [];
     const { registry } = makeRegistry(base, log);
     // 首个会话（web，每用户根内）建容器：不带通道工作区
-    await registry.ensureRunning(7, join(base, 'workspace', '7', 'web-session'));
+    await registry.ensureRunning(7, 5, join(base, 'workspace', '7', 'web-session'));
     expect(log.filter((line) => line.startsWith('run -d')).length).toBe(1);
-    expect(registry.getEntry(7)!.mountedPaths.has(groupWs)).toBe(false);
+    expect(registry.getEntry(7, 5)!.mountedPaths.has(groupWs)).toBe(false);
 
     // 新通道会话的首个工具调用：工作区未挂载 → 重建（rm + run），新容器带该挂载
-    const entry = await registry.ensureRunning(7, groupWs);
+    const entry = await registry.ensureRunning(7, 5, groupWs);
     expect(entry.state).toBe('running');
     expect(entry.mountedPaths.has(groupWs)).toBe(true);
     const runs = log.filter((line) => line.startsWith('run -d'));
@@ -405,7 +405,7 @@ describe('container registry', () => {
     expect(runs[1]).toContain(`${groupWs}:${groupWs}:rw`);
     // 重建后同工作区复用，不再反复重建
     log.length = 0;
-    await registry.ensureRunning(7, groupWs);
+    await registry.ensureRunning(7, 5, groupWs);
     expect(log.filter((line) => line.startsWith('run -d')).length).toBe(0);
   });
 
@@ -417,9 +417,9 @@ describe('container registry', () => {
     }
     const log: string[] = [];
     const { registry } = makeRegistry(base, log);
-    await registry.ensureRunning(7, join(base, 'workspace', '7', 'projects', 'demo'));
+    await registry.ensureRunning(7, 5, join(base, 'workspace', '7', 'projects', 'demo'));
     log.length = 0;
-    await registry.ensureRunning(7, join(base, 'workspace', '7', 'other-session'));
+    await registry.ensureRunning(7, 5, join(base, 'workspace', '7', 'other-session'));
     expect(log.filter((line) => line.startsWith('run -d')).length).toBe(0);
   });
 
@@ -433,12 +433,12 @@ describe('container registry', () => {
     const log: string[] = [];
     const { registry } = makeRegistry(base, log);
     const bogus = join(base, 'elsewhere', 'x');
-    await expect(registry.ensureRunning(7, bogus)).rejects.toThrow(/不在容器可挂载范围内/);
+    await expect(registry.ensureRunning(7, 5, bogus)).rejects.toThrow(/不在容器可挂载范围内/);
     // 容器本体健康（该用户其他会话可用），但该会话工作区永远不可见
-    expect(registry.getEntry(7)?.state).toBe('running');
+    expect(registry.getEntry(7, 5)?.state).toBe('running');
     // 再次调用同样明确失败，不产生额外 docker 动作
     log.length = 0;
-    await expect(registry.ensureRunning(7, bogus)).rejects.toThrow(/不在容器可挂载范围内/);
+    await expect(registry.ensureRunning(7, 5, bogus)).rejects.toThrow(/不在容器可挂载范围内/);
     expect(log.filter((line) => /^(run -d|rm -f|stop)/.test(line)).length).toBe(0);
   });
 
@@ -479,22 +479,22 @@ describe('container registry', () => {
       requestShutdown: async () => {
         if (!noticed) {
           noticed = true;
-          await registry!.ensureRunning(7, feishuWs);
+          await registry!.ensureRunning(7, 5, feishuWs);
         }
         return true;
       },
     }, fakeDocker(log));
 
-    await registry.ensureRunning(7);
-    registry.getEntry(7)!.lastUsedAtMs = Date.now() - 100 * 60_000; // 远超 idle
+    await registry.ensureRunning(7, 5);
+    registry.getEntry(7, 5)!.lastUsedAtMs = Date.now() - 100 * 60_000; // 远超 idle
     await registry.reapExpired();
     // 新容器就绪且未被误伤：最后一次 run -d（重建）之后不得再出现 stop
     const lastRun = log.map((l) => l.startsWith('run -d')).lastIndexOf(true);
     const lastStop = log.map((l) => l.startsWith('stop -t 10')).lastIndexOf(true);
     expect(lastRun).toBeGreaterThanOrEqual(0);
     expect(lastStop).toBeLessThan(lastRun);
-    expect(registry.getEntry(7)?.state).toBe('running');
-    expect(registry.getEntry(7)?.mountedPaths.has(feishuWs)).toBe(true);
+    expect(registry.getEntry(7, 5)?.state).toBe('running');
+    expect(registry.getEntry(7, 5)?.mountedPaths.has(feishuWs)).toBe(true);
   });
 
   it('serializesConcurrentRecyclesAfterIdleReap', async () => {
@@ -513,25 +513,25 @@ describe('container registry', () => {
     // sessionWorkspacesOf 返回 []：DB 查询失败的降级形态，两个调用方都判"需要重建"
     const { registry } = makeRegistry(base, log, { sessionWorkspacesOf: async () => [] });
 
-    await registry.ensureRunning(7);
-    registry.getEntry(7)!.lastUsedAtMs = Date.now() - 100 * 60_000;
+    await registry.ensureRunning(7, 5);
+    registry.getEntry(7, 5)!.lastUsedAtMs = Date.now() - 100 * 60_000;
     await registry.reapExpired(); // → stopped
 
     log.length = 0;
-    const [a, b] = await Promise.all([registry.ensureRunning(7, wsA), registry.ensureRunning(7, wsB)]);
+    const [a, b] = await Promise.all([registry.ensureRunning(7, 5, wsA), registry.ensureRunning(7, 5, wsB)]);
     // recycle 原地更新条目：两个调用方拿到的是同一条目（句柄不错位）
     expect(a).toBe(b);
-    expect(registry.getEntry(7)).toBe(a);
+    expect(registry.getEntry(7, 5)).toBe(a);
     // 在册条目的挂载集合与真实容器一致
-    expect(registry.getEntry(7)!.mountedPaths.has(wsA)).toBe(true);
-    expect(registry.getEntry(7)!.mountedPaths.has(wsB)).toBe(true);
+    expect(registry.getEntry(7, 5)!.mountedPaths.has(wsA)).toBe(true);
+    expect(registry.getEntry(7, 5)!.mountedPaths.has(wsB)).toBe(true);
     // 串行化：每次 run -d 之前都有对应的 rm -f，没有"同名冲突被吞掉"的第二次 run -d，
     // 也没有对同一容器的双重 stop
     expect(dockerOps(log)).toEqual(['rm -f', 'run -d', 'stop -t', 'rm -f', 'run -d']);
     // 两个工作区都已在册：后续调用不触发任何重建
     log.length = 0;
-    await registry.ensureRunning(7, wsA);
-    await registry.ensureRunning(7, wsB);
+    await registry.ensureRunning(7, 5, wsA);
+    await registry.ensureRunning(7, 5, wsB);
     expect(dockerOps(log)).toEqual([]);
   });
 
@@ -551,9 +551,9 @@ describe('container registry', () => {
     const { registry } = makeRegistry(base, log);
 
     log.length = 0;
-    const [a, b] = await Promise.all([registry.ensureRunning(7, wsA), registry.ensureRunning(7, wsB)]);
+    const [a, b] = await Promise.all([registry.ensureRunning(7, 5, wsA), registry.ensureRunning(7, 5, wsB)]);
     expect(a).toBe(b);
-    expect(registry.getEntry(7)).toBe(a);
+    expect(registry.getEntry(7, 5)).toBe(a);
     expect(a.mountedPaths.has(wsA)).toBe(true);
     expect(a.mountedPaths.has(wsB)).toBe(true);
     expect(dockerOps(log)).toEqual(['run -d', 'stop -t', 'rm -f', 'run -d']);
@@ -577,7 +577,7 @@ describe('container registry', () => {
         if (phase === 0) return;
         if (phase === 1) {
           phase = 2;
-          await registry!.ensureRunning(7, wsB);
+          await registry!.ensureRunning(7, 5, wsB);
           throw new Error('容器运行时通道连接超时: userId=7 (1000ms)');
         }
       },
@@ -585,16 +585,16 @@ describe('container registry', () => {
     });
     registry = reg;
 
-    await registry.ensureRunning(7);
-    registry.getEntry(7)!.lastUsedAtMs = Date.now() - 100 * 60_000;
+    await registry.ensureRunning(7, 5);
+    registry.getEntry(7, 5)!.lastUsedAtMs = Date.now() - 100 * 60_000;
     await registry.reapExpired(); // → stopped
     phase = 1;
 
     log.length = 0;
-    await expect(registry.ensureRunning(7)).rejects.toThrow(/连接超时/);
+    await expect(registry.ensureRunning(7, 5)).rejects.toThrow(/连接超时/);
     // 并发 recycle 建好的新容器与在册条目都存活，wsB 已挂载
-    expect(registry.getEntry(7)?.state).toBe('running');
-    expect(registry.getEntry(7)?.mountedPaths.has(wsB)).toBe(true);
+    expect(registry.getEntry(7, 5)?.state).toBe('running');
+    expect(registry.getEntry(7, 5)?.mountedPaths.has(wsB)).toBe(true);
     // 最后一次 rm -f 不得落在最后一次 run -d 之后（旧行为会把新容器 rm 掉）
     const lastRun = log.map((l) => l.startsWith('run -d')).lastIndexOf(true);
     const lastRm = log.map((l) => l.startsWith('rm -f')).lastIndexOf(true);
@@ -625,12 +625,12 @@ describe('container registry', () => {
       },
     });
 
-    await registry.ensureRunning(7);
-    registry.markConnectionDead(7);
+    await registry.ensureRunning(7, 5);
+    registry.markConnectionDead(7, 5);
     log.length = 0;
-    const entry = await registry.ensureRunning(7);
+    const entry = await registry.ensureRunning(7, 5);
     expect(entry.state).toBe('running');
-    expect(registry.getEntry(7)).toBe(entry);
+    expect(registry.getEntry(7, 5)).toBe(entry);
     // stop → rm -f → run -d（撞同名残留，未落日志）→ rm -f → run -d（重试成功）
     expect(dockerOps(log)).toEqual(['stop -t', 'rm -f', 'rm -f', 'run -d']);
   });
@@ -656,19 +656,19 @@ describe('container registry', () => {
       },
     });
 
-    await registry.ensureRunning(7);
-    registry.getEntry(7)!.lastUsedAtMs = Date.now() - 100 * 60_000;
+    await registry.ensureRunning(7, 5);
+    registry.getEntry(7, 5)!.lastUsedAtMs = Date.now() - 100 * 60_000;
     await registry.reapExpired(); // → stopped（容器 exited，仍被注册表跟踪）
-    expect(registry.getEntry(7)?.state).toBe('stopped');
+    expect(registry.getEntry(7, 5)?.state).toBe('stopped');
 
     startFails = true; // 容器已被 GC 清掉
     log.length = 0;
-    await expect(registry.ensureRunning(7)).rejects.toThrow(/No such container/);
-    expect(registry.getEntry(7)).toBeUndefined();
+    await expect(registry.ensureRunning(7, 5)).rejects.toThrow(/No such container/);
+    expect(registry.getEntry(7, 5)).toBeUndefined();
     // 自愈：下次 ensureRunning 走完整 docker run 重建（新容器带新 agent）
     startFails = false;
     log.length = 0;
-    const entry = await registry.ensureRunning(7);
+    const entry = await registry.ensureRunning(7, 5);
     expect(entry.state).toBe('running');
     expect(log.filter((l) => l.startsWith('run -d')).length).toBe(1);
   });
@@ -695,23 +695,23 @@ describe('container registry', () => {
         if (phase === 0) return;
         if (phase === 1) {
           phase = 2;
-          await registry!.ensureRunning(7, wsB);
+          await registry!.ensureRunning(7, 5, wsB);
           throw new Error('容器运行时通道连接超时: userId=7 (1000ms)');
         }
       },
     });
     registry = reg;
 
-    await registry.ensureRunning(7);
-    registry.getEntry(7)!.lastUsedAtMs = Date.now() - 100 * 60_000;
+    await registry.ensureRunning(7, 5);
+    registry.getEntry(7, 5)!.lastUsedAtMs = Date.now() - 100 * 60_000;
     await registry.reapExpired(); // → stopped
     phase = 1;
 
     log.length = 0;
-    await expect(registry.ensureRunning(7, wsA)).rejects.toThrow(/连接超时/);
+    await expect(registry.ensureRunning(7, 5, wsA)).rejects.toThrow(/连接超时/);
     // 重入 recycle 建好的新容器与在册条目都存活，wsB 已挂载
-    expect(registry.getEntry(7)?.state).toBe('running');
-    expect(registry.getEntry(7)?.mountedPaths.has(wsB)).toBe(true);
+    expect(registry.getEntry(7, 5)?.state).toBe('running');
+    expect(registry.getEntry(7, 5)?.mountedPaths.has(wsB)).toBe(true);
     // 最后一次 rm -f 不得落在最后一次 run -d 之后
     const lastRun = log.map((l) => l.startsWith('run -d')).lastIndexOf(true);
     const lastRm = log.map((l) => l.startsWith('rm -f')).lastIndexOf(true);
@@ -739,17 +739,17 @@ describe('container registry', () => {
       waitSocketReady: async () => {
         if (reentered) return;
         reentered = true;
-        await registry!.ensureRunning(7, wsB); // 首建期间的重入方：另建新条目并登记
+        await registry!.ensureRunning(7, 5, wsB); // 首建期间的重入方：另建新条目并登记
         throw new Error('容器运行时通道连接超时: userId=7 (1000ms)');
       },
     });
     registry = reg;
 
     log.length = 0;
-    await expect(registry.ensureRunning(7, wsA)).rejects.toThrow(/连接超时/);
+    await expect(registry.ensureRunning(7, 5, wsA)).rejects.toThrow(/连接超时/);
     // 重入方建好的新容器与在册条目都存活，wsB 已挂载
-    expect(registry.getEntry(7)?.state).toBe('running');
-    expect(registry.getEntry(7)?.mountedPaths.has(wsB)).toBe(true);
+    expect(registry.getEntry(7, 5)?.state).toBe('running');
+    expect(registry.getEntry(7, 5)?.mountedPaths.has(wsB)).toBe(true);
     // 最后一次 rm -f 不得落在最后一次 run -d 之后（旧行为 rm 掉重入方的新容器）
     const lastRun = log.map((l) => l.startsWith('run -d')).lastIndexOf(true);
     const lastRm = log.map((l) => l.startsWith('rm -f')).lastIndexOf(true);
@@ -805,11 +805,11 @@ describe('container registry', () => {
       { host: 'a.internal', ip: '10.0.0.9', source: 'custom' as const },
     ];
     const { registry } = makeRegistry(base, log, { resolveHostsInjection: async () => ({ entries, degraded: false }) });
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     const runArgs = log.find((line) => line.startsWith('run -d'))!;
     expect(runArgs).toContain('--add-host prometheus.acg.team:10.70.21.57');
     expect(runArgs).toContain('--add-host a.internal:10.0.0.9');
-    expect(registry.getEntry(7)!.hostsFingerprint).toBe(containerHostsFingerprint(entries));
+    expect(registry.getEntry(7, 5)!.hostsFingerprint).toBe(containerHostsFingerprint(entries));
   });
 
   it('omitsAddHostArgsWhenNoEntries', async () => {
@@ -819,10 +819,10 @@ describe('container registry', () => {
     }
     const log: string[] = [];
     const { registry } = makeRegistry(base, log, { resolveHostsInjection: async () => ({ entries: [], degraded: false }) });
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     const runArgs = log.find((line) => line.startsWith('run -d'))!;
     expect(runArgs).not.toContain('--add-host');
-    expect(registry.getEntry(7)!.hostsFingerprint).toBe(containerHostsFingerprint([]));
+    expect(registry.getEntry(7, 5)!.hostsFingerprint).toBe(containerHostsFingerprint([]));
   });
 
   it('recreatesContainerWhenHostsInjectionDrifts', async () => {
@@ -834,16 +834,16 @@ describe('container registry', () => {
     const log: string[] = [];
     let entries = [{ host: 'prometheus.acg.team', ip: '10.70.21.57', source: 'hosts-file' as const }];
     const { registry } = makeRegistry(base, log, { resolveHostsInjection: async () => ({ entries, degraded: false }) });
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     entries = [{ host: 'prometheus.acg.team', ip: '192.168.10.10', source: 'custom' as const }];
     log.length = 0;
-    const entry = await registry.ensureRunning(7);
+    const entry = await registry.ensureRunning(7, 5);
     expect(entry.state).toBe('running');
     expect(dockerOps(log)).toEqual(['stop -t', 'rm -f', 'run -d']);
     expect(log.find((line) => line.startsWith('run -d'))).toContain('--add-host prometheus.acg.team:192.168.10.10');
     // 一次性行为：指纹一致后零 docker 动作
     log.length = 0;
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     expect(dockerOps(log)).toEqual([]);
   });
 
@@ -855,10 +855,10 @@ describe('container registry', () => {
     }
     const log: string[] = [];
     const { registry } = makeRegistry(base, log);
-    await registry.ensureRunning(7);
-    delete registry.getEntry(7)!.hostsFingerprint;
+    await registry.ensureRunning(7, 5);
+    delete registry.getEntry(7, 5)!.hostsFingerprint;
     log.length = 0;
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     expect(dockerOps(log)).toEqual([]);
   });
 
@@ -871,12 +871,12 @@ describe('container registry', () => {
     const log: string[] = [];
     const entries = [{ host: 'a.internal', ip: '10.0.0.9', source: 'custom' as const }];
     const { registry } = makeRegistry(base, log, { resolveHostsInjection: async () => ({ entries, degraded: false }) });
-    await registry.ensureRunning(7);
-    delete registry.getEntry(7)!.hostsFingerprint;
+    await registry.ensureRunning(7, 5);
+    delete registry.getEntry(7, 5)!.hostsFingerprint;
     log.length = 0;
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     expect(dockerOps(log)).toEqual(['stop -t', 'rm -f', 'run -d']);
-    expect(registry.getEntry(7)!.hostsFingerprint).toBe(containerHostsFingerprint(entries));
+    expect(registry.getEntry(7, 5)!.hostsFingerprint).toBe(containerHostsFingerprint(entries));
   });
 
   it('doesNotRecreateContainerWhenHostsResolutionDegraded', async () => {
@@ -890,26 +890,26 @@ describe('container registry', () => {
     let entries = [{ host: 'a.internal', ip: '10.0.0.9', source: 'custom' as const }];
     let degraded = false;
     const { registry } = makeRegistry(base, log, { resolveHostsInjection: async () => ({ entries, degraded }) });
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
 
     // 降级窗口：结果为空但不可信 → 不重建
     degraded = true;
     entries = [];
     log.length = 0;
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     expect(dockerOps(log)).toEqual([]);
 
     // 恢复正常且与原配置一致 → 仍不重建
     degraded = false;
     entries = [{ host: 'a.internal', ip: '10.0.0.9', source: 'custom' as const }];
     log.length = 0;
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     expect(dockerOps(log)).toEqual([]);
 
     // 真实配置变化 → 重建一次
     entries = [{ host: 'a.internal', ip: '10.0.0.10', source: 'custom' as const }];
     log.length = 0;
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     expect(dockerOps(log)).toEqual(['stop -t', 'rm -f', 'run -d']);
   });
 
@@ -934,21 +934,57 @@ describe('container registry', () => {
     // 无在册容器
     expect((await registry.recycleUser(7)).status).toBe('none');
 
-    await registry.ensureRunning(7);
-    registry.reportRuntimeStatus(7, { shellSessions: 1, pendingTasks: 0, attachedTerminals: 0 });
+    await registry.ensureRunning(7, 5);
+    registry.reportRuntimeStatus(7, 5, { shellSessions: 1, pendingTasks: 0, attachedTerminals: 0 });
     expect((await registry.recycleUser(7)).status).toBe('skipped-busy');
 
     log.length = 0;
     const rebuilt = await registry.recycleUser(7, { force: true });
-    expect(rebuilt).toEqual({ userId: 7, status: 'rebuilt' });
+    expect(rebuilt).toEqual({ userId: 7, agentId: null, status: 'rebuilt' });
     expect(dockerOps(log)).toEqual(['stop -t', 'rm -f', 'run -d']);
 
     // 失败不抛出，返回 failed + 错误摘要
-    registry.reportRuntimeStatus(7, { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 });
+    registry.reportRuntimeStatus(7, 5, { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 });
     failNextRun = true;
     const failed = await registry.recycleUser(7, { force: true });
     expect(failed.status).toBe('failed');
     expect(failed.error).toContain('no space left');
+  });
+
+  it('runsTwoAgentContainersForTheSameUserIndependently', async () => {
+    // 2026-11-07 复合容器方案 §7 生命周期：同用户双 Agent 并存两个容器，互不影响——
+    // 切换 Agent 建新容器不杀旧容器；按 (user, agent) 独立回收
+    const base = useTmpDir('mao-registry-dual-');
+    for (const d of ['workspace', 'users', 'runtime', 'userskills', 'skills', 'channels', 'dist', 'deps']) {
+      mkdirSync(join(base, d), { recursive: true });
+    }
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log);
+    const a = await registry.ensureRunning(7, 5);
+    const b = await registry.ensureRunning(7, 6);
+    expect(a.containerName).toBe('mao-user-7-agent-5');
+    expect(b.containerName).toBe('mao-user-7-agent-6');
+    expect(registry.getEntry(7, 5)?.state).toBe('running');
+    expect(registry.getEntry(7, 6)?.state).toBe('running');
+    // docker run 调用两次（两个容器）
+    expect(log.filter((l) => l.startsWith('run -d')).length).toBe(2);
+
+    // 复用（ensureRunning 再次调用不重建）：run 仍只有两次
+    await registry.ensureRunning(7, 5);
+    await registry.ensureRunning(7, 6);
+    expect(log.filter((l) => l.startsWith('run -d')).length).toBe(2);
+
+    // 单容器回收只动自己：recycle (7,5) 后 (7,6) 仍在册且 running
+    const recycled = await registry.recycleUser(7, { agentId: 5, force: true });
+    expect(recycled).toEqual({ userId: 7, agentId: 5, status: 'rebuilt' });
+    expect(registry.getEntry(7, 6)?.state).toBe('running');
+    // 整用户回收（缺省 agentId）聚合两个容器
+    const all = await registry.recycleUser(7, { force: true });
+    expect(all).toEqual({ userId: 7, agentId: null, status: 'rebuilt' });
+    // listEntries 按 (userId, agentId) 升序、含 agentId
+    const summary = registry.listEntries().map((e) => `${e.userId}/${e.agentId}`);
+    expect(summary).toContain('7/5');
+    expect(summary).toContain('7/6');
   });
 
   it('listsRegisteredContainersWithBusyFlag', async () => {
@@ -959,13 +995,13 @@ describe('container registry', () => {
     const log: string[] = [];
     const { registry } = makeRegistry(base, log);
     expect(registry.listEntries()).toEqual([]);
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     const [summary] = registry.listEntries();
     expect(summary).toMatchObject({
-      userId: 7, containerName: 'mao-user-7', state: 'running', busy: false,
+      userId: 7, containerName: 'mao-user-7-agent-5', state: 'running', busy: false,
     });
     expect(summary!.startedAtMs).toBeGreaterThan(0);
-    registry.reportRuntimeStatus(7, { shellSessions: 0, pendingTasks: 2, attachedTerminals: 0 });
+    registry.reportRuntimeStatus(7, 5, { shellSessions: 0, pendingTasks: 2, attachedTerminals: 0 });
     expect(registry.listEntries()[0]!.busy).toBe(true);
   });
 
@@ -976,22 +1012,22 @@ describe('container registry', () => {
     writeRuntimeBuild(base, 'host-1');
     const log: string[] = [];
     const { registry } = makeRegistry(base, log);
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     // 容器 agent 上报旧版本 → 空闲时自动重启进程（stop + start，不 rm/run 重建）
-    registry.reportAgentHello(7, 'old-1');
+    registry.reportAgentHello(7, 5, 'old-1');
     expect(registry.listEntries()[0]).toMatchObject({
       runtimeBuild: 'old-1', hostRuntimeBuild: 'host-1', pendingUpgrade: true,
     });
     log.length = 0;
-    const restarted = await registry.ensureRunning(7);
+    const restarted = await registry.ensureRunning(7, 5);
     expect(restarted.state).toBe('running');
     expect(dockerOps(log)).toEqual(['stop -t']);
     expect(log.filter((line) => line.startsWith('start mao-user-7')).length).toBe(1);
     // 重启后 agent 上报新版本 → 一致，不再动作
-    registry.reportAgentHello(7, 'host-1');
+    registry.reportAgentHello(7, 5, 'host-1');
     expect(registry.listEntries()[0]!.pendingUpgrade).toBe(false);
     log.length = 0;
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     expect(dockerOps(log)).toEqual([]);
     expect(log.some((line) => line.startsWith('start mao-user-7'))).toBe(false);
   });
@@ -1001,17 +1037,17 @@ describe('container registry', () => {
     writeRuntimeBuild(base, 'host-1');
     const log: string[] = [];
     const { registry } = makeRegistry(base, log);
-    await registry.ensureRunning(7);
-    registry.reportAgentHello(7, 'old-1');
-    registry.reportRuntimeStatus(7, { shellSessions: 1, pendingTasks: 0, attachedTerminals: 0 });
+    await registry.ensureRunning(7, 5);
+    registry.reportAgentHello(7, 5, 'old-1');
+    registry.reportRuntimeStatus(7, 5, { shellSessions: 1, pendingTasks: 0, attachedTerminals: 0 });
     log.length = 0;
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     // 忙碌：不打断在跑任务，零 docker 操作
     expect(dockerOps(log)).toEqual([]);
     expect(log.some((line) => line.startsWith('start mao-user-7'))).toBe(false);
     // 解除忙碌 → 下一次调用收敛
-    registry.reportRuntimeStatus(7, { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 });
-    await registry.ensureRunning(7);
+    registry.reportRuntimeStatus(7, 5, { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 });
+    await registry.ensureRunning(7, 5);
     expect(dockerOps(log)).toEqual(['stop -t']);
     expect(log.filter((line) => line.startsWith('start mao-user-7')).length).toBe(1);
   });
@@ -1021,10 +1057,10 @@ describe('container registry', () => {
     writeRuntimeBuild(disabledBase, 'host-1');
     const disabledLog: string[] = [];
     const disabled = makeRegistry(disabledBase, disabledLog, { autoUpgradeEnabled: async () => false });
-    await disabled.registry.ensureRunning(7);
-    disabled.registry.reportAgentHello(7, 'old-1');
+    await disabled.registry.ensureRunning(7, 5);
+    disabled.registry.reportAgentHello(7, 5, 'old-1');
     disabledLog.length = 0;
-    await disabled.registry.ensureRunning(7);
+    await disabled.registry.ensureRunning(7, 5);
     expect(dockerOps(disabledLog)).toEqual([]);
     expect(disabledLog.some((line) => line.startsWith('start mao-user-7'))).toBe(false);
 
@@ -1032,10 +1068,10 @@ describe('container registry', () => {
     writeRuntimeBuild(drainingBase, 'host-1');
     const drainingLog: string[] = [];
     const draining = makeRegistry(drainingBase, drainingLog, { isDraining: () => true });
-    await draining.registry.ensureRunning(7);
-    draining.registry.reportAgentHello(7, 'old-1');
+    await draining.registry.ensureRunning(7, 5);
+    draining.registry.reportAgentHello(7, 5, 'old-1');
     drainingLog.length = 0;
-    await draining.registry.ensureRunning(7);
+    await draining.registry.ensureRunning(7, 5);
     expect(dockerOps(drainingLog)).toEqual([]);
     expect(drainingLog.some((line) => line.startsWith('start mao-user-7'))).toBe(false);
   });
@@ -1045,15 +1081,15 @@ describe('container registry', () => {
     writeRuntimeBuild(base, 'host-1');
     const log: string[] = [];
     const { registry } = makeRegistry(base, log);
-    await registry.ensureRunning(7);
-    registry.reportAgentHello(7, 'old-1');
+    await registry.ensureRunning(7, 5);
+    registry.reportAgentHello(7, 5, 'old-1');
     log.length = 0;
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     expect(dockerOps(log)).toEqual(['stop -t']);
     // 模拟「重启后仍上报旧版本」（蓝绿过渡：旧实例缓存旧 build）→ 不得重复重启形成风暴
-    registry.reportAgentHello(7, 'old-1');
+    registry.reportAgentHello(7, 5, 'old-1');
     log.length = 0;
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     expect(dockerOps(log)).toEqual([]);
     expect(log.some((line) => line.startsWith('start mao-user-7'))).toBe(false);
   });
@@ -1063,12 +1099,12 @@ describe('container registry', () => {
     writeRuntimeBuild(base, 'host-1');
     const log: string[] = [];
     const { registry } = makeRegistry(base, log);
-    await registry.ensureRunning(7);
-    registry.reportAgentHello(7, 'old-1');
+    await registry.ensureRunning(7, 5);
+    registry.reportAgentHello(7, 5, 'old-1');
     // 模拟 idle 回收后的 stopped 条目：docker start 本身即进程重启，无需额外 stop/restart
-    (registry.getEntry(7) as { state: string }).state = 'stopped';
+    (registry.getEntry(7, 5) as { state: string }).state = 'stopped';
     log.length = 0;
-    const again = await registry.ensureRunning(7);
+    const again = await registry.ensureRunning(7, 5);
     expect(again.state).toBe('running');
     expect(dockerOps(log)).toEqual([]);
     expect(log.filter((line) => line.startsWith('start mao-user-7')).length).toBe(1);
@@ -1079,12 +1115,12 @@ describe('container registry', () => {
     writeRuntimeBuild(base, 'host-1');
     const log: string[] = [];
     const { registry } = makeRegistry(base, log);
-    await registry.ensureRunning(7);
-    registry.reportAgentHello(7, 'old-1');
+    await registry.ensureRunning(7, 5);
+    registry.reportAgentHello(7, 5, 'old-1');
     // 挂载漂移优先（能力缺失 > 代码新鲜度）：走重建而非重启
-    (registry.getEntry(7) as { mountFingerprint?: string }).mountFingerprint = 'stale-fingerprint';
+    (registry.getEntry(7, 5) as { mountFingerprint?: string }).mountFingerprint = 'stale-fingerprint';
     log.length = 0;
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     expect(dockerOps(log)).toEqual(['stop -t', 'rm -f', 'run -d']);
     expect(log.some((line) => line.startsWith('start mao-user-7'))).toBe(false);
   });
@@ -1094,10 +1130,10 @@ describe('container registry', () => {
     const base = makeBase('mao-registry-build-nomanifest-');
     const log: string[] = [];
     const { registry } = makeRegistry(base, log);
-    await registry.ensureRunning(7);
-    registry.reportAgentHello(7, 'whatever');
+    await registry.ensureRunning(7, 5);
+    registry.reportAgentHello(7, 5, 'whatever');
     log.length = 0;
-    await registry.ensureRunning(7);
+    await registry.ensureRunning(7, 5);
     expect(dockerOps(log)).toEqual([]);
     expect(log.some((line) => line.startsWith('start mao-user-7'))).toBe(false);
     const summary = registry.listEntries()[0]!;

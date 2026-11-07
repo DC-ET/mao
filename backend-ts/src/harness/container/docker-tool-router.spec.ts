@@ -97,10 +97,10 @@ describe('docker tool router', () => {
       globalMode: async () => 'docker',
     });
     const result = await router.dispatch('shell', '{"action":"exec","command":"echo hi"}', {
-      userId: 7, sessionId: 11, workspace: '/opt/mao-data/workspace/feishu-chat/bot-1/oc_chat',
+      userId: 7, agentId: 5, sessionId: 11, workspace: '/opt/mao-data/workspace/feishu-chat/bot-1/oc_chat',
     });
     expect(result).toBe('done');
-    expect(ensureRunning).toHaveBeenCalledWith(7, '/opt/mao-data/workspace/feishu-chat/bot-1/oc_chat');
+    expect(ensureRunning).toHaveBeenCalledWith(7, 5, '/opt/mao-data/workspace/feishu-chat/bot-1/oc_chat');
   });
 
   it('passesSessionWorkspaceToEnsureRunningOnReadBytes', async () => {
@@ -119,10 +119,10 @@ describe('docker tool router', () => {
       globalMode: async () => 'docker',
     });
     const bytes = await router.readBytes({
-      userId: 7, sessionId: 11, workspace: '/opt/mao-data/workspace/dingtalk-chat/bot-1/p2p-7',
+      userId: 7, agentId: 5, sessionId: 11, workspace: '/opt/mao-data/workspace/dingtalk-chat/bot-1/p2p-7',
       path: 'chat-files/a.png', maxBytes: 1024,
     });
     expect(bytes?.toString()).toBe('hi');
-    expect(ensureRunning).toHaveBeenCalledWith(7, '/opt/mao-data/workspace/dingtalk-chat/bot-1/p2p-7');
+    expect(ensureRunning).toHaveBeenCalledWith(7, 5, '/opt/mao-data/workspace/dingtalk-chat/bot-1/p2p-7');
   });
 });

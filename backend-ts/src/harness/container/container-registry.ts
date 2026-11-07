@@ -1,5 +1,5 @@
 import { execFile as execFileCb } from 'node:child_process';
-import { existsSync, lstatSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 import { harnessLog } from '../log.js';
@@ -10,22 +10,34 @@ import { containerHostsFingerprint, EMPTY_CONTAINER_HOSTS_FINGERPRINT } from '..
 import type { ContainerHostsResolution } from './container-hosts-resolver.js';
 import type { RuntimeStatus } from './runtime-channel-server.js';
 import { readRuntimeBuildManifest } from './runtime-build.js';
+import { EXPERIENCE_ROOT_SUBDIR } from '../experience/experience-index.service.js';
 
 /**
- * 容器生命周期注册表（宿主机单例，技术方案 §5.2）。
+ * 容器生命周期注册表（宿主机单例，技术方案 §5.2；2026-11-07 起容器键为 (userId, agentId)）。
  * create / start / stop / reuse、idle 与 lifetime 回收、资源限制、启动预检。
  * docker 命令统一经 DockerCli 调用，单测注入 fake。
  *
- * 并发模型（N-4a/b/c）：同一用户的全部生命周期操作（创建、重启、recycle、stop）
- * 经 withUserLock 按用户串行。容器名固定为 mao-user-{userId}，两个并发调用各自
- * 执行"停-删-建"会互相摧毁对方刚建好的容器，并让在册条目的挂载集合与真实容器
- * 错位（重复重建、条目被删、容器被 rm -f）。
+ * 容器键：`containerKey(userId, agentId)`，容器名 `mao-user-{userId}-agent-{agentId}`。
+ * 同一用户的不同 Agent 各自一个容器，互不共享生命周期；userId 维度沿用运行身份口径
+ * （路由侧 runtimeUserId，见 tool-dispatcher）。
+ *
+ * 并发模型（N-4a/b/c）：同一容器键的全部生命周期操作（创建、重启、recycle、stop）
+ * 经 withUserLock 按容器键串行。容器名固定为 mao-user-{userId}-agent-{agentId}，两个
+ * 并发调用各自执行"停-删-建"会互相摧毁对方刚建好的容器，并让在册条目的挂载集合与
+ * 真实容器错位（重复重建、条目被删、容器被 rm -f）。
  * recycle 走原地更新条目（对象身份不变、generation +1）：并发调用方持有的句柄
  * 始终是在册条目，startedAtMs/mountedPaths 不会错位；await 之后的副作用点靠
  * generation 识别条目已被重建，避免按容器名误伤新容器。
  */
+
+/** 容器复合键：注册表/锁/连接表的统一键形态。 */
+export function containerKey(userId: number, agentId: number): string {
+  return `${userId}:${agentId}`;
+}
+
 export interface ContainerEntry {
   userId: number;
+  agentId: number;
   containerName: string;
   state: 'creating' | 'running' | 'stopped';
   startedAtMs: number;
@@ -77,6 +89,8 @@ export type ContainerRecycleStatus = 'rebuilt' | 'none' | 'skipped-busy' | 'fail
 
 export interface ContainerRecycleResult {
   userId: number;
+  /** 被回收的容器 agentId；null = 整用户聚合结果（未指定 agentId 的全量回收）。 */
+  agentId: number | null;
   status: ContainerRecycleStatus;
   /** status='failed' 时的错误摘要。 */
   error?: string;
@@ -85,6 +99,7 @@ export interface ContainerRecycleResult {
 /** 在册容器摘要（管理后台「容器管理」列表）。 */
 export interface ContainerEntrySummary {
   userId: number;
+  agentId: number;
   containerName: string;
   state: 'running' | 'stopped';
   busy: boolean;
@@ -101,8 +116,11 @@ export interface ContainerEntrySummary {
 /** 管理后台容器运维依赖（窄接口，路由层用，不暴露生命周期内部细节）。 */
 export interface ContainerOps {
   listEntries(): ContainerEntrySummary[];
-  /** 重建单个用户容器；none=当前无在册容器（下次使用时按新配置创建）。 */
-  recycleUser(userId: number, opts?: { force?: boolean }): Promise<ContainerRecycleResult>;
+  /**
+   * 重建容器：指定 agentId 时回收该 (user, agent) 容器；缺省回收该用户全部在册容器
+   * （聚合结果，任一失败即 failed）。none=当前无在册容器（下次使用时按新配置创建）。
+   */
+  recycleUser(userId: number, opts?: { force?: boolean; agentId?: number }): Promise<ContainerRecycleResult>;
 }
 
 /** 容器是否处于忙碌状态（有活跃 shell / 在途任务 / 已连接终端）。 */
@@ -144,20 +162,20 @@ export interface ContainerRegistryOptions {
   runtimeDir: string;
   userSkillsDir: string;
   skillsDir: string;
-  /** 技能视图根（SKILL_VIEWS_DIR）：容器内按用户 ro 挂 {skillViewsDir}/{userId}。 */
+  /** 技能视图根（SKILL_VIEWS_DIR）：容器内按 (user, agent) ro 挂 {skillViewsDir}/{userId}/{agentId}。 */
   skillViewsDir: string;
   /** 图片产物上传根（FILE_UPLOAD_DIR）：按用户挂 {uploadDir}/{userId} 并注入容器 env。 */
   uploadDir: string;
-  /** 公共共享目录（共享目录方案 §4.3）：ro 挂载进每用户容器并注入容器 env。 */
+  /** 公共共享目录根（共享目录方案 §4.3）：容器只挂 {shareDir}/agent-experience/{agentId} 并注入容器 env。 */
   shareDir: string;
   /** 创建前确保宿主机 socket server 已监听（先 listen 再 docker run），返回 socket 路径。 */
-  ensureChannelListening(userId: number): Promise<string>;
-  /** 创建前确保该用户连接 token 已落盘（容器启动时经 -e 注入）。 */
-  issueChannelToken(userId: number): string;
+  ensureChannelListening(userId: number, agentId: number): Promise<string>;
+  /** 创建前确保该容器键的连接 token 已落盘（容器启动时经 -e 注入）。 */
+  issueChannelToken(userId: number, agentId: number): string;
   /** 容器启动命令等待 socket 就绪时轮询连接的回调。 */
-  waitSocketReady(userId: number, timeoutMs: number): Promise<void>;
+  waitSocketReady(userId: number, agentId: number, timeoutMs: number): Promise<void>;
   /** 停止前发 shutdown 帧让容器收尾（§5.3.1 对策 3）。返回 false 表示容器无响应。 */
-  requestShutdown(userId: number): Promise<boolean>;
+  requestShutdown(userId: number, agentId: number): Promise<boolean>;
   /**
    * 自动升级总开关（system_setting.runtime.container.autoUpgrade）：返回 false 时跳过自动重启，
    * 仅记录日志。未注入按开启处理（测试 / 旧装配零改动）。
@@ -169,11 +187,11 @@ export interface ContainerRegistryOptions {
    */
   isDraining?: () => boolean;
   /**
-   * 该用户当前会话使用的工作区绝对路径（N-2）。创建/重建容器时把越出每用户根的
+   * 该用户该 Agent 当前会话使用的工作区绝对路径（N-2）。创建/重建容器时把越出每用户根的
    * 通道会话工作区一并挂入；返回空数组或未注入时行为与旧版一致。
-   * 实现必须按数据库 user_id 过滤（归属校验），不得返回其他用户的工作区。
+   * 实现必须按数据库 (user_id, agent_id) 过滤（归属校验），不得返回其他用户/Agent 的工作区。
    */
-  sessionWorkspacesOf?(userId: number): Promise<string[]>;
+  sessionWorkspacesOf?(userId: number, agentId: number): Promise<string[]>;
   /**
    * 当前应注入容器的 /etc/hosts 条目（容器域名解析注入方案）。
    * 创建容器时逐条转 `--add-host host:ip` 并固化指纹；未注入或返回空数组时
@@ -187,11 +205,12 @@ export interface ContainerRegistryOptions {
 const IDLE_CHECK_INTERVAL_MS = 60_000;
 
 export class ContainerRegistry {
-  private readonly entries = new Map<number, ContainerEntry>();
-  /** 每用户串行锁：值是该用户上一个 Section 的占位 Promise，后到者链接到链尾。 */
-  private readonly userLocks = new Map<number, Promise<unknown>>();
+  /** 在册条目：键为 containerKey(userId, agentId)。 */
+  private readonly entries = new Map<string, ContainerEntry>();
+  /** 每容器键串行锁：值是该键上一个 Section 的占位 Promise，后到者链接到链尾。 */
+  private readonly userLocks = new Map<string, Promise<unknown>>();
   /** 持锁上下文：识别同一异步上下文内的重入（requestShutdown 回调里触发 ensureRunning），避免自死锁。 */
-  private readonly lockContext = new AsyncLocalStorage<Set<number>>();
+  private readonly lockContext = new AsyncLocalStorage<Set<string>>();
   private readonly planner: ContainerMountPlanner;
   /**
    * 本实例加载的容器运行时闭包版本（dist/harness/container/runtime-build.json 的 buildId）。
@@ -199,10 +218,10 @@ export class ContainerRegistry {
    */
   private readonly hostRuntimeBuild: string | null;
   /**
-   * 每用户最近一次 agent hello 上报的代码版本。独立于条目保存：新容器创建过程中
+   * 每容器键最近一次 agent hello 上报的代码版本。独立于条目保存：新容器创建过程中
    * （条目登记前）到达的首个 hello 也要接住，否则首调会被误判 unknown 漂移多重启一次。
    */
-  private readonly lastAgentBuild = new Map<number, string | null>();
+  private readonly lastAgentBuild = new Map<string, string | null>();
   private idleTimer: NodeJS.Timeout | null = null;
   /** 每用户 /tmp 过期清理节流（24h 一次，容器创建 / idle 巡检触发）。 */
   private lastTmpCleanupAtMs = 0;
@@ -232,8 +251,18 @@ export class ContainerRegistry {
     }
   }
 
-  static containerName(userId: number): string {
-    return `mao-user-${userId}`;
+  static containerName(userId: number, agentId: number): string {
+    return `mao-user-${userId}-agent-${agentId}`;
+  }
+
+  /** 当前 (user, agent) 的技能视图目录（挂载源，创建前显式就位）。 */
+  private skillViewsAgentDir(userId: number, agentId: number): string {
+    return path.join(path.resolve(this.opts.skillViewsDir), String(userId), String(agentId));
+  }
+
+  /** 当前 Agent 的经验库子目录（挂载源，创建前显式就位）。 */
+  private experienceAgentDir(agentId: number): string {
+    return path.join(path.resolve(this.opts.shareDir), EXPERIENCE_ROOT_SUBDIR, String(agentId));
   }
 
   get mountsPlanner(): ContainerMountPlanner {
@@ -292,8 +321,8 @@ export class ContainerRegistry {
     }
   }
 
-  getEntry(userId: number): ContainerEntry | undefined {
-    return this.entries.get(userId);
+  getEntry(userId: number, agentId: number): ContainerEntry | undefined {
+    return this.entries.get(containerKey(userId, agentId));
   }
 
   /** 在册容器摘要（管理后台「容器管理」列表；creating 中间态不列出）。 */
@@ -302,6 +331,7 @@ export class ContainerRegistry {
       .filter((entry) => entry.state === 'running' || entry.state === 'stopped')
       .map((entry) => ({
         userId: entry.userId,
+        agentId: entry.agentId,
         containerName: entry.containerName,
         state: entry.state as 'running' | 'stopped',
         busy: isBusy(entry),
@@ -313,34 +343,53 @@ export class ContainerRegistry {
           && this.hostRuntimeBuild != null
           && entry.runtimeBuild !== this.hostRuntimeBuild,
       }))
-      .sort((a, b) => a.userId - b.userId);
+      .sort((a, b) => a.userId - b.userId || a.agentId - b.agentId);
   }
 
   /**
-   * 重建单个用户容器（管理后台「重建容器」）：
-   * - 无在册条目 → none（下次使用时按最新配置创建）；
-   * - 忙碌且未强制 → skipped-busy（保护在跑任务）；
-   * - 其余复用 rebuildEntry（停 → rm → docker run），重建后自动带上最新 hosts 注入；
+   * 重建容器（管理后台「重建容器」）：
+   * - 指定 agentId：只回收该 (user, agent) 容器——无在册条目 → none；忙碌且未强制 →
+   *   skipped-busy；其余复用 rebuildEntry（停 → rm → docker run），重建后自动带上最新
+   *   hosts 注入；
+   * - 缺省 agentId：回收该用户全部在册容器，聚合结果（任一 failed 即 failed，其次
+   *   skipped-busy，全部 rebuilt 才 rebuilt；全部不存在为 none）。
    * - 失败不抛出，返回 failed + 错误摘要（供批量场景逐条汇报）。
-   * 与自动重建共用 per-user 串行锁，不会并发互相摧毁。
+   * 与自动重建共用 per-key 串行锁，不会并发互相摧毁。
    */
-  async recycleUser(userId: number, opts: { force?: boolean } = {}): Promise<ContainerRecycleResult> {
-    return this.withUserLock(userId, async () => {
-      const entry = this.entries.get(userId);
-      if (entry == null) return { userId, status: 'none' as const };
-      if (!opts.force && isBusy(entry)) return { userId, status: 'skipped-busy' as const };
-      try {
-        await this.rebuildEntry(entry, entry.sessionWorkspaces);
-        return { userId, status: 'rebuilt' as const };
-      } catch (e) {
-        return { userId, status: 'failed' as const, error: (e as Error).message };
-      }
-    });
+  async recycleUser(userId: number, opts: { force?: boolean; agentId?: number } = {}): Promise<ContainerRecycleResult> {
+    if (opts.agentId != null) {
+      const agentId = opts.agentId;
+      return this.withUserLock(containerKey(userId, agentId), () => this.recycleOne(userId, agentId, opts.force === true));
+    }
+    const targets = [...this.entries.values()].filter((entry) => entry.userId === userId);
+    if (targets.length === 0) return { userId, agentId: null, status: 'none' as const };
+    const results: ContainerRecycleResult[] = [];
+    for (const entry of targets) {
+      results.push(await this.withUserLock(containerKey(userId, entry.agentId), () => this.recycleOne(userId, entry.agentId, opts.force === true)));
+    }
+    const failed = results.find((r) => r.status === 'failed');
+    if (failed) return { userId, agentId: null, status: 'failed' as const, error: failed.error };
+    const skipped = results.find((r) => r.status === 'skipped-busy');
+    if (skipped) return { userId, agentId: null, status: 'skipped-busy' as const };
+    return { userId, agentId: null, status: 'rebuilt' as const };
+  }
+
+  /** 回收单个 (user, agent) 容器；调用方必须已持有该键的串行锁。 */
+  private async recycleOne(userId: number, agentId: number, force: boolean): Promise<ContainerRecycleResult> {
+    const entry = this.entries.get(containerKey(userId, agentId));
+    if (entry == null) return { userId, agentId, status: 'none' as const };
+    if (!force && isBusy(entry)) return { userId, agentId, status: 'skipped-busy' as const };
+    try {
+      await this.rebuildEntry(entry, entry.sessionWorkspaces);
+      return { userId, agentId, status: 'rebuilt' as const };
+    } catch (e) {
+      return { userId, agentId, status: 'failed' as const, error: (e as Error).message };
+    }
   }
 
   /**
    * ensureRunning：不存在则创建并等待就绪；stopped 则 start；running 直接复用。
-   * 全程按用户串行（见类注释），requiredWorkspace 的挂载检查与必要的重建都在锁内
+   * 全程按容器键串行（见类注释），requiredWorkspace 的挂载检查与必要的重建都在锁内
    * 完成，不存在"登记条目后又被并发重建替换"的窗口。
    *
    * requiredWorkspace：本次调用所属会话的工作区（N-2）。docker 挂载清单在 docker run
@@ -349,21 +398,22 @@ export class ContainerRegistry {
    * 用户新建该类会话的首次调用时发生）。web 会话工作区在 {workspaceRoot}/{userId}
    * 之下，命中已挂载集合，不会触发重建。
    */
-  async ensureRunning(userId: number, requiredWorkspace?: string | null): Promise<ContainerEntry> {
-    return this.withUserLock(userId, () => this.ensureRunningLocked(userId, requiredWorkspace));
+  async ensureRunning(userId: number, agentId: number, requiredWorkspace?: string | null): Promise<ContainerEntry> {
+    return this.withUserLock(containerKey(userId, agentId), () => this.ensureRunningLocked(userId, agentId, requiredWorkspace));
   }
 
-  private async ensureRunningLocked(userId: number, requiredWorkspace?: string | null): Promise<ContainerEntry> {
-    const entry = this.entries.get(userId);
+  private async ensureRunningLocked(userId: number, agentId: number, requiredWorkspace?: string | null): Promise<ContainerEntry> {
+    const key = containerKey(userId, agentId);
+    const entry = this.entries.get(key);
     if (!entry) {
-      const created = await this.createAndStart(userId, requiredWorkspace ? [requiredWorkspace] : []);
+      const created = await this.createAndStart(userId, agentId, requiredWorkspace ? [requiredWorkspace] : []);
       return this.ensureWorkspaceMounted(created, requiredWorkspace);
     }
     if (entry.state === 'running' && !entry.connectionDead) {
       // 挂载计划漂移（planner 变更，如新增 uploads 挂载）：docker start/复用都不会
       // 补上新挂载，只能重建。指纹缺省（旧条目/测试构造）同样按漂移处理，自愈一次
-      if (this.mountPlanDrifted(entry, userId) || await this.hostsInjectionDrifted(entry)) {
-        harnessLog('warn', `[container] recreating container for user=${userId} (mount plan or hosts injection changed)`);
+      if (this.mountPlanDrifted(entry) || await this.hostsInjectionDrifted(entry)) {
+        harnessLog('warn', `[container] recreating container for user=${userId} agent=${agentId} (mount plan or hosts injection changed)`);
         return this.ensureWorkspaceMounted(
           await this.rebuildEntry(entry, entry.sessionWorkspaces),
           requiredWorkspace,
@@ -381,11 +431,11 @@ export class ContainerRegistry {
       // 复用创建时的挂载清单，带不上新目录。requiredWorkspace 一并参与判定，避免
       // "先 docker start 再立刻重建"的一次无用启动；挂载计划漂移同理（先判定再 start）
       const desired = [
-        ...await this.sessionWorkspaces(userId),
+        ...await this.sessionWorkspaces(userId, agentId),
         ...(requiredWorkspace ? [path.resolve(requiredWorkspace)] : []),
       ].filter((p) => isChannelWorkspace(p, this.opts.workspaceRoot));
-      if (this.hasUnmountedWorkspace(entry, desired) || this.mountPlanDrifted(entry, userId) || await this.hostsInjectionDrifted(entry)) {
-        harnessLog('warn', `[container] recreating container for user=${userId} (new session workspaces, mount plan or hosts injection changed while stopped)`);
+      if (this.hasUnmountedWorkspace(entry, desired) || this.mountPlanDrifted(entry) || await this.hostsInjectionDrifted(entry)) {
+        harnessLog('warn', `[container] recreating container for user=${userId} agent=${agentId} (new session workspaces, mount plan or hosts injection changed while stopped)`);
         return this.ensureWorkspaceMounted(
           await this.rebuildEntry(entry, [...entry.sessionWorkspaces, ...desired]),
           requiredWorkspace,
@@ -396,8 +446,8 @@ export class ContainerRegistry {
       return this.ensureWorkspaceMounted(entry, requiredWorkspace);
     }
     // connectionDead（容器内 agent 失联）或状态异常：停止旧容器后重建
-    harnessLog('warn', `[container] rebuilding container for user=${userId} (state=${entry.state}, dead=${entry.connectionDead})`);
-    const extras = [...entry.sessionWorkspaces, ...await this.sessionWorkspaces(userId)];
+    harnessLog('warn', `[container] rebuilding container for user=${userId} agent=${agentId} (state=${entry.state}, dead=${entry.connectionDead})`);
+    const extras = [...entry.sessionWorkspaces, ...await this.sessionWorkspaces(userId, agentId)];
     await this.stopContainer(entry, { force: true });
     return this.ensureWorkspaceMounted(await this.rebuildEntry(entry, extras), requiredWorkspace);
   }
@@ -410,16 +460,16 @@ export class ContainerRegistry {
    * 重入：同一异步上下文内已持有该用户锁时直接执行（stopContainer 的 requestShutdown
    * 回调里同步触发 ensureWorking 的场景），不识别重入会自死锁。
    */
-  private withUserLock<T>(userId: number, section: () => Promise<T>): Promise<T> {
+  private withUserLock<T>(key: string, section: () => Promise<T>): Promise<T> {
     const held = this.lockContext.getStore();
-    if (held?.has(userId)) return section();
+    if (held?.has(key)) return section();
     const chained = this.lockContext.run(
-      new Set([...(held ?? []), userId]),
-      () => (this.userLocks.get(userId) ?? Promise.resolve()).then(section, section),
+      new Set([...(held ?? []), key]),
+      () => (this.userLocks.get(key) ?? Promise.resolve()).then(section, section),
     );
     // 链尾只保留"已 settles"的占位：单个 Section 失败不污染后续排队者
     this.userLocks.set(
-      userId,
+      key,
       chained.then(
         () => undefined,
         () => undefined,
@@ -428,11 +478,11 @@ export class ContainerRegistry {
     return chained;
   }
 
-  /** 该用户会话工作区（供挂载清单附加项）；未注入回调时为空。 */
-  private async sessionWorkspaces(userId: number): Promise<string[]> {
+  /** 该用户该 Agent 的会话工作区（供挂载清单附加项）；未注入回调时为空。 */
+  private async sessionWorkspaces(userId: number, agentId: number): Promise<string[]> {
     if (!this.opts.sessionWorkspacesOf) return [];
     try {
-      const list = await this.opts.sessionWorkspacesOf(userId);
+      const list = await this.opts.sessionWorkspacesOf(userId, agentId);
       if (!Array.isArray(list)) return [];
       // 防御性过滤：只放行通道工作区（结构校验见 ContainerMountPlanner.planSessionWorkspace）。
       // web 会话在每用户根内无需附加；其余异常形态忽略，由 ensureRunning 的明确报错兜底
@@ -441,7 +491,7 @@ export class ContainerRegistry {
         .filter((p) => isChannelWorkspace(p, this.opts.workspaceRoot));
     } catch (e) {
       // 查询失败不阻塞容器创建：附加挂载缺失时通道会话按明确报错失败，好过静默错位
-      harnessLog('warn', `[container] session workspace lookup failed for user=${userId}: ${(e as Error).message}`);
+      harnessLog('warn', `[container] session workspace lookup failed for user=${userId} agent=${agentId}: ${(e as Error).message}`);
       return [];
     }
   }
@@ -464,8 +514,8 @@ export class ContainerRegistry {
    * 清单在 docker run 时定型，planner 变更（新增 uploads 挂载、根路径调整）后既有
    * 容器永远补不上新挂载；指纹缺省按漂移处理，让升级过渡的旧条目自愈重建一次。
    */
-  private mountPlanDrifted(entry: ContainerEntry, userId: number): boolean {
-    return entry.mountFingerprint !== this.planner.standardMountsFingerprint(userId);
+  private mountPlanDrifted(entry: ContainerEntry): boolean {
+    return entry.mountFingerprint !== this.planner.standardMountsFingerprint(entry.userId, entry.agentId);
   }
 
   /**
@@ -564,7 +614,7 @@ export class ContainerRegistry {
         `会话工作区不在容器可挂载范围内（仅支持每用户工作区与飞书/钉钉通道工作区）: ${target}`,
       );
     }
-    harnessLog('warn', `[container] recycling container user=${entry.userId} to mount session workspace ${target}`);
+    harnessLog('warn', `[container] recycling container user=${entry.userId} agent=${entry.agentId} to mount session workspace ${target}`);
     // 保留此前已挂载的会话工作区，只增量并入新工作区（rebuildEntry 原地更新条目）
     await this.rebuildEntry(entry, [...entry.sessionWorkspaces, target]);
     if (!this.isMounted(entry, target)) {
@@ -586,24 +636,24 @@ export class ContainerRegistry {
     }
     // 停止的容器仍占用容器名：不 rm 掉的话 docker run 同名必然冲突
     await this.cleanupHalfCreated(entry.containerName);
-    return this.createAndStart(entry.userId, extraWorkspaces, entry);
+    return this.createAndStart(entry.userId, entry.agentId, extraWorkspaces, entry);
   }
 
   /** 宿主机主动标记连接断开（RuntimeChannelServer onConnectionDead 回调）。 */
-  markConnectionDead(userId: number): void {
-    const entry = this.entries.get(userId);
+  markConnectionDead(userId: number, agentId: number): void {
+    const entry = this.entries.get(containerKey(userId, agentId));
     if (entry) entry.connectionDead = true;
   }
 
-  reportRuntimeStatus(userId: number, status: RuntimeStatus): void {
-    const entry = this.entries.get(userId);
+  reportRuntimeStatus(userId: number, agentId: number, status: RuntimeStatus): void {
+    const entry = this.entries.get(containerKey(userId, agentId));
     if (entry) entry.inContainer = status;
   }
 
   /** 容器 agent hello 上报的运行时闭包版本（旧 agent 传 null → 记为 unknown，按漂移处理）。 */
-  reportAgentHello(userId: number, build: string | null): void {
-    this.lastAgentBuild.set(userId, build);
-    const entry = this.entries.get(userId);
+  reportAgentHello(userId: number, agentId: number, build: string | null): void {
+    this.lastAgentBuild.set(containerKey(userId, agentId), build);
+    const entry = this.entries.get(containerKey(userId, agentId));
     if (entry) entry.runtimeBuild = build ?? undefined;
   }
 
@@ -657,7 +707,7 @@ export class ContainerRegistry {
   /** 应用关闭时停掉本实例管理的容器（数据在挂载卷，下次 start 秒级恢复）。 */
   async stopAllForShutdown(): Promise<void> {
     for (const entry of [...this.entries.values()]) {
-      await this.withUserLock(entry.userId, () => this.stopContainer(entry, { force: false })).catch(() => undefined);
+      await this.withUserLock(containerKey(entry.userId, entry.agentId), () => this.stopContainer(entry, { force: false })).catch(() => undefined);
     }
   }
 
@@ -674,10 +724,10 @@ export class ContainerRegistry {
       const idle = Date.now() - entry.lastUsedAtMs > idleMs;
       const expired = Date.now() - entry.startedAtMs > lifetimeMs;
       if (!idle && !expired) continue;
-      harnessLog('info', `[container] stopping container user=${entry.userId} (idle=${idle}, lifetimeExpired=${expired})`);
-      // 按用户串行：等锁期间条目可能已被 recycle 原地重建，锁内复核后再停
-      await this.withUserLock(entry.userId, async () => {
-        if (this.entries.get(entry.userId) !== entry) return;
+      harnessLog('info', `[container] stopping container user=${entry.userId} agent=${entry.agentId} (idle=${idle}, lifetimeExpired=${expired})`);
+      // 按容器键串行：等锁期间条目可能已被 recycle 原地重建，锁内复核后再停
+      await this.withUserLock(containerKey(entry.userId, entry.agentId), async () => {
+        if (this.entries.get(containerKey(entry.userId, entry.agentId)) !== entry) return;
         if (entry.state !== 'running') return;
         if (this.isBusy(entry)) return;
         const idleNow = Date.now() - entry.lastUsedAtMs > idleMs;
@@ -698,26 +748,32 @@ export class ContainerRegistry {
    */
   private async createAndStart(
     userId: number,
+    agentId: number,
     extraWorkspaces: readonly string[] = [],
     existing?: ContainerEntry,
   ): Promise<ContainerEntry> {
     this.cleanupExpiredTmp();
-    const name = ContainerRegistry.containerName(userId);
+    const name = ContainerRegistry.containerName(userId, agentId);
     const c = this.opts.config.container;
+    // agent 维度挂载源显式就位（容器内 ro/rw 挂载的根）：预热窗口可能早于首轮技能同步
+    // （ensureView 物化视图）与首轮经验挂载（ensureFresh 建库目录），不预创建会让 docker
+    // 以隐式行为自动建宿主目录（2026-11-07 方案 §5.1）
+    mkdirSync(this.skillViewsAgentDir(userId, agentId), { recursive: true });
+    mkdirSync(this.experienceAgentDir(agentId), { recursive: true });
     // 会话工作区（通道会话）并入挂载清单。统一按通道根过滤：web 会话工作区在
     // {workspaceRoot}/{userId} 之内、由标准清单覆盖，显式传入也不需要附加挂载
     const sessionWorkspaces = [...new Set([
-      ...await this.sessionWorkspaces(userId),
+      ...await this.sessionWorkspaces(userId, agentId),
       ...extraWorkspaces.map((p) => path.resolve(p)),
     ])].filter((p) => isChannelWorkspace(p, this.opts.workspaceRoot));
-    const mounts = this.planner.plan(userId, sessionWorkspaces);
+    const mounts = this.planner.plan(userId, agentId, sessionWorkspaces);
     // 指纹与 standardMountsFingerprint 同源（共享序列化口径）：只含标准挂载，
     // 动态会话工作区不进指纹，否则每次新通道会话都会误判漂移触发重建
     const mountFingerprint = this.planner.fingerprintOf(mounts.filter((m) => !m.sessionWorkspace));
-    this.planner.auditLog(userId, mounts);
+    this.planner.auditLog(userId, agentId, mounts);
     // 先 listen 再 run：容器 agent 启动即连 socket，宿主机没监听时只会无限重连
-    const socketPath = await this.opts.ensureChannelListening(userId);
-    const channelToken = this.opts.issueChannelToken(userId);
+    const socketPath = await this.opts.ensureChannelListening(userId, agentId);
+    const channelToken = this.opts.issueChannelToken(userId, agentId);
     // 容器域名解析注入（技术方案 §4.5）：本次 docker run 固化的条目集合，
     // 同时用于 args 与 entry.hostsFingerprint（保证"注入值"与"指纹"同源）。
     const hostsInjection = await this.resolveHostsForInjection();
@@ -729,6 +785,7 @@ export class ContainerRegistry {
       '--name', name,
       '--label', 'mao.runtime=user',
       '--label', `mao.user=${userId}`,
+      '--label', `mao.agent=${agentId}`,
       '--memory', `${c.memoryMb}m`,
       '--cpus', String(c.cpus),
       '--pids-limit', String(c.pidsLimit),
@@ -739,8 +796,9 @@ export class ContainerRegistry {
       // 回落 POSIX/C 语义，wc -m / grep -i 等对多字节字符按字节处理，与宿主机模式行为漂移
       '-e', 'LANG=C.UTF-8',
       // /tmp 由 planner 按 {tmpDir}/{userId} 挂载（持久化，跨重建保留），不再使用 --tmpfs。
-      // 容器 agent 硬依赖：userId 缺失即 exit(1)；roots 显式注入避免容器内出现第二套路径真相
+      // 容器 agent 硬依赖：userId/agentId 缺失即 exit(1)；roots 显式注入避免容器内出现第二套路径真相
       '-e', `MAO_CONTAINER_USER_ID=${userId}`,
+      '-e', `MAO_CONTAINER_AGENT_ID=${agentId}`,
       '-e', `MAO_CHANNEL_TOKEN=${channelToken}`,
       '-e', `MAO_WORKSPACE_ROOT=${this.opts.workspaceRoot}`,
       '-e', `MAO_RUNTIME_DIR=${this.opts.runtimeDir}`,
@@ -749,13 +807,16 @@ export class ContainerRegistry {
       // 配置直接读持久挂载；Java 的 user.home 由 runtime-agent 启动时同步 /etc/passwd 兜住
       '-e', `HOME=${userHomeMount?.containerPath ?? path.posix.join(this.opts.userHomeDir, String(userId))}`,
       '-e', `MAO_USER_SKILLS_DIR=${this.opts.userSkillsDir}`,
-      // 技能视图根：会话技能符号链接的目标根（SkillSyncService 指向 {skillViewsDir}/{u}/{name}），
-      // 容器内文件工具据此登记沙箱允许根（技术方案 2026-11-03 §4.5）。
+      // 技能视图目录：会话技能符号链接的目标（SkillSyncService 指向 {skillViewsDir}/{u}/{a}/{name}），
+      // 容器内文件工具据此登记沙箱允许根（技术方案 2026-11-03 §4.5；2026-11-07 按 agent 收窄）。
       // 注入前 path.resolve：与 planner 挂载路径（path.resolve 后的宿主路径）同一解析基准，
       // 配置为相对值时容器内（cwd=/）也能命中真实挂载点（round-1 review I-1）
-      '-e', `MAO_SKILL_VIEWS_DIR=${path.resolve(this.opts.skillViewsDir)}`,
+      '-e', `MAO_SKILL_VIEWS_DIR=${this.skillViewsAgentDir(userId, agentId)}`,
       '-e', `MAO_UPLOAD_DIR=${this.opts.uploadDir}`,
+      // 共享目录根保留（容器内 ExperienceIndexService 的 root 构造依赖）；
+      // 容器内沙箱经验允许根用 MAO_EXPERIENCE_AGENT_DIR（当前 Agent 的库子目录，挂载清单同源）
       '-e', `MAO_SHARE_DIR=${this.opts.shareDir}`,
+      '-e', `MAO_EXPERIENCE_AGENT_DIR=${this.experienceAgentDir(agentId)}`,
       ...this.planner.toDockerArgs(mounts),
       // 容器不暴露任何端口：进出只走 Unix socket（§5.2）
       '--restart', 'no',
@@ -765,6 +826,7 @@ export class ContainerRegistry {
     ];
     const entry: ContainerEntry = existing ?? {
       userId,
+      agentId,
       containerName: name,
       state: 'creating',
       startedAtMs: 0,
@@ -792,20 +854,20 @@ export class ContainerRegistry {
         try {
           await this.docker.run(args, c.startTimeoutMs + 30_000);
         } catch (retryError) {
-          await this.cleanupFailedStart(userId, entry, generation, name);
+          await this.cleanupFailedStart(userId, agentId, entry, generation, name);
           throw new ContainerStartError(`容器创建失败（清理同名容器后重试仍失败）: ${(retryError as Error).message}`);
         }
       } else {
-        await this.cleanupFailedStart(userId, entry, generation, name);
+        await this.cleanupFailedStart(userId, agentId, entry, generation, name);
         throw new ContainerStartError(`容器创建失败: ${message}`);
       }
     }
     try {
-      await this.opts.waitSocketReady(userId, c.startTimeoutMs);
+      await this.opts.waitSocketReady(userId, agentId, c.startTimeoutMs);
     } catch (e) {
       // 条目必须等 socket 就绪后才登记/固化为 running：先登记会把超时失败固化成
       // "容器就绪"的毒化状态，后续 ensureRunning 直接复用、永不重试（N-3）
-      await this.cleanupFailedStart(userId, entry, generation, name);
+      await this.cleanupFailedStart(userId, agentId, entry, generation, name);
       throw e;
     }
     entry.state = 'running';
@@ -821,11 +883,11 @@ export class ContainerRegistry {
     entry.inContainer = { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 };
     entry.generation += 1;
     // 接住创建过程中（条目登记前）到达的首个 hello：否则新容器首调会被误判 unknown 漂移多重启一次
-    entry.runtimeBuild = this.lastAgentBuild.get(userId) ?? undefined;
+    entry.runtimeBuild = this.lastAgentBuild.get(containerKey(userId, agentId)) ?? undefined;
     // 新容器 = 新的一次收敛机会（防环标记只在同一容器 × 同一 host build 内有效）
     entry.upgradeTargetBuild = undefined;
-    this.entries.set(userId, entry);
-    harnessLog('info', `[container] container ready: user=${userId}, name=${name}`);
+    this.entries.set(containerKey(userId, agentId), entry);
+    harnessLog('info', `[container] container ready: user=${userId}, agent=${agentId}, name=${name}`);
     return entry;
   }
 
@@ -843,18 +905,19 @@ export class ContainerRegistry {
    */
   private async cleanupFailedStart(
     userId: number,
+    agentId: number,
     entry: ContainerEntry,
     generation: number,
     name: string,
   ): Promise<void> {
     if (entry.generation !== generation) {
-      harnessLog('warn', `[container] skip cleanup of failed start for user=${userId} (entry rebuilt concurrently)`);
+      harnessLog('warn', `[container] skip cleanup of failed start for user=${userId} agent=${agentId} (entry rebuilt concurrently)`);
       return;
     }
-    this.dropFailedEntry(userId, entry);
-    const current = this.entries.get(userId);
+    this.dropFailedEntry(userId, agentId, entry);
+    const current = this.entries.get(containerKey(userId, agentId));
     if (current !== undefined && current !== entry) {
-      harnessLog('warn', `[container] skip rm of container ${name} for user=${userId} (a newer entry owns it now)`);
+      harnessLog('warn', `[container] skip rm of container ${name} for user=${userId} agent=${agentId} (a newer entry owns it now)`);
       return;
     }
     await this.cleanupHalfCreated(name);
@@ -864,10 +927,10 @@ export class ContainerRegistry {
    * 启动失败后摘除条目（N-3）：只摘自己那一条。身份校验是纵深防御——串行锁 + 世代校验
    * （cleanupFailedStart）已保证不会误删在册新条目，这里再兜一层。
    */
-  private dropFailedEntry(userId: number, entry: ContainerEntry): void {
-    const current = this.entries.get(userId);
+  private dropFailedEntry(userId: number, agentId: number, entry: ContainerEntry): void {
+    const current = this.entries.get(containerKey(userId, agentId));
     if (current !== undefined && current !== entry) return;
-    this.entries.delete(userId);
+    this.entries.delete(containerKey(userId, agentId));
   }
 
   private async dockerStart(entry: ContainerEntry): Promise<void> {
@@ -880,7 +943,7 @@ export class ContainerRegistry {
       // 或 docker container prune 清掉，报 No such container）：条目必须摘除，否则卡在
       // stopped——该用户此后每次工具调用都同样失败、永不重建，只有重启后端才恢复（F-2）。
       // 与 createAndStart 失败路径同口径：下次 ensureRunning 走完整 docker run 重建
-      await this.cleanupFailedStart(entry.userId, entry, generation, entry.containerName);
+      await this.cleanupFailedStart(entry.userId, entry.agentId, entry, generation, entry.containerName);
       throw new ContainerStartError(`容器启动失败: ${(e as Error).message}`);
     }
     entry.state = 'running';
@@ -891,18 +954,18 @@ export class ContainerRegistry {
     // 把 idle 回收永久挡在门外（新 agent 握手后会补报真实状态）
     entry.inContainer = { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 };
     try {
-      await this.opts.waitSocketReady(entry.userId, c.startTimeoutMs);
+      await this.opts.waitSocketReady(entry.userId, entry.agentId, c.startTimeoutMs);
     } catch (e) {
       // 与 createAndStart 同口径收尾：重启路径等待超时同样不能留下"自称 running"的
       // 毒化条目（后续 ensureRunning 直接复用、工具调用固定报"未就绪"且要等 idle
       // 回收才可能恢复）。删条目 + rm 容器，下次 ensureRunning 走完整 docker run
       // 重建（新容器带新 agent），根因未除时也每次都有一次自愈机会。
       // 身份/世代校验：条目在失败等待期间已被重建/摘除时，不得删在册新条目、rm 新容器
-      await this.cleanupFailedStart(entry.userId, entry, generation, entry.containerName);
+      await this.cleanupFailedStart(entry.userId, entry.agentId, entry, generation, entry.containerName);
       throw e;
     }
     entry.generation += 1;
-    harnessLog('info', `[container] container restarted: user=${entry.userId}`);
+    harnessLog('info', `[container] container restarted: user=${entry.userId} agent=${entry.agentId}`);
   }
 
   /** idle 回收只 stop 不 rm：挂载数据保留（§5.2）。 */
@@ -916,19 +979,19 @@ export class ContainerRegistry {
     entry.state = 'stopped';
     if (!opts.force) {
       // 回收前通知：容器内有机会拒绝/收尾（§5.3.1 对策 3）。无响应时按 idle 判定结果照常停。
-      await this.opts.requestShutdown(entry.userId);
+      await this.opts.requestShutdown(entry.userId, entry.agentId);
       if (!this.isLive(entry, generation)) return;
     }
     await this.docker.run(['stop', '-t', '10', entry.containerName], 30_000).catch((e) => {
-      harnessLog('warn', `[container] docker stop failed for user=${entry.userId}: ${(e as Error).message}`);
+      harnessLog('warn', `[container] docker stop failed for user=${entry.userId} agent=${entry.agentId}: ${(e as Error).message}`);
     });
-    harnessLog('info', `[container] container stopped: user=${entry.userId}`);
+    harnessLog('info', `[container] container stopped: user=${entry.userId} agent=${entry.agentId}`);
   }
 
   /** 条目是否仍是"本次操作面对的那个"：在册且世代未变（await 之后调用）。 */
   private isLive(entry: ContainerEntry, generation: number): boolean {
-    if (this.entries.get(entry.userId) === entry && entry.generation === generation) return true;
-    harnessLog('warn', `[container] skipping stale container op for user=${entry.userId} (entry replaced or reaped)`);
+    if (this.entries.get(containerKey(entry.userId, entry.agentId)) === entry && entry.generation === generation) return true;
+    harnessLog('warn', `[container] skipping stale container op for user=${entry.userId} agent=${entry.agentId} (entry replaced or reaped)`);
     return false;
   }
 

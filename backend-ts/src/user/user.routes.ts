@@ -136,8 +136,10 @@ export function registerUserRoutes(
     app.post('/v1/users/:id/container/recycle', async (request, reply) => {
       const currentUserId = requireUserId(request);
       await requirePermission(permissionService, currentUserId, 'container:manage');
-      const body = bodyOf<{ force?: boolean }>(request);
-      const result = await containerOps.recycleUser(pathId(request), { force: body.force === true });
+      // body.agentId（2026-11-07 复合容器方案 §5.10）：指定时只回收该 (user, agent) 容器，
+      // 缺省回收该用户全部在册容器（聚合结果）
+      const body = bodyOf<{ force?: boolean; agentId?: number }>(request);
+      const result = await containerOps.recycleUser(pathId(request), { force: body.force === true, agentId: body.agentId });
       return sendOk(reply, result);
     });
   }

@@ -45,7 +45,10 @@ function resolveRoots(): ContainerRoots {
   const skillViewsDir = process.env.MAO_SKILL_VIEWS_DIR ?? '/opt/mao-data/skill-views';
   const uploadDir = process.env.MAO_UPLOAD_DIR ?? '/opt/mao-data/uploads';
   const shareDir = process.env.MAO_SHARE_DIR ?? '/opt/mao-data/share';
-  return { workspaceRoot, runtimeDir, userHomeDir, userSkillsDir, skillViewsDir, uploadDir, shareDir };
+  // 经验库沙箱允许根（2026-11-07 复合容器方案 §5.5）：宿主机显式注入；缺省按容器键兜底计算
+  const experienceAgentDir = process.env.MAO_EXPERIENCE_AGENT_DIR
+    ?? path.join(shareDir, 'agent-experience', process.env.MAO_CONTAINER_AGENT_ID ?? '');
+  return { workspaceRoot, runtimeDir, userHomeDir, userSkillsDir, skillViewsDir, uploadDir, shareDir, experienceAgentDir };
 }
 
 function readToken(socketPath: string): string {
@@ -427,6 +430,13 @@ if (isMainModule()) {
   const userId = Number(process.env.MAO_CONTAINER_USER_ID ?? 0);
   if (!Number.isFinite(userId) || userId <= 0) {
     console.error('[runtime-agent] missing MAO_CONTAINER_USER_ID');
+    process.exit(1);
+  }
+  // 容器键第二维（2026-11-07 复合容器方案 §5.5）：经验库沙箱允许根的兜底计算依赖它；
+  // 与 MAO_CONTAINER_USER_ID 同口径硬依赖（宿主机 docker run 必注入，缺失即镜像/代码错配）
+  const agentId = Number(process.env.MAO_CONTAINER_AGENT_ID ?? 0);
+  if (!Number.isFinite(agentId) || agentId <= 0) {
+    console.error('[runtime-agent] missing MAO_CONTAINER_AGENT_ID');
     process.exit(1);
   }
   // 容器时区对齐（镜像默认 Etc/UTC）：process.env.TZ 优先级最高、立即生效（agent 自身与其

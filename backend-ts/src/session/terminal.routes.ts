@@ -57,6 +57,8 @@ export function registerTerminalRoutes(app: FastifyInstance, deps: TerminalRoute
       const terminal = await terminalManager.create({
         sessionId,
         userId,
+        // 容器键第二维（2026-11-07 复合容器方案 §5.7）：终端绑定创建时的容器，不随切 Agent 迁移
+        agentId: session.agentId,
         workspace: session.workspace,
         taskName: session.title,
         cols: body.cols ?? null,
