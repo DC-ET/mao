@@ -189,12 +189,28 @@ export function isCurrentChatSession(
     && activeSessionId === expectedSessionId
 }
 
+/**
+ * D4：只有网络 / HTTP 层失败才算「加载失败」，业务拒绝保持静默。
+ * 拦截器把业务错误（HTTP 200 + code!=0，如「会话尚未落库」）包装成带数字 code 的
+ * Error 且已自行 toast；axios 自身的网络 / HTTP 错误（断网、5xx、超时）code 是
+ * 字符串（ERR_NETWORK / ERR_BAD_REQUEST / ECONNABORTED 等）。按「code 是否为
+ * 数字」区分两类——不能用 code == null 判断，axios 错误几乎都带字符串 code。
+ */
+function isBusinessRejection(e: unknown): boolean {
+  return typeof (e as { code?: unknown } | null)?.code === 'number'
+}
+
 export function useChat(agentId: Ref<string>, executionMode: Ref<string>, selectedModelId?: Ref<number | undefined>, permissionLevel?: Ref<string>) {
   const sessionStore = useSessionStore()
   const { connect, subscribe, unsubscribe, sendMessage: wsSendMessage, sendEditMessage, cancel: wsCancel, retryExecution: wsRetryExecution, sendAskUserQuestionsResult, enqueueMessage: wsEnqueueMessage, pendingCallbacks, setActiveExecution } = useStreamWS()
   const { pendingApprovals, confirmApproval, clearPendingApprovals } = useToolApprovals()
 
   const sending = ref(false)
+  // —— 静默失败可见化（技术方案 2026-11-07）：历史 / 上拉加载失败态 ——
+  // 按 sessionId 记（D7）：组件侧 computed 与当前 sessionId 比对后判定，加载成功
+  // 无条件清空；切会话旧错误自动失活，不与 switchingSession/initialLoading 状态机耦合。
+  const historyLoadError = ref<{ sessionId: string } | null>(null)
+  const olderLoadError = ref<{ sessionId: string } | null>(null)
   const initializingWorkspace = ref(false)
   const initializingWorkspaceLabel = ref('')
   const switchingSession = ref(false)
@@ -231,6 +247,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     sessionStore.clearMessagePageState(sid)
     try {
       const { data } = await api.get(`/sessions/${sid}/messages`, { params: { roundLimit: 5 } })
+      // 迟到的跨会话成功响应不得清掉其他会话的错误态：只清自己的（D7 按 sid 记）
+      if (historyLoadError.value?.sessionId === sid) historyLoadError.value = null
       if (sessionStore.historyAnchorEpochOf(sid) !== anchorEpoch) return
       const raw: Array<Record<string, unknown>> = data?.messages || []
       const { messages, allChanges } = mapMessagesWithFileChanges(raw)
@@ -251,9 +269,20 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
         Boolean(data?.hasMore),
         data?.nextBeforeMessageId != null ? String(data.nextBeforeMessageId) : null
       )
-    } catch {
-      // session might not exist yet
+    } catch (e) {
+      // 业务拒绝（拦截器已 toast，如新建会话尚未落库）保持静默；仅网络 / HTTP 层失败置错误态（D4）。
+      // 写入按「当前会话」守卫（B2/R2）：新鲜失败（用户正看着的会话）必须记录；
+      // 迟到的跨会话失败（sid 已不是当前会话）必然被丢弃，不覆盖当前会话的错误态
+      if (!isBusinessRejection(e) && sessionId.value === sid) {
+        historyLoadError.value = { sessionId: sid }
+      }
     }
+  }
+
+  /** 历史加载失败重试：清错误态后强制绕过 history-anchored 门重新拉取 */
+  async function retryHistoryLoad() {
+    historyLoadError.value = null
+    await fetchMessages({ forceLatest: true, sessionId: sessionId.value ?? undefined })
   }
 
   async function loadOlderMessages() {
@@ -267,6 +296,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       const { data } = await api.get(`/sessions/${sid}/messages`, {
         params: { roundLimit: 5, beforeMessageId: sessionStore.activeMessageNextBeforeId }
       })
+      // 同 fetchMessages：只清自己会话的错误态，迟到跨会话响应不动别人的（B2）
+      if (olderLoadError.value?.sessionId === sid) olderLoadError.value = null
       const raw: Array<Record<string, unknown>> = data?.messages || []
       const { messages: olderMessages, allChanges } = mapMessagesWithFileChanges(raw)
       sessionStore.prependMessages(sid, olderMessages)
@@ -278,7 +309,13 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
         data?.nextBeforeMessageId != null ? String(data.nextBeforeMessageId) : null
       )
       return olderMessages.length > 0
-    } catch {
+    } catch (e) {
+      // 同 fetchMessages（D4）：业务拒绝静默；网络 / HTTP 层失败置错误态。
+      // 写入按「当前会话」守卫（B2/R2），迟到跨会话失败不覆盖；仍 return false，
+      // 加载返回值语义不变（useChatScroll 的滚动定位行为不受影响，D8）
+      if (!isBusinessRejection(e) && sessionId.value === sid) {
+        olderLoadError.value = { sessionId: sid }
+      }
       return false
     } finally {
       sessionStore.setLoadingOlderMessages(sid, false)
@@ -687,8 +724,12 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
 
   /**
    * 编辑最后一条用户消息并重新发送
+   *
+   * images 三态语义（D5）：undefined（未传）= 沿用原消息图片（向后兼容）；
+   * 数组（含空数组）= 显式指定本次重发的图片集合。不能用「length > 0」回落——
+   * 那样「移除全部图片」无法表达，传 [] 会照发原图。
    */
-  async function editAndResend(messageId: string, newContent: string, images: string[] = []) {
+  async function editAndResend(messageId: string, newContent: string, images?: string[] | null) {
     const sid = sessionId.value
     if (!sid || !requireCurrentSession(sid)) return
 
@@ -708,8 +749,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
       return
     }
 
-    // 未显式传入图片时保留原消息图片
-    const imagesToSend = images.length > 0 ? images : (lastUserMsg.images ?? [])
+    // 三态 images（D5）：undefined = 未显式传图，保留原消息图片；null 与 [] 同义（显式清空）
+    const imagesToSend = images === undefined ? (lastUserMsg.images ?? []) : (images ?? [])
 
     // 快照用于失败回滚：乐观截断/更新仅在连接成功后执行，失败时恢复原消息列表。
     // 必须拷贝消息对象，updateMessageContent 会原地改 content。
@@ -735,13 +776,17 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
         return
       }
 
-      // 连接成功后乐观更新：截断后续消息，更新编辑内容
+      // 连接成功后乐观更新：截断后续消息，更新编辑内容。
+      // images 显式传入（含 []）必须原样写回——[] 表示移除全部图片，不能回落成
+      // undefined（updateMessageContent 对 undefined 是「不动图片」，气泡会一直显示已移除的原图）
       sessionStore.truncateMessagesAfter(sid, messageId)
       sessionStore.updateMessageContent(
         sid,
         messageId,
         newContent,
-        imagesToSend.length > 0 ? imagesToSend : undefined
+        images === undefined
+          ? (imagesToSend.length > 0 ? imagesToSend : undefined)
+          : imagesToSend
       )
 
       // 注册空 assistant 占位气泡：与 prepareAndSendMessage 同口径。必须走
@@ -1040,7 +1085,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     stopExecution,
     retryExecution,
     fetchMessages,
+    retryHistoryLoad,
     loadOlderMessages,
+    historyLoadError,
+    olderLoadError,
     newSession,
     restoreSession,
     confirmApproval,

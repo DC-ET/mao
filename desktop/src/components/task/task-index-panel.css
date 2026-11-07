@@ -107,6 +107,39 @@
   padding: 0 8px 8px;
 }
 
+/* --- 任务索引加载失败错误条（静默失败可见化） --- */
+.task-index-panel .index-error-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin: 6px 0;
+  border: 1px solid var(--aw-divider-soft);
+  border-radius: var(--aw-radius-xs);
+  background: var(--aw-surface-pearl);
+}
+
+.task-index-panel .index-error-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--aw-text-caption);
+  color: var(--aw-ink-muted-64);
+}
+
+.task-index-panel .index-error-retry {
+  border: 1px solid var(--aw-divider-soft);
+  border-radius: var(--aw-radius-xs);
+  background: var(--aw-canvas);
+  color: var(--aw-ink);
+  font-size: var(--aw-text-caption);
+  padding: 2px 12px;
+  cursor: pointer;
+}
+
+.task-index-panel .index-error-retry:hover {
+  background: var(--aw-canvas-parchment);
+}
+
 /* --- 多选批量归档 --- */
 .task-index-panel .session-select-checkbox {
   width: 14px;

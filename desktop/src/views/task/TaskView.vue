@@ -3,13 +3,24 @@
     <TaskIndexPanel
       :collapsed="panelCollapsed"
       :list-mode="listMode"
+      :load-error="indexError"
       @update:list-mode="listMode = $event"
       @toggle="panelCollapsed = !panelCollapsed"
+      @retry="retryTaskIndex"
       @new-task="handleNewTask"
       @new-task-from-group="handleNewTaskFromGroup"
     />
 
     <div class="task-container">
+      <!-- 任务索引加载失败：中央错误卡（D6）——门住「静默掉进新建态」，但保留显式出口 -->
+      <div v-if="indexError && !sessionIdParam" class="index-error-card" role="alert">
+        <p class="index-error-title">任务列表加载失败</p>
+        <p class="index-error-sub">网络异常，请检查连接后重试</p>
+        <div class="index-error-actions">
+          <button type="button" class="index-error-btn primary" @click="retryTaskIndex">重试</button>
+          <button type="button" class="index-error-btn" @click="forceNewTask">仍要新建任务</button>
+        </div>
+      </div>
       <CenterTabBar
         v-if="tabs.length > 1"
         :agent-id="isNewTaskMode ? null : (agentId || null)"
@@ -163,7 +174,9 @@ const newTaskGitBranch = ref('')
 const newTaskCloudProjects = ref<Array<{ name: string; path: string; isGit: boolean }>>([])
 const newTaskModelId = ref<number | undefined>()
 const lastViewedSession = ref<{ agentId: string; executionMode: string; workspace?: string; cloudProjectKey?: string; permissionLevel?: string; modelId?: number } | null>(null)
-const isNewTaskMode = computed(() => !sessionIdParam.value && !initialLoading.value)
+// 任务索引加载失败（静默失败可见化）：门住 isNewTaskMode 不再静默掉进「新建任务」态（D6）
+const indexError = ref(false)
+const isNewTaskMode = computed(() => !sessionIdParam.value && !initialLoading.value && !indexError.value)
 const isExplicitNewTaskRoute = computed(() => !sessionIdParam.value && getQueryString(NEW_TASK_QUERY) === '1')
 
 // Shared refs — must be declared before provide()
@@ -192,6 +205,8 @@ provide('newTaskGitBranch', newTaskGitBranch)
 provide('newTaskCloudProjects', newTaskCloudProjects)
 provide('initialLoading', initialLoading)
 provide('currentPhase', currentPhase)
+// ChatPanel 据此压制「空会话」引导，避免中央错误卡下方再渲染假空态
+provide('taskIndexError', indexError)
 
 /**
  * 新建态（会话未创建）：选择器里的工作区/项目/模式是右侧边栏与文件 provider 的事实源。
@@ -1185,6 +1200,9 @@ async function resolveNewTaskDefaults(defaults?: NewTaskDefaults | null): Promis
 
 async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
   const generation = ++newTaskModeGeneration
+  // 显式进入新建任务（入口按钮 / 显式路由 / 错误卡出口）：清掉可能残留的索引错误门，
+  // 否则过期的门会把用户挡在「任务列表加载失败」卡前（B3，与 D6「显式动作不挡」对齐）
+  indexError.value = false
   // Apply known defaults synchronously BEFORE any await so the input model selector
   // does not briefly show a stale newTaskModelId from a previous draft/session.
   const earlyMode = defaults?.executionMode ? normalizeNewTaskMode(defaults.executionMode) : newTaskMode.value
@@ -1285,6 +1303,8 @@ let loadGeneration = 0
 async function loadSession(sid: string) {
   const gen = ++loadGeneration
   newTaskAgentId.value = null
+  // 深链 / 前进后退进入具体会话属于显式导航：清掉过期的索引错误门（B3）
+  indexError.value = false
   const phaseAtRequest = sessionStore.getSessionEntity(sid)?.phase
 
   try {
@@ -1511,9 +1531,27 @@ async function loadTaskIndex() {
     await loadPrefs()
     return true
   } catch {
+    // 网络 / HTTP 层失败置错误态：门住静默新建路径（D6）；!getToken() 分支不置错
+    // （未登录态由登录重定向处理，不是加载失败）
+    indexError.value = true
     initialLoading.value = false
     return false
   }
+}
+
+/** 中央错误卡「重试」：重新拉任务索引，成功则继续初始路由解析（落到最近会话等） */
+async function retryTaskIndex() {
+  indexError.value = false
+  initialLoading.value = true
+  if (await loadTaskIndex()) {
+    await resolveInitialRoute()
+  }
+}
+
+/** 中央错误卡「仍要新建任务」：用户显式动作，点击即清门进入新建任务态（D6 出口） */
+async function forceNewTask() {
+  indexError.value = false
+  await enterNewTaskMode()
 }
 
 async function resolveInitialRoute() {
@@ -1618,5 +1656,63 @@ onUnmounted(() => {
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
+}
+
+/* 任务索引加载失败中央错误卡 */
+.index-error-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex: 1;
+  min-height: 200px;
+  text-align: center;
+}
+
+.index-error-card p {
+  margin: 0;
+}
+
+.index-error-title {
+  font-size: var(--aw-text-body);
+  font-weight: 600;
+  color: var(--aw-ink);
+}
+
+.index-error-sub {
+  font-size: var(--aw-text-caption);
+  color: var(--aw-ink-muted-48);
+}
+
+.index-error-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.index-error-btn {
+  padding: 5px 18px;
+  border: 1px solid var(--aw-hairline);
+  border-radius: var(--aw-radius-xs);
+  background: var(--aw-canvas);
+  color: var(--aw-ink);
+  font-size: var(--aw-text-caption);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.index-error-btn:hover {
+  background: var(--aw-canvas-parchment);
+}
+
+.index-error-btn.primary {
+  background: var(--aw-primary);
+  border-color: var(--aw-primary);
+  color: #fff;
+}
+
+.index-error-btn.primary:hover {
+  opacity: 0.9;
 }
 </style>

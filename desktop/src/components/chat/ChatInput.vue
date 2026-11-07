@@ -55,8 +55,10 @@
         :files="workspaceFiles"
         :filter="filePanelFilter"
         :loading="filePanelLoading"
+        :load-error="fileListError"
         @select="handleFileReferenceSelect"
         @close="closeFilePanel"
+        @retry="fetchWorkspaceFiles(filePanelFilter)"
       />
       <div v-if="replyQuotes.length" class="reply-quote-list">
         <div v-for="quote in replyQuotes" :key="quote.id" class="reply-quote-item">
@@ -309,6 +311,8 @@ const filePanelFilter = ref('')
 const filePanelLoading = ref(false)
 const atRange = ref<{ from: number; to: number } | null>(null)
 const workspaceFiles = ref<WorkspaceFile[]>([])
+// 文件列表拉取失败态（静默失败可见化）：成功赋值点清除，失败置位
+const fileListError = ref(false)
 let fileSearchDebounce: ReturnType<typeof setTimeout> | null = null
 
 // ===== Computed =====
@@ -521,6 +525,7 @@ async function fetchWorkspaceFiles(filter: string) {
       const result = await (window as any).electronAPI.listWorkspaceFiles(props.workspace, filter || undefined, 20)
       if (seq !== fetchFilesSeq) return
       workspaceFiles.value = result || []
+      fileListError.value = false
     } else {
       // CLOUD mode — call backend API
       const sessionId = sessionStore.activeSessionId
@@ -530,6 +535,7 @@ async function fetchWorkspaceFiles(filter: string) {
         })
         if (seq !== fetchFilesSeq) return
         workspaceFiles.value = data?.files || []
+        fileListError.value = false
       } else if (props.workspaceMode === 'existing' && props.cloudProjectKey) {
         // New task with an existing cloud project selected — use project-level API
         const { data } = await api.get('/files/project-list', {
@@ -537,13 +543,17 @@ async function fetchWorkspaceFiles(filter: string) {
         })
         if (seq !== fetchFilesSeq) return
         workspaceFiles.value = data?.files || []
+        fileListError.value = false
       } else {
         if (seq !== fetchFilesSeq) return
         workspaceFiles.value = []
+        fileListError.value = false
       }
     }
   } catch {
     if (seq !== fetchFilesSeq) return
+    // 拉取失败可见（静默失败可见化）：置错误态 + 清列表，面板渲染「文件列表加载失败 · 重试」
+    fileListError.value = true
     workspaceFiles.value = []
   } finally {
     // 只有最新一轮请求能收起 loading，否则先返回的旧请求会提前清掉骨架

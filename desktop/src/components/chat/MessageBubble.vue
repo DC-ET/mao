@@ -79,6 +79,37 @@
           @keydown.enter.meta="onEditKeydown($event, 'confirm')"
           rows="3"
         />
+        <!-- 编辑态原图可见可删（静默失败可见化）：移除只影响本次重发，历史消息不受影响 -->
+        <div v-if="message.images && message.images.length > 0" class="edit-images">
+          <div
+            v-for="(url, idx) in message.images"
+            :key="`edit-img-${idx}`"
+            class="edit-image-item"
+            :class="{ removed: removedImages.has(url) }"
+          >
+            <el-image
+              :src="url"
+              :preview-src-list="message.images"
+              :initial-index="idx"
+              fit="cover"
+              class="edit-image-thumb"
+              :preview-teleported="true"
+            />
+            <el-tooltip
+              :content="removedImages.has(url) ? '恢复携带此图' : '仅本次重发不携带此图，历史消息不受影响'"
+              placement="top"
+            >
+              <button
+                type="button"
+                class="edit-image-remove"
+                :aria-label="removedImages.has(url) ? '恢复携带此图' : '移除此图'"
+                @click="toggleRemovedImage(url)"
+              >
+                <el-icon :size="12"><Plus v-if="removedImages.has(url)" /><Close v-else /></el-icon>
+              </button>
+            </el-tooltip>
+          </div>
+        </div>
         <div class="edit-actions">
           <button class="edit-confirm-btn" @click="handleConfirm" :disabled="!editContent.trim()">
             <el-icon><Check /></el-icon> 确认
@@ -271,6 +302,7 @@ import {
 
 <script setup lang="ts">
 import { computed, ref, watch, nextTick, inject, onMounted, onUnmounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import { Document, CopyDocument, Edit, Check, Close, Plus, Link } from '@element-plus/icons-vue'
 import MarkdownContent from '../common/MarkdownContent.vue'
 import ToolCallGroup from './ToolCallGroup.vue'
@@ -350,7 +382,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   edit: []
   cancelEdit: []
-  confirmEdit: [content: string]
+  /** images 是编辑后确认携带的剩余图片集合（含空数组 = 移除全部图片，D5 三态语义） */
+  confirmEdit: [content: string, images: string[]]
   addToCommand: [content: string]
   /** 分叉到边路任务，payload 是被点击这一轮的助手最终回复 id（即切点） */
   fork: [messageId: string]
@@ -361,6 +394,8 @@ const emit = defineEmits<{
 // Edit mode state
 const editContent = ref(userVisibleText(props.message.content || ''))
 const editInput = ref<HTMLTextAreaElement>()
+// 编辑态被移除的图片集合：只影响本次重发载荷，历史消息与已落库图片不受影响（D2 不二次确认，tooltip 明示）
+const removedImages = ref<Set<string>>(new Set())
 const userCollapsed = ref(true)
 const copied = ref(false)
 const rootEl = ref<HTMLElement | null>(null)
@@ -370,15 +405,29 @@ const quoteReplyToChat = inject<((text: string) => void) | null>('quoteReplyToCh
 watch(() => props.isEditing, async (editing) => {
   if (editing) {
     editContent.value = userVisibleText(props.message.content || '')
+    // 每次进入编辑态重置移除集合：上次编辑的选择不残留到这一次
+    removedImages.value = new Set()
     await nextTick()
     editInput.value?.focus()
     editInput.value?.select()
   }
 })
 
+function toggleRemovedImage(url: string) {
+  const next = new Set(removedImages.value)
+  if (next.has(url)) {
+    next.delete(url)
+  } else {
+    next.add(url)
+  }
+  removedImages.value = next
+}
+
 function handleConfirm() {
   if (editContent.value.trim()) {
-    emit('confirmEdit', editContent.value)
+    // 显式携带剩余图片集合（D5）：空数组 = 移除全部图片，不能回落到原图
+    const remaining = (props.message.images ?? []).filter(u => !removedImages.value.has(u))
+    emit('confirmEdit', editContent.value, remaining)
   }
 }
 
@@ -801,7 +850,12 @@ async function copyMessage() {
   const text = stripCitationMarkers(stripInternalMarkers(displayText.value)).trim()
   if (!text) return
   const ok = await copyText(text)
-  if (!ok) return
+  if (!ok) {
+    // 双路剪贴板都失败（http://IP 访问 / 权限被拒）必须给出反馈，不能静默
+    // 假装成功（与 ExecutionErrorBanner 复制会话 ID 的 error toast 同口径）
+    ElMessage.error('复制失败，请手动选择文本复制')
+    return
+  }
   copied.value = true
   if (copyTimer) clearTimeout(copyTimer)
   copyTimer = setTimeout(() => { copied.value = false }, 1500)
@@ -1547,6 +1601,55 @@ async function copyMessage() {
 
 .edit-textarea:focus {
   border-color: var(--aw-primary-focus);
+}
+
+/* 编辑态原图缩略 + 移除按钮（移除仅影响本次重发） */
+.edit-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.edit-image-item {
+  position: relative;
+  width: 48px;
+  height: 48px;
+}
+
+.edit-image-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--aw-radius-xs);
+  overflow: hidden;
+  transition: opacity 0.15s, filter 0.15s;
+}
+
+.edit-image-item.removed .edit-image-thumb {
+  opacity: 0.25;
+  filter: grayscale(1);
+}
+
+.edit-image-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--aw-ink-muted-48);
+  color: #fff;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.edit-image-remove:hover {
+  background: var(--aw-danger);
 }
 
 .edit-actions {

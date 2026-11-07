@@ -3,6 +3,14 @@
     <div v-if="loading" class="panel-loading">
       <span class="loading-text">搜索文件中...</span>
     </div>
+    <!-- 拉取失败可见 + 可重试（静默失败可见化） -->
+    <div v-else-if="loadError" class="panel-error">
+      <span class="error-text">文件列表加载失败</span>
+      <button type="button" class="panel-retry-btn" @click="emit('retry')">重试</button>
+    </div>
+    <div v-else-if="files.length === 0 && filter" class="panel-empty">
+      未找到匹配的文件
+    </div>
     <div v-else-if="files.length === 0 && !filter" class="panel-empty">
       工作区内暂无文件
     </div>
@@ -48,11 +56,14 @@ const props = defineProps<{
   files: WorkspaceFile[]
   filter: string
   loading?: boolean
+  /** 文件列表拉取失败（ChatInput 传入）：渲染错误条 + 重试（静默失败可见化） */
+  loadError?: boolean
 }>()
 
 const emit = defineEmits<{
   select: [file: WorkspaceFile]
   close: []
+  retry: []
 }>()
 
 const selectedIndex = ref(0)
@@ -160,6 +171,30 @@ defineExpose({ moveUp, moveDown, confirmSelection })
   text-align: center;
   font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-48);
+}
+
+.panel-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px 16px;
+  font-size: var(--aw-text-fine);
+  color: var(--aw-ink-muted-64);
+}
+
+.panel-retry-btn {
+  border: 1px solid var(--aw-hairline);
+  border-radius: var(--aw-radius-xs);
+  background: var(--aw-canvas);
+  color: var(--aw-ink);
+  font-size: var(--aw-text-fine);
+  padding: 2px 12px;
+  cursor: pointer;
+}
+
+.panel-retry-btn:hover {
+  background: var(--aw-canvas-parchment);
 }
 
 .loading-text::after {

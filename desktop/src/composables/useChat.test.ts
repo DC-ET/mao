@@ -492,3 +492,325 @@ describe('LOCAL 模式浏览器边界', () => {
     expect(ws.connect).toHaveBeenCalled()
   })
 })
+
+// ===== 静默失败可见化（技术方案 2026-11-07）=====
+
+describe('fetchMessages 加载失败可见化', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    ws.connect.mockResolvedValue(undefined)
+    ws.sendEditMessage.mockResolvedValue(true)
+    vi.mocked(api.get).mockResolvedValue({ data: { messages: [], hasMore: false } } as never)
+  })
+
+  it('网络 / HTTP 层失败（无 code）置历史加载错误态', async () => {
+    vi.mocked(api.get).mockRejectedValue(new Error('Network Error'))
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    chat.sessionId.value = 'A'
+    await chat.fetchMessages()
+    expect(chat.historyLoadError.value).toEqual({ sessionId: 'A' })
+  })
+
+  it('axios 字符串 code（ERR_NETWORK / ERR_BAD_REQUEST）不算业务拒绝，置错误态', async () => {
+    // 关键分支：axios 自身错误几乎都带字符串 code，不能用 code == null 判业务拒绝（D4）
+    const axiosLike = Object.assign(new Error('Request failed with status code 500'), { code: 'ERR_BAD_RESPONSE' })
+    vi.mocked(api.get).mockRejectedValue(axiosLike)
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    chat.sessionId.value = 'A'
+    await chat.fetchMessages()
+    expect(chat.historyLoadError.value).toEqual({ sessionId: 'A' })
+  })
+
+  it('业务拒绝（数字 code，拦截器已 toast）保持静默不置错误态', async () => {
+    const business = Object.assign(new Error('会话不存在'), { code: 40400 })
+    vi.mocked(api.get).mockRejectedValue(business)
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    chat.sessionId.value = 'A'
+    await chat.fetchMessages()
+    expect(chat.historyLoadError.value).toBeNull()
+  })
+
+  it('加载成功无条件清空错误态', async () => {
+    vi.mocked(api.get).mockRejectedValueOnce(new Error('Network Error'))
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    chat.sessionId.value = 'A'
+    await chat.fetchMessages()
+    expect(chat.historyLoadError.value).toEqual({ sessionId: 'A' })
+    await chat.fetchMessages()
+    expect(chat.historyLoadError.value).toBeNull()
+  })
+
+  it('retryHistoryLoad 清错误态并绕过 history-anchored 门重新拉取', async () => {
+    vi.mocked(api.get).mockRejectedValueOnce(new Error('Network Error'))
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    chat.sessionId.value = 'A'
+    await chat.fetchMessages()
+    expect(chat.historyLoadError.value).toEqual({ sessionId: 'A' })
+
+    const store = useSessionStore()
+    // 失败重试必须真的重新拉取：即使会话被锚定在历史页也不被门挡住（forceLatest）
+    store.setHistoryAnchored('A', true)
+    await chat.retryHistoryLoad()
+    expect(chat.historyLoadError.value).toBeNull()
+    expect(api.get).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(api.get).mock.calls[1][0]).toBe('/sessions/A/messages')
+  })
+})
+
+describe('loadOlderMessages 加载失败可见化', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    ws.connect.mockResolvedValue(undefined)
+    vi.mocked(api.get).mockResolvedValue({ data: { messages: [], hasMore: false } } as never)
+  })
+
+  function setupPagedSession(sid: string) {
+    const store = useSessionStore()
+    store.setMessages(sid, [
+      { id: '1', role: 'user', content: 'hello', createdAt: '2026-11-07 10:00:00' },
+    ])
+    store.setActiveSession(sid)
+    store.setMessagePageState(sid, true, '1')
+    return store
+  }
+
+  it('网络 / HTTP 层失败置上拉错误态且仍返回 false', async () => {
+    vi.mocked(api.get).mockImplementation(( _url: string, config?: { params?: { beforeMessageId?: unknown } }) =>
+      config?.params?.beforeMessageId
+        ? Promise.reject(new Error('Network Error'))
+        : Promise.resolve({ data: { messages: [], hasMore: true, nextBeforeMessageId: '1' } } as never))
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    chat.sessionId.value = 'A'
+    setupPagedSession('A')
+    const ok = await chat.loadOlderMessages()
+    expect(ok).toBe(false)
+    expect(chat.olderLoadError.value).toEqual({ sessionId: 'A' })
+  })
+
+  it('业务拒绝（数字 code）保持静默', async () => {
+    vi.mocked(api.get).mockImplementation(( _url: string, config?: { params?: { beforeMessageId?: unknown } }) =>
+      config?.params?.beforeMessageId
+        ? Promise.reject(Object.assign(new Error('参数错误'), { code: 40000 }))
+        : Promise.resolve({ data: { messages: [], hasMore: true, nextBeforeMessageId: '1' } } as never))
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    chat.sessionId.value = 'A'
+    setupPagedSession('A')
+    const ok = await chat.loadOlderMessages()
+    expect(ok).toBe(false)
+    expect(chat.olderLoadError.value).toBeNull()
+  })
+
+  it('上拉成功清空错误态', async () => {
+    vi.mocked(api.get).mockImplementation(( _url: string, config?: { params?: { beforeMessageId?: unknown } }) => {
+      if (config?.params?.beforeMessageId) {
+        return Promise.resolve({ data: { messages: [{ id: '0', role: 'user', content: 'old', createdAt: '2026-11-06 09:00:00' }], hasMore: false } } as never)
+      }
+      return Promise.resolve({ data: { messages: [], hasMore: true, nextBeforeMessageId: '1' } } as never)
+    })
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    chat.sessionId.value = 'A'
+    setupPagedSession('A')
+    // 先制造一次失败，再成功
+    vi.mocked(api.get).mockImplementationOnce(( _url: string, config?: { params?: { beforeMessageId?: unknown } }) =>
+      config?.params?.beforeMessageId
+        ? Promise.reject(new Error('Network Error'))
+        : Promise.resolve({ data: { messages: [], hasMore: true, nextBeforeMessageId: '1' } } as never))
+    await chat.loadOlderMessages()
+    expect(chat.olderLoadError.value).toEqual({ sessionId: 'A' })
+    await chat.loadOlderMessages()
+    expect(chat.olderLoadError.value).toBeNull()
+  })
+})
+
+describe('editAndResend 三态 images（D5）', () => {
+  const ORIGINAL_IMAGES = ['http://localhost/img/1.png', 'http://localhost/img/2.png']
+
+  function setupEditableSession() {
+    const store = useSessionStore()
+    store.setMessages('A', [
+      { id: 'u1', role: 'user', content: '看这两张图', images: [...ORIGINAL_IMAGES], createdAt: '2026-11-07 10:00:00' },
+      { id: 'a1', role: 'assistant', content: 'reply', createdAt: '2026-11-07 10:00:01' },
+    ])
+    store.setActiveSession('A')
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    chat.sessionId.value = 'A'
+    return { store, chat }
+  }
+
+  async function resendWithImages(
+    images?: string[],
+    /** 在确认链路收尾前检查乐观更新后的中间态（此时 updateMessageContent 已执行） */
+    inspect?: (store: ReturnType<typeof useSessionStore>) => void
+  ) {
+    const { store, chat } = setupEditableSession()
+    let finishSend!: (ok: boolean) => void
+    ws.sendEditMessage.mockImplementation(() => new Promise<boolean>(resolve => { finishSend = resolve }))
+    const callCountBefore = ws.sendEditMessage.mock.calls.length
+    const pending = images === undefined
+      ? chat.editAndResend('u1', 'edited')
+      : chat.editAndResend('u1', 'edited', images)
+    await vi.waitFor(() => expect(ws.sendEditMessage.mock.calls.length).toBeGreaterThan(callCountBefore))
+    // 取最后一次调用，避免共享 mock 上其他用例的残留调用干扰
+    const sentImages = ws.sendEditMessage.mock.calls[ws.sendEditMessage.mock.calls.length - 1][3] as string[]
+    inspect?.(store)
+    // editAndResend 先 await sendEditMessage，成功后才注册 pendingCallbacks——顺序不能反
+    finishSend(true)
+    await vi.waitFor(() => expect(ws.pendingCallbacks.has('A')).toBe(true))
+    ws.pendingCallbacks.get('A')?.resolve?.()
+    await pending
+    return sentImages
+  }
+
+  it('未显式传图（undefined）沿用原消息图片（向后兼容）', async () => {
+    expect(await resendWithImages()).toEqual(ORIGINAL_IMAGES)
+  })
+
+  it('显式传空数组 = 移除全部图片，不回落到原图', async () => {
+    expect(await resendWithImages([])).toEqual([])
+  })
+
+  it('显式传数组按传入集合重发', async () => {
+    expect(await resendWithImages([ORIGINAL_IMAGES[1]])).toEqual([ORIGINAL_IMAGES[1]])
+  })
+
+  it('显式传空数组时乐观更新同步清空气泡图片（round1 B1 回归）', async () => {
+    await resendWithImages([], (store) => {
+      const userMsg = store.getMessages('A').find(m => String(m.id) === 'u1')
+      // 确认后整个重跑期间气泡必须立即反映「已无图片」，不能回落成保留原图
+      expect(userMsg?.images).toEqual([])
+    })
+  })
+
+  it('未显式传图时乐观更新保留原图（round1 B1 对照）', async () => {
+    await resendWithImages(undefined, (store) => {
+      const userMsg = store.getMessages('A').find(m => String(m.id) === 'u1')
+      expect(userMsg?.images).toEqual(ORIGINAL_IMAGES)
+    })
+  })
+})
+
+// round1 B2 回归：错误态槽位不得被迟到的跨会话响应覆盖/清空
+describe('加载错误态的跨会话竞态（round1 B2 回归）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    ws.connect.mockResolvedValue(undefined)
+    ws.sendEditMessage.mockResolvedValue(true)
+    vi.mocked(api.get).mockResolvedValue({ data: [] } as never)
+  })
+
+  it('迟到的旧会话成功响应不清掉当前会话的历史错误态', async () => {
+    const resolves = new Map<string, (value: unknown) => void>()
+    vi.mocked(api.get).mockImplementation((url: string) => url.endsWith('/messages')
+      ? new Promise(r => { resolves.set(url, r) })
+      : Promise.resolve({ data: [] }))
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    const first = chat.restoreSession('A', 'CLOUD')
+    await Promise.resolve()
+    const second = chat.restoreSession('B', 'CLOUD')
+    await Promise.resolve()
+    // B 拉历史网络层失败 → 错误态 {B}
+    resolves.get('/sessions/B/messages')!(Promise.reject(new Error('Network Error')))
+    await second
+    expect(chat.historyLoadError.value).toEqual({ sessionId: 'B' })
+    // A 的迟到成功不得清掉 {B}
+    resolves.get('/sessions/A/messages')!({ data: { messages: [], hasMore: false } })
+    await first
+    expect(chat.historyLoadError.value).toEqual({ sessionId: 'B' })
+  })
+
+  it('迟到的旧会话失败响应不覆盖当前会话的历史错误态', async () => {
+    const resolves = new Map<string, (value: unknown) => void>()
+    vi.mocked(api.get).mockImplementation((url: string) => url.endsWith('/messages')
+      ? new Promise(r => { resolves.set(url, r) })
+      : Promise.resolve({ data: [] }))
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    const first = chat.restoreSession('A', 'CLOUD')
+    await Promise.resolve()
+    const second = chat.restoreSession('B', 'CLOUD')
+    await Promise.resolve()
+    resolves.get('/sessions/B/messages')!(Promise.reject(new Error('Network Error')))
+    await second
+    expect(chat.historyLoadError.value).toEqual({ sessionId: 'B' })
+    // A 的迟到失败不得把 {B} 覆盖成 {A}
+    resolves.get('/sessions/A/messages')!(Promise.reject(new Error('Network Error')))
+    await first
+    expect(chat.historyLoadError.value).toEqual({ sessionId: 'B' })
+  })
+
+  it('迟到的旧会话上拉失败不覆盖当前会话的上拉错误态', async () => {
+    const resolves = new Map<string, (value: unknown) => void>()
+    vi.mocked(api.get).mockImplementation((url: string, config?: { params?: { beforeMessageId?: unknown } }) => {
+      if (config?.params?.beforeMessageId) {
+        return new Promise(r => { resolves.set(`${url}|${String(config.params!.beforeMessageId)}`, r) })
+      }
+      if (url.endsWith('/messages')) {
+        return Promise.resolve({ data: { messages: [], hasMore: true, nextBeforeMessageId: '1' } } as never)
+      }
+      return Promise.resolve({ data: [] })
+    })
+    const store = useSessionStore()
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    await chat.restoreSession('A', 'CLOUD')
+    store.setMessagePageState('A', true, '1')
+    const olderA = chat.loadOlderMessages()
+    await Promise.resolve()
+    await chat.restoreSession('B', 'CLOUD')
+    store.setMessagePageState('B', true, '1')
+    const olderB = chat.loadOlderMessages()
+    // B 上拉失败 → {B}
+    resolves.get('/sessions/B/messages|1')!(Promise.reject(new Error('Network Error')))
+    expect(await olderB).toBe(false)
+    expect(chat.olderLoadError.value).toEqual({ sessionId: 'B' })
+    // A 的迟到上拉失败不得覆盖 {B}
+    resolves.get('/sessions/A/messages|1')!(Promise.reject(new Error('Network Error')))
+    await olderA
+    expect(chat.olderLoadError.value).toEqual({ sessionId: 'B' })
+  })
+})
+
+// round2 回归：失败写入按「当前会话」守卫——断网下切换会话后，新会话的新鲜失败必须被记录
+describe('断网切换会话后新鲜失败仍可见（round2 回归）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    ws.connect.mockResolvedValue(undefined)
+    vi.mocked(api.get).mockRejectedValue(new Error('Network Error'))
+  })
+
+  it('旧会话失败在槽时，新会话的历史新鲜失败仍被记录', async () => {
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    chat.sessionId.value = 'B'
+    await chat.fetchMessages()
+    expect(chat.historyLoadError.value).toEqual({ sessionId: 'B' })
+    // 切到 A，A 的历史请求同样网络失败——必须记录 {A}，不能因槽位被 {B} 占有而丢弃
+    chat.sessionId.value = 'A'
+    await chat.fetchMessages()
+    expect(chat.historyLoadError.value).toEqual({ sessionId: 'A' })
+  })
+
+  it('旧会话上拉失败在槽时，新会话的上拉新鲜失败仍被记录', async () => {
+    vi.mocked(api.get).mockImplementation((_url: string, config?: { params?: { beforeMessageId?: unknown } }) =>
+      config?.params?.beforeMessageId
+        ? Promise.reject(new Error('Network Error'))
+        : Promise.resolve({ data: { messages: [], hasMore: true, nextBeforeMessageId: '1' } } as never))
+    const store = useSessionStore()
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    const seed = (sid: string, id: string) => {
+      store.setMessages(sid, [{ id, role: 'user', content: `msg-${sid}`, createdAt: '2026-11-07 10:00:00' }])
+      store.setActiveSession(sid)
+      store.setMessagePageState(sid, true, id)
+    }
+    chat.sessionId.value = 'A'
+    seed('A', '1')
+    await chat.loadOlderMessages()
+    expect(chat.olderLoadError.value).toEqual({ sessionId: 'A' })
+    // 切到 B，B 的上拉同样网络失败——必须记录 {B}
+    chat.sessionId.value = 'B'
+    seed('B', '2')
+    await chat.loadOlderMessages()
+    expect(chat.olderLoadError.value).toEqual({ sessionId: 'B' })
+  })
+})

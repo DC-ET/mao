@@ -89,7 +89,13 @@
           <el-icon :size="32" class="is-loading"><Loading /></el-icon>
           <p>{{ initializingWorkspaceLabel }}</p>
         </div>
-        <div v-else-if="messages.length === 0 && !agentRunning && !initialLoading" class="empty-state">
+        <div v-else-if="historyLoadFailed && !agentRunning && !initialLoading" class="empty-state history-error-state">
+          <el-icon :size="32" class="history-error-icon"><WarningFilled /></el-icon>
+          <p class="history-error-title">历史消息加载失败</p>
+          <p class="history-error-sub">网络异常，请检查连接后重试</p>
+          <button type="button" class="history-retry-btn" @click="retryHistoryLoad">重试</button>
+        </div>
+        <div v-else-if="messages.length === 0 && !agentRunning && !initialLoading && !historyLoadFailed && !taskIndexError" class="empty-state">
           <template v-if="!sessionId">
             <el-icon :size="48" class="empty-icon"><ChatDotRound /></el-icon>
             <p>我可以帮你做点什么？</p>
@@ -98,6 +104,14 @@
             <p class="guidance-text">在下方输入框描述你的任务，我会帮你完成</p>
           </template>
         </div>
+
+        <!-- 历史上拉失败重试小条（D8：错误态记在 useChat，这里只消费） -->
+        <button
+          v-if="olderLoadFailed"
+          type="button"
+          class="older-retry-strip"
+          @click="loadOlderMessages"
+        >加载更早消息失败，点击重试</button>
 
         <!-- 历史轮次 + 当前轮次 -->
         <ChatRoundList
@@ -228,7 +242,7 @@
 <script setup lang="ts">
 import { ref, computed, inject, provide, watch, nextTick, onActivated, onMounted, onUnmounted, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChatDotRound, Loading } from '@element-plus/icons-vue'
+import { ChatDotRound, Loading, WarningFilled } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage, type PendingUploadFile } from '../../composables/useChat'
 import { useChatScroll } from '../../composables/useChatScroll'
 import { useChatQueue } from '../../composables/useChatQueue'
@@ -320,6 +334,9 @@ const {
   stopExecution,
   retryExecution,
   loadOlderMessages,
+  retryHistoryLoad,
+  historyLoadError,
+  olderLoadError,
   newSession,
   restoreSession,
   confirmApproval,
@@ -346,6 +363,15 @@ function handleSubmitQuestion(requestId: string, answers: QuestionAnswer[], done
 }
 
 const historyLoading = computed(() => initialLoading.value || switchingSession.value)
+
+// 任务索引加载失败（TaskView 提供）：门住新建态时同步压制本组件的「空会话」引导，
+// 避免中央错误卡下方再渲染一块「我可以帮你做点什么？」假空态
+const taskIndexError = inject<Ref<boolean>>('taskIndexError', ref(false))
+
+/** 历史加载失败态（D7：按 sessionId 记，与当前会话比对后判定） */
+const historyLoadFailed = computed(() => historyLoadError.value?.sessionId === sessionId.value)
+/** 历史上拉失败态 */
+const olderLoadFailed = computed(() => olderLoadError.value?.sessionId === sessionId.value)
 
 /** 新建会话中心态：无 session 且不在加载历史时展示居中 Composer */
 const showCenterComposer = computed(() => isNewTaskMode.value && !historyLoading.value)
@@ -648,10 +674,11 @@ function cancelEdit() {
   editingMessageId.value = null
 }
 
-async function confirmEdit(messageId: string, newContent: string) {
+async function confirmEdit(messageId: string, newContent: string, images: string[]) {
   editingMessageId.value = null
   userScrolledUp.value = false
-  await editAndResend(messageId, newContent)
+  // 显式透传剩余图片集合（D5）：含空数组 = 移除全部图片；不再走「未传图回落原图」
+  await editAndResend(messageId, newContent, images)
   nextTick(scrollToBottomSmooth)
 }
 
@@ -1063,6 +1090,63 @@ function handleNewTaskAgentChange(id: string | null) {
 .empty-state p {
   margin: 0;
   font-size: var(--aw-text-body);
+}
+
+/* 历史消息加载失败（静默失败可见化）：错误卡 + 重试 */
+.history-error-state {
+  gap: 4px;
+}
+
+.history-error-icon {
+  color: var(--aw-danger);
+  margin-bottom: 6px;
+}
+
+.history-error-title {
+  font-weight: 600;
+  color: var(--aw-ink);
+}
+
+.history-error-sub {
+  color: var(--aw-ink-muted-48);
+}
+
+.history-retry-btn {
+  margin-top: 10px;
+  padding: 5px 18px;
+  border: 1px solid var(--aw-hairline);
+  border-radius: var(--aw-radius-xs);
+  background: var(--aw-canvas);
+  color: var(--aw-ink);
+  font-size: var(--aw-text-caption);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.history-retry-btn:hover {
+  background: var(--aw-canvas-parchment);
+}
+
+/* 历史上拉失败重试小条：列表顶部整条可点 */
+.older-retry-strip {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  margin-bottom: 8px;
+  border: 1px dashed var(--aw-hairline);
+  border-radius: var(--aw-radius-xs);
+  background: var(--aw-canvas-parchment);
+  color: var(--aw-ink-muted-64);
+  font-size: var(--aw-text-caption);
+  text-align: center;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: background 0.15s, color 0.15s;
+}
+
+.older-retry-strip:hover {
+  background: var(--aw-divider-soft);
+  color: var(--aw-ink);
 }
 
 .typing-dots {

@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useSessionStore, type TaskPhase } from '../stores/session'
 import { useInboxStore } from '../stores/inbox'
@@ -51,6 +51,23 @@ const connected = ref(false)
 const everConnected = ref(false)
 const reconnectDelay = ref(1000)
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+/**
+ * 连续重连失败次数：scheduleReconnect 每次调度 +1，任一次连接成功归零。
+ * 阈值 3 对应退避前三次窗口（约 7 秒），短暂抖动不误报（D1）。
+ */
+const consecutiveFailures = ref(0)
+/**
+ * 服务端鉴权被拒：每次重连都会重读 token 自动重试，但大概率继续失败，
+ * 即时升级终态最诚实（D1）。
+ */
+const authRejected = ref(false)
+/**
+ * 断线终态（D1）：连续失败 ≥3 次或鉴权被拒即升级；连接成功立即恢复 false。
+ * 横幅据此在「自动重连中」与「重连失败，需要出手」两态间切换。
+ */
+const reconnectFailed = computed(() =>
+  connected.value ? false : (authRejected.value || consecutiveFailures.value >= 3)
+)
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 let lastServerMessageAt = 0
 const SERVER_SILENCE_TIMEOUT_MS = 30_000
@@ -310,6 +327,8 @@ export function useStreamWS() {
           // 鉴权被拒：保留退避增长（不重置 reconnectDelay），避免 1s 一次的热循环；
           // 每次重连都会重读 token，令牌刷新后自动恢复
           console.warn(`[ws] authentication rejected by server: code=${event.code} reason=${event.reason}`)
+          // 鉴权失败重试大概率继续失败，即时升级断线终态（D1）
+          authRejected.value = true
         }
         const settle = pendingSettle
         connectPromise = null
@@ -344,6 +363,10 @@ export function useStreamWS() {
       ws = null
     }
     connected.value = false
+    // 主动断开（登出/换号）不构成重连失败：一并清失败计数与鉴权拒绝态，
+    // 否则登出后横幅会残留上一次连接的红色终态
+    consecutiveFailures.value = 0
+    authRejected.value = false
     // 复位未 settle 的连接 Promise：disconnect 后 socket 迟到 onclose 会走早退分支，
     // 若 connectPromise 残留，后续 connect() 会返回永不 settle 的死 Promise（输入框锁死）
     if (connectPromise) {
@@ -384,6 +407,9 @@ export function useStreamWS() {
     setApprovalRelaySupported(data?.approvalRelay === true)
     connected.value = true
     everConnected.value = true
+    // 任一次连接成功：失败计数与鉴权拒绝态归零，断线终态立即恢复自动重连文案（D1）
+    consecutiveFailures.value = 0
+    authRejected.value = false
     reconnectDelay.value = 1000
     const settle = pendingSettle
     connectPromise = null
@@ -451,12 +477,29 @@ export function useStreamWS() {
 
   function scheduleReconnect() {
     if (reconnectTimer) return
+    // 每次调度重连计一次失败：累计到阈值触发断线终态（D1）
+    consecutiveFailures.value += 1
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null
       // 未登录窗口 connect() 会立即 reject，吞掉避免 unhandled rejection
       connect().catch(() => {})
     }, reconnectDelay.value)
     reconnectDelay.value = Math.min(reconnectDelay.value * 2, 30_000)
+  }
+
+  /**
+   * 手动重试（断线终态横幅「立即重试」）：先归零失败计数与退避再连，
+   * 避免旧退避（最长 30s）拖住这次重试。
+   */
+  function manualReconnect() {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+    reconnectDelay.value = 1000
+    consecutiveFailures.value = 0
+    authRejected.value = false
+    void connect().catch(() => {})
   }
 
   function stopHeartbeat() {
@@ -1419,6 +1462,8 @@ export function useStreamWS() {
   return {
     connected,
     everConnected,
+    reconnectFailed,
+    manualReconnect,
     connect,
     disconnect,
     getReadyState,

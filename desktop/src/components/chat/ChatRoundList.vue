@@ -11,7 +11,7 @@
       :is-editing="editingMessageId === round.userMessage.id"
       @edit="$emit('edit', round.userMessage)"
       @cancel-edit="$emit('cancelEdit')"
-      @confirm-edit="$emit('confirmEdit', round.userMessage.id, $event)"
+      @confirm-edit="(content: string, images: string[]) => $emit('confirmEdit', round.userMessage.id, content, images)"
       @add-to-command="$emit('addToCommand', $event)"
     />
     <CompactionMarker
@@ -126,7 +126,7 @@
       :is-editing="editingMessageId === activeRound.userMessage.id"
       @edit="$emit('edit', activeRound.userMessage)"
       @cancel-edit="$emit('cancelEdit')"
-      @confirm-edit="$emit('confirmEdit', activeRound.userMessage.id, $event)"
+      @confirm-edit="(content: string, images: string[]) => $emit('confirmEdit', activeRound!.userMessage.id, content, images)"
       @add-to-command="$emit('addToCommand', $event)"
     />
     <CompactionMarker
@@ -171,7 +171,7 @@
         :is-editing="editingMessageId === msg.id"
         @edit="$emit('edit', msg)"
         @cancel-edit="$emit('cancelEdit')"
-        @confirm-edit="$emit('confirmEdit', msg.id, $event)"
+        @confirm-edit="(content: string, images: string[]) => $emit('confirmEdit', msg.id, content, images)"
         @add-to-command="$emit('addToCommand', $event)"
       />
       <CompactionMarker
@@ -226,7 +226,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   edit: [msg: ChatMessage]
   cancelEdit: []
-  confirmEdit: [messageId: string, content: string]
+  confirmEdit: [messageId: string, content: string, images: string[]]
   addToCommand: [content: string]
   /** 分叉到边路任务：messageId 是被点击那一轮的助手最终回复 id，label 是该轮来源摘录 */
   fork: [payload: { messageId: string; label: string }]
