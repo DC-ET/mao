@@ -110,7 +110,7 @@ AgentLoop（宿主机，每轮 buildContext 定快照：context.agentId = agent.
 | 容器内经验沙箱根 | 维持 `shareDir` 整根登记为允许根（决策 13）；`MAO_CONTAINER_AGENT_ID` env 仍注入作容器身份标识（无运行时消费方） | 挂载面整根共享下沙箱收窄只制造「挂载可见但沙箱拒绝」的双口径行为 | 允许根收窄为经验子目录（已实现后评审撤回） |
 | 通道连接键 | `Map<string>` 键 `userId:agentId`，socket 目录 `{channelDir}/{userId}/{agentId}/` | 单连接踢旧逻辑按键隔离，两容器并存互不干扰；`SO_PEERCRED` 反查容器名与路径双段比对 | 复用用户级 socket（第二连接踢旧 → 同用户多容器互踢死循环） |
 | agentless 会话 | **不存在**，无需哨兵值 | `session.agent_id BIGINT NOT NULL`（V001:151），每个会话必有 Agent | agentId=0 哨兵桶（无必要） |
-| 挂载源目录 | `createAndStart` 在 `docker run` 前对视图目录与经验子目录显式 `mkdirSync(recursive)` | 预热窗口可能早于首轮技能同步/经验挂载，消除 docker 自动建目录的隐式行为 | 依赖 docker 自动创建（隐式、不可测） |
+| 挂载源目录 | `createAndStart` 在 `docker run` 前对视图目录显式 `mkdirSync(recursive)`（经验子目录不涉及，决策 13） | 预热窗口可能早于首轮技能同步，消除 docker 自动建目录的隐式行为 | 依赖 docker 自动创建（隐式、不可测） |
 | 用户级 recycle 语义 | `POST /v1/users/:id/container/recycle` body 增可选 `agentId`：缺省回收该用户**全部**容器，指定则回收单个 | 保持既有运维语义（"重建用户容器"仍是合法操作），admin 面板另有按行回收 | 只允许按 (user, agent) 回收（破坏既有 admin 操作） |
 | 上线方式 | 两期合并上线（见 §9）：一期宿主机数据面、二期容器键切换 | 一期产物（per-agent 视图目录）落在旧挂载根之内，窗口期容器照常可读，两期之间无兼容断点 | 单次全量切换（回滚粒度粗） |
 
@@ -250,7 +250,7 @@ desktop、android、`shared/contracts`、agent-cli、`scripts/deploy-*.sh`、`Do
 **挂载清单**
 - 容器 (U, A) 的挂载表：skillViews 恰为 `{views}/{U}/{A}` ro、share 恰为 `{share}` 整根 rw（决策 13）、channel 恰为 `{channel}/{U}/{A}` rw；断言不含其他 userId 尾段、不含其他 agentId 段。
 - `assertSafe` 拒绝：`agent-experience` 子目录形态挂载（无 userId 段，share 根整挂为唯一放行例外）、skillViews 挂到用户根（缺 agentId 段）、agentId 段与入参不一致、符号链接逃逸、只读项覆写（既有用例全保留）。
-- `createAndStart` 前视图目录与经验子目录已存在（预热早于首轮同步的场景）。
+- `createAndStart` 前视图目录已存在（预热早于首轮同步的场景）。
 
 **生命周期**
 - 同用户双 Agent 容器并存：`(U,A)` 与 `(U,B)` 同时 running、socket 各自独立、`withUserLock` 互不阻塞。

@@ -106,7 +106,7 @@
 1. `agent.skill_names` 可被 admin/用户编辑 → 按 skillNames 收窄挂载的方案会在每次编辑后触发挂载漂移 → 整容器重建（现有 `standardMountsFingerprint` 漂移机制，`container-registry.ts:467-469`）；
 2. 群聊 IM 的 bot.agentId 支持热切换（`feishu-session.ts:42-56`），切 bot 配置即切会话 Agent → 同冲突一。
 
-**化解方向**（推荐）：把"挂载集随 skillNames 变化"转化为"宿主机目录内容维护"——视图按 Agent 维度物化为固定路径 `{skillViewsDir}/{userId}/{agentId}/{skillName}`，容器只挂这个恒定路径（ro）。skillNames 增删只让宿主机重建该目录内容，容器透过 ro 挂载即时可见，**零容器重建**。经验库天然已是固定路径 `<shareDir>/agent-experience/{agentId}`，直接从"整根"改为"只挂子目录"即可。
+**化解方向**（推荐）：把"挂载集随 skillNames 变化"转化为"宿主机目录内容维护"——视图按 Agent 维度物化为固定路径 `{skillViewsDir}/{userId}/{agentId}/{skillName}`，容器只挂这个恒定路径（ro）。skillNames 增删只让宿主机重建该目录内容，容器透过 ro 挂载即时可见，**零容器重建**。经验库天然已是固定路径 `<shareDir>/agent-experience/{agentId}`，看似可直接从"整根"改为"只挂子目录"——**该建议已撤回（决策 13）**：share 还有管理员投放与运维共享文件，须整根共享，见 §6.8 决策 13。
 
 ### 3.3 冲突三：通道层、终端层的"每用户单例"假设
 
@@ -145,7 +145,7 @@
 |---|---|---|
 | DB | **零迁移** | 容器状态全在 `ContainerRegistry` 内存 + docker labels，**没有容器元数据表**（全部迁移中仅 `system_setting` 三项与 `container:manage` 权限和容器相关，V176/V177/V178）。`user.runtime_mode`、`session`、`agent.skill_names`、经验表均不受容器粒度影响 |
 | 存量容器 | **自动过渡，无手工迁移** | 升级后 entries 为空，首次 `ensureRunning` 按新键建新容器；旧 `mao-user-*` 容器由 gc 脚本兜底清理（保持前缀命名即可）；挂载指纹漂移重建机制现成，新键条目天然走完整重建 |
-| 经验库文件 | **零迁移** | `<shareDir>/agent-experience/<agentId>/` 布局不变，只是容器挂载从"整根"改为"子目录"；INDEX.md 与子文档不动 |
+| 经验库文件 | **零迁移** | `<shareDir>/agent-experience/<agentId>/` 布局不变（决策 13 后容器挂载也维持整根，无任何变化）；INDEX.md 与子文档不动 |
 | skill 视图 | **可再生，不算迁移** | 视图本就是源技能的按需物化副本（指纹变化即原子重建，`skill-view.service.ts:109-194`）。若重组为 `{skillViewsDir}/{userId}/{agentId}/`，旧视图目录惰性废弃或一次性重建即可；也可不改布局、按 skillNames 枚举挂载（不推荐，见 §3.2） |
 | 用户数据目录（workspace/runtime/users/deps/uploads/tmp） | **布局不变，继续按用户挂载** | 这些是用户级数据，跨该用户的 Agent 容器共享挂载即可；Docker 多容器 bind mount 同一宿主目录在 FS 层无问题（今天同一容器内多会话本就并发访问） |
 | 升级窗口在途会话 | 与历次后端重启一致 | crash-recovery 从 DB 恢复（`crash-recovery-runner.ts`），与容器完全解耦 |
@@ -161,7 +161,7 @@
 | 模块 | 改动 | 量级 |
 |---|---|---|
 | `container-registry.ts` | 键/名/锁/指纹/回收/listEntries 全部改复合键；`withUserLock` 粒度 | 大 |
-| `container-mount-planner.ts` | 经验子目录挂载、agent 级视图目录挂载、`assertSafe` 新规则（rw 项含 `/{userId}/` 段的校验要为 agentId 段扩展；share 豁免从"恰为根"改为"恰为 agentId 子目录"） | 中 |
+| `container-mount-planner.ts` | agent 级视图目录挂载、`assertSafe` 新规则（rw 项含 `/{userId}/` 段的校验要为 agentId 段扩展；share 豁免维持"恰为根"不变，决策 13——初稿"改为恰为经验子目录"已撤回） | 中 |
 | `runtime-channel-server.ts` | 连接键、socket 路径 `{channelDir}/{userId}/{agentId}/`、身份校验 | 中 |
 | `docker-tool-router.ts` / `tool-dispatcher.ts` | `DockerDispatchContext` 加 agentId；按 sessionId 查或穿线 | 中 |
 | `app-utils.ts`（pty factory）/ `pty-bridge.ts` | `ptyChannelHubs` 复合键 | 小 |
@@ -286,12 +286,12 @@
 
 | 方案 | 内容 | Agent 隔离 | 代价 | 判定 |
 |---|---|---|---|---|
-| **A. (userId, agentId) 粒度**（提案） | 容器键改复合；skill 视图按 Agent 物化成恒定路径；经验库只挂当前 Agent 子目录；通道/预热/管理面全量改复合键 | 容器级，除用户级共享目录外彻底 | §3 五个冲突点全要解；切 Agent 回归；容器数×Agent | 可行，改动大但路径清晰。额外收益（2026-11-07 追问补充）：① 重建爆炸半径从"该用户全部会话"缩到"单 Agent 会话"；② **资源隔离**——今天同用户所有 Agent 共享单容器的 2G/2CPU，一个 Agent 失控会拖累其他 Agent，拆开后各有独立上限 |
+| **A. (userId, agentId) 粒度**（提案，最终形态见决策 13：经验库维持整根挂载，不做容器级隔离） | 容器键改复合；skill 视图按 Agent 物化成恒定路径；经验库维持整根共享；通道/预热/管理面全量改复合键 | 容器级，除用户级共享目录外彻底 | §3 五个冲突点全要解；切 Agent 回归；容器数×Agent | 可行，改动大但路径清晰。额外收益（2026-11-07 追问补充）：① 重建爆炸半径从"该用户全部会话"缩到"单 Agent 会话"；② **资源隔离**——今天同用户所有 Agent 共享单容器的 2G/2CPU，一个 Agent 失控会拖累其他 Agent，拆开后各有独立上限 |
 | B. 保持用户容器 + 数据面收窄 | 不改容器粒度，试图通过软链/拷贝收窄可见面 | **达不成容器级隔离**：skillViews 根、runtime 根、share 根仍整根进容器；把技能软链改实体拷贝只是消除 skillViews 根依赖，容器内其他会话副本仍互见；经验库因"容器内直写 + 双端一致性"设计，实体副本方案会引入双写一致性问题 | 小 | 只能作为过渡缓解，不满足提案目标 |
 | C. A 的按需灰度版 | 仅对"多 Agent 且需要隔离"的用户/Agent 启用复合键，两套键并存 | 同 A | 双键并存期间代码分叉、心智负担 | 可作为上线策略，不宜作为长期形态 |
 | D. 会话级容器 | 每会话一容器 | 最彻底 | 2026-10-14 已否决（启动开销、shell 会话难复用） | 维持否决 |
 
-**对"旧方案是否合理"的定性**：2026-10-14 拍板"每用户一容器"时，经验库/共享目录尚不存在，当时的数据布局（users/workspace/runtime）确实全是用户级，该决策对当时是最优解；是后来新增的 Agent 维度数据让它过时了。另需澄清：新形态下**大多数挂载仍是 user 维度**（workspace/runtime/HOME/deps/uploads），仅 skill 视图与经验库两处变为 agent 维度——容器键是 (user, agent)，挂载清单是两者的函数。
+**对"旧方案是否合理"的定性**：2026-10-14 拍板"每用户一容器"时，经验库/共享目录尚不存在，当时的数据布局（users/workspace/runtime）确实全是用户级，该决策对当时是最优解；是后来新增的 Agent 维度数据让它过时了。另需澄清：新形态下**大多数挂载仍是 user 维度**（workspace/runtime/HOME/deps/uploads），仅 skill 视图一处变为 agent 维度（决策 13：经验库维持整根共享）——容器键是 (user, agent)，挂载清单是两者的函数。
 
 ### 7.2 建议
 
@@ -299,8 +299,8 @@
    - skill 视图走 **Agent 维度物化目录**（`{skillViewsDir}/{userId}/{agentId}/`，宿主机按 skillNames 维护内容），挂载路径恒定，skillNames 增删/技能源更新都只是宿主机目录内容变化，容器 ro 即见，**零容器重建**（规避 §3.2/§6.7 的重建风暴）；
    - ~~经验库挂载从 `shareDir` 整根收窄为 `shareDir/agent-experience/{agentId}` 子目录~~（**已撤回，决策 13**：share 还有管理员投放与运维共享文件，须整根共享；经验库不做容器级隔离）。
 2. **切 Agent 口径（已拍板，取代初稿建议的"拒绝切换"）**：接受中断、不禁止，路由按轮快照 + 切换即预热（详见 §6.1 决策记录）；host 模式不受影响保持现状。
-3. **分期路径**（若立项后细化）：① 数据面先行——Agent 维度物化目录 + 经验子目录挂载（在现有用户容器上即可先实现"挂载路径恒定"的铺垫，但不产生隔离收益）；② 容器键切换 + 通道层复合键（一次性，灰度靠 `user.runtime_mode` 类比新增用户级开关）；③ admin 面板与运维收尾。
-4. **明确写进方案文档的隔离承诺**：隔离的是同用户跨 Agent 的 skill 视图与团队经验库；deps/HOME/tmp/workspace/userSkills 维持用户级共享（决策点 2/3，2026-11-07 拍板）；不承诺会话间隔离。
+3. **分期路径**（若立项后细化）：① 数据面先行——Agent 维度物化目录（经验子目录挂载已随决策 13 撤回；在现有用户容器上即可先实现"挂载路径恒定"的铺垫，但不产生隔离收益）；② 容器键切换 + 通道层复合键（一次性，灰度靠 `user.runtime_mode` 类比新增用户级开关）；③ admin 面板与运维收尾。
+4. **明确写进方案文档的隔离承诺**：隔离的是同用户跨 Agent 的 skill 视图（决策 13：团队经验库维持整根共享，不做容器级隔离）；deps/HOME/tmp/workspace/userSkills 维持用户级共享（决策点 2/3，2026-11-07 拍板）；不承诺会话间隔离。
 
 ---
 
