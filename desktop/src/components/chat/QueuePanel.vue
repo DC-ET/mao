@@ -1,7 +1,7 @@
 <template>
   <div v-if="queueMessages.length > 0" class="queue-panel">
     <div class="queue-header">
-      <span class="queue-title">待发送消息 ({{ queueMessages.length }})</span>
+      <span class="queue-title" role="status" aria-live="polite">待发送消息 ({{ queueMessages.length }})</span>
       <button v-if="queueMessages.length > 5" class="toggle-btn" @click="expanded = !expanded">
         {{ expanded ? '收起' : '展开' }}
       </button>
@@ -431,6 +431,14 @@ async function handleDelete(queueId: string) {
 .action-btn:disabled {
   opacity: 0.3;
   cursor: default;
+}
+
+/* 触屏命中区内扩（技术方案 2026-11-07 D2）：密集操作行实体内扩零重叠；仅 pointer: coarse 生效，桌面像素不变。 */
+@media (pointer: coarse) {
+  .queue-item-actions .action-btn {
+    min-width: 32px;
+    min-height: 32px;
+  }
 }
 
 .insert-btn {

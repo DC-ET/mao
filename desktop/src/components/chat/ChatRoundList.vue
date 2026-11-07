@@ -26,10 +26,10 @@
       </div>
 
       <div class="execution-steps-collapse">
-        <div class="steps-summary" @click="toggleRound(round.userMessage.id)">
+        <button type="button" class="steps-summary" :aria-expanded="Boolean(roundsExpanded[round.userMessage.id])" @click="toggleRound(round.userMessage.id)">
           <el-icon class="steps-expand-icon" :class="{ expanded: roundsExpanded[round.userMessage.id] }"><ArrowDown /></el-icon>
           <span>已执行 {{ round.stepCount }} 个步骤，任务耗时 {{ round.durationText }}</span>
-        </div>
+        </button>
         <div v-if="roundsExpanded[round.userMessage.id]" class="steps-detail">
           <template v-for="step in round.displaySteps" :key="step.id">
             <MessageBubble
@@ -292,10 +292,15 @@ function handleFork(messageId: string) {
 }
 
 .execution-steps-collapse .steps-summary {
+  /* button 显式重置：对齐原 div 计算样式（技术方案 2026-11-07 D1；验收=改前后计算样式仅多 focus-visible 轮廓，
+     故不采纳重置清单里的 width:100% / background:none——父容器非 flex，原 div 为收缩宽且带羊皮纸背景） */
+  font: inherit;
+  text-align: left;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
+  border: 0;
   border-radius: var(--aw-radius-xs);
   background: var(--aw-canvas-parchment);
   color: var(--aw-ink-muted-48);
@@ -308,6 +313,11 @@ function handleFork(messageId: string) {
 .execution-steps-collapse .steps-summary:hover {
   background: var(--aw-divider-soft);
   color: var(--aw-ink);
+}
+
+.execution-steps-collapse .steps-summary:focus-visible {
+  outline: 1px solid var(--aw-ink-muted-48);
+  outline-offset: 1px;
 }
 
 .execution-steps-collapse .steps-expand-icon {

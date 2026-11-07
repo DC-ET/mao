@@ -29,6 +29,7 @@ admin：router `admin/src/router/index.ts`，视图 `views/`。desktop：useStre
 ## 规范
 后端 TS Node22+ Nest11 Fastify；表列 snake_case，BIGINT 自增，created_at/updated_at。
 前端 Vue3 `<script setup>`，Pinia `defineStore`，严格 TS，无 ESLint/Prettier，靠 vue-tsc。
+桌面端新增/修改图标按钮（无可见文本）必须带 aria-label 或 title，文案与按钮实际行为一致（既有范本：TopNav、RoundDirectory）。
 新增或重命名内置工具时，同步补齐 `backend-ts/src/session/util/tool-result-summarizer.ts` 的结果摘要、`desktop/src/utils/toolDisplay.ts` 的中文名称与参数预览，并添加成功/失败及缺失参数的回归测试，勿只注册工具而遗漏展示。工具结果含随机 id / 图片附件 / 传输字段时，还必须同步 `backend-ts/src/harness/core/no-progress-notice.ts` 的按工具归一化与 `VOLATILE_RESULT_KEYS`（漏补→漏报，误删语义字段→误杀），并补用例。
 新增 LLM 调用场景时三处同改：`shared/contracts/src/usage.ts` 加 `LlmCallScene` 联合成员、`backend-ts/src/usage/llm-call-context.ts` 的 `LLM_CALL_SCENES` 加映射、desktop/admin `src/utils/llmCallLabels.ts` 的 `Record<LlmCallScene,string>` 加中文。漏改任一端 tsc 即报错（汉化表靠 Record 穷尽、后端靠 `as const satisfies`），勿绕过硬改类型。
 跨端枚举一律走 `@mao/contracts`：类型下沉契约，前端汉化表用 `Record<契约联合, 文案>` 声明以吃编译期穷尽；禁止在前端 api 层内联手写联合类型与后端并行。已收口：`LlmCallScene`（usage.ts）、`SignalCompareMode`/`SignalWatcherStatus`（signal.ts）。

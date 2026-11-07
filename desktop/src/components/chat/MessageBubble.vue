@@ -206,7 +206,7 @@
         <button v-if="role === 'user'" class="add-command-btn" @click="$emit('addToCommand', userText)" title="添加到我的指令">
           <el-icon :size="12"><Plus /></el-icon>
         </button>
-        <button class="copy-btn" :class="{ copied }" @click="copyMessage">
+        <button class="copy-btn" :class="{ copied }" :title="copied ? '已复制' : '复制消息'" aria-label="复制消息" @click="copyMessage">
           <el-icon :size="12"><CopyDocument /></el-icon>
           <span v-if="copied">已复制</span>
         </button>
@@ -1356,6 +1356,15 @@ async function copyMessage() {
 
 .message-bubble.user .message-footer {
   justify-content: flex-end;
+}
+
+/* 触屏命中区内扩（技术方案 2026-11-07 D2）：密集操作行用实体内扩避免命中泡互相重叠；
+   仅 pointer: coarse 生效，桌面（鼠标/触控板）逐像素不变。 */
+@media (pointer: coarse) {
+  .message-footer button {
+    min-width: 32px;
+    min-height: 32px;
+  }
 }
 
 /* 操作栏图标钮统一 24px 见方圆钮（同 fork-btn / share-btn-icon）；带文字的状态

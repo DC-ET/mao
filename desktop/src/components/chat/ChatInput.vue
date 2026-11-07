@@ -150,6 +150,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, inject } from 'vue'
 import { ElMessage } from 'element-plus'
+import { shouldDeferFocusToSearchJump } from '../../composables/searchJumpFocus'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -1176,6 +1177,9 @@ async function handleSend() {
 
   emit('send', text, imageFiles, pendingUploads)
 
+  // 发送动作结束后焦点回归输入框（props.disabled 早退天然防抢焦点；Enter 场景为无害 no-op）
+  focusInput()
+
   // 不立即清空输入框，等待消息保存确认
   // 清空操作将由父组件在收到消息保存确认后调用 clearInput 方法执行
 }
@@ -1224,6 +1228,10 @@ const GIT_SUGGEST_TEXT = '用一句话介绍一下当前工作区。'
 
 function focusInput() {
   if (props.disabled) return
+  // 搜索跳转焦点交接（composables/searchJumpFocus.ts）：跳转在途或焦点停驻在搜索触发按钮上时，
+  // 目标视图「会话切换/面板挂载自动聚焦」的联动在此让位（联动与跳转后的 restoreFocus 双向竞争，
+  // tiptap focus 还会把真实聚焦推迟到 rAF）；用户主动触发的聚焦不受影响。
+  if (shouldDeferFocusToSearchJump()) return
   nextTick(() => editor.value?.commands.focus())
 }
 

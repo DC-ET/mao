@@ -1,5 +1,14 @@
 <template>
-  <div class="theme-toggle search-toggle" role="button" aria-label="搜索会话" @click="openSearch">
+  <div
+    ref="searchToggleRef"
+    class="theme-toggle search-toggle"
+    role="button"
+    aria-label="搜索会话"
+    tabindex="0"
+    @click="openSearch"
+    @keydown.enter.prevent="openSearch"
+    @keydown.space.prevent="openSearch"
+  >
     <el-icon :size="16"><Search /></el-icon>
   </div>
   <el-dialog
@@ -115,13 +124,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onUnmounted, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Close, Search } from '@element-plus/icons-vue'
 import { api, searchSessions } from '../../api'
 import type { MessageSearchGroup, MessageSearchHit } from '../../types/chat'
 import { useSessionStore, type TaskPhase } from '../../stores/session'
 import { openSideTaskTabFor } from '../../composables/useCenterTabs'
+import { beginSearchJumpFocusWindow, endSearchJumpFocusWindow, registerSearchJumpFocusTarget } from '../../composables/searchJumpFocus'
 import { highlightParts } from './search-highlight'
 
 const sessionStore = useSessionStore()
@@ -143,6 +153,8 @@ const expanded = ref(new Set<number>())
 type SearchStatus = 'idle' | 'loading' | 'empty' | 'error' | 'results'
 const status = ref<SearchStatus>('idle')
 const isOpen = ref(false)
+// 搜索触发按钮（.search-toggle）：跳转成功后焦点回归于此（技术方案 2026-11-07 D5 组件内部闭环）
+const searchToggleRef = ref<HTMLElement | null>(null)
 
 let requestSeq = 0
 let abortController: AbortController | null = null
@@ -321,30 +333,46 @@ watch(activeIndex, async () => {
   active?.scrollIntoView({ block: 'nearest' })
 })
 
+/** 跳转成功后焦点回归搜索触发按钮（Tab 从搜索入口继续，而非文档头重走）；`!rootId` 早退不经过此处。 */
+function restoreFocus() {
+  searchToggleRef.value?.focus()
+}
+
 async function handleJump(group: MessageSearchGroup, hit: MessageSearchHit) {
   isOpen.value = false
-  const locateQuery = {
-    locateMessageId: String(hit.messageId),
-    locateSessionId: String(group.sessionId),
-  }
-  if (group.sessionType === 'SIDE_TASK') {
-    const rootId = String(group.rootSessionId ?? group.parentSessionId ?? '')
-    if (!rootId) return
-    sessionStore.addSideTask(rootId, {
-      id: group.sessionId,
-      title: group.title || '任务',
-      phase: (group.phase || 'IDLE') as TaskPhase,
-    })
-    const target = `/tasks/${rootId}`
-    if (route.path === target) {
-      openSideTaskTabFor(rootId, group.sessionId, group.title || '任务')
-      await router.replace({ path: target, query: { ...route.query, ...locateQuery } })
-    } else {
-      await router.push({ path: target, query: locateQuery })
-      openSideTaskTabFor(rootId, group.sessionId, group.title || '任务')
+  // 焦点交接让位窗口（composables/searchJumpFocus.ts）：同页边路分支的联动聚焦
+  // （openSideTaskTabFor 到 await router.replace 之间运行）先于 restoreFocus，须在窗口内
+  // 拦截；finally 保证 !rootId 早退也关闭窗口。跨页路径的联动（网络往返后）由
+  // 「焦点停驻触发按钮」判定让位。
+  beginSearchJumpFocusWindow()
+  try {
+    const locateQuery = {
+      locateMessageId: String(hit.messageId),
+      locateSessionId: String(group.sessionId),
     }
-  } else {
-    await router.push({ path: `/tasks/${group.sessionId}`, query: locateQuery })
+    if (group.sessionType === 'SIDE_TASK') {
+      const rootId = String(group.rootSessionId ?? group.parentSessionId ?? '')
+      if (!rootId) return
+      sessionStore.addSideTask(rootId, {
+        id: group.sessionId,
+        title: group.title || '任务',
+        phase: (group.phase || 'IDLE') as TaskPhase,
+      })
+      const target = `/tasks/${rootId}`
+      if (route.path === target) {
+        openSideTaskTabFor(rootId, group.sessionId, group.title || '任务')
+        await router.replace({ path: target, query: { ...route.query, ...locateQuery } })
+      } else {
+        await router.push({ path: target, query: locateQuery })
+        openSideTaskTabFor(rootId, group.sessionId, group.title || '任务')
+      }
+    } else {
+      await router.push({ path: `/tasks/${group.sessionId}`, query: locateQuery })
+    }
+    // 两条分支的路由操作都成功完成才走到这里（唯一早退分支在其前）
+    restoreFocus()
+  } finally {
+    endSearchJumpFocusWindow()
   }
 }
 
@@ -370,6 +398,10 @@ function toggle() {
 }
 
 onUnmounted(() => { invalidatePending() })
+
+// 登记触发按钮供焦点交接判定（composables/searchJumpFocus.ts）；卸载时注销
+onMounted(() => { registerSearchJumpFocusTarget(searchToggleRef.value) })
+onUnmounted(() => { registerSearchJumpFocusTarget(null) })
 
 defineExpose({ toggle, open: openSearch })
 </script>
@@ -478,6 +510,20 @@ defineExpose({ toggle, open: openSearch })
   color: var(--aw-ink-muted-48);
   background: transparent;
   cursor: pointer;
+  position: relative;
+}
+
+/* 触屏命中泡 44px（照抄同文件 .search-toggle 既有模式；仅 pointer: coarse 生效） */
+@media (pointer: coarse) {
+  .session-search-dialog .search-close::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
 }
 
 .session-search-dialog .search-close:hover {
