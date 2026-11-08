@@ -92,6 +92,8 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { Folder, FolderOpened, Document, Picture, ArrowRight, ArrowDown, Link } from '@element-plus/icons-vue'
 import type { FileNode } from '../../types/file-browser'
+import { DRAG_PATHS_MIME } from '../../utils/file-manager'
+import { setWorkspaceDragPayload } from '../../utils/workspaceDrag'
 
 const props = defineProps<{
   node: FileNode
@@ -185,9 +187,9 @@ function handleClick(event: MouseEvent) {
 
 function onDragStart(event: DragEvent) {
   const paths = selected.value && (props.selectedPaths?.length ?? 0) > 1 ? props.selectedPaths! : [props.node.path]
-  event.dataTransfer?.setData('application/x-mao-paths', JSON.stringify(paths))
+  // 本组件只知道被拖节点自身的 isDirectory，其余选中路径按文件处理（D4 保守方向：误插引用可删，误吞文件则功能失效）
+  setWorkspaceDragPayload(event, paths.map((p) => ({ path: p, isDirectory: p === props.node.path && props.node.isDirectory })))
   event.dataTransfer?.setData('text/plain', props.node.path)
-  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
 }
 
 function onDragOver(event: DragEvent) {
@@ -198,7 +200,7 @@ function onDragOver(event: DragEvent) {
 
 function onDrop(event: DragEvent) {
   if (!props.canWrite || !props.node.isDirectory || props.node.isSymlink || props.node.readOnly) return
-  const raw = event.dataTransfer?.getData('application/x-mao-paths')
+  const raw = event.dataTransfer?.getData(DRAG_PATHS_MIME)
   if (raw) {
     try {
       const paths = JSON.parse(raw) as string[]

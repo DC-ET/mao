@@ -63,7 +63,8 @@
 import { nextTick, ref, watch } from 'vue'
 import { Check, Document, FolderAdd, FolderOpened, Link, Picture } from '@element-plus/icons-vue'
 import type { FileNode } from '../../types/file-browser'
-import { DRAG_PATHS_MIME, effectiveDragSources, formatSize, formatTime, iconKindOf } from '../../utils/file-manager'
+import { effectiveDragSources, formatSize, formatTime, iconKindOf } from '../../utils/file-manager'
+import { setWorkspaceDragPayload } from '../../utils/workspaceDrag'
 
 const props = defineProps<{
   entries: FileNode[]
@@ -140,8 +141,9 @@ function canDragEntry(entry: FileNode): boolean {
 function onDragstart(entry: FileNode, e: DragEvent) {
   if (!canDragEntry(entry) || !e.dataTransfer) return
   const sources = effectiveDragSources(entry.path, props.selectedPaths)
-  e.dataTransfer.setData(DRAG_PATHS_MIME, JSON.stringify(sources))
-  e.dataTransfer.effectAllowed = 'move'
+  // 起点可见列表查不到的路径按文件处理（保守方向：误插引用可删，误吞文件则功能失效）
+  const dirFlags = new Map(props.entries.map((it) => [it.path, it.isDirectory]))
+  setWorkspaceDragPayload(e, sources.map((p) => ({ path: p, isDirectory: dirFlags.get(p) ?? false })))
   emit('item-dragstart', entry, e)
 }
 

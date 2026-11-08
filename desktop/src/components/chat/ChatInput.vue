@@ -35,6 +35,8 @@
     <div
       class="textarea-area"
       :class="{ 'new-task-textarea': isNewTask && layout === 'docked', 'is-dragging-file': draggingFile }"
+      @dragover.capture="handleRefDragOver"
+      @drop.capture="handleRefDrop"
       @dragover.prevent="handleDragOver"
       @dragenter.prevent="handleDragEnter"
       @dragleave.prevent="handleDragLeave"
@@ -183,6 +185,7 @@ import { getUploadConfig } from '../../utils/storageMode'
 import { generateUUID } from '../../utils/uuid'
 import type { LocalPendingFile } from '../../utils/chatLocalAttach'
 import { MAX_PENDING_ATTACHMENTS, createPastedTextFile, nextPastedTextSeq, planPastedText } from './pasted-text-file'
+import { fileEntriesOf, hasWorkspaceDragPayload, parseWorkspaceDrag } from '../../utils/workspaceDrag'
 
 const props = withDefaults(defineProps<{
   disabled?: boolean
@@ -1141,6 +1144,28 @@ function handleDropFiles(e: DragEvent) {
       addPendingFile(file)
     }
   }
+}
+
+// ===== 工作区文件跨面板拖入（capture 先于 ProseMirror，防编辑器兜底插裸路径）=====
+
+function handleRefDragOver(e: DragEvent) {
+  if (props.disabled) return
+  // dragover 处于 protected mode 读不到载荷数据，只能查 types；目录 / 文件在此阶段无法区分
+  if (!hasWorkspaceDragPayload(e.dataTransfer)) return
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+  draggingFile.value = true // 复用既有 is-dragging-file 高亮，不新增视觉态
+}
+
+function handleRefDrop(e: DragEvent) {
+  if (props.disabled) return
+  const entries = parseWorkspaceDrag(e.dataTransfer)
+  if (entries.length === 0) return // 非 mao 载荷：放行走 OS 文件上传 / 浏览器默认
+  e.preventDefault()
+  e.stopPropagation()
+  draggingFile.value = false
+  const files = fileEntriesOf(entries) // 目录一律忽略（技术方案 D4）
+  for (const it of files) insertFileReference(it.path)
+  if (files.length > 0) saveDraft(props.draftKey) // 对齐 addReplyQuote：onUpdate 不落草稿，插完显式落一次
 }
 
 // ===== Send =====

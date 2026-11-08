@@ -31,6 +31,7 @@
         @close="closeTab"
         @close-all="closeAllFileTabs"
         @close-others="closeOtherTabs"
+        @workspace-file-drop="handleWorkspaceFileDrop"
       />
       <CenterTabContainer
         :tabs="tabs"
@@ -378,6 +379,11 @@ provide('quoteFileRangeToChat', quoteFileRangeToChat)
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
 const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, openFileManagerTab, openWorkspaceFileManagerTab, openGitTab, updateSideTaskTab, restoreSideTaskTabs, restoreSubagentTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
+
+/** 文件管理器 / 文件树拖文件到中心 Tab 栏：去重 / 激活 / version 递增由 openFileTab 内建 */
+function handleWorkspaceFileDrop(paths: string[]) {
+  for (const p of paths) openFileTab(p, p.split('/').pop() || p)
+}
 
 /** 总览页签「用于新任务」：项目目录带 cloudProjectKey（下拉/复用链路同形态），临时 / 其他目录直接预填路径 */
 function handleUseForNewTask(entry: WorkspaceOverviewEntry) {
