@@ -31,6 +31,8 @@
         @close="closeTab"
         @close-all="closeAllFileTabs"
         @close-others="closeOtherTabs"
+        @close-right="closeRightTabs"
+        @reorder="reorderTab"
         @workspace-file-drop="handleWorkspaceFileDrop"
       />
       <CenterTabContainer
@@ -379,11 +381,33 @@ provide('quoteFileRangeToChat', quoteFileRangeToChat)
 
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, openFileManagerTab, openWorkspaceFileManagerTab, openGitTab, updateSideTaskTab, restoreSideTaskTabs, restoreSubagentTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
+const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, reorderTab, closeRightTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, openFileManagerTab, openWorkspaceFileManagerTab, openGitTab, updateSideTaskTab, restoreSideTaskTabs, restoreSubagentTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
 
 /** 文件管理器 / 文件树拖文件到中心 Tab 栏：去重 / 激活 / version 递增由 openFileTab 内建；跨工作区来源按其所属根路由 */
 function handleWorkspaceFileDrop(entries: WorkspaceDragEntry[]) {
   for (const it of entries) openFileTab(it.path, it.path.split('/').pop() || it.path, it.workspaceRoot)
+}
+
+// ===== 中心页签键盘循环切换（Ctrl/Cmd+Alt+←/→）=====
+
+/** 与 TopNav.vue:307 同款 3 行：输入焦点内不触发快捷键（口径一致性由 center-tab-efficiency.test.ts 锁定） */
+function isTypingTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement
+    && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+}
+
+/** 在中心页签（含 chat）间循环切换，端点回绕；e.repeat 防长按连跳，激活 id 失效时 idx===-1 早退防取模漂移。 */
+function handleTabCycleKeydown(e: KeyboardEvent) {
+  if (e.repeat) return
+  if (!(e.ctrlKey || e.metaKey) || !e.altKey) return
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+  if (isTypingTarget(e.target)) return
+  const idx = tabs.value.findIndex(t => t.id === activeTabId.value)
+  if (idx === -1) return
+  e.preventDefault()
+  const delta = e.key === 'ArrowRight' ? 1 : -1
+  const next = (idx + delta + tabs.value.length) % tabs.value.length
+  activateTab(tabs.value[next].id)
 }
 
 /** 总览页签「用于新任务」：项目目录带 cloudProjectKey（下拉/复用链路同形态），临时 / 其他目录直接预填路径 */
@@ -1636,6 +1660,7 @@ watch(getRouteWatchState, async (state, prev) => {
 })
 
 onMounted(async () => {
+  document.addEventListener('keydown', handleTabCycleKeydown)
   // 首启向导判定：就绪数据与任务索引并行拉取，先到先渲染
   void readinessStore.fetch()
   if (!await loadTaskIndex()) return
@@ -1644,6 +1669,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   disposed = true
+  document.removeEventListener('keydown', handleTabCycleKeydown)
   window.removeEventListener('side_session_created', handleSideSessionCreated)
   window.removeEventListener('subagent_session_created', handleSubagentSessionCreated)
 })

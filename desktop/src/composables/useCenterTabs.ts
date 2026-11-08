@@ -747,6 +747,38 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     notifyTabsChanged()
   }
 
+  /**
+   * 页签重排：仅非 chat 页签（state.tabs 内 splice），同位 no-op，激活态不变。
+   * 摘除后对 targetId 重算 findIndex，消除左移 / 右移两个方向的 off-by-one。
+   */
+  function reorderTab(dragId: string, targetId: string, place: 'before' | 'after') {
+    if (dragId === targetId || dragId === 'chat' || targetId === 'chat') return
+    const state = getSessionState()
+    const from = state.tabs.findIndex(t => t.id === dragId)
+    const targetIdx = state.tabs.findIndex(t => t.id === targetId)
+    if (from === -1 || targetIdx === -1) return
+    const [moved] = state.tabs.splice(from, 1)
+    const nextTarget = state.tabs.findIndex(t => t.id === targetId) // 摘除后重算，消除左右向 off-by-one
+    state.tabs.splice(place === 'before' ? nextTarget : nextTarget + 1, 0, moved)
+    notifyTabsChanged()
+  }
+
+  /**
+   * 关闭目标页签右侧的文件类页签（跳过 side_task / subagent，与 closeOtherTabs 口径一致；
+   * 目标为 'chat' 即关闭全部非 chat——内部容错路径，chat 无右键菜单 UI 不可达）。
+   * 逐个走 closeTab，side_task 关闭标记 / 激活回退等副作用不绕过。
+   */
+  function closeRightTabs(tabId: string) {
+    const state = getSessionState()
+    const startIdx = tabId === 'chat' ? -1 : state.tabs.findIndex(t => t.id === tabId)
+    if (tabId !== 'chat' && startIdx === -1) return
+    const closing = state.tabs
+      .slice(startIdx + 1)
+      .filter(t => t.type !== 'side_task' && t.type !== 'subagent')
+      .map(t => t.id)
+    for (const id of closing) closeTab(id)
+  }
+
   // 与菜单文案「关闭其他文件」对齐：只关文件/diff Tab，保留边路任务与子代理 Tab。
   // 早期实现是 state.tabs = [当前 tab]，会连带关掉边路任务，且漏掉 closeTab 里的
   // markSideTaskClosed 记账，导致用户关掉的边路 Tab 在 restoreSideTaskTabs 时又冒出来。
@@ -792,6 +824,8 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     applyWorkspacePathChange,
     closeAllFileTabs,
     closeOtherTabs,
+    reorderTab,
+    closeRightTabs,
     activateTab,
     restoreActiveTab,
     removeSessionTabs,

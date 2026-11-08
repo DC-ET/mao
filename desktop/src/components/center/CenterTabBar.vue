@@ -3,17 +3,29 @@
     ref="barEl"
     class="center-tab-bar"
     :class="{ 'is-drag-over': barDragOver }"
-    @dragover="onBarDragOver"
+    @dragover="onBarDragOver($event), onBarReorderDragover($event)"
     @dragleave="onBarDragLeave"
-    @drop.prevent="onBarDrop"
+    @drop.prevent="onBarDrop($event), onBarReorderDrop($event)"
   >
     <div
       v-for="tab in tabs"
       :key="tab.id"
       class="tab-item"
-      :class="{ active: tab.id === activeTabId }"
+      :class="{
+        active: tab.id === activeTabId,
+        'drop-before': reorderHint?.tabId === tab.id && reorderHint?.place === 'before',
+        'drop-after': reorderHint?.tabId === tab.id && reorderHint?.place === 'after',
+      }"
+      :draggable="tab.type !== 'chat'"
       @click="$emit('activate', tab.id)"
       @contextmenu.prevent="onContextMenu($event, tab)"
+      @mousedown="onTabMousedown($event)"
+      @auxclick="onTabAuxclick($event, tab.id)"
+      @dragstart="onTabDragstart($event, tab)"
+      @dragover="onTabDragover($event, tab)"
+      @dragleave="onTabDragleave($event)"
+      @dragend="onTabDragend"
+      @drop="onTabDrop($event, tab)"
     >
       <AgentAvatar
         v-if="tab.type === 'chat' && agentIdentity.id"
@@ -62,6 +74,9 @@
         <div class="context-menu-item" @click="$emit('close-others', contextMenu.tabId!)">
           关闭其他文件
         </div>
+        <div class="context-menu-item" @click="$emit('close-right', contextMenu.tabId!)">
+          关闭右侧文件
+        </div>
       </div>
     </Teleport>
   </div>
@@ -101,6 +116,8 @@ const emit = defineEmits<{
   close: [tabId: string]
   'close-all': []
   'close-others': [tabId: string]
+  'close-right': [tabId: string]
+  reorder: [dragId: string, targetId: string, place: 'before' | 'after']
   'workspace-file-drop': [entries: WorkspaceDragEntry[]]
 }>()
 
@@ -138,13 +155,128 @@ function onBarDragOver(e: DragEvent) {
 function onBarDragLeave(e: DragEvent) {
   // tab-item 覆盖整栏，进出子元素时 dragleave 也会冒泡触发，仅在真正离开栏时才取消高亮
   const next = e.relatedTarget as Node | null
-  if (!next || !barEl.value?.contains(next)) barDragOver.value = false
+  if (!next || !barEl.value?.contains(next)) {
+    barDragOver.value = false
+    // 真离开栏根时一并清排序指示线（对工作区拖拽无副作用：hint 本就为空）
+    reorderHint.value = null
+  }
 }
 
 function onBarDrop(e: DragEvent) {
   barDragOver.value = false
   const entries = droppableEntries(e)
   if (entries.length > 0) emit('workspace-file-drop', entries)
+}
+
+// ===== 页签中键关闭与拖拽排序（私有 MIME，与工作区文件拖拽靠判型互斥）=====
+
+const TAB_REORDER_MIME = 'application/x-mao-tab-reorder'
+
+/** 拖拽中的页签 id：dragstart 写入、drop/dragend 清除。drop 阶段不依赖 getData（F9）。 */
+const draggingTabId = ref<string | null>(null)
+
+/** 插入指示线位置：命中页签 + before/after（dragover 中点判定）。 */
+const reorderHint = ref<{ tabId: string; place: 'before' | 'after' } | null>(null)
+
+function onTabMousedown(e: MouseEvent) {
+  // 中键按下即抑制浏览器默认的自动滚动指示器：默认行为在 mousedown 阶段触发，auxclick 拦不住（D1）
+  if (e.button === 1) e.preventDefault()
+}
+
+function onTabAuxclick(e: MouseEvent, tabId: string) {
+  // 中键关闭（chat 主 Tab 不可关）；× 按钮上的中键经冒泡走到这里，结果一致
+  if (e.button === 1 && tabId !== 'chat') emit('close', tabId)
+}
+
+function onTabDragstart(e: DragEvent, tab: Tab) {
+  if (tab.type === 'chat') return
+  const dt = e.dataTransfer
+  if (!dt) return
+  // 只写私有 MIME，不写 text/plain：避免拖进输入框等落点被当成纯文本粘贴
+  dt.setData(TAB_REORDER_MIME, tab.id)
+  dt.effectAllowed = 'move'
+  draggingTabId.value = tab.id
+}
+
+function onTabDragover(e: DragEvent, tab: Tab) {
+  // chat 页签不是重排落点：不 preventDefault，事件冒泡到栏根后同样不接——禁止光标、无插入线（F2）
+  if (tab.type === 'chat') return
+  // dragover 处于 protected mode 读不到数据只能查 types；非本方案 MIME（工作区文件拖拽）不拦截，照常冒泡
+  const dt = e.dataTransfer
+  if (!dt || !dt.types.includes(TAB_REORDER_MIME)) return
+  e.preventDefault()
+  dt.dropEffect = 'move'
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  const place: 'before' | 'after' = e.clientX < rect.left + rect.width / 2 ? 'before' : 'after'
+  reorderHint.value = { tabId: tab.id, place }
+}
+
+function onTabDragleave(e: DragEvent) {
+  // 同一页签内部子元素间移动不算离开；真离开当前页签才清指示线（目标页签的 dragover 会立即重设）
+  const next = e.relatedTarget as Node | null
+  const item = e.currentTarget as HTMLElement | null
+  if (next && item?.contains(next)) return
+  reorderHint.value = null
+}
+
+function onTabDragend() {
+  // 拖拽取消 / 在无效落点松手的兜底复位（与 dragleave 双路，D5）
+  draggingTabId.value = null
+  reorderHint.value = null
+}
+
+function onTabDrop(e: DragEvent, tab: Tab) {
+  if (tab.type === 'chat') return
+  // 非 reorder MIME（工作区文件拖入）：不拦截、不 preventDefault，事件照常冒泡到栏根走 0.0.476 既有链路。
+  // 裸绑定（无 .stop/.prevent 修饰符）的意义所在：修饰符在 handler 体之前无条件执行，会切断冒泡（F1）。
+  const dt = e.dataTransfer
+  if (!dt || !dt.types.includes(TAB_REORDER_MIME)) return
+  // 判型通过才命令式拦截：页签上的 drop 不再冒泡，避免栏根第二落点重复 emit
+  e.preventDefault()
+  e.stopPropagation()
+  const dragId = draggingTabId.value
+  if (dragId) {
+    const place = reorderHint.value?.tabId === tab.id ? reorderHint.value.place : 'after'
+    emit('reorder', dragId, tab.id, place)
+  }
+  draggingTabId.value = null
+  reorderHint.value = null
+}
+
+/** 末位非 chat 页签 id（栏根「移到最后」落点的插入锚点）；只剩 chat 时返回 null。 */
+function lastNonChatTabId(): string | null {
+  for (let i = props.tabs.length - 1; i >= 0; i--) {
+    if (props.tabs[i].type !== 'chat') return props.tabs[i].id
+  }
+  return null
+}
+
+function onBarReorderDragover(e: DragEvent) {
+  // 栏根第二落点（F8「移到最后」）：只认 reorder MIME，工作区文件拖拽由 onBarDragOver 处理
+  const dt = e.dataTransfer
+  if (!dt || !dt.types.includes(TAB_REORDER_MIME)) return
+  // 指针在某页签上时由 tab-item 级 handler 负责（chat 在其内早退、保持禁止光标），栏根不接管——
+  // 否则冒泡上来的 dragover 会把页签级指示线覆盖成「末位 after」
+  if ((e.target as HTMLElement | null)?.closest?.('.tab-item')) return
+  const lastId = lastNonChatTabId()
+  if (!lastId) return
+  e.preventDefault()
+  dt.dropEffect = 'move'
+  reorderHint.value = { tabId: lastId, place: 'after' }
+}
+
+function onBarReorderDrop(e: DragEvent) {
+  const dt = e.dataTransfer
+  if (!dt || !dt.types.includes(TAB_REORDER_MIME)) return
+  // 页签上的 drop 由 onTabDrop 处理（chat 早退后不在此兜底，保持「chat 不可落」口径）
+  if ((e.target as HTMLElement | null)?.closest?.('.tab-item')) return
+  const lastId = lastNonChatTabId()
+  if (!lastId) return
+  const dragId = draggingTabId.value
+  if (dragId) emit('reorder', dragId, lastId, 'after')
+  draggingTabId.value = null
+  reorderHint.value = null
+  // preventDefault 已由相邻的 @drop.prevent="onBarDrop" 覆盖
 }
 
 /** 拖拽在别处松手 / Esc 取消时栏上不再收到任何事件，全局 dragend 兜底清高亮（防 is-drag-over 卡死） */
@@ -257,6 +389,28 @@ onUnmounted(() => {
   right: 0;
   height: 2px;
   background: var(--aw-primary);
+}
+
+/* 页签重排插入指示线（仅 reorder MIME 拖拽期间渲染；drop-after 与 active 下划线同用 ::after，
+   需显式复位 left/height，否则激活页签上的插入线被 under-constrain 到左上角） */
+.tab-item.drop-before::before,
+.tab-item.drop-after::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: var(--aw-primary, #409eff);
+}
+
+.tab-item.drop-before::before {
+  left: -1px;
+}
+
+.tab-item.drop-after::after {
+  left: auto;
+  height: auto;
+  right: -1px;
 }
 
 .tab-icon {
