@@ -36,12 +36,19 @@
           </svg>
         </div>
       </el-tooltip>
-      <el-tooltip content="命令面板 (Ctrl/Cmd+Shift+P)" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
-        <div class="theme-toggle palette-toggle" role="button" aria-label="命令面板" @click="commandPaletteRef?.toggle()">
-          <el-icon :size="16"><MagicStick /></el-icon>
-        </div>
-      </el-tooltip>
-      <CommandPalette ref="commandPaletteRef" :host="commandHost" />
+        <!--
+          命令面板入口图标暂时隐藏（功能打磨中，暂不面向用户开放）。
+          恢复：放回下方注释掉的 el-tooltip 块，并在 script 的 import 里补回 MagicStick。
+          注意：命令面板本体与 Ctrl/Cmd+Shift+P 快捷键始终保留，勿删 <CommandPalette>。
+        -->
+        <!--
+        <el-tooltip content="命令面板 (Ctrl/Cmd+Shift+P)" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
+          <div class="theme-toggle palette-toggle" role="button" aria-label="命令面板" @click="commandPaletteRef?.toggle()">
+            <el-icon :size="16"><MagicStick /></el-icon>
+          </div>
+        </el-tooltip>
+        -->
+        <CommandPalette ref="commandPaletteRef" :host="commandHost" />
       <SessionSearchPopover ref="searchPopoverRef" />
       <UsageBell />
       <el-tooltip v-if="!isSettingsRoute" content="我的指令" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
@@ -134,7 +141,7 @@
     <ShortcutHelpDialog ref="shortcutHelpRef" />
   </nav>
 </template><script setup lang="ts">
-import { ArrowLeft, ChatLineSquare, MagicStick, Reading, Refresh, Setting, SwitchButton, User } from '@element-plus/icons-vue'
+import { ArrowLeft, ChatLineSquare, Reading, Refresh, Setting, SwitchButton, User } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
