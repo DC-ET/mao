@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FeishuCardProgressListener, countCompletedAgentRounds } from './card-progress-listener.js';
 
 describe('FeishuCardProgressListener', () => {
@@ -269,6 +269,173 @@ describe('FeishuCardProgressListener', () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(updates[0]).toEqual({ content: '正在思考…', tools: [] });
     expect(updates[1]).toEqual({ content: '', tools: ['shell：`pwd`（执行中）'] });
+  });
+});
+
+describe('FeishuCardProgressListener 在途工具耗时', () => {
+  /**
+   * 假定时器 + 手动时钟双轨：interval 由 advanceTimersByTimeAsync 驱动，
+   * 耗时由 clock 变量驱动，二者互不依赖——推一拍、拨一次表，断言完全确定。
+   */
+  function makeListener(tickMs: number) {
+    let clock = 1_000_000;
+    const updates: Array<{ status: string; round: number; content: string; tools: string[] }> = [];
+    const listener = new FeishuCardProgressListener(
+      { update: async (status, round, content, tools) => { updates.push({ status, round, content, tools }); } },
+      0, tickMs, () => clock,
+    );
+    return { listener, updates, advanceClock: (ms: number) => { clock += ms; } };
+  }
+
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('工具在跑时按 tick 间隔重推带耗时的卡片，亚秒事件推送不带后缀', async () => {
+    const { listener, updates, advanceClock } = makeListener(20);
+    vi.useFakeTimers();
+    listener.onRoundStart(1);
+    listener.onToolCallStart({ id: 'sh', function: { name: 'shell', arguments: '{"command":"npm test"}' } });
+    await vi.advanceTimersByTimeAsync(0);
+    // 工具刚开始的事件推送：elapsed 0 < 1s，不显示（与桌面端 0.0.465 口径一致）
+    expect(updates[updates.length - 1].tools).toEqual(['shell：`npm test`（执行中）']);
+    advanceClock(3000);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(updates[updates.length - 1].tools).toEqual(['shell：`npm test`（执行中 · 3 秒）']);
+    advanceClock(3000);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(updates[updates.length - 1].tools).toEqual(['shell：`npm test`（执行中 · 6 秒）']);
+  });
+
+  it('并行工具各自计时', async () => {
+    const { listener, updates, advanceClock } = makeListener(20);
+    vi.useFakeTimers();
+    listener.onRoundStart(1);
+    listener.onToolCallStart({ id: 'a', function: { name: 'shell', arguments: '{"command":"slow"}' } });
+    advanceClock(3000);
+    listener.onToolCallStart({ id: 'b', function: { name: 'read_file', arguments: '{}' } });
+    await vi.advanceTimersByTimeAsync(0);
+    // b 刚起表（亚秒不显示），a 已跑 3 秒
+    expect(updates[updates.length - 1].tools).toEqual([
+      'shell：`slow`（执行中 · 3 秒）',
+      'read_file：执行中…',
+    ]);
+    advanceClock(3000);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(updates[updates.length - 1].tools).toEqual([
+      'shell：`slow`（执行中 · 6 秒）',
+      'read_file：执行中…（3 秒）',
+    ]);
+  });
+
+  it('工具结束后停止周期刷新，时间推进不再产生推送且摘要行不带耗时', async () => {
+    const { listener, updates, advanceClock } = makeListener(20);
+    vi.useFakeTimers();
+    listener.onRoundStart(1);
+    listener.onToolCallStart({ id: 'sh', function: { name: 'shell', arguments: '{"command":"pwd"}' } });
+    await vi.advanceTimersByTimeAsync(20);
+    const countAfterTick = updates.length;
+    listener.onToolCallResult('sh', '{"exit_code":0,"output":"/tmp"}');
+    listener.onRoundEnd(1);
+    advanceClock(60_000);
+    await vi.advanceTimersByTimeAsync(100); // 多拍
+    // 只有轮末一次推送；摘要行不带耗时（耗时是执行中专属语义）
+    expect(updates.length).toBe(countAfterTick + 1);
+    expect(updates[updates.length - 1]).toMatchObject({ status: 'RUNNING', tools: ['shell：执行 pwd'] });
+  });
+
+  it('complete 与 cancel 后不再有周期推送', async () => {
+    for (const finish of ['complete', 'cancel'] as const) {
+      const { listener, updates, advanceClock } = makeListener(20);
+      vi.useFakeTimers();
+      listener.onRoundStart(1);
+      listener.onToolCallStart({ id: 'sh', function: { name: 'shell', arguments: '{"command":"pwd"}' } });
+      await vi.advanceTimersByTimeAsync(20);
+      const count = updates.length;
+      if (finish === 'complete') await listener.complete('done');
+      else await listener.cancel();
+      advanceClock(30_000);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(updates.length).toBe(count + 1);
+      expect(updates[updates.length - 1].status).toBe(finish === 'complete' ? 'COMPLETED' : 'CANCELLED');
+    }
+  });
+
+  it('fail 终态卡不展示执行中耗时，之后时间推进无推送', async () => {
+    const { listener, updates, advanceClock } = makeListener(20);
+    vi.useFakeTimers();
+    listener.onRoundStart(1);
+    listener.onToolCallStart({ id: 'sh', function: { name: 'shell', arguments: '{"command":"npm test"}' } });
+    await vi.advanceTimersByTimeAsync(0);
+    advanceClock(10_000); // 工具已跑 10 秒才失败
+    await listener.fail('炸了');
+    const countAtFail = updates.length;
+    advanceClock(30_000);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(updates.length).toBe(countAtFail);
+    expect(updates[countAtFail - 1]).toMatchObject({ status: 'FAILED', tools: ['shell：`npm test`（执行中）'] });
+  });
+
+  it('onError 置终局标志，之后时间推进无推送', async () => {
+    const { listener, updates, advanceClock } = makeListener(20);
+    vi.useFakeTimers();
+    listener.onRoundStart(1);
+    listener.onToolCallStart({ id: 'sh', function: { name: 'shell', arguments: '{"command":"pwd"}' } });
+    await vi.advanceTimersByTimeAsync(20);
+    const count = updates.length;
+    listener.onError(new Error('boom'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(updates[count]).toMatchObject({ status: 'FAILED' });
+    advanceClock(30_000);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(updates.length).toBe(count + 1);
+  });
+
+  it('无工具运行时不挂定时器，推进时间无额外推送', async () => {
+    const { listener, updates } = makeListener(20);
+    vi.useFakeTimers();
+    listener.onRoundStart(1);
+    listener.onContentDelta('思考中');
+    await vi.advanceTimersByTimeAsync(200);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].tools).toEqual([]);
+  });
+
+  it('结果先于开始到达的乱序兜底不产生推送，也不让 ticker 复活', async () => {
+    const { listener, updates, advanceClock } = makeListener(20);
+    vi.useFakeTimers();
+    listener.onRoundStart(1);
+    listener.onToolCallStart({ id: 'a', function: { name: 'shell', arguments: '{"command":"pwd"}' } });
+    await vi.advanceTimersByTimeAsync(20);
+    const count = updates.length;
+    // 未知 id 的结果先到：乱序兜底 entry 无起表时刻；随后 a 结束 → 最后一个在途结束，停 tick
+    listener.onToolCallResult('ghost', '幽灵结果');
+    listener.onToolCallResult('a', '{"exit_code":0,"output":"/tmp"}');
+    advanceClock(30_000);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(updates.length).toBe(count);
+  });
+
+  it('tickMs=0 关闭周期刷新（仅事件推送）', async () => {
+    const { listener, updates, advanceClock } = makeListener(0);
+    vi.useFakeTimers();
+    listener.onRoundStart(1);
+    listener.onToolCallStart({ id: 'sh', function: { name: 'shell', arguments: '{"command":"pwd"}' } });
+    advanceClock(60_000);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(updates).toHaveLength(2); // 轮首 + 工具开始，无 tick 推送
+  });
+
+  it('更新失败不影响后续 tick（safeUpdate 吞错，串行链继续）', async () => {
+    let calls = 0;
+    const listener = new FeishuCardProgressListener(
+      { update: async () => { calls++; throw new Error('offline'); } },
+      0, 20, () => 1_000_000,
+    );
+    vi.useFakeTimers();
+    listener.onRoundStart(1);
+    listener.onToolCallStart({ id: 'sh', function: { name: 'shell', arguments: '{"command":"pwd"}' } });
+    await vi.advanceTimersByTimeAsync(80); // 4 拍
+    // 轮首 1 + 工具开始 1 + tick 多次：失败不断链
+    expect(calls).toBeGreaterThanOrEqual(5);
   });
 });
 

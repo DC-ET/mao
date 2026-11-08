@@ -167,9 +167,9 @@ export function assembleLifecycle(deps: LifecycleDeps): LifecycleResult {
     subagentCoordinator,
     async (sessionId: number) => {
       const dingtalkRecovered = await d.dingtalk.recoverProgress(sessionId);
-      if (dingtalkRecovered != null) return new FeishuCardProgressListener(dingtalkRecovered.progress, dingtalkRecovered.roundOffset);
+      if (dingtalkRecovered != null) return new FeishuCardProgressListener(dingtalkRecovered.progress, dingtalkRecovered.roundOffset, cfg.feishu.bot.cardToolTickMs);
       const recovered = await d.createFeishuRecoveryProgress(sessionId);
-      return recovered == null ? null : new FeishuCardProgressListener(recovered.progress, recovered.roundOffset);
+      return recovered == null ? null : new FeishuCardProgressListener(recovered.progress, recovered.roundOffset, cfg.feishu.bot.cardToolTickMs);
     },
     (sessionId: number) => d.agentLoop.getCancelFlag(sessionId) != null,
     cfg.server.port,

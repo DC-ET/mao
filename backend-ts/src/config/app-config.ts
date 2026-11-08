@@ -34,6 +34,8 @@ export interface FeishuBotConfig {
   file: { maxInboundFileMb: number };
   /** 入站防抖合并窗口（ms）：同账号+会话(+话题)+发送者的连续文本消息合并为一次触发；0=禁用。 */
   mergeWindowMs: number;
+  /** 进度卡在途工具耗时刷新间隔（ms）：有工具在跑时按此间隔重推卡片；0=关闭周期刷新（仅事件推送）。 */
+  cardToolTickMs: number;
 }
 
 /** 用户运行时容器隔离配置（技术方案 §5.12）。mode=docker 时执行类工具进每用户容器。 */
@@ -240,6 +242,7 @@ const DEFAULTS: AppConfig = {
       reply: { maxLength: 2000 },
       file: { maxInboundFileMb: 100 },
       mergeWindowMs: 1000,
+      cardToolTickMs: 3000,
     },
   },
   app: {
@@ -513,6 +516,7 @@ function coerceTypes(cfg: AppConfig): AppConfig {
   cfg.feishu.bot.reply.maxLength = n(process.env.FEISHU_BOT_REPLY_MAX_LENGTH ?? cfg.feishu.bot.reply.maxLength, 2000);
   cfg.feishu.bot.file.maxInboundFileMb = n(process.env.FEISHU_BOT_MAX_INBOUND_FILE_MB ?? cfg.feishu.bot.file.maxInboundFileMb, 100);
   cfg.feishu.bot.mergeWindowMs = n(process.env.FEISHU_BOT_MERGE_WINDOW_MS ?? cfg.feishu.bot.mergeWindowMs, 1000);
+  cfg.feishu.bot.cardToolTickMs = n(process.env.FEISHU_CARD_TOOL_TICK_MS ?? cfg.feishu.bot.cardToolTickMs, 3000);
   cfg.weixin.bot.mergeWindowMs = n(process.env.WEIXIN_BOT_MERGE_WINDOW_MS ?? cfg.weixin.bot.mergeWindowMs, 1000);
   cfg.jwt.expiration = n(cfg.jwt.expiration, 86400000);
   cfg.jwt.refreshExpiration = n(cfg.jwt.refreshExpiration, 604800000);

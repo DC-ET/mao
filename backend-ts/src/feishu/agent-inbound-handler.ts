@@ -221,6 +221,8 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     titleGenerator?: FeishuTitleGenerator;
     /** 文本回复发送：成功返回飞书 message_id（供出站映射），失败返回 null（内部可抛错，由 reply 统一容错）。 */
     onReply?: (context: FeishuInboundContext, text: string, sessionId?: number) => Promise<string | null>;
+    /** 进度卡在途工具耗时刷新间隔（ms）；缺省用监听器默认值（与 app-config feishu.bot.cardToolTickMs 对齐）。 */
+    cardToolTickMs?: number;
   }) {}
 
   authorizeDirectMessage(): boolean { return true; }
@@ -321,7 +323,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       } catch {
         roundOffset = 0;
       }
-      cardListener = new FeishuCardProgressListener(progress, roundOffset);
+      cardListener = new FeishuCardProgressListener(progress, roundOffset, this.options.cardToolTickMs);
       // 立刻把原失败卡刷成执行中，避免用户点击后卡片仍停留在失败态。
       try {
         await progress.update('RUNNING', roundOffset, '正在重试，请稍候…', []);
@@ -747,7 +749,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     try {
       try {
         const progress = await this.options.createProgressCard?.(context, sessionId) ?? null;
-        if (progress != null) cardListener = new FeishuCardProgressListener(progress);
+        if (progress != null) cardListener = new FeishuCardProgressListener(progress, 0, this.options.cardToolTickMs);
       } catch (error) {
         console.warn(`飞书进度卡片创建失败，继续执行 Agent: ${error instanceof Error ? error.message : String(error)}`);
       }

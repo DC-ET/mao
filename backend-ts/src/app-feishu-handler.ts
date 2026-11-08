@@ -129,6 +129,7 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
   const persistCancelledIfActive = createPersistCancelledHelper({ sessionService: d.sessionService, taskTerminal: d.taskTerminal, feishuProgressCardRepo });
   const feishuInboundHandler = new AgentFeishuInboundHandler({
     registry: d.wsRegistry,
+    cardToolTickMs: cfg.feishu.bot.cardToolTickMs,
     // 跨通道队列接力（0.0.434）：WS 侧执行占用时让行；飞书队列排空后消费平台排队消息。
     isSessionExecuting: (sessionId: number) => d.wsHandler?.hasExecutionClaim(sessionId) === true,
     onQueuesDrained: createPlatformQueueRelay({ sessionService: d.sessionService, wsHandler: d.wsHandler }),
