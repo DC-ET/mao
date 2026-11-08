@@ -34,7 +34,10 @@
 
 ## 已立项
 
-当前没有。评审通过后把行从「待评审」移到这里，列与「已落地」相同：提案、批次、说明。
+| 提案 | 批次 | 说明 |
+|---|---|---|
+| [全局命令面板](2026-11-07-command-palette.md) | 24 | 技术方案：[docs/plan/2026-11-07-command-palette-technical-design.md](../plan/2026-11-07-command-palette-technical-design.md) |
+| [工作区文件拖进聊天](2026-11-07-workspace-drag-into-chat.md) | 24 | 技术方案：[docs/plan/2026-11-07-workspace-drag-into-chat-technical-design.md](../plan/2026-11-07-workspace-drag-into-chat-technical-design.md) |
 
 ## 已落地
 
@@ -62,7 +65,7 @@
 | [每日运营摘要](2026-10-12-daily-digest.md) | 7 | 0.0.281 |
 | [邮件通知渠道](2026-10-19-email-notification.md) | 9 | 出站通知第三渠道；入站邮件不做 |
 | [自定义 HTTP 工具](2026-10-19-custom-http-tools.md) | 9 | 目录分节 + 按需取 schema，不进 `tools` 数组 |
-| [运行轨迹深度下钻](2026-10-22-run-trace-deep-dive.md) | 10 | P1（0.0.336 / 0.0.337）与请求构成已上线。轨迹内搜索、拖选聚焦未做 |
+| [运行轨迹深度下钻](2026-10-22-run-trace-deep-dive.md) | 10 | P1（0.0.336 / 0.0.337）与请求构成已上线。轨迹内搜索、拖选聚焦未做，余项已否决（批次 24） |
 | [首次成功体验](2026-10-25-first-run-onboarding.md) | 15 | 0.0.347 |
 | [回复渲染完整度](2026-10-25-message-rendering.md) | 16 | 0.0.350。Mermaid / KaTeX / 表格 |
 | [会话列表与长会话导航](2026-10-25-session-list-navigation.md) | 16 | 0.0.351。收藏与置顶已移除 |
@@ -126,6 +129,7 @@
 | [失败任务重跑](2026-11-04-failed-task-retry-with-context-reuse.md) | 21 | 不做从失败轮续跑 |
 | [子代理增量同步与半成品回拷](2026-11-04-subagent-incremental-file-sync.md) | 21 | 不做子代理运行中的文件增量回拷 |
 | [分享一览与来源徽标](2026-11-04-session-share-management-and-source-badge.md) | 22 | 不做「我的分享」抽屉与任务列表来源徽标 |
+| [运行轨迹深钻二阶段](2026-11-07-run-trace-search-drag-select.md) | 24 | 轨迹使用频率低，暂无需求；批次 10 余项就此收口 |
 
 ## 产品边界
 
@@ -164,3 +168,4 @@
 | 21 | 2026-11-04 | 审批收件箱、失败重跑、子代理增量同步 |
 | 22 | 2026-11-04 | 失败原因、分享一览、哨兵值对比 |
 | 23 | 2026-11-06 | 工具卡片、静默失败、键盘与焦点 |
+| 24 | 2026-11-07 | 命令面板、跨面板拖拽、轨迹深钻二阶段 |
