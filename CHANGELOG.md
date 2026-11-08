@@ -1,3 +1,8 @@
+## 0.0.474 (2026-11-08)
+
+### 后端
+- **修复 Docker 模式会话内 CLI 全部断链（0.0.473 回归）**：0.0.473 把技能视图按 (user, agent) 物化到 `skill-views/{u}/{a}/{skill}`、容器挂载收窄为 `{u}/{a}` 后，`deps/{u}/npm` 里更早安装的 npm 全局 CLI 软链仍相对指向历史路径 `skill-views/{u}/{skill}`，而容器内该路径不存在——`dama-cli` / `access-cli` / `xxl-job` / `bigdata-cli` / `lark-cli` / `sls` / `apollo-cli` 等全部 `command -v` 失败，脚本报 `FileNotFoundError`（宿主机旧副本残留掩盖了该问题，仅在容器内复现）。现由 `runtime-agent` 在容器启动时于用户视图根为当前 Agent 的每个技能补 `{skillName} -> {a}/{skillName}` 相对软链（仅补缺失、不覆盖既有条目、幂等、失败仅告警），恢复历史软链解析；存量容器在下一次按代码漂移自动重建后生效。
+
 ## 0.0.473 (2026-11-07)
 
 ### 后端

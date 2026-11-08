@@ -1,5 +1,5 @@
 import { connect, type Socket } from 'node:net';
-import { existsSync, lstatSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -410,6 +410,50 @@ export function alignPasswdHome(passwdPath: string, home: string): boolean {
   return changed;
 }
 
+/**
+ * 技能视图兼容链接（2026-11-08 回归修复）：0.0.473 起视图按 (user, agent) 物化到
+ * {skillViewsDir}/{userId}/{agentId}/{skillName}，容器只 ro 挂载该 (user, agent) 目录；
+ * 但 deps/{u}/npm 里更早安装的 npm 全局 CLI 软链仍相对指向历史路径
+ * {skillViewsDir}/{userId}/{skillName}（npm install 的 realpath 固化），在容器内解析不到
+ * （宿主机旧副本掩盖了该问题），导致会话内 dama-cli / access-cli / xxl-job 等全部断链。
+ *
+ * 容器启动时在用户视图根为当前 agent 的每个技能补 {skillName} -> {agentId}/{skillName}
+ * 相对软链：仅补缺失、已存在条目一律不覆盖（旧副本 / 其它 agent 已建链接不动），
+ * 不动 deps 与会话链接。每次容器启动重做，容器重建后自动生效；失败仅告警不阻塞。
+ * 返回新建链接数。
+ */
+export function prepareSkillViewCompatLinks(skillViewsDir: string): number {
+  const agentViewRoot = path.resolve(skillViewsDir);
+  const agentDir = path.basename(agentViewRoot);
+  const userViewRoot = path.dirname(agentViewRoot);
+  // 只处理形如 .../{userId}/{agentId} 的视图根，避免对任意目录误建条目
+  if (!/^\d+$/.test(agentDir) || !/^\d+$/.test(path.basename(userViewRoot))) {
+    return 0;
+  }
+  let names: string[];
+  try {
+    names = readdirSync(agentViewRoot);
+  } catch {
+    return 0; // 视图未挂载 / 不存在：无事可做
+  }
+  let created = 0;
+  for (const name of names) {
+    if (name.startsWith('.')) continue;
+    const viewStat = lstatSync(path.join(agentViewRoot, name), { throwIfNoEntry: false });
+    if (viewStat == null || !viewStat.isDirectory()) continue; // 只补技能目录
+    const linkPath = path.join(userViewRoot, name);
+    // lstat：已存在条目（旧副本残留、其它 agent 已建链接等）一律不覆盖
+    if (lstatSync(linkPath, { throwIfNoEntry: false }) != null) continue;
+    try {
+      symlinkSync(path.join(agentDir, name), linkPath);
+      created += 1;
+    } catch (e) {
+      console.warn(`[runtime-agent] skill-view compat link failed for ${name}: ${(e as Error).message}`);
+    }
+  }
+  return created;
+}
+
 // 仅作为容器入口脚本直接执行时运行；被 import（宿主机单测驱动）时不自动启动
 function isMainModule(): boolean {
   const entry = process.argv[1];
@@ -453,6 +497,17 @@ if (isMainModule()) {
     } catch (e) {
       console.error('[runtime-agent] align /etc/passwd failed (non-fatal):', (e as Error).message);
     }
+  }
+  // 技能视图兼容链接（2026-11-08 回归修复）：恢复 0.0.473 前安装的 npm 全局 CLI 对历史
+  // 路径 {skillViewsDir}/{userId}/{skillName} 的解析（deps 软链未随 (user, agent) 视图迁移）。
+  // 失败仅告警，不阻塞 agent 启动。
+  try {
+    const created = prepareSkillViewCompatLinks(resolveRoots().skillViewsDir);
+    if (created > 0) {
+      console.log(`[runtime-agent] skill-view compat links restored: ${created}`);
+    }
+  } catch (e) {
+    console.error('[runtime-agent] prepare skill-view compat links failed (non-fatal):', (e as Error).message);
   }
   const agent = new RuntimeAgent(socketPath, token, userId);
   void agent.run().catch((e) => {
