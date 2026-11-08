@@ -134,6 +134,7 @@
             :cite-map="citeMap"
             :streaming="isAssistantRunning"
             body-class="assistant-text markdown-body"
+            code-block-enhance
           />
           <ToolCallGroup
             v-else-if="seg.type === 'tool-group' && seg.toolCalls"
@@ -151,6 +152,7 @@
           :cite-map="citeMap"
           :streaming="isAssistantRunning"
           body-class="assistant-text markdown-body"
+          code-block-enhance
         />
         <div v-if="visibleToolCalls.length > 0" class="tool-calls">
           <ToolCallGroup :tool-calls="visibleToolCalls" :hide-process="hideSubagentProcess" />
@@ -1110,6 +1112,81 @@ async function copyMessage() {
 .markdown-body :deep(.code-copy-btn:hover) {
   color: var(--aw-ink);
   border-color: var(--aw-ink-muted-48);
+}
+
+/* 消息代码块折叠 / 换行增强（utils/codeBlockCollapse，仅消息宿主渲染产物带状态 class）。
+   裁剪层在 code.monaco-code：横向滚动今天由它的 overflow-x 承担，折叠态加 max-height +
+   overflow hidden 恰好同时压掉横向滚条；不能放 pre 层（会连块头一起裁掉）（D9）。
+   折叠高度 = 行高 20px × 首屏 8 行 + code 上下 padding 12px（全局 border-box 下 max-height 含 padding）。 */
+.markdown-body :deep(pre.code-block.code-collapse-collapsed > code.monaco-code) {
+  max-height: calc(8 * 20px + 2 * 12px);
+  overflow: hidden;
+}
+
+.markdown-body :deep(pre.code-block.code-collapse-collapsed) {
+  position: relative;
+}
+
+/* 渐隐遮罩：底色必须用代码块真实底色 --aw-surface-code（code.monaco-code 背景同源），
+   不是页面底色 --aw-surface，用错会出现明显色带；pointer-events none 不拦截划选复制 */
+.markdown-body :deep(pre.code-block.code-collapse-collapsed)::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3em;
+  background: linear-gradient(transparent, var(--aw-surface-code));
+  pointer-events: none;
+}
+
+.markdown-body :deep(pre.code-block.code-wrap-on code.monaco-code) {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* 长块块头布局：语言 + 徽标靠左，复制 / 换行 / 展开靠右——auto margin 吸收全部自由空间，
+   只作用于增强块（.code-enhanced），≤30 行短块的两控件 space-between 布局逐字节不变 */
+.markdown-body :deep(pre.code-block.code-enhanced .code-copy-btn) {
+  margin-left: auto;
+}
+
+.markdown-body :deep(.code-lines-badge) {
+  flex: none;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border: 1px solid var(--aw-hairline);
+  border-radius: 999px;
+  color: var(--aw-ink-muted-48);
+  font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-fine);
+  white-space: nowrap;
+}
+
+.markdown-body :deep(.code-toggle-btn),
+.markdown-body :deep(.code-wrap-btn) {
+  flex: none;
+  margin-left: 6px;
+  height: var(--aw-btn-height);
+  background: none;
+  border: 1px solid var(--aw-hairline);
+  color: var(--aw-ink-muted-48);
+  padding: var(--aw-btn-padding);
+  border-radius: var(--aw-radius-xs);
+  cursor: pointer;
+  font-size: var(--aw-text-fine);
+  transition: all 0.15s;
+}
+
+.markdown-body :deep(.code-toggle-btn:hover),
+.markdown-body :deep(.code-wrap-btn:hover) {
+  color: var(--aw-ink);
+  border-color: var(--aw-ink-muted-48);
+}
+
+.markdown-body :deep(.code-wrap-btn.active) {
+  color: var(--aw-primary);
+  border-color: var(--aw-primary);
 }
 
 .markdown-body :deep(code) {

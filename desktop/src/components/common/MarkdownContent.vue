@@ -6,6 +6,7 @@
 import { ref, watch, nextTick } from 'vue'
 import { renderMarkdown } from '../../composables/useMarkdown'
 import { insertMermaidDiagrams } from '../../utils/mermaid-renderer'
+import { enhanceCodeBlocks, ensureCodeBlockDelegation } from '../../utils/codeBlockCollapse'
 import { useTheme } from '../../utils/theme'
 
 const props = withDefaults(defineProps<{
@@ -15,8 +16,12 @@ const props = withDefaults(defineProps<{
   citeMap?: Record<number, number>
   /** 流式进行中：跳过 Mermaid 图渲染（占位保持代码块形态），流结束后渲染一次（技术方案 C2/C6） */
   streaming?: boolean
+  /** 消息宿主专用：渲染完成后增强代码块（>30 行折叠 / 换行开关，utils/codeBlockCollapse）。
+   *  缺省 false——trace / 文件预览 / 技能页等其它宿主渲染产物逐字节不变（技术方案 D6） */
+  codeBlockEnhance?: boolean
 }>(), {
   bodyClass: 'markdown-body',
+  codeBlockEnhance: false,
 })
 
 const { isDark } = useTheme()
@@ -42,6 +47,12 @@ watch(
       // 过期占位由 mermaid-renderer 的 isConnected/源码校验丢弃（C4）。
       if (!streaming && root.value) {
         insertMermaidDiagrams(root.value)
+        // 消息宿主代码块增强（折叠 / 换行）：与 Mermaid 同位挂 !streaming 分支（D7），
+        // 过期帧在代际守卫处已 return，不会走到这里
+        if (props.codeBlockEnhance) {
+          enhanceCodeBlocks(root.value)
+          ensureCodeBlockDelegation()
+        }
       }
     })
   },
