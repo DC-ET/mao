@@ -53,6 +53,18 @@ describe('setWorkspaceDragPayload（单一写入点）', () => {
     expect(dt.effectAllowed).toBe('copyMove')
   })
 
+  it('workspaceRoot 随 entries 序列化；undefined 字段在 JSON 中省略（JSON.stringify 语义）', () => {
+    const dt = makeDataTransfer() as unknown as DataTransfer
+    setWorkspaceDragPayload({ dataTransfer: dt } as unknown as DragEvent, [
+      { path: 'a.txt', isDirectory: false, workspaceRoot: '/other/root' },
+      { path: 'b.txt', isDirectory: false, workspaceRoot: undefined },
+    ])
+    expect(JSON.parse(dt.getData(WORKSPACE_ENTRIES_MIME))).toEqual([
+      { path: 'a.txt', isDirectory: false, workspaceRoot: '/other/root' },
+      { path: 'b.txt', isDirectory: false },
+    ])
+  })
+
   it('dataTransfer 缺失时静默返回，不抛错', () => {
     expect(() => setWorkspaceDragPayload({ dataTransfer: null } as unknown as DragEvent, [])).not.toThrow()
   })
@@ -112,6 +124,21 @@ describe('parseWorkspaceDrag（落点统一入口）', () => {
     expect(parseWorkspaceDrag(dt)).toEqual([
       { path: 'ok.txt', isDirectory: false },
       { path: 'dir-ok', isDirectory: true },
+    ])
+  })
+
+  it('形状校验：workspaceRoot 可选但必须非空字符串，为空串 / 非字符串整条剔除', () => {
+    const dt = makeDataTransfer({
+      [WORKSPACE_ENTRIES_MIME]: JSON.stringify([
+        { path: 'rooted.txt', isDirectory: false, workspaceRoot: '/other/root' },
+        { path: 'empty-root.txt', isDirectory: false, workspaceRoot: '' },
+        { path: 'num-root.txt', isDirectory: false, workspaceRoot: 42 },
+        { path: 'plain.txt', isDirectory: false },
+      ]),
+    }) as unknown as DataTransfer
+    expect(parseWorkspaceDrag(dt)).toEqual([
+      { path: 'rooted.txt', isDirectory: false, workspaceRoot: '/other/root' },
+      { path: 'plain.txt', isDirectory: false },
     ])
   })
 
@@ -182,18 +209,35 @@ describe('跨面板拖拽接线（源码级断言）', () => {
     expect(treeNodeSrc).toContain("setData('text/plain', props.node.path)")
   })
 
-  it('CenterTabBar 含 workspace-file-drop emit 与 is-drag-over 高亮', () => {
-    expect(tabBarSrc).toContain("'workspace-file-drop': [paths: string[]]")
+  it('CenterTabBar 含 workspace-file-drop emit（entries）与 is-drag-over 高亮，高亮有三重兜底复位', () => {
+    expect(tabBarSrc).toContain("'workspace-file-drop': [entries: WorkspaceDragEntry[]]")
     expect(tabBarSrc).toContain('is-drag-over')
     expect(tabBarSrc).toContain('.center-tab-bar.is-drag-over')
+    // Bug 复发锁：dragleave 按 relatedTarget 是否仍在栏内判定（target===currentTarget 会被子元素覆盖整栏卡死）
+    expect(tabBarSrc).toContain('e.relatedTarget')
+    expect(tabBarSrc).toContain('barEl.value?.contains(next)')
+    expect(tabBarSrc).not.toContain('if (e.target === e.currentTarget) barDragOver.value = false')
+    // dragend 全局兜底（别处松手 / Esc 取消栏上无事件）
+    expect(tabBarSrc).toContain("document.addEventListener('dragend', onWindowDragEnd)")
+    expect(tabBarSrc).toContain("document.removeEventListener('dragend', onWindowDragEnd)")
   })
 
-  it('TaskView 接 workspace-file-drop 并调 openFileTab', () => {
-    expect(taskViewSrc).toContain('@workspace-file-drop="handleWorkspaceFileDrop"')
+  it('跨工作区来源路由：Panel 透传 workspace-root，TaskView 以 entry.workspaceRoot 调 openFileTab', () => {
+    const gridUses = (gridSrc.match(/workspaceRoot: props\.workspaceRoot/g) ?? []).length
+    const listUses = (listSrc.match(/workspaceRoot: props\.workspaceRoot/g) ?? []).length
+    expect(gridUses, 'Grid 拖拽载荷应携带 workspaceRoot').toBe(1)
+    expect(listUses, 'List 拖拽载荷应携带 workspaceRoot').toBe(1)
+    const passCount = (panelSrc.match(/:workspace-root="workspaceRoot"/g) ?? []).length
+    expect(passCount, 'Panel 应向 Grid / List 各透传一次 workspace-root').toBe(2)
+    expect(panelSrc, 'FileManagerPanel 内部移动语义不得改动').toContain("dropEffect = 'move'")
     const at = taskViewSrc.indexOf('function handleWorkspaceFileDrop')
     expect(at).toBeGreaterThan(-1)
     const body = taskViewSrc.slice(at, taskViewSrc.indexOf('\n}', at))
-    expect(body).toContain('openFileTab(')
+    expect(body).toContain('openFileTab(it.path, it.path.split(\'/\').pop() || it.path, it.workspaceRoot)')
+  })
+
+  it('ChatInput 拒绝跨工作区来源：与 CenterTabContainer.onAddFileToChat 同一守卫', () => {
+    expect(chatInputSrc).toContain('it.workspaceRoot === props.workspace')
   })
 
   it('FileManagerPanel 内部移动语义零改动：dropEffect = move 两处原样存在', () => {

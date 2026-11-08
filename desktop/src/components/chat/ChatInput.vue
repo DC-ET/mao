@@ -1163,7 +1163,9 @@ function handleRefDrop(e: DragEvent) {
   e.preventDefault()
   e.stopPropagation()
   draggingFile.value = false
-  const files = fileEntriesOf(entries) // 目录一律忽略（技术方案 D4）
+  // 跨工作区来源（工作区总览的文件管理页签）不落当前会话：与 CenterTabContainer.onAddFileToChat 同一守卫
+  const inSession = entries.filter((it) => !it.workspaceRoot || it.workspaceRoot === props.workspace)
+  const files = fileEntriesOf(inSession) // 目录一律忽略（技术方案 D4）
   for (const it of files) insertFileReference(it.path)
   if (files.length > 0) saveDraft(props.draftKey) // 对齐 addReplyQuote：onUpdate 不落草稿，插完显式落一次
 }

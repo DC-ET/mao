@@ -72,7 +72,7 @@ import { computed, reactive, ref, watch, nextTick, onMounted, onUnmounted } from
 import { ChatDotRound, Document, DocumentCopy, Close, Share, TrendCharts, FolderOpened } from '@element-plus/icons-vue'
 import type { Tab } from '../../types/file-browser'
 import { shouldDismissContextMenuForScroll } from '../../utils/contextMenuDismiss'
-import { fileEntriesOf, hasWorkspaceDragPayload, parseWorkspaceDrag } from '../../utils/workspaceDrag'
+import { fileEntriesOf, hasWorkspaceDragPayload, parseWorkspaceDrag, type WorkspaceDragEntry } from '../../utils/workspaceDrag'
 import { useAgentStore } from '../../stores/agent'
 import { resolveAgentIdentity } from '../../utils/agent-identity'
 import AgentAvatar from '../agent/AgentAvatar.vue'
@@ -101,7 +101,7 @@ const emit = defineEmits<{
   close: [tabId: string]
   'close-all': []
   'close-others': [tabId: string]
-  'workspace-file-drop': [paths: string[]]
+  'workspace-file-drop': [entries: WorkspaceDragEntry[]]
 }>()
 
 const contextMenu = reactive({
@@ -116,12 +116,12 @@ const menuRef = ref<HTMLDivElement>()
 const adjustedX = ref(0)
 const adjustedY = ref(0)
 
-// ===== 工作区文件拖入落点（目录已被 fileEntriesOf 过滤）=====
+// ===== 工作区文件拖入落点（目录已被 fileEntriesOf 过滤；entries 携带源工作区根，宿主据此路由）=====
 
 const barDragOver = ref(false)
 
-function droppablePaths(e: DragEvent): string[] {
-  return fileEntriesOf(parseWorkspaceDrag(e.dataTransfer)).map((it) => it.path)
+function droppableEntries(e: DragEvent): WorkspaceDragEntry[] {
+  return fileEntriesOf(parseWorkspaceDrag(e.dataTransfer))
 }
 
 function onBarDragOver(e: DragEvent) {
@@ -136,13 +136,20 @@ function onBarDragOver(e: DragEvent) {
 }
 
 function onBarDragLeave(e: DragEvent) {
-  if (e.target === e.currentTarget) barDragOver.value = false
+  // tab-item 覆盖整栏，进出子元素时 dragleave 也会冒泡触发，仅在真正离开栏时才取消高亮
+  const next = e.relatedTarget as Node | null
+  if (!next || !barEl.value?.contains(next)) barDragOver.value = false
 }
 
 function onBarDrop(e: DragEvent) {
   barDragOver.value = false
-  const paths = droppablePaths(e)
-  if (paths.length > 0) emit('workspace-file-drop', paths)
+  const entries = droppableEntries(e)
+  if (entries.length > 0) emit('workspace-file-drop', entries)
+}
+
+/** 拖拽在别处松手 / Esc 取消时栏上不再收到任何事件，全局 dragend 兜底清高亮（防 is-drag-over 卡死） */
+function onWindowDragEnd() {
+  barDragOver.value = false
 }
 
 function onContextMenu(e: MouseEvent, tab: Tab) {
@@ -187,10 +194,12 @@ function onWindowScroll(e: Event) {
 onMounted(() => {
   document.addEventListener('click', hideContextMenu)
   window.addEventListener('scroll', onWindowScroll, true)
+  document.addEventListener('dragend', onWindowDragEnd)
 })
 onUnmounted(() => {
   document.removeEventListener('click', hideContextMenu)
   window.removeEventListener('scroll', onWindowScroll, true)
+  document.removeEventListener('dragend', onWindowDragEnd)
 })
 </script>
 

@@ -6,6 +6,11 @@ export const WORKSPACE_ENTRIES_MIME = 'application/x-mao-entries'
 export interface WorkspaceDragEntry {
   path: string
   isDirectory: boolean
+  /**
+   * 拖拽源所属工作区根（绝对路径）。缺省 = 当前会话工作区（会话文件树 / 会话文件管理器拖出）；
+   * 工作区总览打开的跨工作区文件管理页签拖出时带自己的根，落点据此路由（openFileTab 第三参）。
+   */
+  workspaceRoot?: string
 }
 
 /** 三处 dragstart 的唯一写入点：entries（跨面板落点）+ paths（面板内部移动既有消费）双载荷。 */
@@ -17,11 +22,13 @@ export function setWorkspaceDragPayload(e: DragEvent, entries: WorkspaceDragEntr
   e.dataTransfer.effectAllowed = 'copyMove'
 }
 
-/** entries 元素形状校验：path 非空字符串、isDirectory 布尔，不符即整条剔除 */
+/** entries 元素形状校验：path 非空字符串、isDirectory 布尔、workspaceRoot 可选非空字符串，不符即整条剔除 */
 function isValidEntry(value: unknown): value is WorkspaceDragEntry {
   if (typeof value !== 'object' || value === null) return false
   const it = value as Partial<WorkspaceDragEntry>
-  return typeof it.path === 'string' && it.path.length > 0 && typeof it.isDirectory === 'boolean'
+  if (typeof it.path !== 'string' || it.path.length === 0 || typeof it.isDirectory !== 'boolean') return false
+  if (it.workspaceRoot !== undefined && (typeof it.workspaceRoot !== 'string' || it.workspaceRoot.length === 0)) return false
+  return true
 }
 
 /**

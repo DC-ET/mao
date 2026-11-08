@@ -73,6 +73,8 @@ const props = defineProps<{
   creating: { dir: string; kind: 'file' | 'dir' } | null
   dropTargetPath: string
   readOnly?: boolean
+  /** 跨面板拖拽载荷携带的源工作区根（工作区总览打开的文件管理页签有值），供 Tab 栏落点路由 */
+  workspaceRoot?: string
 }>()
 
 const emit = defineEmits<{
@@ -143,7 +145,7 @@ function onDragstart(entry: FileNode, e: DragEvent) {
   const sources = effectiveDragSources(entry.path, props.selectedPaths)
   // 起点可见列表查不到的路径按文件处理（保守方向：误插引用可删，误吞文件则功能失效）
   const dirFlags = new Map(props.entries.map((it) => [it.path, it.isDirectory]))
-  setWorkspaceDragPayload(e, sources.map((p) => ({ path: p, isDirectory: dirFlags.get(p) ?? false })))
+  setWorkspaceDragPayload(e, sources.map((p) => ({ path: p, isDirectory: dirFlags.get(p) ?? false, workspaceRoot: props.workspaceRoot })))
   emit('item-dragstart', entry, e)
 }
 

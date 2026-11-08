@@ -128,6 +128,7 @@ import type { FileChange } from '../../types/chat'
 import type { FileRangeQuotePayload } from '../../utils/selection-quote'
 import type { SideTaskContextMode } from '../../types/file-browser'
 import type { SideTaskEntryOptions } from '../../composables/useCenterTabs'
+import type { WorkspaceDragEntry } from '../../utils/workspaceDrag'
 import { getToken } from '../../utils/auth-storage'
 import { nowDateTime } from '../../utils/datetime'
 import { cloudProjectKeyForNewTask, newTaskWorkspaceFromSession, newTaskWorkspacePrefill } from '../../utils/cloud-project'
@@ -380,9 +381,9 @@ provide('quoteFileRangeToChat', quoteFileRangeToChat)
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
 const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, openFileManagerTab, openWorkspaceFileManagerTab, openGitTab, updateSideTaskTab, restoreSideTaskTabs, restoreSubagentTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
 
-/** 文件管理器 / 文件树拖文件到中心 Tab 栏：去重 / 激活 / version 递增由 openFileTab 内建 */
-function handleWorkspaceFileDrop(paths: string[]) {
-  for (const p of paths) openFileTab(p, p.split('/').pop() || p)
+/** 文件管理器 / 文件树拖文件到中心 Tab 栏：去重 / 激活 / version 递增由 openFileTab 内建；跨工作区来源按其所属根路由 */
+function handleWorkspaceFileDrop(entries: WorkspaceDragEntry[]) {
+  for (const it of entries) openFileTab(it.path, it.path.split('/').pop() || it.path, it.workspaceRoot)
 }
 
 /** 总览页签「用于新任务」：项目目录带 cloudProjectKey（下拉/复用链路同形态），临时 / 其他目录直接预填路径 */
