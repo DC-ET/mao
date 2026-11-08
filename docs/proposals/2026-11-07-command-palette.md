@@ -5,7 +5,7 @@
 > 2. **快捷键不可发现**：`Cmd+K` / `` Cmd+` `` 只存在于代码和少数用户的肌肉记忆里，没有 `?` 速查表；0.0.471 补齐了键盘可达性（焦点、命中区），但「键盘效率」的上半场——用键盘直接到达任何地方——还是空白。
 > 3. **输入框 `/` 指令面板不是答案**：`QuickCommandPanel` 只在输入框聚焦时可用，且语义是「发给 Agent 的提示词模板」（我的指令），不是界面动作。两者需要的是不同东西。
 
-- 状态：已立项（2026-11-07；技术方案：[docs/plan/2026-11-07-command-palette-technical-design.md](../plan/2026-11-07-command-palette-technical-design.md)）
+- 状态：已落地（2026-11-07，0.0.476；技术方案：[docs/plan/2026-11-07-command-palette-technical-design.md](../plan/2026-11-07-command-palette-technical-design.md)）
 - 日期：2026-11-07
 - 提案总览见 [docs/proposals/README.md](README.md)
 - 规模：中小（P1 面板本体 + 命令注册表 + 快捷键帮助约 2-3 人日；**零数据库迁移、零后端改动**，纯桌面端新增，不动任何既有 handler）

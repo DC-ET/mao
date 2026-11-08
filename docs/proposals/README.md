@@ -26,18 +26,14 @@
 
 ## 待评审
 
-| 提案 | 批次 | 一句话 |
-|---|---|---|
-| [工具卡片「看得懂」的最后一公里](2026-11-06-tool-card-completeness.md) | 23 | 图片工具看得见图，失败摘要带上原因，回看不再只剩 JSON |
-| [失败与中间态别再静默](2026-11-06-silent-failure-visibility.md) | 23 | 加载失败、断线、复制失败给出明确状态和重试，不再假装是空会话 |
-| [键盘、焦点与命中区](2026-11-06-keyboard-focus-hit-area.md) | 23 | 发送后焦点回到输入框，折叠块可用键盘展开，触屏热区够得到 |
+当前没有。新提案在此加一行（链接、批次、一句话）。
 
 ## 已立项
 
 | 提案 | 批次 | 说明 |
 |---|---|---|
-| [全局命令面板](2026-11-07-command-palette.md) | 24 | 技术方案：[docs/plan/2026-11-07-command-palette-technical-design.md](../plan/2026-11-07-command-palette-technical-design.md) |
-| [工作区文件拖进聊天](2026-11-07-workspace-drag-into-chat.md) | 24 | 技术方案：[docs/plan/2026-11-07-workspace-drag-into-chat-technical-design.md](../plan/2026-11-07-workspace-drag-into-chat-technical-design.md) |
+| [中心 Tab 效率补完](2026-11-08-center-tab-efficiency.md) | 25 | 技术方案：[docs/plan/2026-11-08-center-tab-efficiency-technical-design.md](../plan/2026-11-08-center-tab-efficiency-technical-design.md) |
+| [消息代码块折叠与换行](2026-11-08-message-code-block-polish.md) | 26 | 技术方案：[docs/plan/2026-11-08-message-code-block-polish-technical-design.md](../plan/2026-11-08-message-code-block-polish-technical-design.md) |
 
 ## 已落地
 
@@ -85,6 +81,11 @@
 | [管理后台关联反查与自定义工具体验](2026-11-02-admin-capability-linking-and-http-tool-ux.md) | 20 | 工具可带密文测试、一键复制，Agent 与模型 / MCP / 工具双向可见 |
 | [定时任务失败原因透出](2026-11-04-scheduled-run-failure-reason-visible.md) | 22 | 「最近运行」失败行展示 `errorSummary` |
 | [哨兵轮询记录值对比](2026-11-04-signal-watcher-check-value-compare.md) | 22 | 轮询记录与列表卡展示旧值 → 新值 |
+| [工具卡片「看得懂」的最后一公里](2026-11-06-tool-card-completeness.md) | 23 | 0.0.468 |
+| [失败与中间态别再静默](2026-11-06-silent-failure-visibility.md) | 23 | 0.0.469 |
+| [键盘、焦点与命中区](2026-11-06-keyboard-focus-hit-area.md) | 23 | 0.0.471 |
+| [全局命令面板](2026-11-07-command-palette.md) | 24 | 0.0.476 |
+| [工作区文件拖进聊天](2026-11-07-workspace-drag-into-chat.md) | 24 | 0.0.476 |
 
 ## 已否决
 
@@ -130,6 +131,9 @@
 | [子代理增量同步与半成品回拷](2026-11-04-subagent-incremental-file-sync.md) | 21 | 不做子代理运行中的文件增量回拷 |
 | [分享一览与来源徽标](2026-11-04-session-share-management-and-source-badge.md) | 22 | 不做「我的分享」抽屉与任务列表来源徽标 |
 | [运行轨迹深钻二阶段](2026-11-07-run-trace-search-drag-select.md) | 24 | 轨迹使用频率低，暂无需求；批次 10 余项就此收口 |
+| [消息级上下文菜单与操作收敛](2026-11-08-message-context-menu.md) | 25 | footer 操作行已够用，右键菜单与溢出收敛收益不大 |
+| [最近会话快切](2026-11-08-recent-session-switcher.md) | 25 | 会话切换无痛点（列表点击 + 搜索已够快） |
+| [会话图片快览](2026-11-08-session-image-gallery.md) | 26 | 图片密集会话是低频场景，暂无需求 |
 
 ## 产品边界
 
@@ -169,3 +173,5 @@
 | 22 | 2026-11-04 | 失败原因、分享一览、哨兵值对比 |
 | 23 | 2026-11-06 | 工具卡片、静默失败、键盘与焦点 |
 | 24 | 2026-11-07 | 命令面板、跨面板拖拽、轨迹深钻二阶段 |
+| 25 | 2026-11-08 | 消息菜单、Tab 效率、会话快切 |
+| 26 | 2026-11-08 | 图片快览、代码块折叠 |

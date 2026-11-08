@@ -5,7 +5,7 @@
 > 2. **聊天输入框只认 OS 文件**：`ChatInput.vue:37-41` 根节点 `@drop.prevent="handleDropFiles"`，处理器（`:1132`）走的是 `dataTransfer.files` 上传链路——从文件面板拖一个工作区文件过来，要么被 `preventDefault` 吃掉毫无反应，要么被 ProseMirror 兜底插成一段裸路径文本（树节点带 `text/plain`），总之都不是「引用文件」的正确语义。实施时以实测为准，两种情况统一在 drop 入口收口。
 > 3. **落点 API 全是现成的**：输入框侧 `insertFileReference(filePath)` 已实现且已暴露（`ChatInput.vue:1294`、`:1378` 注册、`:1444` defineExpose），`FileReferenceNode`/Tag 渲染链路完整；中心区侧 `openFileTab(filePath, title)` 也是既有 API（`useCenterTabs.ts:264`）。本提案几乎全是「把已有事件流接到已有函数上」。
 
-- 状态：已立项（2026-11-07；技术方案：[docs/plan/2026-11-07-workspace-drag-into-chat-technical-design.md](../plan/2026-11-07-workspace-drag-into-chat-technical-design.md)）
+- 状态：已落地（2026-11-07，0.0.476；技术方案：[docs/plan/2026-11-07-workspace-drag-into-chat-technical-design.md](../plan/2026-11-07-workspace-drag-into-chat-technical-design.md)）
 - 日期：2026-11-07
 - 提案总览见 [docs/proposals/README.md](README.md)
 - 规模：小-中（约 1.5-2 人日；**零数据库迁移、零后端改动**；OS 文件拖拽上传等既有路径不动）
