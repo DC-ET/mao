@@ -128,7 +128,9 @@ export class DockerToolRouter {
     if (response.type !== 'read_bytes_result') {
       throw new Error(`容器返回了意外的响应类型: ${response.type}`);
     }
-    if (!response.ok || !response.base64) {
+    // base64==null 才算失败：0 字节文件的合法编码就是空串 `''`，用 `!response.base64`
+    // 会把空文件误判成「读取失败」（与宿主机路径 readLocalBytes 对空文件正常返回不一致）。
+    if (!response.ok || response.base64 == null) {
       throw new Error(response.error ?? '容器内文件读取失败');
     }
     return Buffer.from(response.base64, 'base64');

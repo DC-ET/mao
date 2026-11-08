@@ -173,3 +173,64 @@ describe('McpManager stdio transport', () => {
     await expect(manager.call(SESSION_ID, 'fake', 'echo', {})).rejects.toThrow(/is not connected/);
   });
 });
+
+// 回归（2026-11-07 审查 C-9）：HTTP tools/call 原先没有超时，服务端挂死 / trickle body
+// 会把整轮任务卡死；现在 fetch 带 AbortSignal.timeout，超时错误归一成可读文案。
+describe('McpManager HTTP transport', () => {
+  function stubHttpFetch(onCall: (init?: RequestInit) => Response): () => void {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+      const req = JSON.parse(String(init?.body)) as { method?: string };
+      if (req.method === 'tools/call') return onCall(init);
+      const result = req.method === 'tools/list'
+        ? { tools: [{ name: 'echo', description: '', inputSchema: { type: 'object' } }] }
+        : { protocolVersion: '2024-11-05', capabilities: {}, serverInfo: { name: 'x', version: '1' } };
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+    return () => { globalThis.fetch = realFetch; };
+  }
+
+  it('arms a call timeout signal and reports it as a readable error', async () => {
+    const signals: Array<AbortSignal | undefined> = [];
+    const restore = stubHttpFetch((init) => {
+      signals.push(init?.signal ?? undefined);
+      // 模拟 signal 到点：undici 会让 fetch / body 读取以 TimeoutError 拒绝
+      throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+    });
+    try {
+      const reports = await manager.sync(SESSION_ID, [{ name: 'http-fake', type: 'HTTP', url: 'http://127.0.0.1:9/mcp' }]);
+      expect(reports[0].connected).toBe(true);
+      await expect(manager.call(SESSION_ID, 'http-fake', 'echo', { q: 1 }))
+        .rejects.toThrow('MCP tool call timed out after 120s: echo');
+      expect(signals).toHaveLength(1);
+      expect(signals[0]).toBeInstanceOf(AbortSignal);
+    } finally {
+      restore();
+    }
+  });
+
+  it('keeps non-timeout call failures as-is', async () => {
+    const restore = stubHttpFetch(() => {
+      throw new Error('ECONNREFUSED 127.0.0.1:9');
+    });
+    try {
+      await manager.sync(SESSION_ID, [{ name: 'http-fake', type: 'HTTP', url: 'http://127.0.0.1:9/mcp' }]);
+      await expect(manager.call(SESSION_ID, 'http-fake', 'echo', {})).rejects.toThrow(/ECONNREFUSED/);
+    } finally {
+      restore();
+    }
+  });
+
+  it('still surfaces an HTTP status failure unchanged', async () => {
+    const restore = stubHttpFetch(() => new Response('nope', { status: 502 }));
+    try {
+      await manager.sync(SESSION_ID, [{ name: 'http-fake', type: 'HTTP', url: 'http://127.0.0.1:9/mcp' }]);
+      await expect(manager.call(SESSION_ID, 'http-fake', 'echo', {})).rejects.toThrow('HTTP MCP call failed: 502');
+    } finally {
+      restore();
+    }
+  });
+});

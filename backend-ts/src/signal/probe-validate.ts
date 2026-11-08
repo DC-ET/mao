@@ -8,7 +8,12 @@ import { isPrivateOrReservedHostname } from '../common/ssrf.js';
  * 请求头禁覆盖 hop-by-hop 与 Host，防走私与探测偏移。
  */
 
-/** 禁止用户覆盖的请求头（大小写不敏感）。 */
+/**
+ * 禁止用户覆盖的请求头（大小写不敏感）。
+ * content-length 例外于「服务端不代填」的直觉：用户仍不得自己填（与实际 body 不符会错位 /
+ * 可被用作走私面），但探针执行器会按 body 实际字节数代填（probe-client），
+ * 目标服务要求的定长请求由此满足。
+ */
 const FORBIDDEN_HEADERS = new Set(['host', 'content-length', 'transfer-encoding', 'connection']);
 
 /** 请求头键数量上限。 */

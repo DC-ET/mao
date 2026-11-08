@@ -6,31 +6,23 @@ import type { TuiHandle } from '../src/tui/types';
 import type { SessionVO } from '../src/rest/types';
 
 /**
- * BUGCHECK（2026-11-07 逻辑 BUG 审查，详见 docs/code-review/2026-11-07-logic-bug-review-01.md BUG-7）。
+ * 回归测试（2026-11-07 审查 BUG-7，修复后转正，2 条用例应真实通过）。
  *
- * BUG：`/resume` 切入（或启动即 attach）运行中会话后，等待期间排队的输入永不消费。
+ * 原缺陷：`/resume` 切入（或启动即 attach）运行中会话后，等待期间排队的输入永不消费。
  *
  * 位置：agent-cli/src/repl/repl.ts
- *   - 排队承诺：handleSubmit :120-127 —— isRunning()（= busy）期间输入入队，
- *     提示「已排队（第 n 条）」（/help 语义：本轮结束自动发送）；
- *   - 唯一的排水循环在 handleSubmit 的直发分支 :130-142（runOne 之后 while 队列）；
- *   - 而 resumeActiveRun :190-198（启动分支 :163-169 与 /resume 分支 :360-362 共用）
- *     await waitForCurrentRun 结束后直接返回——两条路径结束后都无人消费队列。
+ *   - 排队承诺：handleSubmit —— isRunning()（= busy）期间输入入队，提示「已排队」；
+ *   - 修复前唯一的排水循环在 handleSubmit 的直发分支（runOne 之后的 while），
+ *     而 resumeActiveRun（启动分支与 /resume 分支共用）在 handleSubmit/runOne 之外 await，
+ *     结束后无人消费队列；
+ *   - 后果：等待期间排队的消息静默滞留，下一条消息提交后反而先发出旧消息（乱序）。
  *
- * 触发（一级路径）：`mao-agent resume <运行中会话>` 或 REPL 内 `/resume` 切到 RUNNING 会话
- * （752b6ebf 明确支持），等待期间输入一条消息 → 占用方执行结束后消息静默滞留；
- * 下一条消息提交后 drain 循环反而把滞留旧消息先行发出（乱序），全程无提示。
+ * 修复口径：抽出公共排水函数 drainQueuedPrompts，`/resume` 续接结束与
+ * 「进入即运行中」续接结束都调用它，保证「本轮结束自动发送」的排队承诺在两条路径都兑现。
  *
- * 验证口径：用例断言「正确行为」（排队消息在本轮结束后自动发出），当前实现必然失败。
- * 默认 it.fails 固化（CI 绿）；把顶部 `const bugIt = it.fails` 改成 `const bugIt = it`
- * 再运行即得真实失败：
- *
- *   cd agent-cli
- *   sed -i '' 's/^const bugIt = it.fails$/const bugIt = it/' test/repl-queue-drain.bugcheck.spec.ts
- *   npx vitest run test/repl-queue-drain.bugcheck.spec.ts
- *   sed -i '' 's/^const bugIt = it$/const bugIt = it.fails/' test/repl-queue-drain.bugcheck.spec.ts
+ * 用例断言「正确行为」：排队消息在本轮/续接结束后自动发出（修复前两条均真实失败）。
  */
-const bugIt = it.fails;
+const bugIt = it;
 
 interface Deferred {
   resolve: () => void;
@@ -43,10 +35,18 @@ function makeDeferred(): Deferred {
   return { resolve, promise };
 }
 
+type SubmitHandlers = {
+  onSubmit: (t: string) => void;
+  onCancel: () => void;
+  onEscape: () => void;
+  onExit: () => void;
+};
+
 interface Harness {
   opts: ReplOptions;
   runPrompt: ReturnType<typeof vi.fn>;
-  handlers: { onSubmit: (t: string) => void; onCancel: () => void; onEscape: () => void; onExit: () => void };
+  /** runRepl 启动后注册进渲染器的按键处理器（submit 用它模拟用户输入） */
+  handlers: () => SubmitHandlers;
   onInputReady: ReturnType<typeof vi.fn>;
   hints: string[];
   /** 状态句柄：控制 isRunning / snapshotIsActive 与 waitForCurrentRun 的释放 */
@@ -58,7 +58,7 @@ function setup(startActive: boolean): Harness {
   const state = { busy: false, active: startActive, gate: null as Deferred | null };
   const hints: string[] = [];
   const runPrompt = vi.fn(async () => ({ status: 'COMPLETED' }));
-  let handlers: Harness['handlers'] = null as never;
+  let handlers: SubmitHandlers = null as never;
   const onInputReady = vi.fn();
 
   const runner = {
@@ -85,12 +85,9 @@ function setup(startActive: boolean): Harness {
     clearTransient: () => undefined,
     noteUser: () => undefined,
     startRound: () => undefined,
-    setInputHandlers: (h: Harness['handlers']) => { handlers = h; },
+    setInputHandlers: (h: SubmitHandlers) => { handlers = h; },
   } as unknown as InkTuiRenderer;
 
-  const exitPromise = new Promise<void>((resolve) => {
-    var _resolve = resolve;
-  });
   let requestExitResolve: (() => void) | null = null;
 
   const opts: ReplOptions = {

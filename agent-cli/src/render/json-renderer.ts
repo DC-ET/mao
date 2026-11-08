@@ -83,6 +83,8 @@ export class JsonRenderer implements Renderer {
         fileChanges: result.fileChanges,
         durationMs: result.durationMs,
         reconnected: result.reconnected,
+        // error 帧内容必须进终态对象：否则 stream-json 消费方只能看到 status=FAILED。
+        ...(result.error ? { error: result.error } : {}),
       });
       return;
     }
@@ -97,6 +99,8 @@ export class JsonRenderer implements Renderer {
       fileChanges: result.fileChanges,
       durationMs: result.durationMs,
       ...(result.reconnected ? { reconnected: true } : {}),
+      // 同上：json 模式终态对象带出错误原文，替代只报 status。
+      ...(result.error ? { error: result.error } : {}),
     });
   }
 

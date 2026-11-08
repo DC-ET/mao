@@ -8,6 +8,9 @@ import { MysqlSignalWatcherRepository, MysqlSignalCheckRepository } from './sign
  * - BUG-I：`status = IF(consecutive_failures + 1 >= 5, ...)` 在 MySQL 里因为 SET 从左到右
  *   求值，实际第 4 次失败就停用；必须用累加后的当前值与阈值比。
  * - BUG-G：`markChecked` 不能无条件写 0，否则会打回探针在途期间并发累加的失败计数。
+ * - 时钟口径（2026-11-07 review）：失败退避与成功路径一样用 Node 时钟算好参数传库
+ *   （`last_checked_at = ?`），不再 `DATE_ADD(NOW(), INTERVAL ? MINUTE)`——DB 会话时区
+ *   与应用时区不一致时，DB 钟与 listDue 的 Node 钟混用会让退避整体漂移。
  *
  * 不连库，只断言发出的 SQL 与参数——这正是真实执行时求值的那一条语句。
  */
@@ -39,8 +42,9 @@ describe('recordFailure 停用阈值（BUG-I 回归）', () => {
     expect(update).toBeDefined();
     expect(update!.sql).toContain("status = IF(consecutive_failures >= ?, 'DISABLED', status)");
     expect(update!.sql).not.toContain('consecutive_failures + 1 >=');
-    // 参数顺序：backoffMinutes, threshold, id
-    expect(update!.params).toEqual([30, 5, 1]);
+    // 参数顺序：backoffUntil（Node 钟算出的退避时刻）, threshold, id
+    expect(update!.params[1]).toBe(5);
+    expect(update!.params[2]).toBe(1);
   });
 
   it('WHERE 仍限定 status = ACTIVE（PAUSED 不被误停用）', async () => {
@@ -48,6 +52,20 @@ describe('recordFailure 停用阈值（BUG-I 回归）', () => {
     await h.repo.recordFailure(1, 30, 5).catch(() => undefined);
     const update = h.calls.find((c) => c.sql.includes('consecutive_failures = consecutive_failures + 1'));
     expect(update!.sql).toContain("WHERE id = ? AND status = 'ACTIVE'");
+  });
+
+  it('退避时刻用 Node 时钟算好传参，不再混用 DATE_ADD(NOW())', async () => {
+    const h = capture();
+    await h.repo.recordFailure(1, 30, 5).catch(() => undefined);
+    const update = h.calls.find((c) => c.sql.includes('consecutive_failures = consecutive_failures + 1'));
+    expect(update).toBeDefined();
+    // SQL 侧不再出现 MySQL 时钟：DB 会话时区 ≠ 应用时区时退避会整体漂移
+    expect(update!.sql).not.toMatch(/NOW\(\)|DATE_ADD|INTERVAL/i);
+    expect(update!.sql).toContain('last_checked_at = ?');
+    // 参数是 Node 钟 + backoffMinutes 算出的未来时刻（上海时区格式化，与成功路径同源）
+    const parsed = Date.parse(String(update!.params[0]).replace(' ', 'T') + '+08:00');
+    expect(Number.isNaN(parsed)).toBe(false);
+    expect(Math.abs(parsed - (Date.now() + 30 * 60_000))).toBeLessThan(3000);
   });
 });
 

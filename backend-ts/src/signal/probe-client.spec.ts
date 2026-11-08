@@ -84,6 +84,39 @@ describe('executeProbe', () => {
     });
   });
 
+  it('POST 探针按 utf8 字节数代填 Content-Length（定长目标不再 411）', async () => {
+    await withServer((req, res) => {
+      const declared = Number(req.headers['content-length']);
+      let raw = '';
+      req.on('data', (c) => { raw += c; });
+      req.on('end', () => {
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          declared,
+          raw,
+          transferEncoding: req.headers['transfer-encoding'] ?? null,
+        }));
+      });
+    }, async (base) => {
+      const body = JSON.stringify({ 名称: '中文' });
+      const result = await executeProbe({
+        url: base,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+      expect(result.ok).toBe(true);
+      const payload = JSON.parse(result.body ?? '{}') as {
+        declared: number; raw: string; transferEncoding: string | null;
+      };
+      // 多字节字符必须以字节数声明（body.length 会把中文算少）且不得再走 chunked
+      expect(payload.declared).toBe(Buffer.byteLength(body, 'utf8'));
+      expect(payload.declared).toBeGreaterThan(body.length);
+      expect(payload.raw).toBe(body);
+      expect(payload.transferEncoding).toBeNull();
+    });
+  });
+
   it('fails when the response exceeds the size cap', async () => {
     await withServer((req, res) => {
       res.writeHead(200);

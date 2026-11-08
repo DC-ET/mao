@@ -11,6 +11,11 @@ import { GitOperationService } from './git-operation.service.js';
 import { GitUrlParser } from './util/git-url-parser.js';
 
 function makeService() {
+  // deleteSession 把「复查相位 + 逻辑删除」收进同一事务：fake 只需给出事务内连接。
+  const txDb = {
+    queryOne: vi.fn(async () => ({ id: 11, userId: 7, phase: 'IDLE' })),
+    execute: vi.fn(async () => ({ affectedRows: 1 })),
+  };
   const sessionRepo = {
     insert: vi.fn(async (s: { id?: number }) => { s.id = 11; return 11; }),
     updateById: vi.fn(),
@@ -21,6 +26,7 @@ function makeService() {
     count: vi.fn(async () => 0),
     selectPage: vi.fn(async () => ({ records: [], total: 0 })),
     logicalDelete: vi.fn(),
+    transaction: vi.fn(async (fn: (db: unknown) => Promise<unknown>) => fn(txDb)),
     listSideTasks: vi.fn(async () => []),
     lockActiveSessionById: vi.fn(async () => 11),
     selectMessageSearchCandidates: vi.fn(async () => []),
@@ -78,7 +84,7 @@ function makeService() {
     { deleteBySessionId: vi.fn(), loadValidated: vi.fn(async () => null), boundaryOf: vi.fn(() => 0) } as never,
     { deleteBySessionId: vi.fn() } as never,
   );
-  return { service, sessionRepo, messageRepo, fileChangeRepo, agentLookup, env };
+  return { service, sessionRepo, messageRepo, fileChangeRepo, agentLookup, env, txDb };
 }
 
 describe('SessionService extra', () => {
@@ -94,7 +100,7 @@ describe('SessionService extra', () => {
   });
 
   it('createSessionLocalKeepsWorkspaceAndToggles', async () => {
-    const { service, sessionRepo } = makeService();
+    const { service, sessionRepo, txDb } = makeService();
     vi.mocked(sessionRepo.findById).mockResolvedValue({
       id: 11, userId: 7, status: 'ACTIVE', phase: 'IDLE', lastPromptTokens: 3, contextAnchorMsgId: 8,
     });
@@ -156,7 +162,10 @@ describe('SessionService extra', () => {
     await service.listSessions(7);
     await service.listSessionsForDashboard(7);
     await service.deleteSession(11);
-    expect(sessionRepo.logicalDelete).toHaveBeenCalled();
+    expect(txDb.execute).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE `session` SET deleted = 1'),
+      [11],
+    );
   });
 
   it('updateMemoryInjectionDisabledWritesNumericFlag', async () => {

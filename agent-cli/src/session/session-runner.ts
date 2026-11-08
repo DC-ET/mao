@@ -39,6 +39,11 @@ export class SessionRunner {
   private reconnected = false;
   private currentText = '';
   private lastAssistantText = '';
+  /**
+   * 本轮 `error` 帧的文案。打印 / JSON 模式原先只从状态推 FAILED、把 error 帧的内容丢掉，
+   * 用户只能看到「执行失败」四个字，排障时必须回平台看日志——这里保留原文供 RunResult.error 输出。
+   */
+  private lastErrorMessage: string | null = null;
   private usage: UsageRecord = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   private toolCalls = new Map<string, ToolCallRecord>();
   private fileChanges: FileChangeRecord[] = [];
@@ -336,6 +341,7 @@ export class SessionRunner {
     this.busyRejectedEid = null;
     this.currentText = '';
     this.lastAssistantText = '';
+    this.lastErrorMessage = null;
     this.usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     this.toolCalls.clear();
     this.fileChanges = [];
@@ -642,7 +648,9 @@ export class SessionRunner {
         this.emit({ type: 'activity', summary: d.summary != null ? String(d.summary) : undefined, status: d.status != null ? String(d.status) : undefined });
         break;
       case 'error':
-        this.emit({ type: 'error', message: String(d.message ?? 'Agent 执行异常') });
+        // 文案必须留到 buildResult：打印 / JSON 模式只看终态 status 会把错误原因整个丢掉。
+        this.lastErrorMessage = String(d.message ?? 'Agent 执行异常');
+        this.emit({ type: 'error', message: this.lastErrorMessage });
         this.terminal = { phase: 'FAILED' };
         this.flushWaiters();
         break;
@@ -778,6 +786,8 @@ export class SessionRunner {
       durationMs: Math.max(0, this.now() - this.startedAt),
     };
     if (this.reconnected) result.reconnected = true;
+    // error 帧兜底：finishWith 的显式 error（发送失败等）在调用处覆盖本字段，语义不变。
+    if (this.lastErrorMessage != null) result.error = this.lastErrorMessage;
     this.renderer.finish?.(result);
     return result;
   }

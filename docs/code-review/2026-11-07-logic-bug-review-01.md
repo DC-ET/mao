@@ -8,7 +8,9 @@
 >
 > 复核（2026-11-07 晚，本次更新）：全部条目重新实跑复核——原 BUG-7 经真实 Chromium 实测**不成立**已移除（原 BUG-8 顺延为 BUG-7）；BUG-1 补第二触发点；候选清单收敛为「代码链路已核实且修复价值 ≥ 中」的 9 条。详见文末「复核记录」。
 >
-> 本次审查**不修改任何产品代码**，当前保留 2 个测试文件与 1 份报告：
+> 修复记录（2026-11-08，版本 0.0.475）：本报告全部 16 项（正榜 BUG-1 ~ BUG-7 + 补充核实候选 9 条）已全部修复并合入 main。两个存在性用例文件（`logic-bug-review-2026-11-07.spec.ts`、`repl-queue-drain.bugcheck.spec.ts`）已转正为常规回归测试（`bugIt = it`），直接运行即断言修复后的正确行为（backend 7 passed、agent-cli 2 passed）；下方「复现」章节的形态翻转步骤为历史记录（当时验证 BUG 存在性的方法），不再需要。逐项修复要点见文末「修复记录」与仓库 CHANGELOG「0.0.475」。
+>
+> 本次审查**不修改任何产品代码**，保留 2 个测试文件与 1 份报告（修复前以 expected-failure 固化；2026-11-08 修复后已转正，见上一条）：
 > - `backend-ts/src/logic-bug-review-2026-11-07.spec.ts`（BUG-1 ~ BUG-6）
 > - `agent-cli/test/repl-queue-drain.bugcheck.spec.ts`（BUG-7）
 
@@ -244,6 +246,31 @@ AssertionError: expected "spy" to be called with arguments: [ 'hello', 9 ]
 - **BUG-1 补第二触发点**：agent-cli 本地工具存在同一 argv 构造缺陷（`agent-cli/src/local/tools/search.ts:274`），修复须两处同步（已并入 BUG-1 与汇总表）。
 - **候选清单剔除 4 条**（不成立或修复价值低于「中」）：容器 envelope「后到覆盖在途」（仅同容器同 user+agent 的 workspace 级 envVars、需同 socket chunk 多帧或抢锁窗口）；edit/write 行尾整文件归一（跨端刻意对齐的移植语义、需混合行尾前提）；useChat.sendMessage 按活跃会话收尾（`!isActive` 分支生产不可达，2026-10-13 豁免仍成立）；`switchTo` 旧相位回填（窗口仅数十 ms、且有二次 Ctrl+C 逃生）。
 - 保留条目全部重新实跑：真实形态 `7 failed (backend) + 2 failed (agent-cli)`；固化形态 `7 + 2` 全绿；`desktop` / `agent-cli` 全量套件均绿。
+
+## 修复记录（2026-11-08）
+
+全部 16 项已修复并合入 main（版本 0.0.475）。逐项修复要点：
+
+| 条目 | 修复 |
+|------|------|
+| BUG-1 | `grep-search-tool.ts`：pattern 改以 `-e` 显式绑定（`cmd.push('-e', pattern, scope.rgTarget)`）；agent-cli `local/tools/search.ts` 同型处同步修复 |
+| BUG-2 | `docker-tool-router.ts`：`if (!response.ok \|\| !response.base64)` → `response.base64 == null`（空串是 0 字节文件的合法编码） |
+| BUG-3 | `watcher.service.ts` `applyCopyInheritance`：headers 键未下发（undefined）→ 继承源行解密值；显式 null 仍为清空（对齐 body 语义） |
+| BUG-4 | `streaming-ws-handler.ts` `handleRetryExecution`：注册 cancelFlag 前 `takePendingCancel(sessionId, retryStartedAt, …)`，命中走取消收敛（`rollbackSubagentRetry(…, 'CANCELLED')` + `finishCancelledSession`） |
+| BUG-5 | `container-registry.ts` `reportAgentHello` 重连成功即清 `connectionDead`；`runtime-channel-server.ts` 替换旧连接先 `connections.delete(key)` 再 close（drop 不再误报） |
+| BUG-6 | `tool-result-summarizer.ts`：wait_subagents 按 `timed_out === true` 返回「等待后台子代理 (已超时，N 个结果)」；ask_user 仅 `cancelled/timed_out` 标「超时或取消」、其余 error 标「(错误)」；`ask-user-questions-registry.ts` 超时结果补 `timed_out: true` |
+| BUG-7 | `repl.ts`：提取公共 `drainQueuedPrompts`；启动续接分支与 `/resume` 分支在 `resumeActiveRun` 后排水（`handleSlash` 增可选排水回调） |
+| 候选-1 | `SideChatPanel.vue`：两处发送收尾对齐主会话 `clearInputIfUnedited`（输入未改才清空）；`ChatInput.getPlainText` 已有、未改 |
+| 候选-2 | `container-mcp-bridge.ts`：connect/listTools 包 60s 超时；失败路径先摘 map 再 `closeQuietly`（子进程不再泄漏） |
+| 候选-3 | `scheduled-task.service.ts/store.ts`：`pendingOnceWork` 补 `hasRunningRun`；守门改 `!(pendingOnceWork && task.once === 1)`；收尾链把「cron 已变且 ACTIVE」判断提前、按新 cron 重排 |
+| 候选-4 | `session.service.ts/repository.ts`：拒删判据移入事务（`findByIdForUpdate` 复查相位 + `logicalDelete` 原子）；移除管线尾部事务外逻辑删除 |
+| 候选-5 | `probe-client.ts`：有 body 时按 utf8 字节数内部代填 `Content-Length`（仍在用户禁填名单之外由服务端代填） |
+| 候选-6 | `signal.repository.ts`：失败退避 `last_checked_at = ?`（Node 时钟算好传参），不再 `DATE_ADD(NOW(), …)` |
+| 候选-7 | `session-runner.ts` 记录 `lastErrorMessage` 并回填 `RunResult.error`；json-renderer 两个 finish 分支带出 `error`；text-renderer FAILED 时 stderr 输出「执行失败：…」 |
+| 候选-8 | `ink-renderer.ts`：审批「已提交」态 30s 兜底定时器（`APPROVAL_ECHO_FALLBACK_MS`），回声不到按本地选择收尾；deliver/abort/dispose 清理定时器 |
+| 候选-9 | `agent-cli/local/tools/mcp.ts`：HTTP 分支 fetch 加 `AbortSignal.timeout`（`MCP_CALL_TIMEOUT_MS`），超时给友好文案 |
+
+验证（2026-11-08）：`backend-ts` 全量 `5716 passed`、`desktop` 全量 `183 files / 1761 passed`、`agent-cli` 全量 `60 files / 686 passed`，均 exit 0；两个存在性用例文件转正后直接运行（`bugIt = it`）：backend `7 passed`、agent-cli `2 passed`。
 
 ## 审查覆盖度与边界
 

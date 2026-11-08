@@ -30,6 +30,34 @@ async function loadSearchWithoutRg(): Promise<typeof import('../src/local/tools/
   return import('../src/local/tools/search');
 }
 
+/**
+ * 假 rg：`--version` 探测返回成功（让 isRgAvailable 判定为已安装），
+ * grep 调用照常回一条 JSON 命中，同时把 argv 记下来供断言。
+ * 这样不依赖环境是否装了 rg，也能检查传给 rg 的参数。
+ */
+async function loadSearchWithFakeRg(): Promise<{
+  search: typeof import('../src/local/tools/search');
+  grepArgv: () => string[];
+}> {
+  vi.resetModules();
+  let grepArgv: string[] = [];
+  vi.doMock('node:child_process', () => ({
+    execFile: (...params: unknown[]) => {
+      const argv = params[1] as string[];
+      const cb = params[params.length - 1] as (e: Error | null, stdout: string, stderr: string) => void;
+      if (argv.includes('--version')) return cb(null, 'ripgrep 14.0.0\n', '');
+      grepArgv = argv;
+      const hit = JSON.stringify({
+        type: 'match',
+        data: { path: { text: 'src/a.ts' }, line_number: 3, lines: { text: '-w literal\n' } },
+      });
+      return cb(null, `${hit}\n`, '');
+    },
+  }));
+  const search = await import('../src/local/tools/search');
+  return { search, grepArgv: () => grepArgv };
+}
+
 function writeFixture(): void {
   fs.mkdirSync(path.join(workspace, 'src'), { recursive: true });
   fs.writeFileSync(path.join(workspace, 'src/a.ts'), 'one\ntwo\nNEEDLE\nfour\nfive\n');
@@ -114,6 +142,22 @@ describe('search failures stay visible', () => {
     expect(res.error).toBeUndefined();
     expect(res.matches).toEqual([]);
     expect(res.total_matches).toBe(0);
+  });
+});
+
+// 回归（2026-11-07 审查 BUG-1）：pattern 以 `-` 开头时必须经 -e 传入。
+// 旧实现 `cmd.push(pattern, target)` 会让 rg 把 pattern 当命令行 flag：
+// 合法 flag（如 `-w`）静默 0 命中、非法 flag 误报搜索失败。
+describe('grep pattern is never read by rg as a flag (BUG-1)', () => {
+  it('passes a dash-leading pattern after -e', async () => {
+    const { search, grepArgv } = await loadSearchWithFakeRg();
+    const res = await search.handleGrepSearch({ pattern: '-w' }, workspace, SESSION_ID);
+    const argv = grepArgv();
+    const dashE = argv.indexOf('-e');
+    expect(dashE).toBeGreaterThanOrEqual(0);
+    expect(argv[dashE + 1]).toBe('-w');
+    expect(res.error).toBeUndefined();
+    expect(res.total_matches).toBe(1);
   });
 });
 

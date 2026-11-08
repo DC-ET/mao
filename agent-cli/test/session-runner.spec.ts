@@ -128,6 +128,35 @@ describe('SessionRunner', () => {
     expect((await p).status).toBe('CANCELLED');
   });
 
+  // 回归（2026-11-07 审查 C-7）：error 帧的内容原先不进 RunResult，打印 / JSON 模式只剩状态。
+  it('keeps the error frame message on the RunResult', async () => {
+    const { ws, runner } = await attached();
+    const p = runner.runPrompt('x');
+    await Promise.resolve();
+    const eid = (ws.sent.find((m) => (m as { type: string }).type === 'send_message') as { data: { eventId: string } }).data.eventId;
+    ws.emit({ type: 'error', sessionId: 11, data: { message: 'LLM 调用失败：上游 504', executionId: eid } });
+    const result = await p;
+    expect(result.status).toBe('FAILED');
+    expect(result.error).toBe('LLM 调用失败：上游 504');
+  });
+
+  it('does not leak a previous round error into the next round', async () => {
+    const { ws, runner } = await attached();
+    const failed = runner.runPrompt('x');
+    await Promise.resolve();
+    const eid = (ws.sent.find((m) => (m as { type: string }).type === 'send_message') as { data: { eventId: string } }).data.eventId;
+    ws.emit({ type: 'error', sessionId: 11, data: { message: 'boom', executionId: eid } });
+    expect((await failed).error).toBe('boom');
+
+    const ok = runner.runPrompt('y');
+    await Promise.resolve();
+    const eid2 = (ws.sent.filter((m) => (m as { type: string }).type === 'send_message').pop() as { data: { eventId: string } }).data.eventId;
+    terminal(ws, eid2, 'COMPLETED');
+    const result = await ok;
+    expect(result.status).toBe('COMPLETED');
+    expect(result.error).toBeUndefined();
+  });
+
   it('REPL session_already_running waits for the busy run and resends input', async () => {
     const { ws, renderer, runner } = await attached({ printMode: false });
     const p = runner.runPrompt('x');

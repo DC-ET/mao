@@ -61,6 +61,12 @@ const FRAME_MS = 24;
 const TICK_MS = 150;
 /** 滞留的 ESC 前缀多久后按「单独 Esc 键」结算：低于终端自身的 escape delay 会误判方向键。 */
 const ESC_FLUSH_MS = 40;
+/**
+ * 审批「已提交」态的兜底时限：回声（服务端决策）可能因断线 / 服务端重启永不到达，
+ * 模态会一直停在「已提交」态吞掉所有按键（含 Ctrl+C），没有键盘逃生路径。
+ * 超时后按本地选择收尾，模态至少能关掉。
+ */
+const APPROVAL_ECHO_FALLBACK_MS = 30_000;
 
 type ModalEntry =
   | { kind: 'ask'; requestId: string; controller: AskController }
@@ -120,6 +126,8 @@ export class InkTuiRenderer implements Renderer {
   /** 多端审批：requestId → requestApproval 的解挂函数（收到回声 / 本地放行才解）。 */
   private approvalResolvers = new Map<string, (choice: ApprovalChoice) => void>();
   private approvalSubmitHandler: ((requestId: string, choice: ApprovalChoice) => void) | null = null;
+  /** 审批「已提交」态的兜底定时器：回声不来时按本地选择收尾（见 APPROVAL_ECHO_FALLBACK_MS）。 */
+  private readonly approvalFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   private input: InputController;
   private decoder = new KeyDecoder();
@@ -196,6 +204,8 @@ export class InkTuiRenderer implements Renderer {
       clearTimeout(this.frameTimer);
       this.frameTimer = null;
     }
+    // 卸载后不会再有模态交互：兜底定时器一并清掉（unref 过，不清也不会阻塞退出）。
+    this.clearAllApprovalFallbacks();
     this.detachStdin();
     this.out.off('resize', this.onResize);
     this.mount0?.unmount();
@@ -633,6 +643,16 @@ export class InkTuiRenderer implements Renderer {
         controller.markSubmitted();
         this.render(true);
         this.approvalSubmitHandler?.(requestId, choice);
+        // 「已提交」态会吞掉所有按键（含 Ctrl+C）：回声永不到达时没有任何键盘逃生路径。
+        // 兜底超时后按本地选择收尾，至少让模态关得掉。
+        const fallback = setTimeout(() => {
+          this.approvalFallbackTimers.delete(requestId);
+          if (!this.approvalResolvers.has(requestId)) return;
+          this.note('等待服务端审批确认超时（可能已重启/断线），按本地选择收尾');
+          this.deliverApproval(requestId, choice);
+        }, APPROVAL_ECHO_FALLBACK_MS);
+        fallback.unref?.();
+        this.approvalFallbackTimers.set(requestId, fallback);
       });
       if (requestId) this.approvalResolvers.set(requestId, resolve);
       this.modalQueue = [...this.modalQueue, { kind: 'approval', controller }];
@@ -646,6 +666,8 @@ export class InkTuiRenderer implements Renderer {
    * approvalRemoteChoices 兜住，不在渲染层缓存，避免污染同一 requestId 的后续动作。
    */
   deliverApproval(requestId: string, choice: ApprovalChoice | null): void {
+    // 回声（或本地兜底）已到：该请求的兜底定时器不再需要。
+    this.clearApprovalFallback(requestId);
     const resolve = this.approvalResolvers.get(requestId);
     if (!resolve) return;
     this.approvalResolvers.delete(requestId);
@@ -655,12 +677,27 @@ export class InkTuiRenderer implements Renderer {
 
   /** 本轮结束 / 断开：关闭全部审批模态并按拒绝解挂，避免模态永久悬挂。 */
   abortAllApprovals(): void {
+    const requestIds = [...this.approvalResolvers.keys()];
     const resolvers = [...this.approvalResolvers.values()];
     this.approvalResolvers.clear();
+    for (const requestId of requestIds) this.clearApprovalFallback(requestId);
     if (this.modalQueue.some((m) => m.kind === 'approval')) {
       this.closeModal((m) => m.kind === 'approval');
     }
     for (const resolve of resolvers) resolve('deny');
+  }
+
+  /** 兜底定时器不再需要时的唯一清理点：避免定时器比模态活得更久、重复收尾。 */
+  private clearApprovalFallback(requestId: string): void {
+    const timer = this.approvalFallbackTimers.get(requestId);
+    if (timer == null) return;
+    clearTimeout(timer);
+    this.approvalFallbackTimers.delete(requestId);
+  }
+
+  private clearAllApprovalFallbacks(): void {
+    for (const timer of this.approvalFallbackTimers.values()) clearTimeout(timer);
+    this.approvalFallbackTimers.clear();
   }
 
   /** 会话选择面板：用户选中后 resolve 会话 id；Esc / Ctrl+C 返回 null。 */

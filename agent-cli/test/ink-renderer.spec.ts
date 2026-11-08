@@ -1,5 +1,5 @@
 import { PassThrough } from 'node:stream';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InkTuiRenderer } from '../src/tui/ink-renderer';
 import type { CliEvent, RunResult } from '../src/render/types';
 import type { TuiHandle } from '../src/tui/types';
@@ -471,6 +471,49 @@ describe('InkTuiRenderer approval flow', () => {
     await tick();
     t.renderer.abortAllApprovals();
     expect(await decision).toBe('deny');
+  });
+
+  // 回归（2026-11-07 审查 C-8）：回声（服务端决策）永不到达时，「已提交」态会吞掉所有按键
+  //（含 Ctrl+C），必须有兜底超时按本地选择收尾，否则模态没有键盘逃生路径。
+  it('多端审批：回声超时后按本地选择收尾，模态不再吞按键', async () => {
+    const t = mount();
+    t.renderer.seedChrome();
+    t.renderer.setApprovalSubmitHandler(() => undefined);
+    const decision = t.renderer.requestApproval(
+      { toolName: 'shell', description: 'ls', requestId: 'r-timeout' },
+      '需要审批',
+    );
+    await tick();
+    // 用假时钟推进 30s 兜底窗口；真实计时器（渲染/等待）在进入前已用完
+    vi.useFakeTimers();
+    try {
+      t.stdin.emit('data', 'y');
+      await vi.advanceTimersByTimeAsync(30_000);
+    } finally {
+      vi.useRealTimers();
+    }
+    // 兜底按本地选择解挂，模态关闭
+    await expect(decision).resolves.toBe('allow');
+    expect(t.plain()).toContain('等待服务端审批确认超时');
+  });
+
+  it('多端审批：回声及时到达时兜底定时器被清掉（不会二次收尾）', async () => {
+    const t = mount();
+    t.renderer.seedChrome();
+    t.renderer.setApprovalSubmitHandler(() => undefined);
+    const timers = (t.renderer as unknown as { approvalFallbackTimers: Map<string, unknown> })
+      .approvalFallbackTimers;
+    const decision = t.renderer.requestApproval(
+      { toolName: 'shell', description: 'ls', requestId: 'r-echo' },
+      '需要审批',
+    );
+    await tick();
+    t.stdin.emit('data', 'y');
+    await tick();
+    expect(timers.has('r-echo')).toBe(true); // 提交后进入「等待服务端确认」：兜底已武装
+    t.renderer.deliverApproval('r-echo', 'deny');
+    expect(timers.has('r-echo')).toBe(false); // 回声到达：兜底定时器必须清掉
+    await expect(decision).resolves.toBe('deny');
   });
 });
 

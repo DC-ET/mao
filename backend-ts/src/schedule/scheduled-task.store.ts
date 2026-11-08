@@ -161,6 +161,18 @@ export class ScheduledTaskDbStore implements ScheduledTaskStore {
     return row != null;
   }
 
+  /**
+   * 是否存在运行中的运行行。重试入口 beginRetry 会先清 next_retry_at，因此「重试运行中」在
+   * hasPendingRetry / oldestQueuedRun 两个判据上都不成立，需要它把 pendingOnceWork 补全。
+   */
+  async hasRunningRun(taskId: number): Promise<boolean> {
+    const row = await this.db.queryOne<{ id: number }>(
+      `SELECT id FROM scheduled_task_run WHERE task_id = ? AND status = 'RUNNING' LIMIT 1`,
+      [taskId],
+    );
+    return row != null;
+  }
+
   listRuns(taskId: number, limit: number): Promise<ScheduledTaskRun[]> {
     return this.db.query(
       `SELECT * FROM scheduled_task_run WHERE task_id = ? ORDER BY fire_time DESC LIMIT ?`,

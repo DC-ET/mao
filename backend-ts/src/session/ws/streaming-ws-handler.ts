@@ -1494,6 +1494,11 @@ export class StreamingWsHandler {
   private async handleRetryExecution(socket: WsSocket | undefined, userId: number, root: Record<string, unknown>): Promise<void> {
     const sessionId = this.getLong(root, 'sessionId');
     if (sessionId == null) return;
+    // 本次重试的起始时间：pendingCancels 只消费「登记时间不早于本次入口」的取消标记——
+    // 重试在占 claim 到注册 cancelFlag 之间隔着多个 await（beginRetry 落库、LOCAL 检查、
+    // cleanupIncompleteTail、updatePhase），窗口内用户点「停止」只能先记 pendingCancels；
+    // 用入口时间消费才能接住它，同时避免此前残留的旧标记误杀本次重试。
+    const retryStartedAt = Date.now();
     const session = await this.requireOwnedSession(userId, sessionId);
     if (!session) return;
     // 只有终态（FAILED）且没有正在运行的其他执行时才能重试
@@ -1577,6 +1582,14 @@ export class StreamingWsHandler {
       // 分配新的 executionId
       const executionId = randomUUID();
       const cancelFlag = this.deps.agentLoop.registerCancelFlag(sessionId);
+      // 与其余四个执行入口同口径：注册 cancelFlag 前消费提交前窗口的「停止」（M-2 竞态修复）。
+      // 重试入口此前漏接该分支，窗口内的取消会被 runRetryExecution 的 finally 抹掉、任务照跑。
+      if (this.takePendingCancel(sessionId, retryStartedAt, cancelFlag)) {
+        // 子代理重试已 beginRetry（execution 置 RUNNING 并纳入跟踪）：按取消收敛，避免记录卡 RUNNING。
+        await this.rollbackSubagentRetry(session, retryTaskId, 'CANCELLED');
+        await this.finishCancelledSession(sessionId, userId, executionId);
+        return;
+      }
       this.cancelFlags.set(sessionId, cancelFlag);
       this.runningExecutionIds.set(sessionId, executionId);
       // 清除残留的 tool calls 和 ask questions 状态
@@ -1698,11 +1711,15 @@ export class StreamingWsHandler {
     });
   }
 
-  /** beginRetry 成功但重试未能启动时的收敛：execution 置回 FAILED，释放运行跟踪。 */
-  private async rollbackSubagentRetry(session: Session, retryTaskId: number | null): Promise<void> {
+  /** beginRetry 成功但重试未能启动（或提交前被取消）时的收敛：execution 置回终态，释放运行跟踪。 */
+  private async rollbackSubagentRetry(
+    session: Session,
+    retryTaskId: number | null,
+    status: 'FAILED' | 'CANCELLED' = 'FAILED',
+  ): Promise<void> {
     if (retryTaskId == null || session.parentSessionId == null) return;
     try {
-      await this.deps.backgroundSubagentManager?.completeRetry?.(session.parentSessionId, retryTaskId, 'FAILED');
+      await this.deps.backgroundSubagentManager?.completeRetry?.(session.parentSessionId, retryTaskId, status);
     } catch (e) {
       console.error(`Failed to roll back subagent retry for task ${retryTaskId}`, e);
     }

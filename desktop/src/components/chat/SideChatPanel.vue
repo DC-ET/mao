@@ -410,6 +410,9 @@ const sending = ref(false)
 /** 发送互斥：仅防双击/双 Enter 重入。与 sending（忙碌/loading）分离——执行中 sending 由 phase 置位，不能拿来拦入队。 */
 const sendInFlight = ref(false)
 const waitingForSave = ref(false)
+// 发送收尾代数（与主会话 ChatPanel.sendGeneration 同口径）：每轮发送自增，标记收尾归属本轮。
+// 是否「输入被改过」一律以文本比较为准——代数没变不能当成输入没变。
+let sendGeneration = 0
 
 /** 边路会话处于 CANCELLED 终态且未在执行时，输入框为空显示「继续」按钮（续跑语义同重试） */
 const canContinue = computed(() =>
@@ -832,6 +835,11 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: Pend
   // 表示忙碌/loading，若在此拦下则执行中永远走不到入队分支。
   if (sendInFlight.value) return
   sendInFlight.value = true
+  // 发送时快照：上传 / 连接 / 等待 user_message_saved（上限 60s）窗口内输入框未禁用，
+  // 用户可以继续打字；收尾据此判断输入是否仍是原文，只有没被改过才清空（同主会话口径）。
+  // 原文取输入框文本而非 resolvedText——后者在上传文件后会追加文件路径，与输入框内容不再相等。
+  const sentText = trimmed
+  const generation = ++sendGeneration
   // 发送即跟随：与主会话同一语义。不能沿用历史的上滑状态——用户点发送就是要看最新内容，
   // 而边路滚动条是隐藏的，内部状态与「看起来在底部」经常并不一致。
   resumeFollow()
@@ -889,7 +897,8 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: Pend
         return
       }
       draftStore.clearDraft(props.tabId)
-      chatInputRef.value?.clearInput()
+      // 等待上传 / 入队窗口内用户可以继续打字，只有未修改时才清空（与主会话 clearInputIfUnedited 同口径）
+      clearInputIfUnedited(sentText, generation)
       // 入队成功后补一次定位：QueuePanel 出现会压缩消息区高度，底部会无声下移
       scrollToBottom()
       return
@@ -1044,7 +1053,9 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: Pend
     // 成功路径由 phase 终态/watcher 收敛 sending；保存确认本身不释放忙碌态
     if (saved) {
       draftStore.clearDraft(draftKeyAtSend)
-      chatInputRef.value?.clearInput()
+      // 等 user_message_saved 最长 60s，期间用户可以继续打字：只有未修改时才清空
+      // （与主会话 clearInputIfUnedited 同口径），已改过则整块保留，避免静默清空且不可恢复。
+      clearInputIfUnedited(sentText, generation)
     }
   } catch (e) {
     // connect/upload 等前置 await 异常；若已占用 sending（非执行中路径）则复位，避免忙碌卡住
@@ -1056,6 +1067,20 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: Pend
   }
   // 首发/普通发送成功：乐观消息与流式占位已入列表，DOM 更新后补一次定位
   scrollToBottom()
+}
+
+/**
+ * 发送收尾守卫（与主会话 ChatPanel.clearInputIfUnedited 同口径）：
+ * 上传 / 连接 / 等待 user_message_saved 窗口内输入框未禁用，用户可以继续打字；
+ * 收尾时只有输入框当前文本仍等于发送时原文才清空，已改过则整块保留，
+ * 避免静默清空用户新输入且不可恢复。
+ * 代数仅用于对齐主会话签名——是否被改过一律以文本比较为准，不能把「代数没变」当成「输入没变」。
+ */
+function clearInputIfUnedited(sentText: string, _generation: number) {
+  const current = chatInputRef.value?.getPlainText() ?? ''
+  if (current === sentText.trim()) {
+    chatInputRef.value?.clearInput()
+  }
 }
 
 async function handleStop() {

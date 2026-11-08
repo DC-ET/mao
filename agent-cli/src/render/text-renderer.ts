@@ -18,6 +18,11 @@ export class TextRenderer implements Renderer {
   finish(result: RunResult): void {
     const text = result.result || this.last;
     if (text) process.stdout.write(text.endsWith('\n') ? text : text + '\n');
+    // 失败原因只走 stderr：stdout 保持「只含正文」的契约（管道消费方不受影响），
+    // 同时不让 error 帧的内容随 status 一起被丢掉。
+    if (result.status === 'FAILED' && result.error) {
+      process.stderr.write(`执行失败：${result.error}\n`);
+    }
   }
 
   peek(): string {

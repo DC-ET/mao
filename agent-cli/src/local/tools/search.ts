@@ -271,7 +271,9 @@ function grepWithRg(
     if (ignoreCase) cmd.push('--ignore-case');
     if (contextLines > 0) cmd.push('--context', String(contextLines));
     if (glob) cmd.push('--glob', glob);
-    cmd.push(pattern, scope.rgTarget);
+    // 必须用 -e 显式指定 pattern：pattern 以 `-` 开头（如 `-w`、`--foo`）时，
+    // rg 会把它当命令行 flag——合法 flag 静默 0 命中、非法 flag 误报搜索失败。
+    cmd.push('-e', pattern, scope.rgTarget);
     execFile('rg', cmd, { cwd: scope.cwd, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err && !stdout) {
         if (isRgNoMatch(err, stderr)) return resolve({ matches: [], truncated: false, total_matches: 0 });

@@ -368,6 +368,38 @@ describe('SessionService archive', () => {
     expect(sessionRepo.logicalDelete).not.toHaveBeenCalled();
   });
 
+  it('deleteSession 在事务内复查相位：锁外读到 IDLE、事务内已 RUNNING 时拒删且不做任何删除', async () => {
+    const { service, sessionRepo, messageRepo, txDb } = makeService();
+    // 锁前读到 IDLE（执行体被池排队/等锁，相位还没落），事务内复查已是 RUNNING
+    vi.mocked(sessionRepo.findById).mockImplementation(async () => ({ id: 11, userId: 7, phase: 'IDLE' }));
+    txDb.queryOne.mockImplementation(async (sql: string) => (
+      sql.includes('FROM `session`') ? { id: 11, userId: 7, phase: 'RUNNING' } : null
+    ));
+    await expect(service.deleteSession(11)).rejects.toMatchObject({
+      code: ErrorCode.PARAM_INVALID.code,
+      message: '会话运行中，无法删除',
+    });
+    expect(txDb.execute).not.toHaveBeenCalled();
+    expect(messageRepo.logicalDeleteBySession).not.toHaveBeenCalled();
+  });
+
+  it('deleteSession 逻辑删除在事务内完成，清理管线照常执行', async () => {
+    const { service, sessionRepo, messageRepo, txDb } = makeService();
+    vi.mocked(sessionRepo.findById).mockImplementation(async () => ({ id: 11, userId: 7, phase: 'IDLE' }));
+    txDb.queryOne.mockImplementation(async (sql: string) => (
+      sql.includes('FROM `session`') ? { id: 11, userId: 7, phase: 'IDLE' } : null
+    ));
+    await service.deleteSession(11);
+    expect(sessionRepo.transaction).toHaveBeenCalledTimes(1);
+    expect(txDb.execute).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE `session` SET deleted = 1'),
+      [11],
+    );
+    // 事务外不再重复逻辑删除（已提前在事务内完成）
+    expect(sessionRepo.logicalDelete).not.toHaveBeenCalled();
+    expect(messageRepo.logicalDeleteBySession).toHaveBeenCalledWith(11);
+  });
+
   it('rejectsEditMessageFromOtherSession', async () => {
     const { service, messageRepo } = makeService();
     vi.mocked(messageRepo.findById).mockResolvedValue({ id: 3, sessionId: 99, role: 'USER', content: 'old' });

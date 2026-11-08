@@ -643,6 +643,8 @@ export class SessionService {
   }
 
   async deleteSession(id: number): Promise<void> {
+    // 锁前预检只为快速失败：执行提交路径（IDLE/终态 → RUNNING）可能在这次读之后才落相位，
+    // 真正的拒删判据在下面的事务内复查。
     const session = await this.sessionRepo.findById(id);
     if (session != null && (
       session.phase === 'RUNNING' || session.phase === 'WAITING_APPROVAL'
@@ -651,6 +653,22 @@ export class SessionService {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '会话运行中，无法删除');
     }
     await this.sessionRepo.lockActiveSessionById(id);
+    // 复查相位 + 逻辑删除必须在同一事务内原子完成：lockActiveSessionById 的
+    // SELECT ... FOR UPDATE 在事务外执行，语句结束行锁即释放，挡不住 check-then-act——
+    // 执行体被连接池排队 / 等锁期间相位已切到 RUNNING 时，仅凭锁前的相位会把运行中的
+    // 会话删掉，执行继续落在已删会话上。写法对照 promoteSideTaskToMainSession 的事务内复查。
+    await this.sessionRepo.transaction(async (tx) => {
+      const txRepo = new SessionRepository(tx);
+      const fresh = await txRepo.findByIdForUpdate(id);
+      if (fresh == null) {
+        return;
+      }
+      if (fresh.phase === 'RUNNING' || fresh.phase === 'WAITING_APPROVAL'
+        || fresh.phase === 'RESUMING' || fresh.phase === 'CANCELLING') {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '会话运行中，无法删除');
+      }
+      await txRepo.logicalDelete(id);
+    });
     if (this.deleteSessionApprovalRules) {
       // 会话级审批规则物理删（V135）：WAITING_APPROVAL 拒删守卫保证无挂起审批，
       // 规则删除失败不阻断会话删除（残留行不参与匹配——会话已删、sessionId 不复用）
@@ -663,7 +681,6 @@ export class SessionService {
     await this.sessionCompactionService.deleteBySessionId(id);
     await this.sessionCompactionEventService.deleteBySessionId(id);
     await this.messageRepo.logicalDeleteBySession(id);
-    await this.sessionRepo.logicalDelete(id);
     if (this.onSessionDeleted) {
       try {
         await this.onSessionDeleted(id);

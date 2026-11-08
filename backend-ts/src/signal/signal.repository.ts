@@ -208,18 +208,24 @@ export class MysqlSignalWatcherRepository {
    * 失败累加 + 退避推进 + 达阈值自动停用（单条条件更新）。
    * 退避分钟数 = interval_minutes * min(2^failures, 32)，由调用方算好传入。
    *
+   * 退避时刻必须与成功路径（markChecked 的 `last_checked_at = ?`）同源：都用 Node 时钟算好再传参。
+   * 混用 `DATE_ADD(NOW(), INTERVAL ? MINUTE)` 会在 DB 会话时区 ≠ 应用时区时整体漂移
+   * （落后 → 退避被旁路、约每 30s 重试；超前 → 一次失败后静默停摆），
+   * 而 listDue 的到期比较用的正是调用方传入的 Node 时钟。
+   *
    * 停用判定必须用「累加后的当前值」：MySQL 的 SET 从左到右求值，第一个赋值
    * 已把 consecutive_failures 加成新值，因此这里直接与阈值比即可。
    * 若写成 `consecutive_failures + 1 >= ?`，等于多算一次，实际第 4 次失败就停用（BUG-I）。
    */
   async recordFailure(id: number, backoffMinutes: number, threshold: number): Promise<SignalWatcher | null> {
+    const backoffUntil = ts(Date.now() + backoffMinutes * 60_000);
     const result = await this.db.execute(
       `UPDATE signal_watcher
        SET consecutive_failures = consecutive_failures + 1,
-           last_checked_at = DATE_ADD(NOW(), INTERVAL ? MINUTE),
+           last_checked_at = ?,
            status = IF(consecutive_failures >= ?, 'DISABLED', status)
        WHERE id = ? AND status = 'ACTIVE'`,
-      [backoffMinutes, threshold, id],
+      [backoffUntil, threshold, id],
     );
     if (result.affectedRows !== 1) return null;
     return this.findById(id);

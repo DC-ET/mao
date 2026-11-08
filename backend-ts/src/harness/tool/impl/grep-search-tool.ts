@@ -94,7 +94,10 @@ export class GrepSearchTool extends BaseTool {
     if (ignoreCase) cmd.push('--ignore-case');
     if (contextLines > 0) cmd.push('--context', String(contextLines));
     if (glob) cmd.push('--glob', glob);
-    cmd.push(pattern, scope.rgTarget);
+    // pattern 用 -e 显式绑定为表达式：以 `-` 开头的 pattern（如 `-n`、`--force`）否则会被
+    // clap 解析成 rg 自己的 flag——合法 flag 吃参数后 path 位空缺、rg 读空 stdin 静默
+    // 返回「0 命中成功」；非法 flag 则把合法搜索报成工具故障。JS 回退分支无此问题。
+    cmd.push('-e', pattern, scope.rgTarget);
     const spawned = spawnSync(cmd[0], cmd.slice(1), {
       cwd: scope.cwd, encoding: 'utf8', timeout: 30_000, maxBuffer: 10 * 1024 * 1024,
     });

@@ -72,6 +72,32 @@ describe('stream-json / json schema golden', () => {
     });
     expect((lines[0] as { toolCalls: unknown[] }).toolCalls[0]).not.toHaveProperty('arguments');
   });
+
+  // 回归（2026-11-07 审查 C-7）：error 帧内容必须随终态对象输出，
+  // 否则 json / stream-json 消费方只能看到 status=FAILED。
+  it('carries the failure reason into the terminal result object', () => {
+    const failed: RunResult = { ...result, status: 'FAILED', error: 'LLM 调用失败：上游 504' };
+
+    const { lines, renderer } = collect();
+    renderer.finish(failed);
+    expect(lines[0]).toMatchObject({ type: 'result', status: 'FAILED', error: 'LLM 调用失败：上游 504' });
+
+    const plain: unknown[] = [];
+    const jsonRenderer = new JsonRenderer({
+      stream: false,
+      streamPartial: false,
+      includeToolIo: false,
+      write: (obj) => plain.push(obj),
+    });
+    jsonRenderer.finish(failed);
+    expect(plain[0]).toMatchObject({ type: 'result', status: 'FAILED', error: 'LLM 调用失败：上游 504' });
+  });
+
+  it('omits the error field on successful rounds (向后兼容：既有消费方不受影响)', () => {
+    const { lines, renderer } = collect();
+    renderer.finish(result);
+    expect(lines[0]).not.toHaveProperty('error');
+  });
 });
 
 afterEach(() => {

@@ -57,7 +57,8 @@ export class AskUserQuestionsRegistry {
     } catch {
       this.pending.delete(this.key(sessionId, requestId));
       harnessLog('warn', `ask_user_questions timeout for session ${sessionId}, requestId ${requestId}`);
-      return { answered: false, cancelled: false, resultJson: JSON.stringify({ error: 'User did not respond within timeout' }) };
+      // timed_out 标记供摘要层区分「等待超时」与即时失败（参数非法等），与 cancelled 同口径
+      return { answered: false, cancelled: false, resultJson: JSON.stringify({ error: 'User did not respond within timeout', timed_out: true }) };
     }
   }
 

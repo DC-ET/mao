@@ -103,6 +103,8 @@ export interface ScheduledTaskStore {
   clearPendingRetries?(taskId: number): Promise<void>;
   oldestQueuedRun?(taskId: number): Promise<ScheduledTaskRun | null>;
   hasPendingRetry?(taskId: number): Promise<boolean>;
+  /** 是否存在 status=RUNNING 的运行行：重试 beginRetry 已清 next_retry_at，只能靠它判「重试运行中」。 */
+  hasRunningRun?(taskId: number): Promise<boolean>;
   listRuns?(taskId: number, limit: number): Promise<ScheduledTaskRun[]>;
   listDueRetries?(now: string): Promise<ScheduledTaskRun[]>;
   listMissedTasks?(before: string): Promise<ScheduledTask[]>;
@@ -428,17 +430,20 @@ export class ScheduledTaskService {
       }
       task.status = status;
     }
-    // 还有未结算的一次性工作（待重试，或已入队尚未执行）时不得重开档期。
+    // 还有未结算的一次性工作（待重试、已入队尚未执行、或重试正在运行）时不得重开档期。
     // 这条不变量对所有保存路径生效——带 cron 原样保存、只改 status 从 PAUSED 重新启用、
     // agent 工具只回传 status 都算。判据必须提到分支外面：只看 cron 分支的守门会被
     // reactivate 绕开。重试到期前 listDue 与 listDueRetries 会同时命中；QUEUED 则是
     // 队列里已有一条待执行消息，再排一档会让同一一次性任务跑两次。claimRun 按
     // (task_id, fire_time) 查重，挡不住两个不同 fire_time 的入口。
+    // RUNNING 判据补「重试运行中」：beginRetry 已把 next_retry_at 清空，前两条都命中不到，
+    // 此时改 cron 会排出一档新计划，随后被这次重试的收尾抹掉（新计划永不触发）。
     // 显式把 once 改成 0 时不拦：task.once 已被置 0，重试成功后仍需要下一档。
     const pendingOnceWork = task.once === 1 && task.id != null
       && (
         (await this.store.hasPendingRetry?.(task.id)) === true
         || (await this.store.oldestQueuedRun?.(task.id)) != null
+        || (await this.store.hasRunningRun?.(task.id)) === true
       );
     if (cronExpression != null) {
       this.parseCron(cronExpression);
@@ -447,9 +452,10 @@ export class ScheduledTaskService {
       // 未显式指定 once 时，换 cron 后按新形态重判一次性属性。
       // 存量行的 once 是 0/1 而不是 null，不能再要求 task.once == null。
       if (once == null && !sameSchedule) task.once = isOneShotCron(cronExpression) ? 1 : 0;
-      // 管理端保存会原样带上当前 cron。仍是一次性且还有未结算工作时，下一档必须保持为空。
-      // 关掉一次性之后要按循环任务重算下一档，否则重试成功后没有档期。
-      if (!(sameSchedule && pendingOnceWork)) {
+      // 只要仍是「有未结算工作的一次性任务」，下一档就保持为空（含换成另一个一次性日期）：
+      // 新档期由旧档期的收尾链按最新 cron 重排，避免 listDue 与重试/队列入口重复执行。
+      // 关掉一次性或换成循环 cron 时要按循环任务重算下一档，否则重试成功后没有档期。
+      if (!(pendingOnceWork && task.once === 1)) {
         const next = this.requireNextFireTime(cronExpression);
         task.nextFireTime = next;
         task.finished = 0;
@@ -794,22 +800,31 @@ export class ScheduledTaskService {
                   patch.finished = 0;
                   patch.finishedAt = null;
                 } else if (latest.once === 1 && !pendingRetry && (isRetry || latest.status === 'PAUSED' || latest.status === 'ACTIVE')) {
-                  if (isRetry || latest.status === 'PAUSED') {
+                  const latestCron = latest.cronExpression ?? cronUsedForAdvance;
+                  const next = this.calculateNextFireTime(latestCron);
+                  // 执行/重试期间用户改过档期（含改成另一个一次性日期）：新档期是用户的明确意图，
+                  // 不能被旧档期的收尾抹掉，否则新计划永不触发、任务还会被误标 finished。
+                  // 本条判断必须排在后面「一次性执行过一次即完结」的收尾之前。
+                  if (latestCron !== cronUsedForAdvance && latest.status === 'ACTIVE') {
+                    if (next == null) {
+                      patch.finished = 1;
+                      patch.finishedAt = now;
+                      patch.nextFireTime = null;
+                    } else {
+                      patch.nextFireTime = next;
+                      patch.finished = 0;
+                      patch.finishedAt = null;
+                    }
+                  } else if (isRetry || latest.status === 'PAUSED') {
+                    // 未改档期：重试成功 / 暂停态都不重开新档期，这一档到此收口。
                     patch.finished = 1;
                     patch.finishedAt = now;
                     patch.nextFireTime = null;
                   } else {
-                    const latestCron = latest.cronExpression ?? cronUsedForAdvance;
-                    const next = this.calculateNextFireTime(latestCron);
                     // 一次性任务执行过一次即完结（cron 固定月+日时 next 永远是明年同一天，不能靠 next==null 判定）
-                    if (next == null || latest.once === 1) {
-                      patch.finished = 1;
-                      patch.finishedAt = now;
-                      patch.nextFireTime = null;
-                    } else if (latestCron !== cronUsedForAdvance) {
-                      // 开跑前按旧 cron 推进过下一档。执行期间 cron 已变，按新表达式重写，避免仍按旧档期触发。
-                      patch.nextFireTime = next;
-                    }
+                    patch.finished = 1;
+                    patch.finishedAt = now;
+                    patch.nextFireTime = null;
                   }
                 } else if (latest.status === 'ACTIVE') {
                   const latestCron = latest.cronExpression ?? cronUsedForAdvance;

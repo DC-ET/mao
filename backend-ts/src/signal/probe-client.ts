@@ -46,6 +46,12 @@ function safeError(err: unknown): string {
   return typeof message === 'string' && message !== '' ? message.slice(0, 200) : '连接失败';
 }
 
+/** 请求头名大小写不敏感匹配（HTTP 头名大小写不敏感，Content-Length 可能被写成任意变体）。 */
+function hasHeader(headers: Record<string, string>, name: string): boolean {
+  const lower = name.toLowerCase();
+  return Object.keys(headers).some((key) => key.toLowerCase() === lower);
+}
+
 export function executeProbe(
   req: ProbeRequest,
   timeouts: ProbeTimeouts = {},
@@ -84,13 +90,21 @@ export function executeProbe(
     }
 
     const lib = parsed.protocol === 'https:' ? https : http;
+    // 有 body 时必须显式给 Content-Length：Node 在未指定长度时默认走 chunked，对要求定长的
+    // 目标（网关 / 严格的旧服务）会 411 拒绝，而错误页还会被当正常响应建成假基线。
+    // content-length 在输入校验里仍属禁填（probe-validate）：长度由服务端按实际发出的
+    // body 字节数代填，既不允许用户填错，也不放开这条注入面。
+    const headers: Record<string, string> = { ...req.headers };
+    if (req.body != null && !hasHeader(headers, 'content-length')) {
+      headers['Content-Length'] = String(Buffer.byteLength(req.body, 'utf8'));
+    }
     let request: http.ClientRequest;
     try {
       // 注意：`redirect` 不是 http.RequestOptions 的合法字段，禁重定向由响应回调里
       // 对 3xx 直接判失败实现（见下方 response 分支）。
       request = lib.request(parsed, {
         method: req.method,
-        headers: req.headers,
+        headers,
       });
     } catch (e) {
       finish({ ok: false, httpStatus: null, body: null, bodyBytes: null, error: safeError(e) });

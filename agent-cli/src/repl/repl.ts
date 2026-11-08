@@ -110,10 +110,30 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
     }
   };
 
+  /**
+   * 公共排水：消费排队输入。runOne 之后与 resumeActiveRun 之后共用。
+   * 行为与原先 handleSubmit 尾部的 while 循环逐字一致（斜杠命令就地处理、遇 exit 收尾）。
+   */
+  const drainQueuedPrompts = async (): Promise<void> => {
+    while (!closing && queue.length > 0) {
+      const next = queue.shift();
+      if (!next) break;
+      if (next.startsWith('/')) {
+        const handled = await handleSlash(next, opts, queue, { hint, print }, drainQueuedPrompts);
+        if (handled === 'exit') {
+          await requestExit();
+          return;
+        }
+        continue;
+      }
+      await runOne(next);
+    }
+  };
+
   const handleSubmit = async (text: string) => {
     if (!text) return;
     if (text.startsWith('/')) {
-      const handled = await handleSlash(text, opts, queue, { hint, print });
+      const handled = await handleSlash(text, opts, queue, { hint, print }, drainQueuedPrompts);
       if (handled === 'exit') await requestExit();
       return;
     }
@@ -127,19 +147,7 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
       return;
     }
     await runOne(text);
-    while (!closing && queue.length > 0) {
-      const next = queue.shift();
-      if (!next) break;
-      if (next.startsWith('/')) {
-        const handled = await handleSlash(next, opts, queue, { hint, print });
-        if (handled === 'exit') {
-          await requestExit();
-          return;
-        }
-        continue;
-      }
-      await runOne(next);
-    }
+    await drainQueuedPrompts();
   };
 
   opts.renderer.setInputHandlers({
@@ -166,6 +174,9 @@ export async function runRepl(opts: ReplOptions): Promise<void> {
     await handleSubmit(opts.firstPrompt);
   } else if (opts.runner.snapshotIsActive) {
     await resumeActiveRun(opts, { hint, print }, '该会话仍在执行，续接当前输出。可用 /cancel 中止。');
+    // resumeActiveRun 在 handleSubmit/runOne 之外 await：排队承诺（「本轮结束自动发送」）
+    // 必须在这条路径也兑现，否则等待期间入队的消息永不消费。
+    await drainQueuedPrompts();
   }
 
   // 挂住直到退出：由 requestExit 直接 resolve，不做轮询
@@ -202,6 +213,12 @@ export async function handleSlash(
   opts: ReplOptions,
   queue: PromptQueue,
   io: SlashIo,
+  /**
+   * 排水回调：handleSlash 在 handleSubmit / runOne 之外 await（`/resume` 续接运行中会话），
+   * 排队承诺（「本轮结束自动发送」）必须由调用方在这条路径上兑现。
+   * 直接调用（测试 / 打印模式兼容）可省略，此时不排水。
+   */
+  drainQueue?: () => Promise<void>,
 ): Promise<'exit' | void> {
   const [cmd, ...rest] = text.slice(1).split(/\s+/);
   const arg = rest.join(' ').trim();
@@ -359,6 +376,9 @@ export async function handleSlash(
         io.hint(`已切换到会话 #${switched.id}${switched.title ? ` · ${switched.title}` : ''}`);
         if (opts.runner.snapshotIsActive) {
           await resumeActiveRun(opts, io, '该会话仍在执行，续接当前输出。可用 /cancel 中止。');
+          // 切换发生在 handleSubmit 的斜杠分支里，续接结束后不会回到 runOne 的排水循环，
+          // 由 drainQueue 兜底消费等待期间入队的消息。
+          await drainQueue?.();
         }
       } catch (err) {
         io.print(err instanceof Error ? err.message : String(err), 'err');

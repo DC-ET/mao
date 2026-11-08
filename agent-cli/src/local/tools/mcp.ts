@@ -220,6 +220,16 @@ function withTimeout<T>(task: Promise<T>, timeoutMs: number, message: string): P
   });
 }
 
+/**
+ * AbortSignal.timeout 到点会让 fetch（及 body 读取）以 TimeoutError 拒绝；
+ * 主动 abort 则是 AbortError。两者都视为「调用超时」，其余错误照旧冒泡。
+ * 不依赖 DOMException 类型（不同 Node / polyfill 实现不一定 instanceof Error）。
+ */
+function isAbortError(e: unknown): boolean {
+  const name = (e as { name?: unknown } | null)?.name;
+  return name === 'TimeoutError' || name === 'AbortError';
+}
+
 interface McpEntry {
   conn?: McpConn;
   tools: McpToolDef[];
@@ -272,18 +282,29 @@ export class McpManager {
     if (entry.httpUrl) {
       const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
       if (entry.mcpSessionId) headers['mcp-session-id'] = entry.mcpSessionId;
-      const res = await fetch(entry.httpUrl, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: Date.now(),
-          method: 'tools/call',
-          params: { name: toolName, arguments: args },
-        }),
-      });
-      if (!res.ok) throw new Error(`HTTP MCP call failed: ${res.status}`);
-      const body = await res.json() as { result?: unknown; error?: { message?: string } };
+      let body: { result?: unknown; error?: { message?: string } };
+      try {
+        const res = await fetch(entry.httpUrl, {
+          method: 'POST',
+          headers,
+          // 与 stdio 路径的 rpc 同一超时口径：HTTP 端原先没有超时，服务端挂死或持续
+          // trickle body 时 fetch 永不返回，整轮任务卡住；signal 同时覆盖 body 读取。
+          signal: AbortSignal.timeout(MCP_CALL_TIMEOUT_MS),
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: Date.now(),
+            method: 'tools/call',
+            params: { name: toolName, arguments: args },
+          }),
+        });
+        if (!res.ok) throw new Error(`HTTP MCP call failed: ${res.status}`);
+        body = await res.json() as { result?: unknown; error?: { message?: string } };
+      } catch (e) {
+        if (isAbortError(e)) {
+          throw new Error(`MCP tool call timed out after ${MCP_CALL_TIMEOUT_MS / 1000}s: ${toolName}`);
+        }
+        throw e;
+      }
       if (body.error) throw new Error(body.error.message || 'MCP error');
       return formatCallResult(body.result);
     }

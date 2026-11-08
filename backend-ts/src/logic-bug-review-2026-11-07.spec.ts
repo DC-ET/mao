@@ -1,22 +1,22 @@
 /**
- * 2026-11-07 逻辑 BUG 审查——存在性证明用例（详见 docs/code-review/2026-11-07-logic-bug-review-01.md）。
+ * 2026-11-07 逻辑 BUG 审查——回归测试（BUG-1 ~ BUG-6，详见 docs/code-review/2026-11-07-logic-bug-review-01.md）。
  *
- * 本文件只新增测试，不改产品代码。用例断言的是「正确行为」，当前实现必然失败，
- * 因此默认以 it.fails 固化（expected-failure 通过，CI 保持绿色）。
- * 把文件顶部的 `const bugIt = it.fails;` 改成 `const bugIt = it;` 再运行，
- * 即得到各 BUG 的真实失败输出，即「BUG 真实存在」的可复现证据：
+ * 本文件最初以「存在性证明」形态落地：用例断言正确行为、当时实现必然失败，默认以 it.fails
+ * 固化（expected-failure 通过，CI 保持绿色）；把 bugIt 改成 it 再跑即得各 BUG 的真实失败输出。
+ * 2026-11-08 全部 BUG 修复后转正为常规断言——用例直接验证修复后的正确行为，任何回归都会红：
  *
  *   cd backend-ts
- *   sed -i '' 's/^const bugIt = it.fails;$/const bugIt = it;/' src/logic-bug-review-2026-11-07.spec.ts
- *   npx vitest run src/logic-bug-review-2026-11-07.spec.ts
- *   sed -i '' 's/^const bugIt = it;$/const bugIt = it.fails;/' src/logic-bug-review-2026-11-07.spec.ts
+ *   npx vitest run src/logic-bug-review-2026-11-07.spec.ts    # 7 passed
+ *
+ * 注：BUG-1 的 rg 分支用例在装有 ripgrep 的环境下校验真实 rg 路径；无 rg 时走 JS 回退，
+ * 两条路径行为已对齐、同一断言同样成立。
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
-const bugIt = it.fails;
+const bugIt = it;
 
 import { GrepSearchTool } from './harness/tool/impl/grep-search-tool.js';
 import { PathSandbox } from './harness/safety/path-sandbox.js';
@@ -45,6 +45,7 @@ import { WatcherService } from './signal/watcher.service.js';
 //       若 pattern 恰为非法 flag（如 --foo）→ rg exit 2 → 合法搜索被误报「ripgrep 搜索失败」。
 // 已实测：spawnSync('rg', ['--json','-n','.']) → status 1、bytes_searched 0；
 //         spawnSync('rg', ['--json','--foo','.']) → status 2「unrecognized flag --foo」。
+// 修复（2026-11-08）：cmd.push('-e', pattern, scope.rgTarget)（agent-cli 同型处同步修复）。
 // ---------------------------------------------------------------------------
 describe('BUG-1: grep_search rg 分支把以 - 开头的 pattern 当成 flag', () => {
   bugIt('pattern 为 "-n" 时应只命中字面 "-n" 所在行，而不是变成 `.` 全量匹配', async () => {
@@ -72,6 +73,7 @@ describe('BUG-1: grep_search rg 分支把以 - 开头的 pattern 当成 flag', (
 // 容器侧 container-tool-executor.ts:207 对空文件返回 { ok: true, base64: '' }；
 // `''` 是 base64 的合法编码结果，`!response.base64` 把空串当失败 → 抛「容器内文件读取失败」。
 // 期望：与 host 模式一致返回空 Buffer。实际：send/edit_image 等读 0 字节文件直接报错。
+// 修复（2026-11-08）：判空改为 `response.base64 == null`（空串是 0 字节文件的合法编码）。
 // ---------------------------------------------------------------------------
 describe('BUG-2: 容器 read_bytes 对 0 字节文件误判失败', () => {
   bugIt('ok=true 且 base64 为空串时应返回空 Buffer，而不是抛「容器内文件读取失败」', async () => {
@@ -105,6 +107,7 @@ describe('BUG-2: 容器 read_bytes 对 0 字节文件误判失败', () => {
 // 触发路径是官方文档示例：mao-cli signal-watcher create ... --copy-from 12（不带 --headers），
 // CLI 与后端注释都承诺「未显式修改的敏感请求头由后端从源行解密继承」。
 // 后果：副本探针无凭据 → 401 错误页被当成正常基线建立，哨兵静默失效。
+// 修复（2026-11-08）：headers 键未下发（undefined）时沿用源行（restoreMaskedHeaders 恢复掩码）。
 // ---------------------------------------------------------------------------
 describe('BUG-3: copyFrom 不带 headers 键时静默丢掉源哨兵全部请求头', () => {
   const SECRET = 'test-signal-secret';
@@ -211,6 +214,7 @@ describe('BUG-3: copyFrom 不带 headers 键时静默丢掉源哨兵全部请求
 // 场景：会话 FAILED → 用户点「重试」→ 占 claim 后、注册 cancelFlag 前有多个 await
 // （cleanupIncompleteTail 全量扫描、updatePhase(RESUMING) 等）→ 此窗口点「停止」→
 // pendingCancels 登记 → 重试照常提交执行，取消被吞。
+// 修复（2026-11-08）：注册 cancelFlag 前消费入口时间之后的 pendingCancels，命中则收敛取消。
 // ---------------------------------------------------------------------------
 describe('BUG-4: handleRetryExecution 不消费 pendingCancels，提交前窗口的停止被吞掉', () => {
   bugIt('重试入口注册 cancelFlag 前应消费 pendingCancels 且不提交执行', async () => {
@@ -271,8 +275,14 @@ describe('BUG-4: handleRetryExecution 不消费 pendingCancels，提交前窗口
     };
     sessionService.getSession.mockResolvedValue(failed);
 
-    // 模拟：重试占 claim 后、注册 cancelFlag 前的提交前窗口内，用户点了「停止」
-    (handler as unknown as { pendingCancels: Map<number, number> }).pendingCancels.set(11, Date.now());
+    // 模拟：重试占 claim 后、注册 cancelFlag 前有多个 await（cleanupIncompleteTail 全量扫描等），
+    // 就在该「提交前窗口」内用户点了「停止」→ pendingCancels 登记（时间戳不早于重试入口，
+    // 只能靠重试入口自身消费；入口之前的旧标记不应误杀本次重试）
+    const pendingCancels = (handler as unknown as { pendingCancels: Map<number, number> }).pendingCancels;
+    sessionService.cleanupIncompleteTail.mockImplementation(async () => {
+      pendingCancels.set(11, Date.now());
+      return 0;
+    });
 
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'retry_execution', sessionId: 11 }));
     await executor.runAll();
@@ -291,6 +301,7 @@ describe('BUG-4: handleRetryExecution 不消费 pendingCancels，提交前窗口
 // 后果：一次通道抖动（agent 已自动重连、容器健康）后，下一次 ensureRunning（每次工具调用都会走）
 // 把健康容器 stop + rm + docker run，shell 会话/PTY/后台任务/MCP stdio 子进程全部丢失；
 // 且 pty-bridge 特意给 20s 宽限保住的终端也被这次重建整批杀掉。
+// 修复（2026-11-08）：reportAgentHello（重连成功）清除 connectionDead；替换旧连接先从 map 摘除。
 // ---------------------------------------------------------------------------
 describe('BUG-5: 容器 agent 重连后 connectionDead 不清除，健康容器被强制重建', () => {
   bugIt('markConnectionDead 后 reportAgentHello（重连成功）应清除标志：下次 ensureRunning 零 docker 动作', async () => {

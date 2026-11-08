@@ -15,6 +15,25 @@ type AnyClient = {
   close(): Promise<void>;
 };
 
+/** connect / listTools 的兜底超时：能 spawn 但不响应 initialize 的 server 会让 buildContext 每轮挂死。 */
+const MCP_CONNECT_TIMEOUT_MS = 60_000;
+
+/**
+ * Promise 超时包装（与宿主 McpClientManager.withTimeout 同款）。用 Promise.race 而非在轮询
+ * 回调里 throw：定时器回调中的异常不会 reject 外层 Promise，调用方仍会永久挂起。
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+    // 主流程先行结束时不再由本定时器持有事件循环
+    timer.unref();
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 export interface ContainerMcpToolRef {
   serverId: number;
   serverName: string;
@@ -45,31 +64,54 @@ export class ContainerMcpBridge {
       args: parseArgs(server.argsJson),
       env: containerMcpEnv(serverEnv, envelope),
     });
-    await client.connect(transport);
-    let map = this.sessionClients.get(sessionId);
-    if (!map) {
-      map = new Map();
-      this.sessionClients.set(sessionId, map);
+    try {
+      // 必须有超时：StdioClientTransport.start() 在 connect 里就已 spawn 子进程，
+      // 挂起的 server（能 spawn 但不回 initialize）会把整轮 buildContext 无限期拖住。
+      await withTimeout(
+        client.connect(transport),
+        MCP_CONNECT_TIMEOUT_MS,
+        `连接 MCP 服务器 ${server.name} 超时（60s）`,
+      );
+      let map = this.sessionClients.get(sessionId);
+      if (!map) {
+        map = new Map();
+        this.sessionClients.set(sessionId, map);
+      }
+      const previous = map.get(server.id);
+      if (previous) {
+        await closeQuietly(previous);
+      }
+      map.set(server.id, client);
+      const tools = await withTimeout(
+        client.listTools(),
+        MCP_CONNECT_TIMEOUT_MS,
+        `MCP listTools 超时（60s）：${server.name}`,
+      );
+      const refs: ContainerMcpToolRef[] = [];
+      for (const tool of tools.tools ?? []) {
+        refs.push({
+          serverId: server.id,
+          serverName: server.name ?? '',
+          toolName: tool.name,
+          description: tool.description ?? '',
+          inputSchema: (tool.inputSchema ?? {}) as Record<string, unknown>,
+          fullToolName: `mcp__${server.name}__${tool.name}`,
+          annotations: normalizeMcpAnnotations(tool.annotations),
+        });
+      }
+      return refs;
+    } catch (e) {
+      // 每条失败路径都必须回收：connect/listTools 抛错时 StdioClientTransport 已 spawn 的子进程
+      // 不会自己退出，不关就等于每轮执行泄漏一个（容器 --pids-limit 下逐渐耗尽）。
+      // 先摘 map（可能已入），再 close——Client.close 会关 transport 并杀掉子进程。
+      const map = this.sessionClients.get(sessionId);
+      if (map?.get(server.id) === client) {
+        map.delete(server.id);
+        if (map.size === 0) this.sessionClients.delete(sessionId);
+      }
+      await closeQuietly(client);
+      throw e;
     }
-    const previous = map.get(server.id);
-    if (previous) {
-      await closeQuietly(previous);
-    }
-    map.set(server.id, client);
-    const tools = await client.listTools();
-    const refs: ContainerMcpToolRef[] = [];
-    for (const tool of tools.tools ?? []) {
-      refs.push({
-        serverId: server.id,
-        serverName: server.name ?? '',
-        toolName: tool.name,
-        description: tool.description ?? '',
-        inputSchema: (tool.inputSchema ?? {}) as Record<string, unknown>,
-        fullToolName: `mcp__${server.name}__${tool.name}`,
-        annotations: normalizeMcpAnnotations(tool.annotations),
-      });
-    }
-    return refs;
   }
 
   async callTool(sessionId: number, serverId: number, toolName: string, argumentsJson: string): Promise<string> {

@@ -178,6 +178,9 @@ export class RuntimeChannelServer {
       const previous = this.connections.get(`${userId}:${agentId}`);
       if (previous) {
         harnessLog('info', `Runtime channel replacing stale connection: userId=${userId}, agentId=${agentId}`);
+        // 先摘除再 close：close() 会同步回调 drop()，若 map 仍指向旧连接会被误判为
+        // 「连接失效」上报 onConnectionDead（此处是替换，新连接随即就位）
+        this.connections.delete(`${userId}:${agentId}`);
         previous.close();
       }
       this.connections.set(`${userId}:${agentId}`, connection);

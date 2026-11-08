@@ -139,6 +139,9 @@ class MemoryStore implements ScheduledTaskStore {
   async hasPendingRetry(taskId: number): Promise<boolean> {
     return this.runs.some((row) => row.taskId === taskId && row.nextRetryAt != null);
   }
+  async hasRunningRun(taskId: number): Promise<boolean> {
+    return this.runs.some((row) => row.taskId === taskId && row.status === 'RUNNING');
+  }
   async listRuns(taskId: number, limit: number): Promise<ScheduledTaskRun[]> {
     return this.runs.filter((row) => row.taskId === taskId).sort((a, b) => b.fireTime.localeCompare(a.fireTime)).slice(0, limit);
   }
@@ -462,6 +465,83 @@ describe('定时任务可靠性', () => {
     expect((await store.selectById(1))?.nextFireTime).toBeNull();
     expect(store.runs[0]?.nextRetryAt).toBeTruthy();
     expect(await store.listDue('2099-01-01 00:00:00')).toHaveLength(0);
+  });
+
+  it('待重试期间把 cron 改成另一个一次性日期：保存后保持无档期', async () => {
+    const store = new MemoryStore({
+      ...BASE, once: 1, retryMax: 2, cronExpression: '0 * * * * *', nextFireTime: '2026-10-09 09:00:00',
+    });
+    const { svc, phase, run } = serviceFor(store, { live: async () => { phase.value = 'FAILED'; } });
+    await svc.executeTask({ ...(await store.selectById(1))! });
+    await run();
+    expect(store.runs[0]?.nextRetryAt).toBeTruthy();
+    // 旧档期还没结算（待重试）就换档期：新档期由旧档期的收尾链按最新 cron 重排，
+    // 保存本身不得重开一档（否则 listDue 与重试入口会各跑一次）。
+    await svc.updateTask(1, 7, '日报', 'hello', '0 0 9 15 8 ?', null, true);
+    const after = await store.selectById(1);
+    expect(after?.cronExpression).toBe('0 0 9 15 8 ?');
+    expect(after?.nextFireTime).toBeNull();
+    expect(after?.finished).toBe(0);
+    expect(await store.listDue('2099-01-01 00:00:00')).toHaveLength(0);
+  });
+
+  it('重试运行中把 cron 改成另一个一次性日期：旧档期收尾不抹掉新档期', async () => {
+    const store = new MemoryStore({
+      ...BASE, once: 1, retryMax: 2, cronExpression: '0 * * * * *', nextFireTime: '2026-10-09 09:00:00',
+    });
+    let retryRunning = false;
+    let svcRef: ScheduledTaskService;
+    const { svc, phase, run } = serviceFor(store, {
+      live: async () => {
+        if (!retryRunning) {
+          phase.value = 'FAILED';
+          return;
+        }
+        // 重试运行中：beginRetry 已清 next_retry_at，靠 hasRunningRun 命中 pendingOnceWork → 不重排
+        await svcRef.updateTask(1, 7, '日报', 'hello', '0 0 9 15 8 ?', null, true);
+        expect((await store.selectById(1))?.nextFireTime).toBeNull();
+        phase.value = 'COMPLETED';
+      },
+    });
+    svcRef = svc;
+    await svc.executeTask({ ...(await store.selectById(1))! });
+    await run();
+    expect(store.runs[0]?.nextRetryAt).toBeTruthy();
+
+    // 旧档期重试到期并成功：收尾必须按新 cron 重排，而不是把任务标 finished
+    retryRunning = true;
+    store.runs[0]!.nextRetryAt = '2000-01-01 00:00:00';
+    phase.value = 'IDLE';
+    await new ScheduledTaskScheduler(store, svc).scanAndExecute();
+    await run();
+
+    const after = await store.selectById(1);
+    expect(after?.finished).toBe(0);
+    expect(after?.finishedAt).toBeNull();
+    expect(after?.cronExpression).toBe('0 0 9 15 8 ?');
+    expect(after?.nextFireTime).toBe(svc.calculateNextFireTime('0 0 9 15 8 ?'));
+    expect(after?.nextFireTime).not.toBeNull();
+  });
+
+  it('未改 cron 的重试成功仍按一次性收口（对照组）', async () => {
+    const store = new MemoryStore({
+      ...BASE, once: 1, retryMax: 2, cronExpression: '0 * * * * *', nextFireTime: '2026-10-09 09:00:00',
+    });
+    let retryPhase = false;
+    const { svc, phase, run } = serviceFor(store, {
+      live: async () => { phase.value = retryPhase ? 'COMPLETED' : 'FAILED'; },
+    });
+    await svc.executeTask({ ...(await store.selectById(1))! });
+    await run();
+    expect(store.runs[0]?.nextRetryAt).toBeTruthy();
+    retryPhase = true;
+    store.runs[0]!.nextRetryAt = '2000-01-01 00:00:00';
+    phase.value = 'IDLE';
+    await new ScheduledTaskScheduler(store, svc).scanAndExecute();
+    await run();
+    const after = await store.selectById(1);
+    expect(after?.finished).toBe(1);
+    expect(after?.nextFireTime).toBeNull();
   });
 
   it('待重试时关掉一次性并保存，重试成功后仍有下一档', async () => {

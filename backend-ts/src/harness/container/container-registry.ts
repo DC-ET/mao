@@ -648,7 +648,12 @@ export class ContainerRegistry {
   reportAgentHello(userId: number, agentId: number, build: string | null): void {
     this.lastAgentBuild.set(containerKey(userId, agentId), build);
     const entry = this.entries.get(containerKey(userId, agentId));
-    if (entry) entry.runtimeBuild = build ?? undefined;
+    if (entry) {
+      entry.runtimeBuild = build ?? undefined;
+      // hello 通过 token 校验说明容器 agent 已重新在线（容器重建/进程重启后重连）：
+      // 清除失联标记，避免 ensureRunning 把刚恢复的容器再推去「停旧重建」
+      entry.connectionDead = false;
+    }
   }
 
   startIdleLoop(): void {

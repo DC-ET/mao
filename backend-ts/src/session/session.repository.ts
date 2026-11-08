@@ -390,6 +390,12 @@ export class SessionRepository {
     ).then((rows) => rows.map((r) => r.workspace).filter((w): w is string => typeof w === 'string' && w.length > 0));
   }
 
+  /**
+   * 锁会话行并返回 id（不存在/已删返回 null）。
+   * 注意：这是事务外的一条独立语句，语句结束行锁即释放——它不能单独用来「锁住再判相位」，
+   * 调用方若依赖行锁做互斥（如 deleteSession 的运行中拒删），必须在事务内再用
+   * findByIdForUpdate 复查一次，否则 check-then-act 窗口依然存在。
+   */
   async lockActiveSessionById(sessionId: number): Promise<number | null> {
     const row = await this.db.queryOne<{ id: number }>(
       `SELECT id FROM \`session\` WHERE id = ? AND ${notDeleted()} FOR UPDATE`,

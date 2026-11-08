@@ -3,17 +3,25 @@ import { TextRenderer } from '../src/render/text-renderer';
 import type { CliEvent, RunResult } from '../src/render/types';
 
 let written: string[] = [];
+let errWritten: string[] = [];
 let restore: (() => void) | undefined;
 
 beforeEach(() => {
   written = [];
+  errWritten = [];
   const original = process.stdout.write.bind(process.stdout);
   process.stdout.write = ((chunk: unknown) => {
     written.push(String(chunk));
     return true;
   }) as typeof process.stdout.write;
+  const originalErr = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: unknown) => {
+    errWritten.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
   restore = () => {
     process.stdout.write = original;
+    process.stderr.write = originalErr;
   };
 });
 
@@ -103,5 +111,21 @@ describe('TextRenderer', () => {
     ]);
     r.finish(result());
     expect(written).toEqual([]);
+  });
+
+  // 回归（2026-11-07 审查 C-7）：error 帧的内容原先被丢弃，打印模式只得到退出码。
+  it('prints the failure reason on stderr and keeps stdout body-only', () => {
+    const r = new TextRenderer();
+    feed(r, [{ type: 'content_delta', delta: '半截输出' }]);
+    r.finish(result({ status: 'FAILED', error: 'LLM 调用失败：上游 504' }));
+    expect(written).toEqual(['半截输出\n']);
+    expect(errWritten).toEqual(['执行失败：LLM 调用失败：上游 504\n']);
+  });
+
+  it('writes nothing to stderr when the round did not carry an error', () => {
+    const r = new TextRenderer();
+    feed(r, [{ type: 'content_delta', delta: 'ok' }]);
+    r.finish(result());
+    expect(errWritten).toEqual([]);
   });
 });

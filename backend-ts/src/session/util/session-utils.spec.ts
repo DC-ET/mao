@@ -263,7 +263,11 @@ describe('ToolResultSummarizer', () => {
 
   it('summarizesQuestionAndWebTools', () => {
     expect(ToolResultSummarizer.summarize('ask_user_questions', '{}', '{"answers":[{},{}]}')).toBe('向用户提问 (2 个问题已回答)');
-    expect(ToolResultSummarizer.summarize('ask_user_questions', '{}', '{"error":"timeout"}')).toBe('向用户提问 (超时或取消)');
+    // 仅「等待超时」（registry 打 timed_out 标记）与「会话取消」（failAllForSession 打 cancelled
+    // 标记）归入超时/取消；参数非法/通道不支持等即时失败按 (错误) 口径（2026-11-07 BUG-6 修复）
+    expect(ToolResultSummarizer.summarize('ask_user_questions', '{}', '{"error":"User did not respond within timeout","timed_out":true}')).toBe('向用户提问 (超时或取消)');
+    expect(ToolResultSummarizer.summarize('ask_user_questions', '{}', '{"error":"Session cancelled","cancelled":true}')).toBe('向用户提问 (超时或取消)');
+    expect(ToolResultSummarizer.summarize('ask_user_questions', '{}', '{"error":"questions 不能为空，请提供至少 1 个问题"}')).toBe('向用户提问 (错误)');
     expect(ToolResultSummarizer.summarize('spawn_subagent', '{"agent_type":"explorer"}', '{"success":true,"task_id":193,"status":"RUNNING"}')).toBe('启动后台子代理 (explorer) #193 (运行中)');
     expect(ToolResultSummarizer.summarize('spawn_subagent', '{"agent_type":"explorer","title":"梳理登录鉴权链路"}', '{"success":true,"task_id":193,"status":"RUNNING"}')).toBe('启动后台子代理「梳理登录鉴权链路」 (explorer) #193 (运行中)');
     expect(ToolResultSummarizer.summarize('spawn_subagent', '{"agent_type":"explorer","title":""}', '{"success":true,"task_id":193,"status":"RUNNING"}')).toBe('启动后台子代理 (explorer) #193 (运行中)');
