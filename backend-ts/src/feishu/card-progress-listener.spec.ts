@@ -15,10 +15,22 @@ describe('FeishuCardProgressListener', () => {
     await listener.complete('最终答案');
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(updates).toEqual([
+      { status: 'RUNNING', round: 1, content: '正在思考…', tools: [] },
       { status: 'RUNNING', round: 1, content: '摘要', tools: ['read_file：执行中…'] },
       { status: 'RUNNING', round: 1, content: '摘要', tools: ['read_file：读取 文件'] },
       { status: 'COMPLETED', round: 1, content: '最终答案', tools: [] },
     ]);
+  });
+
+  it('pushes a thinking placeholder when a round starts before any content arrives', async () => {
+    // 首次思考期间卡片不能停在首卡「任务已接收，正在准备执行。」：轮次一开始就推思考态。
+    const updates: Array<{ status: string; round: number; content: string; tools: string[] }> = [];
+    const listener = new FeishuCardProgressListener({
+      update: async (status, round, content, tools) => { updates.push({ status, round, content, tools }); },
+    });
+    listener.onRoundStart(1);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(updates).toEqual([{ status: 'RUNNING', round: 1, content: '正在思考…', tools: [] }]);
   });
 
   it('keeps tool results matched when results arrive out of order', async () => {
@@ -31,7 +43,8 @@ describe('FeishuCardProgressListener', () => {
     listener.onToolCallResult('b', 'second result');
     listener.onMessageEnd({ promptTokens: 0, completionTokens: 0, totalTokens: 0 });
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(updates[0]).toEqual(['first：执行中…']);
+    expect(updates[0]).toEqual([]);
+    expect(updates[1]).toEqual(['first：执行中…']);
     expect(updates[updates.length - 1]).toEqual(['first：first', 'second：执行中…']);
   });
 
@@ -43,7 +56,7 @@ describe('FeishuCardProgressListener', () => {
     listener.onRoundStart(1);
     listener.onToolCallStart({ id: 'sh', function: { name: 'shell', arguments: '{"command":"npm test"}' } });
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(updates[0]).toEqual(['shell：`npm test`（执行中）']);
+    expect(updates[1]).toEqual(['shell：`npm test`（执行中）']);
   });
 
   it('refreshes the card when streamed shell arguments become parseable', async () => {
@@ -55,7 +68,7 @@ describe('FeishuCardProgressListener', () => {
     listener.onToolCallStart({ id: 'sh', function: { name: 'shell', arguments: '{"command":' } });
     listener.onToolCallArgsDelta('sh', '{"command":"pwd && ls"}');
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(updates[0]).toEqual(['shell：执行中…']);
+    expect(updates[1]).toEqual(['shell：执行中…']);
     expect(updates[updates.length - 1]).toEqual(['shell：`pwd && ls`（执行中）']);
   });
 
@@ -69,7 +82,7 @@ describe('FeishuCardProgressListener', () => {
     listener.onToolCallStart({ id: 'long', function: { name: 'shell', arguments: JSON.stringify({ command: longCommand }) } });
     listener.onToolCallStart({ id: 'stdin', function: { name: 'shell', arguments: '{"action":"write_stdin","input":"hello world"}' } });
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(updates[0][0]).toBe(`shell：\`${longCommand.slice(0, 240)}…\`（执行中）`);
+    expect(updates[1][0]).toBe(`shell：\`${longCommand.slice(0, 240)}…\`（执行中）`);
     expect(updates[updates.length - 1]).toEqual([
       `shell：\`${longCommand.slice(0, 240)}…\`（执行中）`,
       'shell：写入 stdin: hello world（执行中）',
@@ -86,7 +99,7 @@ describe('FeishuCardProgressListener', () => {
     listener.onToolCallResult('sh', '{"exit_code":0,"output":"/tmp"}');
     listener.onRoundEnd(1);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(updates[0]).toEqual(['shell：`pwd`（执行中）']);
+    expect(updates[1]).toEqual(['shell：`pwd`（执行中）']);
     expect(updates[updates.length - 1]).toEqual(['shell：执行 pwd']);
   });
 
@@ -109,7 +122,8 @@ describe('FeishuCardProgressListener', () => {
     const cancelled = listener.cancel();
     release();
     await cancelled;
-    expect(updates).toEqual(['RUNNING', 'CANCELLED']);
+    // 轮开始（思考态）与轮结束各推一次 RUNNING，取消后为终态。
+    expect(updates).toEqual(['RUNNING', 'RUNNING', 'CANCELLED']);
   });
 
   it('keeps markdown breaks when newlines arrive as their own deltas', async () => {
@@ -140,7 +154,9 @@ describe('FeishuCardProgressListener', () => {
     listener.onRoundEnd(1);
     await listener.complete('done');
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(updates[0]).toEqual({ round: 79, tools: ['shell：`pwd`（执行中）'] });
+    // 恢复续跑时首个更新同样是思考态，轮次直接衔接到 79。
+    expect(updates[0]).toEqual({ round: 79, tools: [] });
+    expect(updates[1]).toEqual({ round: 79, tools: ['shell：`pwd`（执行中）'] });
     expect(updates[updates.length - 2]).toEqual({ round: 79, tools: ['shell：执行 pwd'] });
     expect(updates[updates.length - 1]).toEqual({ round: 79, tools: [] });
   });
@@ -165,9 +181,11 @@ describe('FeishuCardProgressListener', () => {
     listener.onToolCallResult('sh2', '{"exit_code":0,"output":"pending"}');
     listener.onRoundEnd(3);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(updates[0]).toEqual({ round: 1, content: '请先登录：https://ecp.example.com/auth/abc', tools: [] });
-    // 第 2、3 轮都是纯工具轮，正文沿用最近一条（含收尾那次的最终摘要）。
+    expect(updates[0]).toEqual({ round: 1, content: '正在思考…', tools: [] });
+    expect(updates[1]).toEqual({ round: 1, content: '请先登录：https://ecp.example.com/auth/abc', tools: [] });
+    // 第 2、3 轮都是纯工具轮，正文沿用最近一条（轮首思考态与收尾各刷一次）。
     expect(updates.filter((u) => u.round === 2)).toEqual([
+      { round: 2, content: '请先登录：https://ecp.example.com/auth/abc', tools: [] },
       { round: 2, content: '请先登录：https://ecp.example.com/auth/abc', tools: ['shell：`pmo login --status`（执行中）'] },
       { round: 2, content: '请先登录：https://ecp.example.com/auth/abc', tools: ['shell：执行 pmo login --status'] },
     ]);
@@ -249,7 +267,8 @@ describe('FeishuCardProgressListener', () => {
     listener.onRoundStart(1);
     listener.onToolCallStart({ id: 'sh', function: { name: 'shell', arguments: '{"command":"pwd"}' } });
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(updates[0]).toEqual({ content: '', tools: ['shell：`pwd`（执行中）'] });
+    expect(updates[0]).toEqual({ content: '正在思考…', tools: [] });
+    expect(updates[1]).toEqual({ content: '', tools: ['shell：`pwd`（执行中）'] });
   });
 });
 

@@ -41,6 +41,11 @@ export class FeishuCardProgressListener implements AgentEventListener {
 
   onRoundStart(round: number): void {
     this.round = this.displayRound(round);
+    // LLM 请求已发起（真正进入思考阶段）：立即刷新卡片，轮次也随之向上走。
+    // 首次调用常要几十秒才产出内容，卡片若停在首卡的「任务已接收，正在准备执行。」，
+    // 用户会误以为任务卡住；尚无正文（本轮未产出、上轮也没有可兜底内容）时用思考提示占位。
+    const content = this.displayContent();
+    this.queue('RUNNING', content.trim() === '' ? THINKING_TEXT : content, this.toolsList(), this.round);
   }
 
   onContentDelta(delta: string): void {
@@ -162,6 +167,9 @@ export class FeishuCardProgressListener implements AgentEventListener {
 }
 
 const CARD_TEXT_MAX = 6000;
+
+/** 轮次开始（LLM 请求已发起）但没有任何正文时的占位文案：区别于首卡「正在准备执行」，明确 agent 已进入思考阶段。 */
+const THINKING_TEXT = '正在思考…';
 
 /** 只去掉整段首尾空白。内部换行必须保留，发出卡片时再调用。 */
 function trimCardText(value: string): string {
