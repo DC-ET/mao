@@ -1,5 +1,6 @@
 # 人+Agent 维度容器隔离（User+Agent Container Isolation）技术方案
 
+> ⚠️ **部分结论已被取代（2026-11-09）**：决策 13（share 维持整根 rw）已被 [2026-11-09 share 按 Agent 隔离方案](./2026-11-09-share-per-agent-isolation-technical-design.md) 取代（改为 `agent-experience/{A}` + `agents/{A}` 两条子路径挂载）；其余内容仍有效。
 > 状态：已实施（2026-11-07 开发完成；一期/二期全量落地，backend 5703 用例全绿、admin 构建通过。同日修订：决策 13 撤回经验库容器级收口，share 维持整根 rw，见 §10）
 > 日期：2026-11-07
 > 覆盖端：后端 backend-ts、管理后台 admin。桌面端 desktop、安卓 android、`shared/contracts`、agent-cli、部署脚本**不改**。
