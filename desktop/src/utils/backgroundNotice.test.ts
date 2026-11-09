@@ -94,3 +94,14 @@ describe('noticeExcerpt', () => {
     expect(noticeExcerpt('   ')).toBe('')
   })
 })
+
+describe('BUG-7：noticeExcerpt 码点安全截断', () => {
+  it('emoji 恰落在切点上时不产生孤立代理项（渲染不再出现 U+FFFD）', () => {
+    const text = 'x'.repeat(119) + '😀' + 'y'.repeat(5)
+    const excerpt = noticeExcerpt(text)
+    expect(excerpt.endsWith('…')).toBe(true)
+    const body = excerpt.replace(/…$/, '')
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(body)).toBe(false)
+    expect(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(body)).toBe(false)
+  })
+})

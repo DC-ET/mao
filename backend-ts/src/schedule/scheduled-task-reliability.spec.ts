@@ -453,6 +453,60 @@ describe('定时任务可靠性', () => {
     expect(store.runs.find((row) => row.id === 1)?.status).toBe('QUEUED');
   });
 
+  it('排队期间把 cron 改成另一个一次性日期：排队结算按新档期重排而不是完结', async () => {
+    const store = new MemoryStore({
+      ...BASE, once: 1, cronExpression: '0 0 8 20 2 *', nextFireTime: null,
+    });
+    const { svc } = serviceFor(store);
+    // 档期已 busy 入队：运行行 fireTime 是旧 cron（20 日）的触发点，任务停在无档期待结算
+    store.runs.push({
+      id: 2, taskId: 1, fireTime: '2027-02-20 08:00:00', attempt: 1, status: 'QUEUED', sessionId: 11, queueSeq: 1,
+    });
+    // 排队期间改档：pendingOnceWork 保留空档期，等旧档期（排队）结算按新 cron 重排
+    await svc.updateTask(1, 7, '日报', 'hello', '0 0 8 21 2 *', null, true);
+    const afterUpdate = await store.selectById(1);
+    expect(afterUpdate?.cronExpression).toBe('0 0 8 21 2 *');
+    expect(afterUpdate?.nextFireTime).toBeNull();
+    await svc.settleQueuedExecution(1, 'COMPLETED');
+    const after = await store.selectById(1);
+    expect(after?.finished).toBe(0);
+    expect(after?.finishedAt).toBeNull();
+    expect(after?.nextFireTime).toBe(svc.calculateNextFireTime('0 0 8 21 2 *'));
+    expect(after?.nextFireTime).not.toBeNull();
+    expect(await store.listDue('2099-01-01 00:00:00')).toHaveLength(1);
+  });
+
+  it('排队期间改档且排队执行失败无重试：结算同样按新档期重排', async () => {
+    const store = new MemoryStore({
+      ...BASE, once: 1, retryMax: 0, cronExpression: '0 0 8 20 2 *', nextFireTime: null,
+    });
+    const { svc } = serviceFor(store);
+    store.runs.push({
+      id: 2, taskId: 1, fireTime: '2027-02-20 08:00:00', attempt: 1, status: 'QUEUED', sessionId: 11, queueSeq: 1,
+    });
+    await svc.updateTask(1, 7, '日报', 'hello', '0 0 8 21 2 *', null, true);
+    await svc.settleQueuedExecution(1, 'FAILED');
+    const after = await store.selectById(1);
+    expect(after?.finished).toBe(0);
+    expect(after?.nextFireTime).toBe(svc.calculateNextFireTime('0 0 8 21 2 *'));
+    expect(await store.listDue('2099-01-01 00:00:00')).toHaveLength(1);
+  });
+
+  it('排队结算未改档时仍按一次性完结（对照）', async () => {
+    const store = new MemoryStore({
+      ...BASE, once: 1, cronExpression: '0 0 8 20 2 *', nextFireTime: null,
+    });
+    const { svc } = serviceFor(store);
+    store.runs.push({
+      id: 2, taskId: 1, fireTime: '2027-02-20 08:00:00', attempt: 1, status: 'QUEUED', sessionId: 11, queueSeq: 1,
+    });
+    await svc.settleQueuedExecution(1, 'COMPLETED');
+    const after = await store.selectById(1);
+    expect(after?.finished).toBe(1);
+    expect(after?.finishedAt).not.toBeNull();
+    expect(after?.nextFireTime).toBeNull();
+  });
+
   it('待重试的一次性任务原样保存 cron 不会再开一档', async () => {
     const store = new MemoryStore({
       ...BASE, once: 1, retryMax: 2, cronExpression: '0 * * * * *', nextFireTime: '2026-10-09 09:00:00',

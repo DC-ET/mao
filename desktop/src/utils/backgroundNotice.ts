@@ -1,4 +1,5 @@
 import type { ChatMessage } from '../types/chat'
+import { clipByCodePoint } from './toolDisplay'
 
 /** 后台子代理完成通知的 metadata，由后端 persistCompletionNotice 写入 */
 export interface BackgroundCompletionMeta {
@@ -33,5 +34,5 @@ export function isNoticeLong(content?: string): boolean {
 export function noticeExcerpt(content?: string): string {
   const text = (content ?? '').replace(/\s+/g, ' ').trim()
   if (text.length <= NOTICE_EXCERPT_CHARS) return text
-  return `${text.slice(0, NOTICE_EXCERPT_CHARS)}…`
+  return `${clipByCodePoint(text, NOTICE_EXCERPT_CHARS)}…`
 }

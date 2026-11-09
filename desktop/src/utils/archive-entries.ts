@@ -103,11 +103,16 @@ const TEXT_EXTENSIONS = new Set([
 ])
 
 export function classifyArchiveEntry(name: string): ArchiveEntryKind {
-  const dot = name.lastIndexOf('.')
-  const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
-  if (ext === 'pdf') return 'pdf'
-  if (IMAGE_EXTENSIONS.has(ext)) return 'image'
-  if (TEXT_EXTENSIONS.has(ext)) return 'text'
+  const lower = name.toLowerCase()
+  const dot = lower.lastIndexOf('.')
+  // 匹配键：x.ext → ext；.gitignore 等点文件 → 去点整名（旧代码 dot > 0 把它判成
+  // other，恒走下载而非内存预览）；Dockerfile/Makefile 等无点文件 → 整名。
+  // :95-103 集合里的 gitignore/dockerfile 等成员正是为这两种形态准备的。
+  // 副作用（有意）：裸名 log/env/txt 等也能进文本预览——点文件与无点文件同等对待。
+  const key = dot > 0 ? lower.slice(dot + 1) : dot === 0 ? lower.slice(1) : lower
+  if (key === 'pdf') return 'pdf'
+  if (IMAGE_EXTENSIONS.has(key)) return 'image'
+  if (TEXT_EXTENSIONS.has(key)) return 'text'
   return 'other'
 }
 

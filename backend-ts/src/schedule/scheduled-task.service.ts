@@ -1100,6 +1100,24 @@ export class ScheduledTaskService {
   }
 
   /**
+   * fireTime（Asia/Shanghai 格式化串）是否仍是 cron 的一个触发点：排队结算用它判定
+   * 档期是否在排队期间被改过（队列行不快照旧 cron，这是零迁移下的等价判据）。
+   * 解析失败/表达式失效按「未改档」处理，保持旧的完结行为。
+   */
+  private cronFiresAt(cronExpression: string, fireTime: string): boolean {
+    try {
+      const cron = new Cron(normalizeSpringCron(cronExpression), { timezone: 'Asia/Shanghai' });
+      const moment = new Date(`${fireTime.replace(' ', 'T')}+08:00`);
+      if (Number.isNaN(moment.getTime())) return true;
+      // nextRun 自身是开区间（fireTime 恰为触发点时返回的是再下一档），必须回退 1 秒再查
+      const next = cron.nextRun(new Date(moment.getTime() - 1000));
+      return next != null && formatDateTime(next) === fireTime;
+    } catch {
+      return true;
+    }
+  }
+
+  /**
    * 创建/更新落库前的档期校验，与 `buildCronPreview` 的 valid=false 对齐：
    * croner 能解析但 `nextRun()` 为空（如 2 月 30 日）时拒绝，避免留下
    * ACTIVE 且 nextFireTime 永远为空、调度与补偿都捞不到的死任务。
@@ -1124,13 +1142,14 @@ export class ScheduledTaskService {
   /**
    * busy 入队的定时任务在队列终态回写。
    * 一次性任务入队时不再立刻完结。取消说明这一次没有跑完，恢复下一档；
-   * 成功或重试耗尽后才完结；还会重试时保持未完结且下一档为空。
+   * 成功或重试耗尽后一般完结——但排队期间改过档期时例外（改档重排见下）；
+   * 还会重试时保持未完结且下一档为空。
    *
    * 收口判据只看 `once`，不看 status：暂停只是用户侧「别再开新档」，不影响「已在队列里的
    * 这一档是否算跑完」。若把 status===ACTIVE 与 once 耦合，PAUSED 期间收尾会整个分支被跳过，
    * 任务停在 finished=0 + nextFireTime=null；用户之后从 PAUSED 重新启用时 reactivate 分支
    * （判据是 nextFireTime==null && status==ACTIVE，与 finished 无关）命中并重开下一档，
-   * once 任务被执行第二次。status 只用来决定「取消时是否重开档期」。
+   * once 任务被执行第二次。status 用来决定「取消或改档时是否重开档期」。
    */
   async settleQueuedExecution(taskId: number, status: 'COMPLETED' | 'FAILED' | 'CANCELLED'): Promise<void> {
     const task = await this.store.selectById(taskId);
@@ -1154,9 +1173,31 @@ export class ScheduledTaskService {
           ? this.calculateNextFireTime(task.cronExpression)
           : null;
       } else if (status === 'COMPLETED' || (status === 'FAILED' && !willRetry)) {
-        patch.finished = 1;
-        patch.finishedAt = formatDateTime(new Date());
-        patch.nextFireTime = null;
+        // 一次性执行过一档即完结——但排队期间改过档期除外：updateTask 的 pendingOnceWork
+        // 只保留空档期等旧档期收尾链按最新 cron 重排（updateTask 内契约注释），这里就是那条
+        // 收尾链，无条件完结会让新档期永不触发、任务被误标 finished（与直跑收尾
+        // 「latestCron !== cronUsedForAdvance 时重排」同语义）。队列行不快照旧 cron，
+        // 用「入队 fireTime 是否仍是当前 cron 的触发点」判定改档。
+        const cronChanged = task.status === 'ACTIVE'
+          && task.cronExpression != null
+          && run?.fireTime != null
+          && !this.cronFiresAt(task.cronExpression, run.fireTime);
+        if (cronChanged) {
+          const next = this.calculateNextFireTime(task.cronExpression!);
+          if (next == null) {
+            patch.finished = 1;
+            patch.finishedAt = formatDateTime(new Date());
+            patch.nextFireTime = null;
+          } else {
+            patch.finished = 0;
+            patch.finishedAt = null;
+            patch.nextFireTime = next;
+          }
+        } else {
+          patch.finished = 1;
+          patch.finishedAt = formatDateTime(new Date());
+          patch.nextFireTime = null;
+        }
       } else if (status === 'FAILED' && willRetry) {
         patch.finished = 0;
         patch.finishedAt = null;

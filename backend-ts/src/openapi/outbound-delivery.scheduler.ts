@@ -126,6 +126,34 @@ export class OutboundDeliveryScheduler {
       await this.recordFailedAudit(subscription.userId ?? null, subscription.id ?? null, event, subscription.targetUrl ?? null, result.error);
     } catch (e) {
       console.error(`出站投递发送异常, id=${deliveryId}`, e);
+      // 抛出型失败（secret 解密抛出、发送器前置异常、回写瞬断）与 result 失败同口径收口：
+      // 否则行停在 SENDING，被 recoverInterrupted 反复复位重认领且 attempt_count 永不推进，
+      // 到不了 3 次重试后的 FAILED 终态与审计（技术方案 §5.5）。
+      const error = e instanceof Error ? e.message : String(e);
+      try {
+        const row = await this.deps.deliveryRepo.findById(deliveryId);
+        if (row == null || row.subscriptionId == null) return;
+        const attempt = Number(row.attemptCount ?? 0) + 1;
+        const retryIndex = attempt - 1;
+        if (retryIndex < RETRY_DELAY_MINUTES.length) {
+          const nextRetryAt = formatDateTime(new Date(Date.now() + RETRY_DELAY_MINUTES[retryIndex] * 60_000));
+          await this.deps.deliveryRepo.scheduleRetry(deliveryId, attempt, null, error.slice(0, 200), nextRetryAt);
+          return;
+        }
+        await this.deps.deliveryRepo.markFailed(deliveryId, attempt, null, error.slice(0, 200));
+        if (isOutboundEvent(row.event)) {
+          const subscription = await this.deps.subscriptionRepo.findById(row.subscriptionId);
+          await this.recordFailedAudit(
+            subscription?.userId ?? null,
+            row.subscriptionId,
+            row.event,
+            subscription?.targetUrl ?? null,
+            error.slice(0, 200),
+          );
+        }
+      } catch (fallbackError) {
+        console.error(`出站投递异常收口失败, id=${deliveryId}`, fallbackError);
+      }
     }
   }
 

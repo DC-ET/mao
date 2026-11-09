@@ -683,6 +683,41 @@ describe('AgentLoop', () => {
     expect(l.onToolCallResult).toHaveBeenCalledWith('call-real', expect.any(String), expect.anything());
   });
 
+  it('merges a first id-bearing delta without index into the id-less first chunk', async () => {
+    // 部分网关的参数分片连 index 一起省略：byId/byIndex 都落空时必须归并到唯一占位调用，
+    // 否则同一调用被拆成两条重复派发（占位参数截断 + 无名尾巴），用户命令实际未被完整执行。
+    const ctx = context();
+    ctx.tools = [namedTool('shell')];
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    stubActiveContext(5);
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
+    let call = 0;
+    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      if (call++ === 0) {
+        callback.onChunk(toolChunk({ index: 0, function: { name: 'shell', arguments: '{"command":' } }));
+        callback.onChunk(toolChunk({ id: 'call-real', function: { arguments: '"pwd"}' } }));
+        callback.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+      } else {
+        callback.onChunk(contentChunk(null, 'done'));
+        callback.onComplete({ promptTokens: 4, completionTokens: 1, totalTokens: 5 });
+      }
+    });
+
+    await agentLoop.execute(ctx, l, p);
+
+    expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledTimes(1);
+    expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: 'shell',
+      argumentsJson: '{"command":"pwd"}',
+    }));
+    const assistant = ctx.messages.find((m) => m.role === 'assistant' && m.toolCalls?.length);
+    expect(assistant!.toolCalls).toHaveLength(1);
+    expect(assistant!.toolCalls![0].id).toBe('call-real');
+  });
+
   it('appends a later id-only arguments chunk onto the same tool call', async () => {
     const ctx = context();
     ctx.tools = [namedTool('shell')];

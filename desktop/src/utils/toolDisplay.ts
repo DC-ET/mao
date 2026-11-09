@@ -1,3 +1,11 @@
+/** 按码点截断：裸 slice 会把 BMP 外字符（如 emoji）从代理对中间切开，预览渲染成 U+FFFD 乱码。 */
+export function clipByCodePoint(text: string, max: number): string {
+  if (text.length <= max) return text
+  // max-1 处恰是高代理项（其低位伴侣在 max 处被切走）时回退一位，保住完整码点
+  const cut = text.charCodeAt(max - 1)
+  return text.slice(0, cut >= 0xd800 && cut <= 0xdbff ? max - 1 : max)
+}
+
 const TOOL_DISPLAY_NAMES: Record<string, string> = {
   glob_search: '搜索文件',
   grep_search: '搜索内容',
@@ -93,7 +101,7 @@ export function getToolInputPreview(name: string, input?: Record<string, unknown
         .map((key) => {
           const value = (inner as Record<string, unknown>)[key]
           const text = typeof value === 'string' ? value : JSON.stringify(value) ?? ''
-          return `${key}=${text.length > 20 ? `${text.slice(0, 20)}...` : text}`
+          return `${key}=${text.length > 20 ? `${clipByCodePoint(text, 20)}...` : text}`
         })
         .join(', ')
       return `${tool}(${summary}${keys.length > 3 ? ', ...' : ''})`
@@ -108,17 +116,17 @@ export function getToolInputPreview(name: string, input?: Record<string, unknown
     }
     case 'create_scheduled_task': {
       const name = input.name
-      return typeof name === 'string' && name.trim() ? (name.length > 30 ? name.slice(0, 30) + '...' : name) : ''
+      return typeof name === 'string' && name.trim() ? (name.length > 30 ? clipByCodePoint(name, 30) + '...' : name) : ''
     }
     case 'create_signal_watcher': {
       const name = input.name
-      return typeof name === 'string' && name.trim() ? (name.length > 30 ? name.slice(0, 30) + '...' : name) : ''
+      return typeof name === 'string' && name.trim() ? (name.length > 30 ? clipByCodePoint(name, 30) + '...' : name) : ''
     }
     case 'list_signal_watchers':
       return ''
     case 'update_scheduled_task': {
       const name = input.name
-      if (typeof name === 'string' && name.trim()) return name.length > 30 ? name.slice(0, 30) + '...' : name
+      if (typeof name === 'string' && name.trim()) return name.length > 30 ? clipByCodePoint(name, 30) + '...' : name
       // update/delete 不要求 name：按 task_id 兜底（scheduled-task-tools.ts 的 task_id 入参键）
       const taskId = input.task_id
       return typeof taskId === 'number' && Number.isInteger(taskId) && taskId > 0 ? `任务 #${taskId}` : ''
@@ -137,7 +145,7 @@ export function getToolInputPreview(name: string, input?: Record<string, unknown
     case 'generate_image':
     case 'edit_image': {
       const prompt = input.prompt
-      if (typeof prompt === 'string' && prompt) return prompt.length > 60 ? prompt.slice(0, 60) + '...' : prompt
+      if (typeof prompt === 'string' && prompt) return prompt.length > 60 ? clipByCodePoint(prompt, 60) + '...' : prompt
       const images = input.image_paths ?? input.image
       if (typeof images === 'string') return images
       if (Array.isArray(images) && typeof images[0] === 'string') return images[0]
@@ -169,7 +177,7 @@ export function getToolInputPreview(name: string, input?: Record<string, unknown
       return `${actions.length} 个动作`
     }
     case 'page_fill':
-      return typeof input.value === 'string' ? `值: ${input.value.slice(0, 40)}` : ''
+      return typeof input.value === 'string' ? `值: ${clipByCodePoint(input.value, 40)}` : ''
     case 'page_select':
       return typeof input.value === 'string' ? `选项: ${input.value}` : ''
     case 'page_keyboard':
@@ -191,19 +199,19 @@ export function getToolInputPreview(name: string, input?: Record<string, unknown
   }
   const cmd = input.command
   if (typeof cmd === 'string') {
-    return cmd.slice(0, 60) + (cmd.length > 60 ? '...' : '')
+    return clipByCodePoint(cmd, 60) + (cmd.length > 60 ? '...' : '')
   }
   // shell 复用会话时 write_stdin 的正文在 input 而不是 command（多端审批卡片摘要用）
   if (name === 'shell' && input.action === 'write_stdin' && typeof input.input === 'string') {
     const text = input.input
-    return text.length > 60 ? text.slice(0, 60) + '...' : text
+    return text.length > 60 ? clipByCodePoint(text, 60) + '...' : text
   }
   const pattern = input.pattern
   if (typeof pattern === 'string') {
     const searchPath = input.path
     const suffix = (typeof searchPath === 'string' && searchPath) ? ` in ${searchPath}` : ''
     const text = `${pattern}${suffix}`
-    return text.length > 60 ? text.slice(0, 60) + '...' : text
+    return text.length > 60 ? clipByCodePoint(text, 60) + '...' : text
   }
   const path = input.path ?? input.file_path
   if (typeof path === 'string') return path
@@ -221,7 +229,7 @@ export function getToolInputPreview(name: string, input?: Record<string, unknown
     const prefix = typeof agentType === 'string' && agentType ? `${agentType}: ` : ''
     const body = title || (typeof task === 'string' ? task : '')
     const text = prefix + body
-    return text.length > 60 ? text.slice(0, 60) + '...' : text
+    return text.length > 60 ? clipByCodePoint(text, 60) + '...' : text
   }
   return ''
 }

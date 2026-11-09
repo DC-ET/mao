@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { OpenRunService, type OpenRunDeps } from './open-run.service.js';
+import { OPEN_RUN_MESSAGE_MAX_LENGTH, OpenRunService, type OpenRunDeps } from './open-run.service.js';
 import type { Message, Session } from '../domain/types.js';
 
 function session(overrides: Partial<Session> = {}): Session {
@@ -199,5 +200,28 @@ describe('OpenRunService（P1/P2 共用执行流）', () => {
     const result = await h.service.run({ userId: 7, agentId: 5, message: 'go', sessionId: 11, source: 'API' });
     expect(result.terminalPhase).toBe('COMPLETED');
     expect(h.budgetCheck).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('message 门禁与队列列宽契约（BUG-4，docs/code-review/2026-11-10-logic-bug-audit-01.md）', () => {
+  it('门禁仍按 32000 字拒绝超长 message（列宽放宽不改变门禁行为）', async () => {
+    const h = makeHarness();
+    const longMessage = '汉'.repeat(OPEN_RUN_MESSAGE_MAX_LENGTH + 1);
+    await expect(h.service.run({ userId: 7, agentId: 5, message: longMessage, source: 'API' }))
+      .rejects.toMatchObject({ code: 2001 });
+    expect(h.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('门禁放行的最大 message 必须 MEDIUMTEXT 装得下（V190 对齐 message_queue.content）', () => {
+    // 32000 字 × UTF-8 中文 3 字节 = 96000 字节：旧 TEXT（65535B）装不下，
+    // busy 入队 INSERT 会被 MySQL 严格模式拒绝（Data too long），排队消息永久丢失。
+    // V190 已把 message_queue.content 拓宽为 MEDIUMTEXT（16MB），这里把「门禁 × 列宽」契约钉住。
+    expect(Buffer.byteLength('汉'.repeat(OPEN_RUN_MESSAGE_MAX_LENGTH), 'utf8'))
+      .toBeLessThanOrEqual(16_777_215);
+    const migration = readFileSync(
+      new URL('../../db/migration/V190__message_queue_content_mediumtext.sql', import.meta.url),
+      'utf8',
+    );
+    expect(migration).toMatch(/MODIFY COLUMN\s+`?content`?\s+MEDIUMTEXT/);
   });
 });

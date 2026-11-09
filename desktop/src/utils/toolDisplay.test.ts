@@ -202,3 +202,31 @@ describe('getToolInputPreview 子代理与定时任务/微信补全（0.0.468）
     expect(getToolInputPreview('wait_subagents', { timeout_seconds: 60 })).toBe('')
   })
 })
+
+describe('BUG-7：码点安全截断（docs/code-review/2026-11-10-logic-bug-audit-01.md）', () => {
+  const LONE_HIGH = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/
+  const LONE_LOW = /(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+
+  function assertNoLoneSurrogate(text: string): void {
+    expect(LONE_HIGH.test(text)).toBe(false)
+    expect(LONE_LOW.test(text)).toBe(false)
+  }
+
+  it('generate_image 预览截断不把 emoji 从代理对中间切开', () => {
+    // 😀 恰落在切点上（UTF-16 下标 59/60 是一对）：旧实现 slice(0,60) 留下孤立高位代理，渲染成 U+FFFD
+    const preview = getToolInputPreview('generate_image', { prompt: 'x'.repeat(59) + '😀' + 'y'.repeat(10) })
+    expect(preview.endsWith('...')).toBe(true)
+    assertNoLoneSurrogate(preview.replace(/\.{3}$/, ''))
+    // emoji 整体落在切点内时完整保留且不产生孤立代理项
+    const preview2 = getToolInputPreview('generate_image', { prompt: 'x'.repeat(58) + '😀' + 'y'.repeat(20) })
+    assertNoLoneSurrogate(preview2.replace(/\.{3}$/, ''))
+    expect(preview2.replace(/\.{3}$/, '')).toContain('😀')
+  })
+
+  it('截断长度语义不变：≤ 上限原样返回，> 上限按码点截到上限内', () => {
+    expect(getToolInputPreview('generate_image', { prompt: 'a'.repeat(60) })).toBe('a'.repeat(60))
+    expect(getToolInputPreview('generate_image', { prompt: 'a'.repeat(61) })).toBe('a'.repeat(60) + '...')
+    expect(getToolInputPreview('shell', { command: 'b'.repeat(59) + '😀' + 'c'.repeat(5) }).replace(/\.{3}$/, ''))
+      .not.toMatch(LONE_HIGH)
+  })
+})

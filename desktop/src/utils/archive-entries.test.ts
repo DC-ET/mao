@@ -140,6 +140,20 @@ describe('classifyArchiveEntry', () => {
     }
   })
 
+  it('点文件与无点整名 → text（BUG-6：.gitignore/Dockerfile 此前恒 other 走下载）', () => {
+    expect(classifyArchiveEntry('.gitignore')).toBe('text')
+    expect(classifyArchiveEntry('.gitattributes')).toBe('text')
+    expect(classifyArchiveEntry('.editorconfig')).toBe('text')
+    expect(classifyArchiveEntry('.env')).toBe('text')
+    expect(classifyArchiveEntry('Dockerfile')).toBe('text')
+    expect(classifyArchiveEntry('dockerfile')).toBe('text')
+    expect(classifyArchiveEntry('Makefile')).toBe('text')
+    // 多重点号仍按末段扩展名判定；不在集合的隐藏文件保持 other
+    expect(classifyArchiveEntry('.gitignore.old')).toBe('other')
+    expect(classifyArchiveEntry('.hidden')).toBe('other')
+    expect(classifyArchiveEntry('.pdf')).toBe('pdf')
+  })
+
   it('未知扩展名与无扩展名 → other（下载，不猜）', () => {
     expect(classifyArchiveEntry('binary.bin')).toBe('other')
     expect(classifyArchiveEntry('Makefile.old')).toBe('other')
