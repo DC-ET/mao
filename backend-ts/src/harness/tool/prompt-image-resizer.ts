@@ -7,6 +7,15 @@ export const MAX_DIMENSION = 2048;
 export const MAX_PATCHES = 2500;
 export const JPEG_QUALITY = 0.85;
 
+/**
+ * prompt 侧安全图片格式：三个协议的上游模型稳定支持的图片类型。
+ * 其余格式（TIFF/BMP 等）即使尺寸与体积都合规也必须转码后再进 prompt，
+ * 否则会被上游以 400 `unsupported image` 拒绝（2026-11-09 会话 2368 的 TIFF 截图即此因）。
+ */
+export const PROMPT_SAFE_MIMES: ReadonlySet<string> = new Set([
+  'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+]);
+
 /** 写入侧压缩：超过该字节数才做有损压缩（技术方案 2026-10-22 §7.1）。 */
 export const STORE_COMPRESS_THRESHOLD_BYTES = 1.5 * 1024 * 1024; // 1_572_864
 /** 写入侧压缩目标：单图 ≤1.2MB（必须小于触发阈值，否则会把图“压”得更大）。 */
@@ -100,7 +109,10 @@ export const PromptImageResizer = {
     const srcW = src.width;
     const srcH = src.height;
     const target = this.computeTargetSize(srcW, srcH);
-    if (target.width === srcW && target.height === srcH && this.fitsPromptLimits(srcW, srcH)) {
+    // 尺寸合规且格式安全（PNG/JPEG/GIF/WebP）才原样返回；非安全格式（TIFF/BMP 等）
+    // 即使无需缩尺寸也要走下面的重编码分支转成 PNG。
+    if (PROMPT_SAFE_MIMES.has(mime)
+      && target.width === srcW && target.height === srcH && this.fitsPromptLimits(srcW, srcH)) {
       return new PromptImageResult(input, mime, srcW, srcH, false);
     }
 
@@ -212,6 +224,11 @@ export const PromptImageResizer = {
       throw new Error(`Failed to encode image as ${outMime}`);
     }
     if (best.bytes.length >= input.length) {
+      if (!PROMPT_SAFE_MIMES.has(mime)) {
+        // 非安全格式（TIFF/BMP 等）即使压不小也必须转码：原样透传会让上游直接 400。
+        harnessLog('warn', `Image cannot be compressed below original (${input.length}B -> ${best.bytes.length}B), transcoding ${mime} anyway`);
+        return new PromptImageResult(best.bytes, outMime, best.width, best.height, true);
+      }
       // 极端图（小尺寸高质量 JPEG、低质量编码的大图等）压不小就别压大：
       // 保留原图，避免写侧体积反而上升。
       harnessLog('warn', `Image cannot be compressed below original (${input.length}B -> ${best.bytes.length}B), keeping original`);

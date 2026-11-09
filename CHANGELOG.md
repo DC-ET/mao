@@ -1,3 +1,8 @@
+## 0.0.488 (2026-11-09)
+
+### 后端
+- **非白名单图片格式（TIFF 等）强制转码后再进 prompt**：用户上传的图片若实际是 TIFF/BMP 等非 webp/png/jpeg/gif 格式（例如文件名伪装成 `.jpg` 的 TIFF 截图），此前图片准备链路只按尺寸/体积决定是否重编码——尺寸合规的 TIFF 会被原样转成 `data:image/tiff;base64,…` 发给模型，上游（如 kuaishou 渠道）不认该格式直接 400 `unsupported image`；且失败会话历史里这张图每轮都会重发，用户重发新图也无法自救。现在 `PromptImageResizer` 统一走图片格式白名单（png/jpeg/gif/webp），白名单外的格式即使尺寸/体积合规也强制转码为 PNG（压不小则 JPEG），三条协议（OpenAI 兼容 / Anthropic / Responses）与远程图片缓存路径同时生效。
+
 ## 0.0.487 (2026-11-09)
 
 ### 前端（桌面 / Web / 安卓）
