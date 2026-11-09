@@ -466,9 +466,31 @@
   transition: transform 0.2s var(--mao-ease);
 }
 
+/* 轮次容器：把过程行/折叠条/回复收进同一列，行距 2px（对齐桌面端步骤明细的紧凑排布）。
+   消息列表 .mao-messages 的 14px gap 只留给「用户气泡 ↔ 轮次」与「轮次 ↔ 轮次」；
+   用户气泡与本轮过程贴得稍近（-4px ≈ 10px），折叠条与后续内容留 5px 呼吸、
+   最终回复比过程行多退开一点（4px）。规则顺序即优先级（同为 0,2,0），勿随意调换。 */
+.mao-round {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.mao-round > * + * {
+  margin-top: 2px;
+}
+.mao-msg--user + .mao-round {
+  margin-top: -4px;
+}
+.mao-round > .mao-steps {
+  margin-bottom: 5px;
+}
+.mao-round > .mao-reply {
+  margin-top: 4px;
+}
+
 /* 过程正文 / 最终回复：助手侧不套气泡，markdown 直接落在面板上（沿用 mao-msg__md） */
 .mao-step-text {
-  margin: 2px 0;
+  margin: 0;
 }
 .mao-reply {
   margin-top: 2px;

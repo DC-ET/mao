@@ -160,24 +160,42 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
     <div ref="listEl" class="mao-messages" aria-live="polite">
       <template v-for="round in rounds" :key="round.key">
         <MessageBubble v-if="round.user" :message="round.user" />
-        <!-- 已完成轮次：折叠条（默认收起）+ 过程行/最终回复；折叠条常驻，展开后充当标题 -->
-        <template v-if="round.collapsible && !round.active">
-          <button
-            type="button"
-            class="mao-steps"
-            :aria-expanded="isExpanded(round.key)"
-            @click="toggle(round.key)"
-          >
-            <MaoIcon
-              :icon="ICON_ARROW_DOWN"
-              :size="12"
-              class="mao-steps__icon"
-              :class="{ 'mao-chevron--open': isExpanded(round.key) }"
-            />
-            <span>已执行 {{ round.stepCount }} 个步骤{{ round.durationText ? `，任务耗时 ${round.durationText}` : '' }}</span>
-          </button>
-          <template v-if="isExpanded(round.key)">
-            <template v-for="(row, ri) in round.rows" :key="`${round.key}-x${ri}`">
+        <!-- 轮次容器：过程行/折叠条/回复的行距收在本容器内（2px），消息列表的 14px gap
+             只留给「用户气泡 ↔ 轮次」与「轮次 ↔ 轮次」，否则每行都被撑开一整格（对齐桌面端） -->
+        <div class="mao-round">
+          <!-- 已完成轮次：折叠条（默认收起）+ 过程行/最终回复；折叠条常驻，展开后充当标题 -->
+          <template v-if="round.collapsible && !round.active">
+            <button
+              type="button"
+              class="mao-steps"
+              :aria-expanded="isExpanded(round.key)"
+              @click="toggle(round.key)"
+            >
+              <MaoIcon
+                :icon="ICON_ARROW_DOWN"
+                :size="12"
+                class="mao-steps__icon"
+                :class="{ 'mao-chevron--open': isExpanded(round.key) }"
+              />
+              <span>已执行 {{ round.stepCount }} 个步骤{{ round.durationText ? `，任务耗时 ${round.durationText}` : '' }}</span>
+            </button>
+            <template v-if="isExpanded(round.key)">
+              <template v-for="(row, ri) in round.rows" :key="`${round.key}-x${ri}`">
+                <ThinkingRow
+                  v-if="row.kind === 'thinking'"
+                  :thinking="row.content"
+                  :streaming="row.streaming"
+                />
+                <ToolCallGroup v-else-if="row.kind === 'tools'" :tool-calls="row.toolCalls ?? []" />
+                <div v-else class="mao-msg__md mao-step-text" v-html="renderMarkdown(row.content)" />
+              </template>
+              <div v-if="round.replyText" class="mao-msg__md mao-reply" v-html="renderMarkdown(round.replyText)" />
+            </template>
+            <div v-else-if="round.replyText" class="mao-msg__md mao-reply" v-html="renderMarkdown(round.replyText)" />
+          </template>
+          <!-- 执行中轮次 / 不可折叠轮次：思考行、工具组、中间文本平铺 + 最终回复 -->
+          <template v-else>
+            <template v-for="(row, ri) in round.rows" :key="`${round.key}-${ri}`">
               <ThinkingRow
                 v-if="row.kind === 'thinking'"
                 :thinking="row.content"
@@ -187,25 +205,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
               <div v-else class="mao-msg__md mao-step-text" v-html="renderMarkdown(row.content)" />
             </template>
             <div v-if="round.replyText" class="mao-msg__md mao-reply" v-html="renderMarkdown(round.replyText)" />
+            <div v-if="round.typing" class="mao-typing" aria-hidden="true">
+              <span /><span /><span />
+            </div>
           </template>
-          <div v-else-if="round.replyText" class="mao-msg__md mao-reply" v-html="renderMarkdown(round.replyText)" />
-        </template>
-        <!-- 执行中轮次 / 不可折叠轮次：思考行、工具组、中间文本平铺 + 最终回复 -->
-        <template v-else>
-          <template v-for="(row, ri) in round.rows" :key="`${round.key}-${ri}`">
-            <ThinkingRow
-              v-if="row.kind === 'thinking'"
-              :thinking="row.content"
-              :streaming="row.streaming"
-            />
-            <ToolCallGroup v-else-if="row.kind === 'tools'" :tool-calls="row.toolCalls ?? []" />
-            <div v-else class="mao-msg__md mao-step-text" v-html="renderMarkdown(row.content)" />
-          </template>
-          <div v-if="round.replyText" class="mao-msg__md mao-reply" v-html="renderMarkdown(round.replyText)" />
-          <div v-if="round.typing" class="mao-typing" aria-hidden="true">
-            <span /><span /><span />
-          </div>
-        </template>
+        </div>
       </template>
       <div v-if="isEmpty" class="mao-empty">
         <span class="mao-empty__icon" aria-hidden="true">
