@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
-import { EmbedController, createUiState, type UiState } from './controller';
+import { EmbedController, createUiState, agentIdentityCacheKey, type UiState } from './controller';
 import type { MaoChatEvent, MaoChatInitOptions } from './types';
 
 /** 与 ws-client.spec.ts 同款 fake：静态常量必须保留 */
@@ -182,11 +182,54 @@ describe('EmbedController', () => {
     agentAvatarUrl = '/uploads/agents/3.png';
     const h = await makeHarness();
     h.ctl.prefetchLauncherIdentity();
+    expect(h.ui.launcherIconPending).toBe(true);
     await vi.waitFor(() => expect(h.ui.agentAvatarUrl).toBe('https://mao.example.com/uploads/agents/3.png'));
+    await vi.waitFor(() => expect(h.ui.launcherIconPending).toBe(false));
     expect(h.ui.sessionTitle).toBe('客服助手');
+    expect(JSON.parse(window.localStorage.getItem(agentIdentityCacheKey('https://mao.example.com', 3))!)).toEqual({
+      avatarUrl: 'https://mao.example.com/uploads/agents/3.png', name: '客服助手',
+    });
     await boot(h);
     expect(h.fetchCalls.filter((call) => call === 'GET https://mao.example.com/api/v1/agents/3')).toHaveLength(1);
     h.ctl.destroy();
+  });
+
+  it('再次加载时用上次缓存的图标直接展示，不进入待解析态', async () => {
+    agentAvatarUrl = '/uploads/agents/3.png';
+    window.localStorage.setItem(agentIdentityCacheKey('https://mao.example.com', 3), JSON.stringify({
+      avatarUrl: 'https://mao.example.com/uploads/agents/3.png', name: '客服助手',
+    }));
+    const h = await makeHarness();
+    h.ctl.prefetchLauncherIdentity();
+    // 首屏同步落图标：不经过「待解析」窗口，也不会先出现品牌图标
+    expect(h.ui.launcherIconPending).toBe(false);
+    expect(h.ui.agentAvatarUrl).toBe('https://mao.example.com/uploads/agents/3.png');
+    expect(h.ui.sessionTitle).toBe('客服助手');
+    h.ctl.destroy();
+  });
+
+  it('无头像时预取结算后结束待解析态，入口回退品牌图标', async () => {
+    const h = await makeHarness();
+    h.ctl.prefetchLauncherIdentity();
+    expect(h.ui.launcherIconPending).toBe(true);
+    await vi.waitFor(() => expect(h.ui.launcherIconPending).toBe(false));
+    expect(h.ui.agentAvatarUrl).toBeNull();
+    h.ctl.destroy();
+  });
+
+  it('预取超时兜底：长时间无响应时先结束挂起，不长期挡住宿主入口', async () => {
+    const h = await makeHarness();
+    vi.mocked(fetch).mockImplementationOnce(() => new Promise<Response>(() => {}));
+    vi.useFakeTimers();
+    try {
+      h.ctl.prefetchLauncherIdentity();
+      expect(h.ui.launcherIconPending).toBe(true);
+      await vi.advanceTimersByTimeAsync(1200);
+      expect(h.ui.launcherIconPending).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      h.ctl.destroy();
+    }
   });
 
   it('预取失败静默：不写错误横幅，首次打开仍重新获取 Agent 详情', async () => {

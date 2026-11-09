@@ -37,7 +37,7 @@ const attention = computed(() => props.ui.unread > 0 || props.ui.pendingQuestion
 
 <template>
   <Launcher
-    :visible="ui.launcherVisible"
+    :visible="ui.launcherVisible && !ui.launcherIconPending"
     :agent-avatar-url="ui.agentAvatarUrl"
     :agent-name="ui.sessionTitle"
     :position="side"

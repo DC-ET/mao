@@ -49,3 +49,22 @@ describe('RootApp 页面能力开关', () => {
     expect(el.querySelector('.mao-page-highlight')).toBeNull();
   });
 });
+
+describe('RootApp 入口图标待解析', () => {
+  it('待解析时入口整体不渲染，解析完成后一次性出现（不闪默认图标）', async () => {
+    const ui = createUiState({
+      serverUrl: 'https://mao.example.com', agentId: 1, getToken: () => Promise.resolve('tok'),
+    } as MaoChatInitOptions);
+    ui.launcherIconPending = true;
+    el = document.createElement('div');
+    document.body.appendChild(el);
+    app = createApp({ render: () => h(RootApp, { ui }) });
+    app.mount(el);
+    expect(el.querySelector('.mao-launcher')).toBeNull();
+    expect(el.querySelector('.mao-brand-icon')).toBeNull();
+    ui.launcherIconPending = false;
+    await nextTick();
+    expect(el.querySelector('.mao-launcher')).not.toBeNull();
+    expect(el.querySelector('.mao-launcher .mao-brand-icon')).not.toBeNull();
+  });
+});
