@@ -1026,7 +1026,7 @@ function finalizeUsage(
 }
 
 /** 非流式响应用的完整 ChatUsage（含 totalTokens）。 */
-function mapAnthropicChatUsage(raw: unknown): ChatUsage | undefined {
+export function mapAnthropicChatUsage(raw: unknown): ChatUsage | undefined {
   const fields = extractUsageFields(raw);
   if (fields == null) return undefined;
   return finalizeUsage(fields.inputTokens ?? null, fields.outputTokens ?? null, fields.cacheRead ?? null, fields.cacheCreation ?? null);

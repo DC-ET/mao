@@ -35,8 +35,9 @@ export class GroupContextSummarizer {
     private readonly resolveModelConfig: (sessionId: number) => Promise<LlmModelConfig | null>,
   ) {}
 
-  /** 对溢出群消息文本（调用方已按注入格式渲染）生成摘要；模型不可用或调用失败时返回 null（不阻塞主流程）。 */
-  async summarize(record: string, sessionId: number): Promise<string | null> {
+  /** 对溢出群消息文本（调用方已按注入格式渲染）生成摘要；模型不可用或调用失败时返回 null（不阻塞主流程）。
+   *  userId 为本次触发的发言者（缺省回退会话归属人），仅用于调用流水归属，不影响摘要内容。 */
+  async summarize(record: string, sessionId: number, userId?: number | null): Promise<string | null> {
     if (record.trim() === '') return null;
     try {
       const config = await this.resolveModelConfig(sessionId);
@@ -51,7 +52,7 @@ export class GroupContextSummarizer {
       };
       const response = await LlmCallContext.runAsync({
         scene: LLM_CALL_SCENES.FEISHU_SUMMARIZE,
-        userId: null,
+        userId: userId ?? null,
         sessionId,
         agentId: null,
       }, async () => this.resolveLlmClient(config).chat(request, config));

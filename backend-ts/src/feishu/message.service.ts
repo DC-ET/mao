@@ -325,7 +325,10 @@ export class FeishuMessageService {
     // L-3：渲染可能因超长丢弃最旧行，记账水位必须以「实际参与摘要的最大消息 id」为准，
     // 否则被丢弃的最旧消息既不会增量注入、也永远进不了溢出查询，永久丢失于上下文。
     const keptMaxId = keptMaxOverflowId(overflow, record);
-    const summary = await this.summarizer.summarize(record, conversation.sessionId);
+    // 调用归属：本次触发的发言者优先（群内任何成员都可能触发），未解析出绑定用户时回退会话归属人。
+    const summary = await this.summarizer.summarize(
+      record, conversation.sessionId, context.maoUserId ?? conversation.ownerUserId,
+    );
     if (summary == null || summary.trim() === '') return null;
     const trimmed = summary.trim();
     await this.repository.updateGroupContextSummary(accountId, chatId, trimmed, keptMaxId > 0 ? keptMaxId : maxOverflowId);

@@ -93,6 +93,26 @@ describe('OpenAiChatClient', () => {
     );
   });
 
+  it('maps usage from the response for call accounting', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { role: 'assistant', content: 'ok' } }],
+      usage: { prompt_tokens: 120, completion_tokens: 8, prompt_tokens_details: { cached_tokens: 100 } },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })) as unknown as typeof fetch;
+
+    const client = new OpenAiChatClient({ fetchImpl });
+    const result = await client.chat(
+      { messages: [{ role: 'user', content: 'Hi' }] },
+      { baseUrl: 'https://api.example.test', apiKey: 'sk', modelId: 'gpt-4o' },
+    );
+    // 部分网关不回 total_tokens，用 prompt + completion 兜底。
+    expect(result.usage).toEqual({
+      promptTokens: 120,
+      completionTokens: 8,
+      totalTokens: 128,
+      promptTokensDetails: { cachedTokens: 100 },
+    });
+  });
+
   it('throwsOnHttpError', async () => {
     const fetchImpl = vi.fn(async () => new Response('nope', { status: 401 })) as unknown as typeof fetch;
     const client = new OpenAiChatClient({ fetchImpl });

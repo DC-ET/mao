@@ -1,5 +1,6 @@
 import type { LlmChatClient, LlmChatRequest, LlmChatResponse, LlmModelConfig } from './types.js';
 import { applyClientImpersonationHeaders } from '../harness/llm/client-impersonation-headers.js';
+import { parseUsage } from '../harness/llm/json.js';
 
 export interface OpenAiChatClientOptions {
   timeoutMs?: number;
@@ -52,7 +53,9 @@ export class OpenAiChatClient implements LlmChatClient {
       if (!text) {
         throw new Error('LLM API returned empty body');
       }
-      return JSON.parse(text) as LlmChatResponse;
+      const raw = JSON.parse(text) as Record<string, unknown>;
+      // 保留上游原始响应形状（choices 等），只补归一后的 usage 供非流式调用记账。
+      return { ...raw, usage: parseUsage(raw.usage) } as LlmChatResponse;
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         throw new Error('LLM call failed: timeout');

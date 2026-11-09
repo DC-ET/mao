@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { feishuSummarizerModelConfig, GroupContextSummarizer } from './group-context-summarizer.js';
+import { LlmCallContext } from '../usage/llm-call-context.js';
 
 function makeResponse(text: unknown) {
   return { choices: [{ message: { content: text } }] };
@@ -49,6 +50,18 @@ describe('GroupContextSummarizer', () => {
     const chat = vi.fn(async () => makeResponse([{ type: 'text', text: '分段' }, { type: 'text', text: '摘要' }]));
     const summarizer = makeSummarizer(chat, async () => MODEL_CONFIG);
     expect(await summarizer.summarize('记录')).toBe('分段摘要');
+  });
+
+  it('carries the trigger user into the call context for usage attribution', async () => {
+    const seen: Array<number | null | undefined> = [];
+    const chat = vi.fn(async () => {
+      seen.push(LlmCallContext.get()?.userId);
+      return makeResponse('摘要');
+    });
+    const summarizer = makeSummarizer(chat, async () => MODEL_CONFIG);
+    await summarizer.summarize('记录', 9, 7);
+    await summarizer.summarize('记录', 9);
+    expect(seen).toEqual([7, null]);
   });
 
   it('returns null when no model is available', async () => {

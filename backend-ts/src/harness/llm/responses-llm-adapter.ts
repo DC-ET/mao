@@ -1072,7 +1072,7 @@ export function mapResponsesStatusToFinishReason(status: string | undefined, max
 }
 
 /** Responses usage → 统一 ChatUsage。input_tokens_details.cached_tokens → cachedTokens。 */
-function parseResponsesUsage(raw: unknown): ChatUsage | null {
+export function parseResponsesUsage(raw: unknown): ChatUsage | null {
   if (!isPlainObject(raw)) return null;
   const promptTokens = toNumber(raw.input_tokens) ?? 0;
   const completionTokens = toNumber(raw.output_tokens) ?? 0;

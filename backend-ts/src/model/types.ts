@@ -1,4 +1,5 @@
 import type { ClientImpersonation, ModelVO, ModelPageResult, ModelListFilter } from '@mao/contracts';
+import type { ChatUsage } from '../harness/llm/chat-request.js';
 export type { ClientImpersonation, ModelVO, ModelPageResult, ModelListFilter };
 
 export interface LlmModel {
@@ -97,6 +98,8 @@ export interface LlmChatResponse {
     message?: LlmChatMessage | null;
     finish_reason?: string;
   }>;
+  /** 上游 token 用量（各协议已归一为统一口径）。非流式链路（连通性测试、飞书摘要等）记账必需。 */
+  usage?: ChatUsage;
 }
 
 export interface LlmModelConfig {

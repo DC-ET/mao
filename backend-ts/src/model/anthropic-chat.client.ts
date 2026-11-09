@@ -1,6 +1,6 @@
 import type { LlmChatClient, LlmChatRequest, LlmChatResponse, LlmModelConfig } from './types.js';
 import { applyClientImpersonationHeaders } from '../harness/llm/client-impersonation-headers.js';
-import { convertMessages, mapStopReason } from '../harness/llm/anthropic-llm-adapter.js';
+import { convertMessages, mapAnthropicChatUsage, mapStopReason } from '../harness/llm/anthropic-llm-adapter.js';
 import type { ChatMessage } from '../harness/llm/chat-request.js';
 
 export interface AnthropicChatClientOptions {
@@ -84,6 +84,7 @@ function toChatResponse(raw: Record<string, unknown>): LlmChatResponse {
       message: { role: 'assistant', content: text },
       finish_reason: mapStopReason(stopReason),
     }],
+    usage: mapAnthropicChatUsage(raw.usage),
   };
 }
 

@@ -58,7 +58,7 @@
 | `records[]` | 调用记录 |
 | `total` / `page` / `size` | 分页 |
 
-单条记录主要字段：`createdAt`、`userId`、`sessionId`、`agentId`、`modelName`、`provider`、`scene`、`stream`、`promptTokens`、`completionTokens`、`cachedTokens`、`totalTokens`、`firstTokenMs`、`durationMs`、`success`、`errorMessage`、`cancelled`，以及 `costMicros`（单次调用成本快照，**微单位** = 成本单位×1e6；模型未配价格或只配一个方向时为 `null`，`0` 表示该模型被配成免费）。价格在调用写入时快照，之后改价不影响历史行；管理后台「调用流水」页与 CSV 导出里的「成本」列为成本单位（`costMicros/1e6`）。流被上游截断或用户取消时，若用量已经返回，失败行仍按这些 token 计价。飞书群聊溢出摘要（`feishu_summarize`）记在会话所用模型上。
+单条记录主要字段：`createdAt`、`userId`、`sessionId`、`agentId`、`modelName`、`provider`、`scene`、`stream`、`promptTokens`、`completionTokens`、`cachedTokens`、`totalTokens`、`firstTokenMs`、`durationMs`、`success`、`errorMessage`、`cancelled`，以及 `costMicros`（单次调用成本快照，**微单位** = 成本单位×1e6；模型未配价格或只配一个方向时为 `null`，`0` 表示该模型被配成免费）。价格在调用写入时快照，之后改价不影响历史行；管理后台「调用流水」页与 CSV 导出里的「成本」列为成本单位（`costMicros/1e6`）。流被上游截断或用户取消时，若用量已经返回，失败行仍按这些 token 计价。飞书群聊溢出摘要（`feishu_summarize`）记在会话所用模型上，调用归属本次触发的发言者（缺省回退会话归属人）；非流式调用（飞书摘要、连通性测试等）自 0.0.483 起同样记录真实 token 与成本（此前为 0）。
 
 `cancelled`（0/1，读时按 `errorMessage` 是否含 `Cancelled by user` 派生，历史行同样生效）：1 = 用户点「停止」取消，此时 `success` 仍为 0，但展示与统计都按「取消」而非「失败」计。
 

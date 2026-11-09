@@ -1,6 +1,6 @@
 import type { LlmChatClient, LlmChatRequest, LlmChatResponse, LlmModelConfig } from './types.js';
 import { applyClientImpersonationHeaders } from '../harness/llm/client-impersonation-headers.js';
-import { convertMessages, mapResponsesStatusToFinishReason } from '../harness/llm/responses-llm-adapter.js';
+import { convertMessages, mapResponsesStatusToFinishReason, parseResponsesUsage } from '../harness/llm/responses-llm-adapter.js';
 import type { ChatMessage } from '../harness/llm/chat-request.js';
 
 export interface ResponsesChatClientOptions {
@@ -93,6 +93,7 @@ function toChatResponse(raw: Record<string, unknown>): LlmChatResponse {
       message: { role: 'assistant', content: text },
       finish_reason: mapResponsesStatusToFinishReason(status, incomplete.reason === 'max_output_tokens'),
     }],
+    usage: parseResponsesUsage(raw.usage) ?? undefined,
   };
 }
 

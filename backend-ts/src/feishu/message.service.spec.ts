@@ -151,13 +151,29 @@ describe('FeishuMessageService', () => {
     const group = await service.buildGroupContext('1', makeContext({ messageId: 'om_trigger' }));
     // 溢出查询以最近窗口最小 id 为上界，且不受时间窗限制。
     expect(repository.listOverflowGroupMessages).toHaveBeenCalledWith('1', 'oc_group', 0, 101, 100, null);
-    expect(summarize).toHaveBeenCalledWith(expect.stringContaining('[2026-08-25 09:00] 张三：更早的讨论'), 9);
+    expect(summarize).toHaveBeenCalledWith(expect.stringContaining('[2026-08-25 09:00] 张三：更早的讨论'), 9, 3);
     expect(group.prompt).toBe(
       '[更早历史消息摘要]\n此前讨论了部署方案，决定周五上线。\n[2026-08-26 13:18] 张三：最近讨论',
     );
     expect(repository.updateGroupContextSummary).toHaveBeenCalledWith('1', 'oc_group', '此前讨论了部署方案，决定周五上线。', 50);
     // 水位线仍推进到最近窗口最大 id，摘要后的溢出消息下轮不再重复处理。
     expect(repository.updateGroupContextWatermark).toHaveBeenCalledWith('1', 'oc_group', 101);
+  });
+
+  it('attributes the overflow summary to the triggering member before the conversation owner', async () => {
+    const repository = makeRepo({
+      findGroupConversation: vi.fn(async () => ({ id: 1, appId: '1', chatId: 'oc_group', sessionId: 9, ownerUserId: 3, lastContextLogId: 0 })),
+      listGroupMessages: vi.fn(async () => [
+        { id: 101, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_a', senderName: '张三', isMention: false, messageId: 'om_recent', content: '最近讨论', createdAt: '2026-08-26 13:18:00' },
+      ]),
+      listOverflowGroupMessages: vi.fn(async () => [
+        { id: 50, appId: '1', chatId: 'oc_group', senderOpenId: 'ou_a', senderName: '张三', isMention: false, messageId: 'om_overflow', content: '更早的讨论', createdAt: '2026-08-25 09:00:00' },
+      ]),
+    });
+    const summarize = vi.fn(async () => '摘要');
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120, { summarize } as never, 100);
+    await service.buildGroupContext('1', makeContext({ messageId: 'om_trigger', maoUserId: 7 }));
+    expect(summarize).toHaveBeenCalledWith(expect.any(String), 9, 7);
   });
 
   it('reuses the cached overflow summary when it already covers the overflow range', async () => {

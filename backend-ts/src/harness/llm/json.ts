@@ -173,7 +173,8 @@ function normalizeReasoning(raw: unknown): string | undefined {
   return text === '' ? undefined : text;
 }
 
-function parseUsage(raw: unknown): ChatUsage | undefined {
+/** OpenAI 兼容 usage → 统一 ChatUsage（非流式客户端与 SSE 解析共用同一口径）。 */
+export function parseUsage(raw: unknown): ChatUsage | undefined {
   if (!isPlainObject(raw)) return undefined;
   const details = raw.prompt_tokens_details ?? raw.promptTokensDetails;
   const promptTokens = Number(raw.prompt_tokens ?? raw.promptTokens ?? 0);

@@ -64,4 +64,23 @@ describe('AnthropicChatClient', () => {
     );
     expect(result.choices?.[0]?.message?.content).toBe('ab');
   });
+
+  it('把 Anthropic usage 归一为统一口径（总输入含缓存读写）', async () => {
+    const client = new AnthropicChatClient({
+      fetchImpl: fetchOk({
+        content: [{ type: 'text', text: 'ok' }],
+        usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 2, cache_creation_input_tokens: 3 },
+      }),
+    });
+    const result = await client.chat(
+      { messages: [{ role: 'user', content: 'Hi' }] },
+      { baseUrl: 'https://api.example.test', apiKey: 'k', modelId: 'm' },
+    );
+    expect(result.usage).toEqual({
+      promptTokens: 15,
+      completionTokens: 5,
+      totalTokens: 20,
+      promptTokensDetails: { cachedTokens: 2, cacheCreationTokens: 3 },
+    });
+  });
 });
