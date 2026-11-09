@@ -225,7 +225,14 @@ describe('信号哨兵凭据占位符插入控件', () => {
     expect(src.slice(valueInputAt, closeAt)).toContain('insertCredential')
   })
 
-  it('值输入框 placeholder 提示支持占位符（新建/编辑态）', () => {
+  it('占位符说明放在值输入框之外（placeholder 被截断看不全），placeholder 保持简短', () => {
+    // 说明文案在输入框下方的 .header-hint 里（v-pre 防止 {{...}} 被当模板插值）。
     expect(src).toContain('值，支持 {{MAO_TOKEN}}/{{ECP_TOKEN}} 凭据占位符')
+    const valueInputAt = src.indexOf('v-model="pair.value"')
+    const closeAt = src.indexOf('</el-input>', valueInputAt)
+    expect(src.slice(valueInputAt, closeAt)).not.toContain('凭据占位符')
+    expect(src).toContain(':placeholder="editing && pair.masked ? \'留空不修改\' : \'Header 值\'"')
+    const hintAt = src.indexOf('class="header-hint" v-pre')
+    expect(hintAt).toBeGreaterThan(-1)
   })
 })

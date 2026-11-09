@@ -131,7 +131,7 @@
               <el-input
                 :ref="(el: unknown) => setHeaderValueRef(index, el)"
                 v-model="pair.value"
-                :placeholder="editing && pair.masked ? '留空不修改' : '值，支持 {{MAO_TOKEN}}/{{ECP_TOKEN}} 凭据占位符'"
+                :placeholder="editing && pair.masked ? '留空不修改' : 'Header 值'"
               >
                 <!--
                   插入凭据控件（2026-11-06 方案 §5.2）：放在值输入框 suffix 内，
@@ -155,6 +155,11 @@
             <button type="button" class="add-header-btn" @click="addHeaderRow">
               <el-icon :size="12"><Plus /></el-icon> 添加请求头
             </button>
+            <!--
+              占位符说明放在输入框外：值输入框宽度有限（行内还有 MAO/ECP 插入按钮），
+              placeholder 会被截断看不全；v-pre 让 {{MAO_TOKEN}} 不被当成模板插值。
+            -->
+            <p class="header-hint" v-pre>值，支持 {{MAO_TOKEN}}/{{ECP_TOKEN}} 凭据占位符，也可点右侧 MAO / ECP 直接插入。</p>
           </div>
         </el-form-item>
         <el-form-item label="轮询间隔" required>
@@ -932,6 +937,13 @@ onMounted(() => {
 .insert-cred-btn:hover {
   color: var(--aw-primary);
   background: var(--aw-surface-hover);
+}
+
+.header-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--aw-ink-muted);
 }
 
 .field-hint {
