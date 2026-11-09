@@ -190,6 +190,17 @@ test.describe('Analytics Homepage', () => {
 // ─────────────────────────────────────────────────────────
 // Agent Management
 // ─────────────────────────────────────────────────────────
+test.describe('Signal Watcher Management', () => {
+  test('信号哨兵列表展示「类型」列（V189 脚本探针）', async ({ page }) => {
+    await login(page)
+    await page.goto('/admin/signal-watchers')
+    const table = page.locator('.el-table')
+    await expect(table).toBeVisible({ timeout: 10_000 })
+    await expect(table.locator('th', { hasText: '类型' })).toBeVisible()
+    await expect(table.locator('th', { hasText: '探测地址' })).toBeVisible()
+  })
+})
+
 test.describe('Agent Management', () => {
   test.beforeEach(async ({ page }) => {
     await login(page)

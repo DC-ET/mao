@@ -1,11 +1,15 @@
 import { createHash } from 'node:crypto';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import type { SignalWatcher, SignalWatcherCheck } from './types.js';
 import type { MysqlSignalCheckRepository, MysqlSignalWatcherRepository } from './signal.repository.js';
 import { SignalSecretCipher } from './signal-cipher.js';
 import type { ProbeResult } from './probe-client.js';
+import type { ScriptProbeResult } from './script-probe.js';
 import type { WatcherCredentialResolver } from './watcher-credential-resolver.js';
 import {
   WATCHER_DISABLE_AFTER_FAILURES,
@@ -74,6 +78,8 @@ interface Harness {
   sessions: Map<number, WatcherSessionLookup>;
   checks: SignalWatcherCheck[];
   probeExecute: ReturnType<typeof vi.fn>;
+  scriptProbeExecute: ReturnType<typeof vi.fn>;
+  scriptProjectsRoot: string | null;
   openRun: { run: ReturnType<typeof vi.fn> };
   notify: ReturnType<typeof vi.fn>;
   markChecked: ReturnType<typeof vi.fn>;
@@ -85,6 +91,10 @@ interface Harness {
 function harness(options: {
   watcher?: SignalWatcher;
   probe?: () => Promise<ProbeResult> | ProbeResult;
+  /** 脚本探针假执行器返回值（V189）；提供即视为装配了脚本探针依赖。 */
+  scriptProbe?: () => Promise<ScriptProbeResult> | ScriptProbeResult;
+  /** 脚本存储根（真实临时目录）；与 scriptProbe 一起提供。 */
+  scriptProjectsRoot?: string;
   /** 复用指针预检可见的会话；缺省给一条「本人 + CLOUD + agent 3」的可用会话（id=42）。 */
   sessions?: WatcherSessionLookup[];
   /** 覆盖 getSession 行为，用于复刻生产 wiring（行不存在时抛 SESSION_NOT_FOUND）。 */
@@ -103,6 +113,9 @@ function harness(options: {
   const nextCheckId = { value: 100 };
 
   const probeExecute = vi.fn(async () => (options.probe ? options.probe() : probeResult()));
+  const scriptProbeExecute = vi.fn(async () =>
+    options.scriptProbe ? options.scriptProbe() : { ok: true, exitCode: 0, stdout: '', stdoutBytes: Buffer.alloc(0), error: null, durationMs: 5 },
+  );
   const openRun = { run: vi.fn(async () => ({ sessionId: 42, messageId: 1, queued: false, terminalPhase: 'COMPLETED' as const })) };
   // 复用指针预检：读不到返回 null（等同会话已删）
   const getSession = options.getSession
@@ -218,12 +231,17 @@ function harness(options: {
     cipher: makeCipher(),
     openRun: openRun as never,
     probe: { execute: probeExecute as never },
+    scriptProbe: { execute: scriptProbeExecute as never },
+    scriptProjectsRoot: options.scriptProjectsRoot != null
+      ? (userId: number) => join(options.scriptProjectsRoot!, String(userId), 'projects')
+      : undefined,
+    scriptUserHome: () => null,
     disableNotifier: { notifyWatcherDisabled: notify } satisfies WatcherDisableNotifier,
     getSession,
     credentialResolver: options.credentialResolver,
   });
 
-  return { service, watchers, sessions, checks, probeExecute, openRun, notify, markChecked, recordFailure, getSession, nextCheckId };
+  return { service, watchers, sessions, checks, probeExecute, scriptProbeExecute, scriptProjectsRoot: options.scriptProjectsRoot ?? null, openRun, notify, markChecked, recordFailure, getSession, nextCheckId };
 }
 
 const baseInput: WatcherInput = {
@@ -1526,5 +1544,230 @@ describe('存量 {{...}} 字面量头的兼容（review round 1）', () => {
     await h.service.runCheck(1);
     expect(h.probeExecute).toHaveBeenCalledTimes(1);
     expect(h.probeExecute.mock.calls[0]![0].headers).toEqual({ 'X-Tpl': '{{EVIL}}', Accept: 'json' });
+  });
+});
+
+// ── Shell 脚本探针分流（V189，docs/plan/2026-11-10-shell-script-signal-watcher-technical-design.md）──
+
+describe('SCRIPT 哨兵（V189）', () => {
+  let projectsRoot: string;
+  beforeEach(() => {
+    projectsRoot = mkdtempSync(join(tmpdir(), 'mao-script-sentinel-'));
+  });
+  afterEach(() => {
+    rmSync(projectsRoot, { recursive: true, force: true });
+  });
+
+  function scriptWatcher(overrides: Partial<SignalWatcher> = {}): SignalWatcher {
+    return watcher({
+      name: '磁盘',
+      url: '',
+      method: 'GET',
+      intervalMinutes: 10,
+      compareMode: 'JSON_FIELD',
+      jsonPath: 'free',
+      probeType: 'SCRIPT',
+      scriptPath: 'ops/sentinels/disk.sh',
+      scriptTimeoutSeconds: 60,
+      ...overrides,
+    });
+  }
+
+  function scriptProbeResult(overrides: Partial<ScriptProbeResult> = {}): ScriptProbeResult {
+    return {
+      ok: true,
+      exitCode: 0,
+      stdout: '{"free": 100}',
+      stdoutBytes: Buffer.from('{"free": 100}', 'utf8'),
+      error: null,
+      durationMs: 30,
+      ...overrides,
+    };
+  }
+
+  function writeUserScript(userId: number, relative: string, content: string): string {
+    const full = join(projectsRoot, String(userId), 'projects', relative);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, content);
+    return full;
+  }
+
+  function scriptInput(overrides: Partial<WatcherInput> = {}): WatcherInput {
+    return {
+      ...baseInput,
+      name: '磁盘',
+      url: '',
+      intervalMinutes: 10,
+      compareMode: 'JSON_FIELD',
+      jsonPath: 'free',
+      probeType: 'SCRIPT',
+      scriptPath: 'ops/sentinels/disk.sh',
+      scriptTimeoutSeconds: 60,
+      ...overrides,
+    };
+  }
+
+  it('create：落库 probeType/scriptPath/scriptTimeoutSeconds，HTTP 侧字段归空', async () => {
+    const h = harness({ scriptProbe: scriptProbeResult, scriptProjectsRoot: projectsRoot });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'echo \'{"free": 100}\'\n');
+    const view = await h.service.create(7, scriptInput());
+    expect(view.probeType).toBe('SCRIPT');
+    expect(view.scriptPath).toBe('ops/sentinels/disk.sh');
+    expect(view.scriptTimeoutSeconds).toBe(60);
+    expect(view.url).toBe('');
+    expect(view.headers).toEqual({});
+    const row = h.watchers.get(view.id)!;
+    expect(row.probeType).toBe('SCRIPT');
+    expect(row.headersJson).toBeNull();
+    expect(row.body).toBeNull();
+  });
+
+  it('create：校验矩阵（STATUS_CODE/间隔<5/.. 段/绝对路径/文件不存在/超大小）', async () => {
+    const h = harness({ scriptProbe: scriptProbeResult, scriptProjectsRoot: projectsRoot });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'echo ok\n');
+    const cases: Array<{ input: Partial<WatcherInput>; message: string }> = [
+      { input: { compareMode: 'STATUS_CODE' }, message: 'HASH/JSON_FIELD' },
+      { input: { intervalMinutes: 1 }, message: '5~1440' },
+      { input: { scriptPath: 'ops/../other/check.sh' }, message: '..' },
+      { input: { scriptPath: '/etc/passwd' }, message: '相对路径' },
+      { input: { scriptPath: 'ops/sentinels/missing.sh' }, message: '脚本文件不存在' },
+    ];
+    for (const c of cases) {
+      await expect(h.service.create(7, scriptInput(c.input))).rejects.toThrow(c.message);
+    }
+    // 超大小：256KB 上限
+    writeUserScript(7, 'ops/sentinels/big.sh', 'x'.repeat(256 * 1024 + 1));
+    await expect(h.service.create(7, scriptInput({ scriptPath: 'ops/sentinels/big.sh' }))).rejects.toThrow('过大');
+  });
+
+  it('runCheck：首轮建基线（exit_code=0、httpStatus=null），不触发', async () => {
+    const h = harness({ watcher: scriptWatcher(), scriptProbe: scriptProbeResult, scriptProjectsRoot: projectsRoot });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'echo \'{"free": 100}\'\n');
+    await h.service.runCheck(1);
+    expect(h.openRun.run).not.toHaveBeenCalled();
+    expect(h.checks).toHaveLength(1);
+    expect(h.checks[0]).toMatchObject({ exitCode: 0, httpStatus: null, changed: 0 });
+    // JSON_FIELD 判定值 = 提取路径取值的规范化文本（100），不是 stdout 全文
+    expect(h.watchers.get(1)!.lastValueHash).toBe(sha256('100'));
+    // 假执行器收到绝对路径与白名单 env（含 MAO_WATCHER_ID，不含后端进程变量）
+    const call = h.scriptProbeExecute.mock.calls[0]![0]!;
+    // macOS /var → /private/var 符号链接：用 realpath 对齐
+    expect(call.scriptPath).toBe(realpathSync(join(projectsRoot, '7', 'projects', 'ops/sentinels/disk.sh')));
+    expect(call.env.MAO_WATCHER_ID).toBe('1');
+    expect(call.env.MAO_WATCHER_NAME).toBe('磁盘');
+    expect(call.env.APP_SIGNAL_SECRET).toBeUndefined();
+    expect(call.timeoutSeconds).toBe(60);
+  });
+
+  it('runCheck：变化触发会话，{url} 渲染脚本路径、{diff} 为 stdout 新旧片段', async () => {
+    const h = harness({
+      watcher: scriptWatcher({ lastValueHash: sha256('{"free": 100}'), lastValueSnippet: '{"free": 100}' }),
+      scriptProbe: () => scriptProbeResult({ stdout: '{"free": 88}', stdoutBytes: Buffer.from('{"free": 88}', 'utf8') }),
+      scriptProjectsRoot: projectsRoot,
+    });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'echo \'{"free": 88}\'\n');
+    await h.service.runCheck(1);
+    expect(h.openRun.run).toHaveBeenCalledTimes(1);
+    const run = h.openRun.run.mock.calls[0]![0]!;
+    expect(run.source).toBe('SIGNAL');
+    expect(run.message).toContain('ops/sentinels/disk.sh');
+    expect(run.message).toContain('88');
+    expect(h.checks[0]).toMatchObject({ changed: 1, exitCode: 0, triggeredSessionId: 42 });
+  });
+
+  it('runCheck：非零退出判失败（error 取 stderr、check 行记 exit_code、计连败）', async () => {
+    const h = harness({
+      watcher: scriptWatcher(),
+      scriptProbe: () => scriptProbeResult({ ok: false, exitCode: 3, stdout: null, stdoutBytes: null, error: '上游拒绝' }),
+      scriptProjectsRoot: projectsRoot,
+    });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'exit 3\n');
+    await h.service.runCheck(1);
+    expect(h.openRun.run).not.toHaveBeenCalled();
+    expect(h.checks).toHaveLength(1);
+    expect(h.checks[0]).toMatchObject({ exitCode: 3, httpStatus: null, error: '上游拒绝' });
+  });
+
+  it('runCheck：脚本路径软链逃逸到 projects 外 → 记失败不执行', async () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), 'mao-script-outside-'));
+    try {
+      const h = harness({ watcher: scriptWatcher(), scriptProbe: scriptProbeResult, scriptProjectsRoot: projectsRoot });
+      const outsideScript = join(outsideDir, 'evil.sh');
+      writeFileSync(outsideScript, 'echo pwned\n');
+      // 项目内放一个指向 projects 外的软链
+      const linkDir = join(projectsRoot, '7', 'projects', 'ops', 'sentinels');
+      mkdirSync(linkDir, { recursive: true });
+      symlinkSync(outsideScript, join(linkDir, 'disk.sh'));
+      await h.service.runCheck(1);
+      expect(h.scriptProbeExecute).not.toHaveBeenCalled();
+      expect(h.openRun.run).not.toHaveBeenCalled();
+      expect(h.checks).toHaveLength(1);
+      expect(h.checks[0]!.error).toContain('越出项目工作区');
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it('runCheck：脚本文件被删 → 记失败走退避', async () => {
+    const h = harness({ watcher: scriptWatcher(), scriptProbe: scriptProbeResult, scriptProjectsRoot: projectsRoot });
+    await h.service.runCheck(1);
+    expect(h.scriptProbeExecute).not.toHaveBeenCalled();
+    expect(h.checks).toHaveLength(1);
+    expect(h.checks[0]!.error).toContain('脚本文件不存在');
+  });
+
+  it('runCheck：非零退出连续 5 次自动停用并发通知', async () => {
+    const h = harness({
+      watcher: scriptWatcher({ lastValueHash: sha256('base') }),
+      scriptProbe: () => scriptProbeResult({ ok: false, exitCode: 2, stdout: null, stdoutBytes: null, error: 'boom' }),
+      scriptProjectsRoot: projectsRoot,
+    });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'exit 2\n');
+    for (let i = 0; i < 5; i += 1) {
+      await h.service.runCheck(1);
+    }
+    expect(h.notify).toHaveBeenCalledTimes(1);
+  });
+
+  it('update：切换 probeType/scriptPath 重置基线；仅改 timeout 不重置', async () => {
+    const h = harness({ scriptProbe: scriptProbeResult, scriptProjectsRoot: projectsRoot });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'echo ok\n');
+    writeUserScript(7, 'ops/sentinels/disk2.sh', 'echo ok2\n');
+    // harness 预置了 id=1 的默认 HTTP 哨兵：create 的新哨兵 id 是 2，必须按返回 id 取行
+    const created = await h.service.create(7, scriptInput());
+    const row = () => h.watchers.get(created.id)!;
+    await h.service.update(7, created.id, {}).catch(() => undefined);
+    // 直接模拟库里有基线：通过 repo patch 写入
+    row().lastValueHash = sha256('base');
+    row().lastValueSnippet = 'base';
+    // 只改 timeout：不重置基线
+    await h.service.update(7, created.id, { scriptTimeoutSeconds: 120 });
+    expect(row().lastValueHash).toBe(sha256('base'));
+    expect(row().scriptTimeoutSeconds).toBe(120);
+    // 改脚本路径：重置基线
+    await h.service.update(7, created.id, { scriptPath: 'ops/sentinels/disk2.sh' });
+    expect(row().lastValueHash).toBeNull();
+    expect(row().scriptPath).toBe('ops/sentinels/disk2.sh');
+  });
+
+  it('test：返回 exitCode 与 stdout 样例', async () => {
+    const h = harness({ watcher: scriptWatcher(), scriptProbe: scriptProbeResult, scriptProjectsRoot: projectsRoot });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'echo \'{"free": 100}\'\n');
+    const result = await h.service.test(7, 1);
+    expect(result).toMatchObject({ exitCode: 0, httpStatus: null, parseOk: true, sample: '{"free": 100}' });
+    expect(result.valueHash).toBe(sha256('100'));
+  });
+
+  it('test：SCRIPT 样例取 stdout 前 500 字（§4 步骤 4.2 定案，与 HTTP 的 200 字口径分流）', async () => {
+    const longStdout = 'x'.repeat(700);
+    const h = harness({
+      watcher: scriptWatcher({ compareMode: 'HASH', jsonPath: null }),
+      scriptProbe: () => scriptProbeResult({ stdout: longStdout, stdoutBytes: Buffer.from(longStdout, 'utf8') }),
+      scriptProjectsRoot: projectsRoot,
+    });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'echo long\n');
+    const result = await h.service.test(7, 1);
+    expect(result.sample).toHaveLength(500);
+    expect(result.sample).toBe('x'.repeat(500));
   });
 });

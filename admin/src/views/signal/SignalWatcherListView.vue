@@ -35,10 +35,15 @@
       <el-table-column label="属主" min-width="120">
         <template #default="{ row }">{{ row.username || row.userId }}</template>
       </el-table-column>
-      <el-table-column label="探测地址" min-width="220" show-overflow-tooltip>
-        <template #default="{ row }">{{ row.method }} {{ row.url }}</template>
+      <el-table-column label="类型" width="90">
+        <template #default="{ row }">{{ probeTypeLabel(row.probeType) }}</template>
       </el-table-column>
-      <el-table-column prop="method" label="方法" width="70" />
+      <el-table-column label="探测地址" min-width="220" show-overflow-tooltip>
+        <template #default="{ row }">{{ probeTargetText(row) }}</template>
+      </el-table-column>
+      <el-table-column label="方法" width="70">
+        <template #default="{ row }">{{ row.probeType === 'SCRIPT' ? '—' : row.method }}</template>
+      </el-table-column>
       <el-table-column prop="intervalMinutes" label="间隔(分)" width="90" />
       <el-table-column label="判定模式" width="110">
         <template #default="{ row }">{{ compareModeLabel(row.compareMode) }}</template>
@@ -107,10 +112,14 @@
             </el-descriptions-item>
             <el-descriptions-item label="Agent">{{ agentLabel(detail.agentId) }}</el-descriptions-item>
             <el-descriptions-item label="轮询间隔">{{ detail.intervalMinutes }} 分钟</el-descriptions-item>
+            <el-descriptions-item label="探针类型">{{ probeTypeLabel(detail.probeType) }}</el-descriptions-item>
             <el-descriptions-item label="判定模式">{{ compareModeLabel(detail.compareMode) }}</el-descriptions-item>
             <el-descriptions-item label="触发方式">{{ triggerModeLabel(detail.triggerMode) }}</el-descriptions-item>
             <el-descriptions-item label="探测地址" :span="isMobile ? 1 : 2">
-              <code class="probe-url">{{ detail.method }} {{ detail.url }}</code>
+              <code class="probe-url">{{ probeTargetText(detail) }}</code>
+            </el-descriptions-item>
+            <el-descriptions-item v-if="detail.probeType === 'SCRIPT'" label="执行超时">
+              {{ detail.scriptTimeoutSeconds ?? 60 }} 秒
             </el-descriptions-item>
             <el-descriptions-item v-if="detail.compareMode === 'JSON_FIELD'" label="JSON 路径">
               {{ detail.jsonPath || '-' }}
@@ -198,7 +207,7 @@ import { computed, onActivated, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
-import type { SignalCompareMode, SignalTriggerMode, SignalWatcherStatus, SignalWatcherWarning } from '@mao/contracts'
+import type { SignalCompareMode, SignalProbeType, SignalTriggerMode, SignalWatcherStatus, SignalWatcherWarning } from '@mao/contracts'
 import { formatSignalChangeValue, formatSignalCheckDetail } from '@mao/contracts'
 import { formatDateTime } from '../../utils/datetime'
 import { useBreakpoint } from '../../composables/useBreakpoint'
@@ -213,6 +222,12 @@ interface WatcherRow {
   method: string
   intervalMinutes: number
   compareMode: SignalCompareMode
+  /** 探针类型（V189）：HTTP / SCRIPT。 */
+  probeType: SignalProbeType
+  /** 脚本路径（仅 SCRIPT）：项目工作区内相对路径。 */
+  scriptPath: string | null
+  /** 脚本超时秒数（仅 SCRIPT；null=默认 60）。 */
+  scriptTimeoutSeconds: number | null
   /** JSON_FIELD 的取值路径；列表「上次变化内容」文案要用，不能写死空路径。 */
   jsonPath: string | null
   triggerMode: SignalTriggerMode
@@ -423,6 +438,22 @@ function statusLabel(status: SignalWatcherStatus): string {
 
 function compareModeLabel(mode: SignalCompareMode): string {
   return COMPARE_MODE_LABELS[mode] ?? mode
+}
+
+const PROBE_TYPE_LABELS: Record<SignalProbeType, string> = {
+  HTTP: 'HTTP 接口',
+  SCRIPT: 'Shell 脚本'
+}
+
+function probeTypeLabel(type: SignalProbeType): string {
+  return PROBE_TYPE_LABELS[type] ?? type
+}
+
+/** 判定对象：SCRIPT=脚本路径（含超时口径），HTTP=方法+URL。 */
+function probeTargetText(row: { probeType?: SignalProbeType; scriptPath?: string | null; method?: string; url?: string }): string {
+  return row.probeType === 'SCRIPT'
+    ? `脚本 ${row.scriptPath ?? ''}`
+    : `${row.method ?? ''} ${row.url ?? ''}`.trim()
 }
 
 function triggerModeLabel(mode: SignalTriggerMode): string {

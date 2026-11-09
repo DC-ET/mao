@@ -1034,8 +1034,8 @@ export async function fetchMyBudgets(): Promise<MyBudgetsVO> {
 
 // ── 信号哨兵（/v1/signal-watchers）─────────────────────────────────────────
 
-export type { SignalCompareMode, SignalTriggerMode, SignalWatcherStatus } from '@mao/contracts'
-import type { SignalCompareMode, SignalTriggerMode, SignalWatcherStatus } from '@mao/contracts'
+export type { SignalCompareMode, SignalTriggerMode, SignalWatcherStatus, SignalProbeType } from '@mao/contracts'
+import type { SignalCompareMode, SignalTriggerMode, SignalWatcherStatus, SignalProbeType } from '@mao/contracts'
 
 export interface SignalWatcherView {
   id: number
@@ -1051,6 +1051,12 @@ export interface SignalWatcherView {
   compareMode: SignalCompareMode
   jsonPath: string | null
   promptTemplate: string
+  /** 探针类型（V189）：HTTP / SCRIPT。 */
+  probeType: SignalProbeType
+  /** 脚本路径（仅 SCRIPT）：项目工作区内相对路径 `<slug>/<子路径>`。 */
+  scriptPath: string | null
+  /** 脚本超时秒数（仅 SCRIPT；null=默认 60）。 */
+  scriptTimeoutSeconds: number | null
   status: SignalWatcherStatus
   /** 触发方式：NEW_SESSION=每次新建会话，REUSE_SESSION=复用自己的会话。 */
   triggerMode: SignalTriggerMode
@@ -1072,6 +1078,8 @@ export interface SignalWatcherCheckView {
   id: number
   checkedAt: string | null
   httpStatus: number | null
+  /** 脚本探针的退出码（V189）；HTTP 探针恒 null。 */
+  exitCode: number | null
   valueHash: string | null
   /** 本次判定所对照的上次值 / 本次值片段（V185）；失败行与上线前历史行为 null。 */
   oldValueSnippet: string | null
@@ -1090,6 +1098,8 @@ export interface SignalWatcherCheckPage {
 
 export interface SignalWatcherTestResult {
   httpStatus: number | null
+  /** 脚本探针的退出码（V189）；HTTP 探针恒 null。 */
+  exitCode: number | null
   durationMs: number
   valueHash: string | null
   parseOk: boolean
@@ -1100,8 +1110,10 @@ export interface SignalWatcherTestResult {
 export interface SignalWatcherInput {
   name: string
   agentId: number
-  url: string
-  method: string
+  /** 探测地址（仅 HTTP 哨兵；SCRIPT 哨兵不下发，服务端按类型归空）。 */
+  url?: string
+  /** HTTP 方法（仅 HTTP 哨兵）：GET / POST。 */
+  method?: string
   /**
    * 请求头整体下发；省略该键 = 服务端保留原值（`undefined`），
    * 显式 `null` / `{}` = 清空。前端按「未填任何请求头就不下发」的语义省略。
@@ -1113,6 +1125,12 @@ export interface SignalWatcherInput {
   compareMode: SignalCompareMode
   jsonPath?: string | null
   promptTemplate: string
+  /** 探针类型（V189）；缺省 = HTTP。 */
+  probeType?: SignalProbeType
+  /** 脚本路径（仅 SCRIPT）：键存在且 null = 清空，省略 = 编辑时保留库值。 */
+  scriptPath?: string | null
+  /** 脚本超时秒数（仅 SCRIPT）：null = 回到默认 60，省略 = 编辑时保留库值。 */
+  scriptTimeoutSeconds?: number | null
   /** 触发方式；缺省 = NEW_SESSION（保持现状语义）。 */
   triggerMode?: SignalTriggerMode
   /**

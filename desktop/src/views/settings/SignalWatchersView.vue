@@ -29,6 +29,7 @@
             <div class="item-title">
               {{ watcher.name }}
               <span class="badge" :class="statusClass(watcher.status)">{{ statusLabel(watcher.status) }}</span>
+              <span class="badge badge-muted">{{ probeTypeLabel(watcher.probeType) }}</span>
               <span class="badge badge-muted">{{ compareModeLabel(watcher.compareMode) }}</span>
               <span class="badge badge-muted">{{ triggerModeLabel(watcher.triggerMode) }}</span>
             </div>
@@ -62,8 +63,9 @@
             </div>
           </div>
           <div class="item-meta">
-            <span class="mono url-text">{{ watcher.method }} {{ watcher.url }}</span>
+            <span class="mono url-text">{{ targetText(watcher) }}</span>
             <span>间隔 {{ watcher.intervalMinutes }} 分钟</span>
+            <span v-if="watcher.probeType === 'SCRIPT'">超时 {{ watcher.scriptTimeoutSeconds ?? 60 }} 秒</span>
             <span v-if="watcher.compareMode === 'JSON_FIELD'">路径 {{ watcher.jsonPath }}</span>
             <span>上次变化：{{ watcher.lastChangedAt ? formatTime(watcher.lastChangedAt) : '从未' }}</span>
             <span v-if="watcher.lastChangeOldSnippet != null || watcher.lastChangeNewSnippet != null"
@@ -102,24 +104,33 @@
             <el-option v-for="agent in agents" :key="agent.id" :label="agent.name" :value="agent.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="探测地址" required>
-          <el-input v-model="form.url" placeholder="http:// 或 https://，不支持 localhost 与内网地址" />
-        </el-form-item>
-        <el-form-item label="方法">
-          <el-radio-group v-model="form.method">
-            <el-radio value="GET">GET</el-radio>
-            <el-radio value="POST">POST</el-radio>
+        <el-form-item label="探针类型" required>
+          <el-radio-group v-model="form.probeType" @change="handleProbeTypeChange">
+            <el-radio v-for="(label, value) in PROBE_TYPE_LABELS" :key="value" :value="value">{{ label }}</el-radio>
           </el-radio-group>
+          <span class="field-hint">
+            {{ form.probeType === 'SCRIPT' ? '定期执行项目工作区里的 Shell 脚本，stdout 作为判定值，非零退出计一次失败。' : '定期请求一个 HTTP 接口，响应体作为判定值。' }}
+          </span>
         </el-form-item>
-        <el-form-item label="请求体" v-if="form.method === 'POST'">
+        <template v-if="form.probeType === 'HTTP'">
+          <el-form-item label="探测地址" required>
+            <el-input v-model="form.url" placeholder="http:// 或 https://，不支持 localhost 与内网地址" />
+          </el-form-item>
+          <el-form-item label="方法">
+            <el-radio-group v-model="form.method">
+              <el-radio value="GET">GET</el-radio>
+              <el-radio value="POST">POST</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="请求体" v-if="form.method === 'POST'">
           <el-input
             v-model="form.body"
             type="textarea"
             :rows="3"
             :placeholder="bodyPlaceholder"
           />
-        </el-form-item>
-        <el-form-item label="请求头">
+          </el-form-item>
+          <el-form-item label="请求头">
           <!--
             el-form 渲染的是原生 <form>：内部 <button> 不写 type 默认就是 submit，
             点击会触发表单提交导致整页重载（打包态 file:// + hash 路由下 hash 丢失，
@@ -161,16 +172,39 @@
             -->
             <p class="header-hint" v-pre>值，支持 {{MAO_TOKEN}}/{{ECP_TOKEN}} 凭据占位符，也可点右侧 MAO / ECP 直接插入。</p>
           </div>
-        </el-form-item>
+          </el-form-item>
+        </template>
+        <template v-else>
+          <el-form-item label="脚本路径" required>
+            <div class="script-path-row">
+              <el-input
+                v-model="form.scriptPath"
+                class="script-path-input"
+                placeholder="my-project/sentinels/check.sh"
+                @blur="form.scriptPath = form.scriptPath.trim()"
+              />
+              <button type="button" class="dialog-btn dialog-btn-cancel script-pick-btn" @click="pickerVisible = true">
+                选择脚本
+              </button>
+            </div>
+            <span class="field-hint">项目工作区内相对路径；脚本以 bash 执行（不要求可执行位），stdout 为判定值。</span>
+          </el-form-item>
+          <el-form-item label="执行超时">
+            <el-input-number v-model="scriptTimeoutModel" :min="5" :max="300" :step="5" />
+            <span class="field-hint">秒，5~300；超时按失败计并触发退避。留空默认 60。</span>
+          </el-form-item>
+        </template>
         <el-form-item label="轮询间隔" required>
-          <el-input-number v-model="form.intervalMinutes" :min="1" :max="1440" :step="1" />
-          <span class="field-hint">分钟，1~1440。失败后按倍数退避重试。</span>
+          <el-input-number v-model="form.intervalMinutes" :min="form.probeType === 'SCRIPT' ? 5 : 1" :max="1440" :step="1" />
+          <span class="field-hint">
+            {{ form.probeType === 'SCRIPT' ? '分钟，5~1440（脚本最长执行 300 秒）。' : '分钟，1~1440。' }}失败后按倍数退避重试。
+          </span>
         </el-form-item>
         <el-form-item label="判定模式" required>
           <el-radio-group v-model="form.compareMode">
             <el-radio value="HASH">内容哈希</el-radio>
             <el-radio value="JSON_FIELD">JSON 字段</el-radio>
-            <el-radio value="STATUS_CODE">HTTP 状态码</el-radio>
+            <el-radio v-if="form.probeType === 'HTTP'" value="STATUS_CODE">HTTP 状态码</el-radio>
           </el-radio-group>
         </el-form-item>
         <el-form-item v-if="form.compareMode === 'JSON_FIELD'" label="提取路径" required>
@@ -230,7 +264,7 @@
             <template #default="{ row }">{{ row.checkedAt ? formatTime(row.checkedAt) : '-' }}</template>
           </el-table-column>
           <el-table-column label="状态码" width="56">
-            <template #default="{ row }">{{ row.httpStatus ?? '-' }}</template>
+            <template #default="{ row }">{{ checkStatusText(row) }}</template>
           </el-table-column>
           <el-table-column label="结果" width="60">
             <template #default="{ row }">
@@ -274,7 +308,7 @@
     <el-dialog v-model="testVisible" title="探针测试结果" width="min(520px, calc(100vw - 32px))" class="signal-dialog">
       <div v-if="testResult" class="test-body">
         <p class="test-line">
-          HTTP 状态：<b>{{ testResult.httpStatus ?? '未取得' }}</b>
+          {{ testResult.httpStatus != null ? `HTTP 状态：` : `退出码：` }}<b>{{ testResult.httpStatus ?? (testResult.exitCode ?? '未取得') }}</b>
           <span class="field-hint">耗时 {{ testResult.durationMs }}ms</span>
         </p>
         <p v-if="testResult.error" class="test-error">{{ testResult.error }}</p>
@@ -283,7 +317,7 @@
             判定可用：<b>{{ testResult.parseOk ? '是' : '否' }}</b>
           </p>
           <p v-if="testResult.parseOk" class="test-line mono">判定哈希：{{ testResult.valueHash }}</p>
-          <div class="test-sample-label">响应体样本（前 200 字）</div>
+          <div class="test-sample-label">{{ testResult.httpStatus != null ? '响应体样本（前 200 字）' : '脚本输出样本（前 500 字）' }}</div>
           <pre class="test-sample">{{ testResult.sample }}</pre>
         </template>
       </div>
@@ -291,6 +325,9 @@
         <button class="dialog-btn dialog-btn-confirm" @click="testVisible = false">知道了</button>
       </template>
     </el-dialog>
+
+    <!-- ── 脚本路径选择器（V189）────────────────────────────── -->
+    <ScriptPathPickerDialog :visible="pickerVisible" @update:visible="pickerVisible = $event" @select="applyScriptPath" />
   </div>
 </template>
 
@@ -319,12 +356,15 @@ import type { SignalWatcherWarning } from '@mao/contracts'
 import { formatSignalChangeValue, formatSignalCheckDetail } from '@mao/contracts'
 import {
   DISABLE_AFTER_FAILURES,
+  PROBE_TYPE_LABELS,
   TRIGGER_MODE_LABELS,
   buildWatcherPayload,
   copyFormFromView,
   headerPairsFromView,
   type HeaderPair
 } from './signal-watcher-form'
+import type { SignalProbeType } from '../../api'
+import ScriptPathPickerDialog from './ScriptPathPickerDialog.vue'
 
 const router = useRouter()
 
@@ -361,8 +401,34 @@ const form = reactive({
   compareMode: 'HASH' as SignalCompareMode,
   jsonPath: '',
   promptTemplate: '',
+  probeType: 'HTTP' as SignalProbeType,
+  scriptPath: '',
+  scriptTimeoutSeconds: null as number | null,
   triggerMode: 'NEW_SESSION' as SignalTriggerMode
 })
+
+/** 脚本超时输入框模型：el-input-number 不吃 null，用 60 兜底显示；清空回 null（服务端默认）。 */
+const scriptTimeoutModel = computed<number>({
+  get: () => form.scriptTimeoutSeconds ?? 60,
+  set: (value) => { form.scriptTimeoutSeconds = value == null ? null : value }
+})
+
+const pickerVisible = ref(false)
+
+function applyScriptPath(scriptPath: string): void {
+  form.scriptPath = scriptPath
+}
+
+/**
+ * 切换探针类型：归一另一侧的非法残留值——SCRIPT 不支持 STATUS_CODE（exit code 是成败
+ * 语义不是判定输入），间隔下限 5 分钟（脚本最长 300 秒）。切回 HTTP 不动 interval（≥5 也合法）。
+ */
+function handleProbeTypeChange(value: SignalProbeType): void {
+  if (value === 'SCRIPT') {
+    if (form.compareMode === 'STATUS_CODE') form.compareMode = 'HASH'
+    if (form.intervalMinutes < 5) form.intervalMinutes = 5
+  }
+}
 
 const checksVisible = ref(false)
 const checksLoading = ref(false)
@@ -403,6 +469,24 @@ function compareModeLabel(mode: SignalCompareMode): string {
 
 function triggerModeLabel(mode: SignalTriggerMode): string {
   return TRIGGER_MODE_LABELS[mode] ?? mode
+}
+
+function probeTypeLabel(type: SignalProbeType): string {
+  return PROBE_TYPE_LABELS[type] ?? type
+}
+
+/** 列表卡判定对象：SCRIPT=脚本路径，HTTP=方法+URL。 */
+function targetText(watcher: SignalWatcherView): string {
+  return watcher.probeType === 'SCRIPT'
+    ? `脚本 ${watcher.scriptPath ?? ''}`
+    : `${watcher.method} ${watcher.url}`
+}
+
+/** 轮询记录「状态码」列：脚本探针显示退出码，HTTP 显示状态码。 */
+function checkStatusText(row: { httpStatus: number | null; exitCode: number | null }): string {
+  if (row.httpStatus != null) return String(row.httpStatus)
+  if (row.exitCode != null) return `exit ${row.exitCode}`
+  return '-'
 }
 
 function warningLabel(warning: SignalWatcherWarning): string {
@@ -480,6 +564,9 @@ function resetForm(): void {
   form.compareMode = 'HASH'
   form.jsonPath = ''
   form.promptTemplate = ''
+  form.probeType = 'HTTP'
+  form.scriptPath = ''
+  form.scriptTimeoutSeconds = null
   form.triggerMode = 'NEW_SESSION'
 }
 
@@ -526,6 +613,9 @@ function openEditDialog(watcher: SignalWatcherView): void {
   form.compareMode = watcher.compareMode
   form.jsonPath = watcher.jsonPath ?? ''
   form.promptTemplate = watcher.promptTemplate
+  form.probeType = watcher.probeType ?? 'HTTP'
+  form.scriptPath = watcher.scriptPath ?? ''
+  form.scriptTimeoutSeconds = watcher.scriptTimeoutSeconds ?? null
   form.triggerMode = watcher.triggerMode ?? 'NEW_SESSION'
   form.headers = headerPairsFromView(watcher.headers)
   dialogVisible.value = true
@@ -583,9 +673,13 @@ const bodyPlaceholder = computed(() => {
 
 const canSubmit = computed(() => {
   if (form.name.trim() === '' || form.agentId == null) return false
-  if (form.url.trim() === '') return false
-  // 复制态请求体留空 = 沿用源体，不算未填
-  if (form.method === 'POST' && !editing.value && copyingFromId.value == null && form.body.trim() === '') return false
+  if (form.probeType === 'SCRIPT') {
+    if (form.scriptPath.trim() === '') return false
+  } else {
+    if (form.url.trim() === '') return false
+    // 复制态请求体留空 = 沿用源体，不算未填
+    if (form.method === 'POST' && !editing.value && copyingFromId.value == null && form.body.trim() === '') return false
+  }
   if (form.compareMode === 'JSON_FIELD' && form.jsonPath.trim() === '') return false
   if (form.promptTemplate.trim() === '') return false
   return true
@@ -937,6 +1031,23 @@ onMounted(() => {
 .insert-cred-btn:hover {
   color: var(--aw-primary);
   background: var(--aw-surface-hover);
+}
+
+/* 脚本路径行：输入框 + 选择按钮同排（V189） */
+.script-path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.script-path-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.script-pick-btn {
+  flex-shrink: 0;
 }
 
 .header-hint {

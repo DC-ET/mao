@@ -1,5 +1,6 @@
 import type {
   SignalCompareMode,
+  SignalProbeType,
   SignalTriggerMode,
   SignalWatcherStatus,
   SignalWatcherWarning,
@@ -21,6 +22,15 @@ export interface SignalWatcher {
   compareMode: SignalCompareMode;
   jsonPath: string | null;
   promptTemplate: string;
+  /** 探针类型（V189）：HTTP=单接口探针，SCRIPT=Shell 脚本探针。 */
+  probeType: SignalProbeType;
+  /**
+   * 脚本路径（仅 SCRIPT）：项目工作区内相对路径 `<slug>/<子路径>`，
+   * 解析根为 `{workspaceRoot}/{userId}/projects/`。HTTP 哨兵恒 null。
+   */
+  scriptPath: string | null;
+  /** 脚本超时秒数（仅 SCRIPT；NULL=默认 60）。 */
+  scriptTimeoutSeconds: number | null;
   status: SignalWatcherStatus;
   /** 上次判定值哈希；NULL=待建基线。 */
   lastValueHash: string | null;
@@ -49,6 +59,8 @@ export interface SignalWatcherCheck {
   watcherId: number;
   checkedAt?: string | null;
   httpStatus: number | null;
+  /** 脚本探针的退出码（V189）；HTTP 探针恒 null。 */
+  exitCode: number | null;
   valueHash: string | null;
   /**
    * 本次判定所对照的上次值 / 本次值片段（V185）：取 runCheck 开头那份快照的
@@ -66,6 +78,7 @@ export interface SignalWatcherCheck {
 
 /** 变化判定模式（决策 14：三种）。 */
 export type { SignalCompareMode };
+export type { SignalProbeType };
 
 /** 哨兵状态：ACTIVE 轮询中 / PAUSED 用户暂停 / DISABLED 连续失败自动停用。 */
 export type { SignalWatcherStatus };
@@ -77,6 +90,23 @@ export const SIGNAL_COMPARE_MODES = ['HASH', 'JSON_FIELD', 'STATUS_CODE'] as con
 
 export function isSignalCompareMode(value: unknown): value is SignalCompareMode {
   return typeof value === 'string' && (SIGNAL_COMPARE_MODES as readonly string[]).includes(value);
+}
+
+/** 探针类型（V189）：HTTP / SCRIPT。 */
+export const SIGNAL_PROBE_TYPES = ['HTTP', 'SCRIPT'] as const satisfies readonly SignalProbeType[];
+
+export function isSignalProbeType(value: unknown): value is SignalProbeType {
+  return typeof value === 'string' && (SIGNAL_PROBE_TYPES as readonly string[]).includes(value);
+}
+
+/**
+ * SCRIPT 哨兵允许的判定模式：exit code 是成败语义（非 0 = 探针失败计连败），
+ * 不是变化判定输入，STATUS_CODE 不对脚本开放（技术方案 §3.1）。
+ */
+export const SCRIPT_COMPARE_MODES = ['HASH', 'JSON_FIELD'] as const satisfies readonly SignalCompareMode[];
+
+export function isScriptCompareMode(value: unknown): value is SignalCompareMode {
+  return typeof value === 'string' && (SCRIPT_COMPARE_MODES as readonly string[]).includes(value);
 }
 
 export const SIGNAL_TRIGGER_MODES = ['NEW_SESSION', 'REUSE_SESSION'] as const satisfies readonly SignalTriggerMode[];

@@ -202,6 +202,7 @@ import { assembleContainerRuntime } from './app-container-runtime.js';
 import { assembleLlmEngine } from './app-llm-engine.js';
 import { assembleNotificationServices } from './app-notification-services.js';
 import { PENDING_ESCALATION_DELAY_MS } from './notification/task/delivery.service.js';
+import type { WatcherService } from './signal/watcher.service.js';
 import { assembleOpenApiServices } from './app-openapi-services.js';
 import { assembleWeixinServices } from './app-weixin-services.js';
 import { assembleFeishuHandler } from './app-feishu-handler.js';
@@ -820,8 +821,14 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
 
   // harness 必须在 wsHandler / 微信 / 钉钉 / GitCommitMessageService 之前装配：
   // 这些消费者在构造时就读取真实的 harness 与 agentLoop（holder 只是给运行期晚绑定用）。
+  // 信号哨兵服务同理（V189）：watcherService 在 openapi 装配段才构造，工具执行期经 thunk 取。
+  let signalWatcherServiceRef: WatcherService | null = null;
   const harnessEngine = assembleHarnessEngine({
     cfg, apiPrefix, uploadDir, harnessTuning, pathSandbox, todoMapper, scheduledService,
+    getSignalWatcherService: () => {
+      if (signalWatcherServiceRef == null) throw new Error('signal watcher service not assembled yet');
+      return signalWatcherServiceRef;
+    },
     sessionSvc, sessionMap, shellManager, outputManager, backgroundTasks, gitTokenResolver, jwt,
     userRepo, ecpInjector, larkUatInjector, settingService, runtimeResolver, modelService,
     wechatBridges, feishuMessageService, feishuMessageRepository, getFeishuClient,
@@ -903,8 +910,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     openCallLogHolder, openTriggerSettle, openCallSettle,
     // 哨兵凭据占位符签发依赖（均构造于本调用点之前，时序无碍）
     jwt, userRepo, ecpSessionRepo,
+    // 脚本探针 HOME 解析（V189）：runtimeResolver 即 RuntimeDataResolver
+    runtimeDataResolver: runtimeResolver,
   });
   const { openRunService, callLogService, callLogCleanup, webhookTriggerService, watcherService, watcherScheduler, signalCheckCleanup, digestService, digestScheduler, signalWatcherRepo } = openApiServices;
+  // 晚绑定回填：openapi 装配完成后信号哨兵工具即可用（工具仅在会话运行期调用，时序无碍）
+  signalWatcherServiceRef = watcherService;
 
 
   const feishuHandler = assembleFeishuHandler({

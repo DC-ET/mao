@@ -174,6 +174,10 @@ export function summarize(toolName: string | null | undefined, argumentsJson: st
       return summarizeDeleteScheduledTask(result);
     case 'list_scheduled_tasks':
       return summarizeListScheduledTasks(result);
+    case 'list_signal_watchers':
+      return summarizeListSignalWatchers(result);
+    case 'create_signal_watcher':
+      return summarizeCreateSignalWatcher(argumentsJson, result);
     case 'page_inspect':
     case 'page_observe':
     case 'page_screenshot':
@@ -565,6 +569,31 @@ function summarizeDeleteScheduledTask(result: string | null | undefined): string
   if (failure) return `删除定时任务${failure}`;
   if (has(node, 'message')) return String(node.message);
   return '删除定时任务';
+}
+
+function summarizeListSignalWatchers(result: string | null | undefined): string {
+  if (result == null) return '查询信号哨兵';
+  const node = asObj(parseJson(result));
+  if (!node) return '查询信号哨兵';
+  const failure = failureSuffix(node);
+  if (failure) return `查询信号哨兵${failure}`;
+  if (has(node, 'total')) return `信号哨兵列表 (${Number(node.total)} 个)`;
+  if (Array.isArray(node.watchers)) return `信号哨兵列表 (${node.watchers.length} 个)`;
+  return '查询信号哨兵';
+}
+
+function summarizeCreateSignalWatcher(argumentsJson: string | null | undefined, result: string | null | undefined): string {
+  const name = extractJsonString(argumentsJson, 'name');
+  const label = name != null ? `创建信号哨兵 ${truncate(name, 20)}` : '创建信号哨兵';
+  if (result == null) return label;
+  const node = asObj(parseJson(result));
+  if (!node) return label;
+  const failure = failureSuffix(node);
+  if (failure) return `${label}${failure}`;
+  if (has(node, 'message')) return String(node.message);
+  const resultName = has(node, 'name') ? String(node.name) : null;
+  if (resultName != null) return `创建信号哨兵 ${truncate(resultName, 20)}`;
+  return '创建信号哨兵';
 }
 
 function summarizeListScheduledTasks(result: string | null | undefined): string {

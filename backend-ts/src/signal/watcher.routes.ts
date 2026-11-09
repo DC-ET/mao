@@ -46,6 +46,15 @@ export function toInput(body: Record<string, unknown>): Partial<WatcherInput> {
     }
     copyFrom = n;
   }
+  // V189 脚本探针三键：probeType 缺省=HTTP；scriptPath/scriptTimeoutSeconds 与 jsonPath
+  // 同口径——键未下发=未下发（编辑沿用库值），键存在且 null=显式清空。
+  let scriptTimeoutSeconds: number | null | undefined;
+  if ('scriptTimeoutSeconds' in body) {
+    scriptTimeoutSeconds = body.scriptTimeoutSeconds == null ? null : Number(body.scriptTimeoutSeconds);
+    if (scriptTimeoutSeconds != null && !Number.isFinite(scriptTimeoutSeconds)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, 'scriptTimeoutSeconds 必须为数字');
+    }
+  }
   return {
     name: typeof body.name === 'string' ? body.name : undefined,
     agentId: body.agentId == null ? undefined : Number(body.agentId),
@@ -60,6 +69,9 @@ export function toInput(body: Record<string, unknown>): Partial<WatcherInput> {
     jsonPath: 'jsonPath' in body ? (typeof body.jsonPath === 'string' ? body.jsonPath : null) : undefined,
     promptTemplate: typeof body.promptTemplate === 'string' ? body.promptTemplate : undefined,
     triggerMode: typeof body.triggerMode === 'string' ? body.triggerMode : undefined,
+    probeType: typeof body.probeType === 'string' ? body.probeType : undefined,
+    scriptPath: 'scriptPath' in body ? (typeof body.scriptPath === 'string' ? body.scriptPath : null) : undefined,
+    scriptTimeoutSeconds,
     // 复制源哨兵 id（仅 create 消费）：敏感请求头/body 由后端从源行解密继承。
     // reuseSessionId 刻意不解析——指针系统维护，防伪造指向他人生效中的会话。
     copyFrom,
@@ -79,7 +91,16 @@ export function registerSignalWatcherRoutes(app: FastifyInstance, deps: WatcherR
   app.post('/v1/signal-watchers', async (req, reply) => {
     const userId = requireJwtIdentity(req);
     const input = toInput(bodyOf<Record<string, unknown>>(req));
-    if (input.name == null || input.agentId == null || input.url == null || input.promptTemplate == null) {
+    if (input.name == null || input.agentId == null || input.promptTemplate == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, 'name、agentId、promptTemplate 必填');
+    }
+    // 脚本哨兵必填脚本路径、HTTP 哨兵必填 URL；字段级细节（格式/文件存在/互斥）由
+    // normalizeInput + validateScriptFile 统一校验，路由层只拦结构性缺参。
+    if (input.probeType === 'SCRIPT') {
+      if (input.scriptPath == null) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '脚本哨兵必须提供 scriptPath');
+      }
+    } else if (input.url == null) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, 'name、agentId、url、promptTemplate 必填');
     }
     return sendOk(reply, await deps.service.create(userId, input as WatcherInput));

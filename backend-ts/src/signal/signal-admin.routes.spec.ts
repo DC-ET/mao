@@ -104,9 +104,9 @@ describe('registerSignalAdminRoutes compareMode 入参', () => {
     expect(listForAdmin).toHaveBeenCalledWith(1, 20, { status: null, userId: undefined, compareMode: null });
   });
 
-  it('列表行透出 jsonPath，JSON 字段模式的「上次变化内容」能带上路径', async () => {
+  it('列表行透出 jsonPath 与脚本探针三字段（V189），JSON 字段模式的「上次变化内容」能带上路径', async () => {
     const listForAdmin = vi.fn(async () => ({
-      rows: [watcher({ compareMode: 'JSON_FIELD', jsonPath: 'data.price', lastChangeOldSnippet: '1', lastChangeNewSnippet: '2' })],
+      rows: [watcher({ compareMode: 'JSON_FIELD', jsonPath: 'data.price', lastChangeOldSnippet: '1', lastChangeNewSnippet: '2', probeType: 'SCRIPT', scriptPath: 'ops/sentinels/disk.sh', scriptTimeoutSeconds: 120 })],
       total: 1,
     }));
     const app = { get: vi.fn() };
@@ -120,7 +120,7 @@ describe('registerSignalAdminRoutes compareMode 入参', () => {
     const reply = makeReply();
     const payload = parsePayload(await handler({ userId: 1, query: {} }, reply));
     const data = payload.data as { records: Array<Record<string, unknown>> };
-    expect(data.records[0]).toMatchObject({ compareMode: 'JSON_FIELD', jsonPath: 'data.price' });
+    expect(data.records[0]).toMatchObject({ compareMode: 'JSON_FIELD', jsonPath: 'data.price', probeType: 'SCRIPT', scriptPath: 'ops/sentinels/disk.sh', scriptTimeoutSeconds: 120 });
   });
 });
 

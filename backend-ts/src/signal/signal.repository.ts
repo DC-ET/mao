@@ -25,6 +25,9 @@ export class MysqlSignalWatcherRepository {
       compareMode: watcher.compareMode,
       jsonPath: watcher.jsonPath,
       promptTemplate: watcher.promptTemplate,
+      probeType: watcher.probeType,
+      scriptPath: watcher.scriptPath,
+      scriptTimeoutSeconds: watcher.scriptTimeoutSeconds,
       status: watcher.status,
       lastValueHash: watcher.lastValueHash,
       lastValueSnippet: watcher.lastValueSnippet,
@@ -103,6 +106,9 @@ export class MysqlSignalWatcherRepository {
     if (patch.compareMode !== undefined) row.compareMode = patch.compareMode;
     if (patch.jsonPath !== undefined) row.jsonPath = patch.jsonPath;
     if (patch.promptTemplate !== undefined) row.promptTemplate = patch.promptTemplate;
+    if (patch.probeType !== undefined) row.probeType = patch.probeType;
+    if (patch.scriptPath !== undefined) row.scriptPath = patch.scriptPath;
+    if (patch.scriptTimeoutSeconds !== undefined) row.scriptTimeoutSeconds = patch.scriptTimeoutSeconds;
     if (patch.status !== undefined) row.status = patch.status;
     if (patch.lastValueHash !== undefined) row.lastValueHash = patch.lastValueHash;
     // 本次补漏（2026-11-04 方案 §5.7）：基线重置 / 重新启用的
@@ -246,6 +252,7 @@ export class MysqlSignalCheckRepository {
     return this.db.insert('signal_watcher_check', {
       watcherId: check.watcherId,
       httpStatus: check.httpStatus,
+      exitCode: check.exitCode ?? null,
       valueHash: check.valueHash,
       changed: check.changed,
       triggeredSessionId: check.triggeredSessionId,

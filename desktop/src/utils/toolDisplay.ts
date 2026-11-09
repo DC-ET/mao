@@ -33,6 +33,8 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   update_scheduled_task: '更新定时任务',
   delete_scheduled_task: '删除定时任务',
   list_scheduled_tasks: '查询定时任务',
+  create_signal_watcher: '创建信号哨兵',
+  list_signal_watchers: '查询信号哨兵',
   page_inspect: '查看页面元素',
   page_observe: '观察页面变化',
   page_screenshot: '截取页面截图',
@@ -108,6 +110,12 @@ export function getToolInputPreview(name: string, input?: Record<string, unknown
       const name = input.name
       return typeof name === 'string' && name.trim() ? (name.length > 30 ? name.slice(0, 30) + '...' : name) : ''
     }
+    case 'create_signal_watcher': {
+      const name = input.name
+      return typeof name === 'string' && name.trim() ? (name.length > 30 ? name.slice(0, 30) + '...' : name) : ''
+    }
+    case 'list_signal_watchers':
+      return ''
     case 'update_scheduled_task': {
       const name = input.name
       if (typeof name === 'string' && name.trim()) return name.length > 30 ? name.slice(0, 30) + '...' : name

@@ -43,6 +43,7 @@ import { TaskCreateTool, TaskDeleteTool, TaskListTool, TaskUpdateTool } from './
 import {
   CreateScheduledTaskTool, DeleteScheduledTaskTool, ListScheduledTasksTool, UpdateScheduledTaskTool,
 } from './impl/scheduled-task-tools.js';
+import { CreateSignalWatcherTool, ListSignalWatchersTool, type SignalWatcherServiceRef } from './impl/signal-watcher-tools.js';
 import { SendWechatFileTool, SendWechatImageTool } from './impl/wechat-tools.js';
 import { FeishuDownloadFileTool, SendFeishuFileTool, SendFeishuImageTool } from './impl/feishu-tools.js';
 import { SendDingtalkFileTool, SendDingtalkImageTool, type DingtalkMediaSendSupport } from './impl/dingtalk-tools.js';
@@ -68,6 +69,8 @@ export interface DefaultToolRegistryDeps {
   pathSandbox: PathSandbox;
   sessionTodoMapper: SessionTodoMapper;
   scheduledTaskService: ScheduledTaskService;
+  /** 信号哨兵服务晚绑定（V189）：harness 装配先于 openapi 装配，运行期经 thunk 取实例。 */
+  getSignalWatcherService?: SignalWatcherServiceRef;
   sessionService: SessionService;
   sessionMapper: SessionMapper;
   shellSessionManager: ShellSessionManager;
@@ -176,6 +179,11 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     new ListScheduledTasksTool(deps.scheduledTaskService),
     new UpdateScheduledTaskTool(deps.scheduledTaskService),
     new DeleteScheduledTaskTool(deps.scheduledTaskService),
+    // 信号哨兵两件套（V189）：仅装配了晚绑定 ref 时注册（缺省装配工具集不变）
+    ...(deps.getSignalWatcherService != null ? [
+      new ListSignalWatchersTool(deps.getSignalWatcherService, deps.sessionService),
+      new CreateSignalWatcherTool(deps.getSignalWatcherService, deps.sessionService),
+    ] : []),
     new SendWechatImageTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService, deps.sendBytesSupport),
     new SendWechatFileTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService, deps.sendBytesSupport),
     new FeishuDownloadFileTool(deps.feishuToolSupport, deps.feishuGroupMediaLookup, deps.feishuMediaDownloader, deps.feishuMaxInboundFileBytes, deps.feishuMessageDetailFetcher),

@@ -1,4 +1,5 @@
 import type { Db } from './db/db.js';
+import { resolve } from 'node:path';
 import type { AppConfig } from './config/app-config.js';
 import type { SessionService } from './session/session.service.js';
 import type { MessageQueueService } from './session/message-queue.service.js';
@@ -29,6 +30,7 @@ import { SignalSecretCipher } from './signal/signal-cipher.js';
 import { MysqlSignalWatcherRepository, MysqlSignalCheckRepository } from './signal/signal.repository.js';
 import { WatcherService } from './signal/watcher.service.js';
 import { createWatcherCredentialResolver } from './signal/watcher-credential-resolver.js';
+import type { RuntimeDataResolver } from './harness/runtime/runtime-data-resolver.js';
 import { WatcherScheduler } from './signal/watcher-scheduler.js';
 import { SignalCheckCleanup } from './signal/signal-check-cleanup.js';
 import { DigestRepository } from './digest/repository.js';
@@ -49,6 +51,7 @@ export interface OpenApiServicesDeps {
   inboxService: InboxService;
   settingService: SystemSettingService;
   openApiRateLimiter: FixedWindowRateLimiter;
+  runtimeDataResolver: RuntimeDataResolver;
   notifCipher: WebhookSecretCipher;
   outboundSubscriptionService: OutboundSubscriptionService;
   holder: { harness?: HarnessService };
@@ -76,7 +79,7 @@ export interface OpenApiServicesResult {
 }
 
 export function assembleOpenApiServices(deps: OpenApiServicesDeps): OpenApiServicesResult {
-  const { db, cfg, sessionService, messageQueueService, taskTerminal, agentRepo, wsHandler, budgetService, apiTokenService, inboxService, settingService, openApiRateLimiter, notifCipher, outboundSubscriptionService, holder, agentExecutor, openCallLogHolder, openTriggerSettle, openCallSettle, jwt, userRepo, ecpSessionRepo } = deps;
+  const { db, cfg, sessionService, messageQueueService, taskTerminal, agentRepo, wsHandler, budgetService, apiTokenService, inboxService, settingService, openApiRateLimiter, notifCipher, outboundSubscriptionService, holder, agentExecutor, openCallLogHolder, openTriggerSettle, openCallSettle, jwt, userRepo, ecpSessionRepo, runtimeDataResolver } = deps;
 
   const openRunService = new OpenRunService({
     sessionService: sessionService as unknown as OpenRunDeps['sessionService'],
@@ -141,6 +144,9 @@ export function assembleOpenApiServices(deps: OpenApiServicesDeps): OpenApiServi
     checkRepo: signalCheckRepo,
     cipher: signalCipher,
     openRun: openRunService,
+    // 脚本探针（V189）：存储根 = {workspaceRoot}/{userId}/projects，HOME = 属主运行时目录
+    scriptProjectsRoot: (userId) => resolve(cfg.app.harness.workspaceRoot, String(userId), 'projects'),
+    scriptUserHome: (userId) => runtimeDataResolver.resolveUserHomeDir(userId),
     // 复用指针有效性预检（技术方案 2026-10-27 §3.2.3）
     getSession: (id) => sessionService.getSession(id),
     disableNotifier: {

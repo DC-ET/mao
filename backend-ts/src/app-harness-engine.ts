@@ -4,6 +4,7 @@ import type { JwtService } from './crypto/jwt.service.js';
 import type { PathSandbox } from './harness/safety/path-sandbox.js';
 import type { SessionTodoMapper } from './harness/todo/session-todo.mapper.js';
 import type { ScheduledTaskService } from './schedule/scheduled-task.service.js';
+import type { WatcherService } from './signal/watcher.service.js';
 import type { SessionService } from './session/session.service.js';
 import type { SessionRepository } from './session/session.repository.js';
 import type { GitTokenResolver } from './session/types.js';
@@ -88,6 +89,8 @@ export interface HarnessEngineDeps {
   pathSandbox: PathSandbox;
   todoMapper: SessionTodoMapper;
   scheduledService: ScheduledTaskService;
+  /** 信号哨兵服务晚绑定（V189）：harness 装配先于 openapi 装配，工具执行期经 thunk 取实例。 */
+  getSignalWatcherService: () => WatcherService;
   sessionSvc: SessionService;
   sessionMap: SessionRepository;
   shellManager: ShellSessionManager;
@@ -182,6 +185,7 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     pathSandbox: d.pathSandbox,
     sessionTodoMapper: d.todoMapper,
     scheduledTaskService: d.scheduledService,
+    getSignalWatcherService: d.getSignalWatcherService,
     sessionService: d.sessionSvc,
     sessionMapper: d.sessionMap,
     shellSessionManager: d.shellManager,

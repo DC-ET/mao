@@ -17,6 +17,9 @@ function form(partial: Partial<SignalWatcherForm> = {}): SignalWatcherForm {
     compareMode: 'HASH',
     jsonPath: '',
     promptTemplate: '值变了 {diff}',
+    probeType: 'HTTP',
+    scriptPath: '',
+    scriptTimeoutSeconds: null,
     triggerMode: 'NEW_SESSION',
     ...partial
   }
@@ -189,6 +192,61 @@ describe('buildWatcherPayload 复制态（copyFrom）', () => {
   })
 })
 
+describe('脚本探针载荷（V189）', () => {
+  it('SCRIPT：下发 probeType/scriptPath/scriptTimeoutSeconds，HTTP 侧字段（url/method/headers/body）不下发', () => {
+    const payload = buildWatcherPayload(form({
+      probeType: 'SCRIPT',
+      url: 'https://example.com/should-not-send',
+      headers: [pair('X-Should', 'not-send')],
+      body: 'should-not-send',
+      scriptPath: 'ops/sentinels/disk.sh',
+      scriptTimeoutSeconds: 120,
+      compareMode: 'JSON_FIELD',
+      jsonPath: 'free'
+    }), false)
+    expect(payload.probeType).toBe('SCRIPT')
+    expect(payload.scriptPath).toBe('ops/sentinels/disk.sh')
+    expect(payload.scriptTimeoutSeconds).toBe(120)
+    expect('url' in payload).toBe(false)
+    expect('method' in payload).toBe(false)
+    expect('headers' in payload).toBe(false)
+    expect('body' in payload).toBe(false)
+    expect(payload.compareMode).toBe('JSON_FIELD')
+    expect(payload.jsonPath).toBe('free')
+  })
+
+  it('HTTP：不下发脚本侧字段（切回探针类型时服务端归空旧脚本值）', () => {
+    const payload = buildWatcherPayload(form({ probeType: 'HTTP', scriptPath: 'ops/sentinels/leftover.sh' }), false)
+    expect(payload.probeType).toBe('HTTP')
+    expect(payload.url).toBe('https://example.com/api/rate')
+    expect(payload.method).toBe('GET')
+    expect('scriptPath' in payload).toBe(false)
+    expect('scriptTimeoutSeconds' in payload).toBe(false)
+  })
+
+  it('canSubmit 语义由调用方保证：SCRIPT 必填 scriptPath（buildWatcherPayload 只做形状）', () => {
+    // 空路径在 UI canSubmit 拦截；此处只验证 trim 后空串原样下发（后端必填校验兜底）
+    const payload = buildWatcherPayload(form({ probeType: 'SCRIPT', scriptPath: '   ' }), false)
+    expect(payload.probeType).toBe('SCRIPT')
+    expect(payload.scriptPath).toBe('')
+  })
+
+  it('copyFormFromView 回显脚本字段', () => {
+    const copied = copyFormFromView({
+      id: 3, name: '磁盘', agentId: 7, url: '', method: 'GET', headers: {}, hasBody: false,
+      bodyLength: 0, intervalMinutes: 10, compareMode: 'JSON_FIELD', jsonPath: 'free',
+      promptTemplate: 'p', probeType: 'SCRIPT', scriptPath: 'ops/sentinels/disk.sh',
+      scriptTimeoutSeconds: 45, status: 'ACTIVE', triggerMode: 'NEW_SESSION',
+      reuseSessionId: null, lastValueHash: null, lastValueSnippet: null,
+      lastChangeOldSnippet: null, lastChangeNewSnippet: null, lastCheckedAt: null,
+      lastChangedAt: null, consecutiveFailures: 0, createdAt: null
+    })
+    expect(copied.probeType).toBe('SCRIPT')
+    expect(copied.scriptPath).toBe('ops/sentinels/disk.sh')
+    expect(copied.scriptTimeoutSeconds).toBe(45)
+  })
+})
+
 describe('凭据占位符值往返（2026-11-06 方案 §5.3）', () => {
   it('纯占位符值不是掩码：headerPairsFromView 原样回显（后端 D5 例外不打码）', () => {
     expect(headerPairsFromView({ Authorization: '{{MAO_TOKEN}}' })).toEqual([
@@ -226,6 +284,9 @@ describe('copyFormFromView 复制预填', () => {
       compareMode: 'HASH' as const,
       jsonPath: null,
       promptTemplate: '值变了 {diff}',
+      probeType: 'HTTP' as const,
+      scriptPath: null,
+      scriptTimeoutSeconds: null,
       status: 'ACTIVE' as const,
       triggerMode: 'REUSE_SESSION' as const,
       reuseSessionId: 42,

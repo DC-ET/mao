@@ -64,6 +64,10 @@ export function registerSignalAdminRoutes(app: FastifyInstance, deps: SignalAdmi
       intervalMinutes: row.intervalMinutes,
       compareMode: row.compareMode,
       jsonPath: row.jsonPath ?? null,
+      // 脚本探针三键（V189）：admin 列表「类型」列与脚本路径展示的数据源，漏映射则恒空
+      probeType: row.probeType,
+      scriptPath: row.scriptPath ?? null,
+      scriptTimeoutSeconds: row.scriptTimeoutSeconds ?? null,
       triggerMode: row.triggerMode,
       status: row.status,
       lastCheckedAt: row.lastCheckedAt,

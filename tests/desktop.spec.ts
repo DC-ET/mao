@@ -606,6 +606,39 @@ test.describe('Session Search', () => {
 })
 
 // ─────────────────────────────────────────────────────────
+// Desktop - Signal Watcher form（V189 脚本探针）
+// ─────────────────────────────────────────────────────────
+test.describe('Desktop - Signal watcher form', () => {
+  test('探针类型切换分流：HTTP 区与脚本区互斥显示', async ({ page }) => {
+    await mockLoggedInDesktopApi(page)
+    await page.goto('/settings/signal-watchers')
+    await expect(page.getByRole('heading', { name: '信号哨兵' })).toBeVisible({ timeout: 15_000 })
+
+    // 新建对话框
+    await page.locator('.create-btn').click()
+    const dialog = page.locator('.signal-dialog')
+    await expect(dialog).toBeVisible()
+
+    // 默认 HTTP：探测地址可见、脚本区不可见、状态码判定可选
+    expect(dialog.locator('input[placeholder^="http://"]')).toBeVisible()
+    await expect(dialog.getByText('脚本路径')).toHaveCount(0)
+    await expect(dialog.locator('.el-radio:has(input[value="STATUS_CODE"])')).toBeVisible()
+
+    // 切到 Shell 脚本：HTTP 区隐藏、脚本区出现（路径 + 选择按钮 + 超时）、状态码选项移除
+    await dialog.locator('.el-radio:has(input[value="SCRIPT"])').click()
+    await expect(dialog.locator('input[placeholder^="http://"]')).toHaveCount(0)
+    await expect(dialog.locator('.script-path-row')).toBeVisible()
+    await expect(dialog.locator('.script-pick-btn')).toBeVisible()
+    await expect(dialog.locator('.el-radio:has(input[value="STATUS_CODE"])')).toHaveCount(0)
+
+    // 切回 HTTP：恢复
+    await dialog.locator('.el-radio:has(input[value="HTTP"])').click()
+    expect(dialog.locator('input[placeholder^="http://"]')).toBeVisible()
+    await expect(dialog.locator('.script-path-row')).toHaveCount(0)
+  })
+})
+
+// ─────────────────────────────────────────────────────────
 // Desktop - Settings entry
 // ─────────────────────────────────────────────────────────
 test.describe('Desktop - Settings entry', () => {

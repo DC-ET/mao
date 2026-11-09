@@ -1,4 +1,4 @@
-import type { SignalCompareMode, SignalTriggerMode, SignalWatcherInput, SignalWatcherView } from '../../api'
+import type { SignalCompareMode, SignalProbeType, SignalTriggerMode, SignalWatcherInput, SignalWatcherView } from '../../api'
 
 /** 编辑对话框里的请求头行（服务端打码过的值单独标记）。 */
 export interface HeaderPair {
@@ -20,6 +20,12 @@ export interface SignalWatcherForm {
   compareMode: SignalCompareMode
   jsonPath: string
   promptTemplate: string
+  /** 探针类型（V189）：HTTP / SCRIPT，缺省 HTTP。 */
+  probeType: SignalProbeType
+  /** 脚本路径（仅 SCRIPT）：项目工作区内相对路径 `<slug>/<子路径>`。 */
+  scriptPath: string
+  /** 脚本超时秒数（仅 SCRIPT）；null=服务端默认 60。 */
+  scriptTimeoutSeconds: number | null
   /** 触发方式：每次新建会话 / 复用自己的会话。 */
   triggerMode: SignalTriggerMode
 }
@@ -29,6 +35,12 @@ export const SIGNAL_SECRET_MASK = '******'
 
 /** 连续失败自动停用阈值（与后端 WATCHER_DISABLE_AFTER_FAILURES 对齐）。 */
 export const DISABLE_AFTER_FAILURES = 5
+
+/** 探针类型中文名（契约联合穷尽，漏一项编译期报错）。 */
+export const PROBE_TYPE_LABELS: Record<SignalProbeType, string> = {
+  HTTP: 'HTTP 接口',
+  SCRIPT: 'Shell 脚本'
+}
 
 /** 触发方式中文名（契约联合穷尽，漏一项编译期报错）。 */
 export const TRIGGER_MODE_LABELS: Record<SignalTriggerMode, string> = {
@@ -88,6 +100,9 @@ export function copyFormFromView(watcher: SignalWatcherView): SignalWatcherForm 
     compareMode: watcher.compareMode,
     jsonPath: watcher.jsonPath ?? '',
     promptTemplate: watcher.promptTemplate,
+    probeType: watcher.probeType ?? 'HTTP',
+    scriptPath: watcher.scriptPath ?? '',
+    scriptTimeoutSeconds: watcher.scriptTimeoutSeconds ?? null,
     triggerMode: watcher.triggerMode ?? 'NEW_SESSION'
   }
 }
@@ -121,7 +136,10 @@ export function buildWatcherPayload(
       ? undefined
       : (!editing || form.body !== '') ? form.body : undefined
   const jsonPath = form.compareMode === 'JSON_FIELD' ? form.jsonPath.trim() : undefined
-  const headers = collectHeaders(form.headers)
+  // 探针类型互斥（V189）：SCRIPT 只带脚本两键、HTTP 只带 URL 族——
+  // 切换探针类型时另一侧的库值必须被清掉（normalizeInput 单侧归空的双保险）。
+  const isScript = form.probeType === 'SCRIPT'
+  const headers = isScript ? undefined : collectHeaders(form.headers)
   // 编辑态把行全删光 = 显式清空：下发 null，而不是「不下发」让服务端保留原值，
   // 否则用户没有入口撤掉已保存的请求头。
   const clearedHeaders = editing
@@ -131,15 +149,20 @@ export function buildWatcherPayload(
   return {
     name: form.name.trim(),
     agentId: form.agentId!,
-    url: form.url.trim(),
-    method: form.method,
+    // 探针类型权威下发：编辑态回显原值未动等于不动（后端同值幂等）
+    probeType: form.probeType,
+    // HTTP 侧字段（SCRIPT 态不下发 url/method，服务端归空清掉旧值）
+    ...(isScript ? {} : { url: form.url.trim(), method: form.method }),
     // 三个敏感字段都只用「键存在与否」表达意图：不出现 = 服务端保留原值。
     // 不能写成 `headers: undefined`——服务端按键存在性区分「显式清空」与「未下发」，
     // 依赖序列化层丢掉 undefined 太脆（BUG-H/BUG-2 同类）。
     ...(headers !== undefined ? { headers } : {}),
-    ...(clearedHeaders ? { headers: null } : {}),
-    ...(body !== undefined ? { body } : {}),
+    ...(!isScript && clearedHeaders ? { headers: null } : {}),
+    ...(!isScript && body !== undefined ? { body } : {}),
     ...(jsonPath !== undefined ? { jsonPath } : {}),
+    // 脚本侧字段（HTTP 态不下发，服务端归空清掉旧值）
+    ...(isScript ? { scriptPath: form.scriptPath.trim() } : {}),
+    ...(isScript ? { scriptTimeoutSeconds: form.scriptTimeoutSeconds } : {}),
     intervalMinutes: form.intervalMinutes,
     compareMode: form.compareMode,
     promptTemplate: form.promptTemplate.trim(),
