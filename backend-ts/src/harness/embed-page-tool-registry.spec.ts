@@ -35,6 +35,32 @@ describe('EmbedPageToolRegistry', () => {
     expect(outcome.error.code).toBe('embed_session_required');
   });
 
+  it('写能力关闭的连接：读类工具放行，写类工具 page_operation_disabled', async () => {
+    const { registry, pageTools } = setup();
+    const bound = socket('embed-bound');
+    // auth 首帧声明 pageEnabled=false：连接仍是 embed 会话，但写/操作能力关闭
+    registry.register(bound, 7, 'embed', undefined, false);
+    registry.bindEmbedSession(11, bound);
+
+    // 读类不受开关控制：照常下发到 SDK
+    const read = await pageTools.request(11, 'page_inspect', {});
+    expect(read.requestId).toBeTruthy();
+    expect(bound.sent).toHaveLength(1);
+    expect(JSON.parse(bound.sent[0]!).data.tool).toBe('page_inspect');
+    pageTools.complete(11, read.requestId!, bound, { success: true, result: {} });
+
+    // 写类直接失败，不下发
+    for (const tool of ['page_click', 'page_fill', 'page_scroll', 'page_actions']) {
+      const pending = await pageTools.request(11, tool, { elementId: 'e1' });
+      expect(pending.requestId).toBeNull();
+      const outcome = JSON.parse(await pending.future) as { success: boolean; error: { code: string; message: string } };
+      expect(outcome.success).toBe(false);
+      expect(outcome.error.code).toBe('page_operation_disabled');
+      expect(outcome.error.message).toBe('宿主已关闭页面操作能力');
+    }
+    expect(bound.sent).toHaveLength(1);
+  });
+
   it('routes requests only to the bound connection and completes from that connection', async () => {
     const { registry, pageTools } = setup();
     const bound = socket('embed-bound');

@@ -126,8 +126,8 @@ describe('WsClient', () => {
     const socket = FakeWebSocket.instances[0];
     socket.open();
     await p;
-    // 未提供 getPageEnabled 时按开启声明（缺省 true，兼容不发送该字段的旧口径）
-    expect(socket.frames()[0]).toEqual({ type: 'auth', token: 'tok', client: 'embed', pageEnabled: true });
+    // 未提供 getPageEnabled 时按关闭声明（fail-closed，页面操作缺省关闭）
+    expect(socket.frames()[0]).toEqual({ type: 'auth', token: 'tok', client: 'embed', pageEnabled: false });
     expect(ws.connected.value).toBe(true);
     // 尚未收到 connected 帧：业务上不可用
     expect(ws.authenticated.value).toBe(false);

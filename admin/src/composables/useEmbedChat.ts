@@ -14,8 +14,9 @@ interface MaoChatInitOptions {
   agentId: number
   getToken: () => Promise<string>
   context?: () => Record<string, unknown>
-  /** initialLevel 只接受 per_action / task：full 会被 SDK 降级，完全授权必须用户在浮窗内授予。 */
-  page?: { initialLevel?: 'per_action' | 'task' }
+  /** enabled 只控写/操作类工具（SDK 缺省 false）；读类（inspect/observe/screenshot/wait）始终提供。admin 自家宿主显式开启写能力。
+   * initialLevel 只接受 per_action / task：full 会被 SDK 降级，完全授权必须用户在浮窗内授予。 */
+  page?: { enabled?: boolean; initialLevel?: 'per_action' | 'task' }
   onEvent?: (event: { type: string } & Record<string, unknown>) => void
 }
 
@@ -73,7 +74,8 @@ export function useEmbedChat() {
         // 每次重新读 localStorage：admin axios 拦截器 refresh 写回新 token 后，SDK 下一次请求自然拿到
         getToken: () => Promise.resolve(localStorage.getItem('token') ?? ''),
         context: () => ({ ...collectEmbedContext(route), title: document.title }),
-        page: { initialLevel: PAGE_INITIAL_LEVEL },
+        // SDK 页面操作已改为缺省关闭；自家宿主显式开启，保持后台浮窗既有能力
+        page: { enabled: true, initialLevel: PAGE_INITIAL_LEVEL },
         // phase/auth/error 仅 console.warn，不弹 toast，避免打扰后台操作
         onEvent: (event) => { console.warn('[mao-chat]', event) },
       })

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isPageWriteTool } from './page-tool-kinds.js';
 import type { StreamingWsRegistry, WsSocket } from '../session/ws/streaming-ws-registry.js';
 
 export interface PendingPageToolRequest {
@@ -59,7 +60,7 @@ export class EmbedPageToolRegistry {
     return this.registry.isEmbedSession(sessionId);
   }
 
-  /** embed 会话且连接未关闭页面能力：HarnessService 工具过滤口径的委托。 */
+  /** embed 会话且连接声明了写/操作能力（page.enabled）：写类工具过滤与门控口径的委托。 */
   isEmbedPageSession(sessionId: number): boolean {
     return this.registry.isEmbedPageSession(sessionId);
   }
@@ -72,9 +73,11 @@ export class EmbedPageToolRegistry {
     if (!this.registry.isEmbedSession(sessionId)) {
       return errorResult('embed_session_required', '当前会话不是嵌入式页面会话，无法执行页面操作');
     }
-    // 宿主已关闭页面能力（连接换绑到关闭态连接的在途请求、新旧后端版本交错）：
+    // 写/操作类工具还要求连接声明页面能力（page.enabled，缺省 false）；
+    // 读类工具不受该开关控制，绑定 embed 连接即可执行（口径见 contracts/page.ts）。
+    // 覆盖连接换绑到关闭态连接的在途请求、新旧后端版本交错等场景：
     // 直接失败，不下发到 SDK，模型读到可解释错误后自行调整。
-    if (!this.registry.isEmbedPageSession(sessionId)) {
+    if (isPageWriteTool(tool) && !this.registry.isEmbedPageSession(sessionId)) {
       return errorResult('page_operation_disabled', '宿主已关闭页面操作能力');
     }
     const connection = this.registry.getEmbedSessionConnection(sessionId);

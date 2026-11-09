@@ -102,6 +102,23 @@ describe('HarnessService.filterToolsForSession', () => {
     expect(names(HarnessService.filterPageTools(list, false))).toEqual(['read_file']);
   });
 
+  it('embed 会话写能力关闭时只剥写类工具，读类保留', () => {
+    const list = [
+      fakeTool('read_file'),
+      fakeTool('page_inspect'), fakeTool('page_observe'), fakeTool('page_screenshot'), fakeTool('page_wait'),
+      fakeTool('page_click'), fakeTool('page_fill'), fakeTool('page_scroll'), fakeTool('page_actions'),
+    ];
+    expect(names(HarnessService.filterPageTools(list, true, false)))
+      .toEqual(['read_file', 'page_inspect', 'page_observe', 'page_screenshot', 'page_wait']);
+    // 第三参缺省 true：存量两参调用维持「embed 即全开」
+    expect(names(HarnessService.filterPageTools(list, true)))
+      .toEqual(['read_file', 'page_inspect', 'page_observe', 'page_screenshot', 'page_wait',
+        'page_click', 'page_fill', 'page_scroll', 'page_actions']);
+    // 非 embed 一律全剥，与写能力无关
+    expect(names(HarnessService.filterPageTools(list, false, false))).toEqual(['read_file']);
+    expect(names(HarnessService.filterPageTools(list, false, true))).toEqual(['read_file']);
+  });
+
   it('emptyToolsIsSafe', () => {
     expect(HarnessService.filterToolsForSession([], WEIXIN_PROJECT_KEY)).toEqual([]);
   });
@@ -562,7 +579,7 @@ describe('HarnessService.buildContext and execute', () => {
     expect(names(ctx.tools)).toEqual(['read_file', 'page_inspect', 'page_click']);
   });
 
-  it('buildContext 过滤关闭页面能力的 embed 会话的 page_* 工具', async () => {
+  it('buildContext 对写能力关闭的 embed 会话只剥写类工具，读类保留', async () => {
     const pageTools = [fakeTool('read_file'), fakeTool('page_inspect'), fakeTool('page_click')];
     const toolRegistry = {
       getAllTools: vi.fn(() => pageTools),
@@ -573,11 +590,11 @@ describe('HarnessService.buildContext and execute', () => {
       embedSessionLookup: { isEmbedSession: () => true, isEmbedPageSession: () => false },
     });
     const ctx = await service.buildContext(10);
-    expect(names(ctx.tools)).toEqual(['read_file']);
+    expect(names(ctx.tools)).toEqual(['read_file', 'page_inspect']);
   });
 
-  it('buildContext 对仅提供 isEmbedSession 的存量注入按关闭收敛（fail-closed）', async () => {
-    const pageTools = [fakeTool('read_file'), fakeTool('page_inspect')];
+  it('buildContext 对仅提供 isEmbedSession 的存量注入：读类可用、写类按关闭收敛', async () => {
+    const pageTools = [fakeTool('read_file'), fakeTool('page_inspect'), fakeTool('page_click')];
     const toolRegistry = {
       getAllTools: vi.fn(() => pageTools),
       getTool: vi.fn((name: string) => pageTools.find((tool) => tool.getName() === name)),
@@ -587,7 +604,7 @@ describe('HarnessService.buildContext and execute', () => {
       embedSessionLookup: { isEmbedSession: () => true },
     });
     const ctx = await service.buildContext(10);
-    expect(names(ctx.tools)).toEqual(['read_file']);
+    expect(names(ctx.tools)).toEqual(['read_file', 'page_inspect']);
   });
 
   it('buildContextInjectsWorkingSetToolsAndSectionOnlyInWorkingSetMode', async () => {

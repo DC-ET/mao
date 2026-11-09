@@ -2,7 +2,7 @@ import type {
   PageAction, PageActionResult, PageBatchResult, PageElement, PageObserveResult,
   PageSnapshot, PageToolError, PageToolName,
 } from './types';
-import { isPageToolName } from './types';
+import { isPageToolName, isPageWriteTool } from './types';
 import { PageSnapshotManager } from './snapshot-manager';
 import { scanPage } from './scanner';
 import { PageExecutor, type AuthorizeAction } from './executor';
@@ -33,6 +33,12 @@ export interface PageEngineHooks {
   currentSessionId: () => number | null;
   scopeVersion?: string;
   screenshotRenderer?: ScreenshotRenderer;
+  /**
+   * 是否允许执行写/操作类工具（init 的 page.enabled）。缺省 true。
+   * false 时引擎仍创建（读类工具 inspect/observe/screenshot/wait 需要快照管理），
+   * 但写/操作类请求直接以 page_operation_disabled 失败，截图强制遮罩。
+   */
+  actionsEnabled?: boolean;
   onAuthorizationChange?: (level: PageAuthorizationLevel, taskSessionId: number | null) => void;
   onConfirmRequest?: (request: PageConfirmRequest | null) => void;
   onLog?: (entry: PageActionLogEntry) => void;
@@ -80,6 +86,9 @@ export class PageEngine {
     });
     this.executor = new PageExecutor(this.manager);
   }
+
+  /** 写/操作能力是否开启（init 的 page.enabled，缺省 true）。 */
+  get actionsEnabled(): boolean { return this.hooks.actionsEnabled !== false; }
 
   get authorizationLevel(): PageAuthorizationLevel { return this.authorization.current; }
   get taskActive(): boolean { return this.activeSessionId != null; }
@@ -172,17 +181,24 @@ export class PageEngine {
     const sessionId = options.sessionId ?? this.hooks.currentSessionId() ?? 0;
     // 截图遵循与 inspect 相同的授权模型：full / 命中会话的 task 授权范围内允许未遮罩；
     // 仅 per_action 下需要逐次确认。
-    const unmaskedAllowed = !this.authorization.shouldRedactSensitive(sessionId);
-    let mask = options.maskSensitive !== false;
-    if (unmaskedAllowed) mask = options.maskSensitive === true;
-    if (!unmaskedAllowed && options.maskSensitive === false) {
-      const approved = await this.authorization.requestConfirmation({
-        tool: 'page_screenshot',
-        summary: `发送未遮罩的当前视口截图${options.reason ? `（用途：${options.reason}）` : ''}`,
-        risk: 'sensitive',
-        sessionId,
-      });
-      mask = !approved;
+    // 写能力关闭（page.enabled=false）时授权固定 per_action，且浮窗的确认卡 UI 已门控隐藏，
+    // 未遮罩请求会挂起到超时——因此该形态下强制遮罩，整个确认流都不走。
+    let mask: boolean;
+    if (!this.actionsEnabled) {
+      mask = true;
+    } else {
+      const unmaskedAllowed = !this.authorization.shouldRedactSensitive(sessionId);
+      mask = options.maskSensitive !== false;
+      if (unmaskedAllowed) mask = options.maskSensitive === true;
+      if (!unmaskedAllowed && options.maskSensitive === false) {
+        const approved = await this.authorization.requestConfirmation({
+          tool: 'page_screenshot',
+          summary: `发送未遮罩的当前视口截图${options.reason ? `（用途：${options.reason}）` : ''}`,
+          risk: 'sensitive',
+          sessionId,
+        });
+        mask = !approved;
+      }
     }
     // 遮罩区域必须按当前 DOM 现算：快照里的 rect 是上次 inspect 时的视口坐标，
     // 滚动或布局变化后用它会把敏感字段漏出、并涂黑错误位置。
@@ -235,6 +251,12 @@ export class PageEngine {
 
   async handleRequest(tool: PageToolName, args: Record<string, unknown>, sessionId: number): Promise<PageToolOutcome> {
     if (this.destroyed) return { success: false, error: { code: 'internal_error', message: '页面执行器已销毁' } };
+    // 写/操作类工具受 init 的 page.enabled 控制（缺省关闭）：直接失败，不碰 DOM、不进确认流。
+    // 读类工具不受此开关控制，始终可执行。后端本应已过滤写工具，这里是双保险
+    // （新旧版本交错、后端不过滤直发等场景），错误码与后端一致，模型可读。
+    if (isPageWriteTool(tool) && !this.actionsEnabled) {
+      return { success: false, error: { code: 'page_operation_disabled', message: '宿主已关闭页面操作能力' } };
+    }
     const expected = this.hooks.currentSessionId();
     if (expected != null && expected !== sessionId) {
       return { success: false, error: { code: 'internal_error', message: '页面请求与当前会话不匹配，已忽略' } };

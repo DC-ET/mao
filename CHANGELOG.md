@@ -35,6 +35,10 @@
 ### 终端 CLI（mao-cli）
 - **移除 `mao analytics run-trace`**：与管理后台该 Tab 同一份数据，Tab 下线后命令不再提供。
 
+### Embed SDK
+- **浮窗入口按钮放大为原来的 75%**：0.0.424 曾缩到 56px 的 50%（28px），实际偏小；现调整为 75%——桌面 42px、窄屏（≤480px）39px。品牌图标 / Agent 头像满铺按钮随之同比缩放，内侧描边环、未读红点、运行环与拖动避让同步适配，点击打开对话的行为不变。
+- **页面工具改为读 / 写分离，`page.enabled` 只控制写/操作类**：读类工具（`page_inspect` / `page_observe` / `page_screenshot` / `page_wait`）不受开关控制、始终提供——宿主零配置，Agent 默认就能查看当前页面（元素快照与遮罩截图）；写/操作类（`page_scroll` / `page_focus` / `page_fill` / `page_select` / `page_check` / `page_uncheck` / `page_click` / `page_keyboard` / `page_actions`）缺省关闭，显式 `page: { enabled: true }` 才开启，不再有「一行 `init` 就默认拿到操作宿主页面能力」的隐式授权。后端按连接级声明过滤写类工具，SDK 侧写请求双保险直接返回 `page_operation_disabled`；写能力关闭时截图强制遮罩敏感区域（不弹确认卡）、浮窗不显示授权下拉 / 确认卡片 / 动作日志、注入模型的提示词换用只读变体（明确告知只能查看、不能代操作）。读能力需要页面快照，SDK 因此始终创建页面引擎（patch 宿主 `history.pushState` 并挂导航监听，非破坏性）——这是「读始终提供」的固有成本，暂无「连读也全关」的开关。管理后台自家宿主已显式 `page: { enabled: true }`，浮窗助手读写能力不变；**外部存量宿主**若依赖原缺省开启，补 `page: { enabled: true }` 即可恢复。
+
 ## 0.0.485 (2026-11-09)
 
 ### 管理后台

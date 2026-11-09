@@ -27,9 +27,9 @@ export function useLauncherPosition(defaultSide: () => Side) {
     return { width: v?.width ?? window.innerWidth, height: v?.height ?? window.innerHeight,
       left: v?.offsetLeft ?? 0, top: v?.offsetTop ?? 0, mobile: window.innerWidth <= 480 };
   }
-  // 浮窗入口边长（桌面 28 / 窄屏 26，为原 56/52 的 50%）：须与 style.css .mao-launcher 保持一致，
+  // 浮窗入口边长（桌面 42 / 窄屏 39，为原 56/52 的 75%）：须与 style.css .mao-launcher 保持一致，
   // 拖动夹取、面板避让都按它计算
-  const size = computed(() => viewport.value.mobile ? 26 : 28);
+  const size = computed(() => viewport.value.mobile ? 39 : 42);
   const margin = computed(() => viewport.value.mobile ? 16 : 24);
   const side = computed(() => dock.value?.side ?? defaultSide());
   const point = computed(() => {

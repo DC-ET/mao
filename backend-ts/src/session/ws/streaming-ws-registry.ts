@@ -567,7 +567,8 @@ export class StreamingWsRegistry {
   }
 
   /**
-   * embed 会话且页面能力开启：HarnessService 工具过滤与 EmbedPageToolRegistry 的统一口径。
+   * embed 会话且连接声明了写/操作能力（page.enabled）：写类页面工具的过滤与门控口径。
+   * 读类工具不受此开关控制，只看 isEmbedSession（见 contracts/page.ts）。
    * 连接非 OPEN / 未鉴权时 getEmbedSessionConnection 返回 null，即向「关闭」收敛。
    */
   isEmbedPageSession(sessionId: number): boolean {

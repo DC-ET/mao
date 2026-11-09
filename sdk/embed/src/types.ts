@@ -27,9 +27,13 @@ export type AuthStatus =
 /** 页面操作相关选项。 */
 export interface MaoChatPageOptions {
   /**
-   * 是否允许 Agent 操作当前页面；缺省 true。
-   * false 时：Agent 不会获得 page_* 工具，SDK 不执行任何页面动作，
-   * 浮窗不展示授权/确认/日志 UI，实例页面 API 返回 page_operation_disabled。
+   * 是否允许 Agent **操作（写）**当前页面；缺省 false（需显式传 true 开启）。
+   * 只控制写/操作类工具（page_scroll / page_focus / page_fill / page_select /
+   * page_check / page_uncheck / page_click / page_keyboard / page_actions）；
+   * 读类工具（page_inspect / page_observe / page_screenshot / page_wait）不受此开关
+   * 控制，始终提供。分类口径见 @mao/contracts 的 PageReadToolName / PageWriteToolName。
+   * 未开启时：写类工具对 Agent 不可见，请求直接以 page_operation_disabled 失败，
+   * 截图强制遮罩敏感区域，浮窗不展示授权下拉/确认卡片/动作日志。
    * 与 initialLevel 并传时后者被忽略（禁用态无授权语义）。
    */
   enabled?: boolean;
@@ -40,11 +44,12 @@ export interface MaoChatPageOptions {
 }
 
 /**
- * 页面操作总开关判定：undefined、true、缺省 page 均为开启；只有显式 false 关闭。
+ * 写/操作能力判定：只有显式 enabled: true 才开启；缺省 page、其他字段、false 均为关闭。
+ * 只门控写/操作类 page_* 工具与 executePageAction；读类工具始终提供（不受此判定影响）。
  * 导出供 controller 与测试共用，避免各处重复字面量判断。
  */
 export function isPageEnabled(options: MaoChatInitOptions): boolean {
-  return options.page?.enabled !== false;
+  return options.page?.enabled === true;
 }
 
 export interface MaoChatCommonOptions {
@@ -66,14 +71,18 @@ export interface MaoChatInstance {
   /** 展开/收起浮窗内的历史会话列表面板。 */
   toggleHistory(): void;
   setContext(ctx: Record<string, unknown>): void;
-  /** 读取当前页面可见交互元素快照。 */
+  /** 读取当前页面可见交互元素快照（读能力，不受 page.enabled 控制，始终可用）。 */
   inspectPage(): PageSnapshot;
-  /** 执行单个页面动作；snapshotId 缺省使用最近一次 inspect 的快照。 */
+  /**
+   * 执行单个页面动作；snapshotId 缺省使用最近一次 inspect 的快照。
+   * 写/操作类动作受 page.enabled 控制（缺省关闭）：未开启时返回
+   * `page_operation_disabled`，不执行任何 DOM 变更。
+   */
   executePageAction(action: PageAction, snapshotId?: string): Promise<PageActionResult>;
   getPageAuthorization(): PageAuthorizationLevel;
   /** 宿主 API：只接受 per_action/task，full 会被降级（完全授权需用户在浮窗内授予）。 */
   setPageAuthorization(level: PageAuthorizationLevel): void;
-  /** 截取当前视口截图；maskSensitive 缺省按授权级别处理。 */
+  /** 截取当前视口截图（读能力，不受 page.enabled 控制）；page.enabled 关闭时强制遮罩敏感区域。 */
   capturePageScreenshot(options?: { maskSensitive?: boolean; reason?: string }): Promise<PageScreenshot>;
   destroy(): void;
 }

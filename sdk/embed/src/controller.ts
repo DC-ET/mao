@@ -243,7 +243,8 @@ export class EmbedController {
   private readonly contextCollector: ContextCollector;
   private selectionTracker: SelectionTracker | null = null;
   /** 页面能力引擎：快照 / 动作 / 授权 / 截图，与 controller 共用同一页面实例。
-   *  init page.enabled=false 时为 null：不创建即不 monkey-patch history、不挂 window 监听。 */
+   *  始终创建（读类工具不受 page.enabled 控制，需要快照管理）；保留 | null 类型与各处
+   *  空守卫仅为运行时意外兜底。写/操作类由 pageEngine.actionsEnabled 门控。 */
   readonly pageEngine: PageEngine | null;
   private destroyed = false;
   private booted = false;
@@ -350,15 +351,19 @@ export class EmbedController {
     this.selectionTracker = new SelectionTracker((sel) => {
       this.ui.quotedSelection = sel;
     }, host);
-    // 禁用态不创建 PageEngine：其构造即 monkey-patch history 并挂 window 监听，
-    // 「创建但禁用」也会动宿主页面；所有 this.pageEngine 调用点均已做空守卫。
-    this.pageEngine = this.ui.pageEnabled ? new PageEngine({
+    // PageEngine 始终创建：读类工具（page_inspect / page_observe / page_screenshot / page_wait）
+    // 不受 page.enabled 开关控制，需要快照管理（PageSnapshotManager 构造即 patch history.pushState
+    // 并挂 popstate/hashchange/beforeunload 监听——非破坏性，但宿主页面确有这一层接触）。
+    // 写/操作类由 actionsEnabled 在引擎内门控，关闭时直接失败、不进确认流。
+    // 所有 this.pageEngine 调用点均已做空守卫（理论上不会为 null，防运行时意外）。
+    this.pageEngine = new PageEngine({
       host,
       serverUrl: options.serverUrl,
       agentId: options.agentId,
       identity: () => this.identity,
       currentSessionId: () => this.store.sessionId(),
       screenshotRenderer: options.page?.screenshotRenderer,
+      actionsEnabled: this.ui.pageEnabled,
       onAuthorizationChange: (level) => {
         this.ui.pageAuthorization = level;
         // 不在此清空 pageConfirm：授权层会在升级（自动放行）或撤销/结束（拒绝）时通过
@@ -376,8 +381,8 @@ export class EmbedController {
       onTaskStateChange: (active) => {
         this.ui.pageTaskActive = active;
       },
-    }) : null;
-    if (this.pageEngine && options.page?.initialLevel) this.pageEngine.setInitialLevel(options.page.initialLevel);
+    });
+    if (options.page?.initialLevel) this.pageEngine?.setInitialLevel(options.page?.initialLevel);
     // ws → ui：连接指示灯/输入禁用以"已鉴权"为准（socket OPEN 但未鉴权时业务帧不可用）
     watch(this.ws.authenticated, (v) => {
       this.ui.connected = v;
@@ -1182,9 +1187,9 @@ export class EmbedController {
     const requestId = data?.requestId;
     const tool = data?.tool;
     if (!requestId || !tool || sessionId == null || !isPageToolName(tool)) return;
-    // 禁用态（init page.enabled=false）：无 PageEngine，立即回传失败。
-    // 置于缓存/inFlight 判定之前：禁用态不存在幂等缓存与并发执行问题；
-    // 覆盖新 SDK + 旧后端（照常注入并下发）的窗口期，不等后端超时。
+    // 引擎始终创建（读类工具需要），此分支仅为运行时意外兜底。
+    // 写/操作类在 actionsEnabled=false 时由引擎内部直接失败（page_operation_disabled），
+    // 读类工具正常执行；覆盖新 SDK + 旧后端（照常注入并下发写工具）的窗口期。
     if (!this.pageEngine) {
       await this.ws.sendPageToolResult(sessionId, requestId, {
         success: false, error: { code: 'page_operation_disabled', message: '宿主已关闭页面操作能力' },

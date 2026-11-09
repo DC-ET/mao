@@ -22,7 +22,7 @@
 </script>
 ```
 
-实例方法：`open()` / `close()` / `toggle()` / `newSession()` / `setContext(ctx)` / `destroy()`；页面操作相关：`inspectPage()` / `executePageAction(action, snapshotId?)` / `getPageAuthorization()` / `setPageAuthorization(level)` / `capturePageScreenshot({ maskSensitive?, reason? })`。重复 `init()` 会先销毁旧实例（单实例约束）。
+实例方法：`open()` / `close()` / `toggle()` / `newSession()` / `setContext(ctx)` / `destroy()`；页面相关：`inspectPage()` / `capturePageScreenshot({ maskSensitive?, reason? })`（读，始终可用）、`executePageAction(action, snapshotId?)` / `getPageAuthorization()` / `setPageAuthorization(level)`（写侧，`page.enabled` 关闭时分别为 `page_operation_disabled` / 固定 `per_action` / 空操作）。重复 `init()` 会先销毁旧实例（单实例约束）。
 
 ## 管理后台浮窗助手（内置宿主）
 
@@ -30,8 +30,8 @@ Mao 自己的管理后台是 Embed SDK 的第一个「自家宿主」：`admin/i
 
 - **鉴权**：走 SDK `getToken` 模式，回调读 admin 登录态（`localStorage.token`），不引入公司 SSO 换票；admin axios 拦截器 refresh 写回新 token 后，SDK 下一次请求自然拿到。
 - **Agent 配置**：`embed.agentId` 系统配置（管理后台「系统设置 → 登录认证 → 集成配置」内选择，V156 迁移），留空回落系统默认 Agent。读取接口 `GET /v1/embed/admin-config` 仅要求登录、不要求 `settings:read`（浮窗全员可用）；配置无效 / Agent 停用 / 无默认 Agent 时返回空，前端不初始化浮窗，接口不报错。
-- **页面上下文**：只采集路由结构性信息（`route.name` / `path` / `params` / `query` + `document.title`，见 `admin/src/utils/embedContext.ts`），**禁止采集表格数据行与表单值**；Agent 需要页面内容时用 `page_*` 工具按授权级别自行获取。
-- **页面操作**：默认 `per_action`（每个写操作前在浮窗确认），`full` 完全授权只能由用户在浮窗内显式授予。
+- **页面上下文**：只采集路由结构性信息（`route.name` / `path` / `params` / `query` + `document.title`，见 `admin/src/utils/embedContext.ts`），**禁止采集表格数据行与表单值**；Agent 需要页面内容时用读类 `page_*` 工具（`page_inspect` / `page_observe` / `page_screenshot`）自行获取——读类工具不受 `page.enabled` 开关控制，始终可用。
+- **页面操作**：写/操作类工具 SDK 缺省关闭，admin 作为自家宿主在初始化时显式传 `page: { enabled: true }` 开启；授权 `per_action`（每个写操作前在浮窗确认），`full` 完全授权只能由用户在浮窗内显式授予。
 - **登出联动**：登出 / token 失效 / Layout 卸载时销毁 SDK 实例，入口与 Shadow DOM host 一并移除。
 - **部署顺序**：产物由 desktop 部署提供，**必须先部署 desktop 再部署 admin**；反序则浮窗不出现（控制台 warn，不影响后台其他功能），补齐 desktop 后刷新恢复。
 - **本地开发**：admin dev（:5200）需同时运行 desktop dev server（:5201）——`admin/vite.config.ts` 已把 `/embed` 代理到 :5201，`/api` 代理开了 `ws: true`（SDK 的 WS 走同源升级）。
@@ -43,29 +43,32 @@ Mao 自己的管理后台是 Embed SDK 的第一个「自家宿主」：`admin/i
 
 在对话中直接要求 Agent 查看或操作当前页面（如「帮我把收货地址填成……」）。业务方仍然只需 `MaoChat.init()`，不需要为按钮/表单增加标记，也不需要提供 selector 或回调。Agent 通过后端 `page_*` 工具请求、由 SDK 在用户浏览器本地执行并回传结果。
 
-```js
-const chat = MaoChat.init({
-  serverUrl: 'https://mao.example.com',
-  agentId: 1,
-  getToken: () => fetch('/your-backend/embed-token').then(r => r.json()).then(d => d.accessToken),
-  page: {
-    enabled: true,                  // 可选：缺省 true；false 时整条页面操作链路关闭（见下）
-    initialLevel: 'per_action',     // 可选：默认每次确认；宿主不得借此静默授予高权限
-    screenshotRenderer: myRenderer, // 可选：自定义截图渲染器，缺省用内置视口渲染器
-  },
-});
-```
+- **读 / 写分离（0.0.486 起）**：`page_*` 工具分两类，`page.enabled` **只控制写/操作类**，读类始终提供：
+  - **读（始终提供，不受开关控制）**：`page_inspect`（可见交互元素快照，含已打开的下拉建议）、`page_observe`（按快照读元素状态）、`page_screenshot`（当前视口截图）、`page_wait`（等待渲染稳定）。
+  - **写/操作（受 `page.enabled` 控制，缺省 `false`）**：`page_scroll`、`page_focus`、`page_fill`、`page_select`、`page_check` / `page_uncheck`、`page_click`、`page_keyboard`、`page_actions`（有序批量）。
 
-- **页面操作总开关**：`page.enabled` 缺省 `true`（不传 `page` 或只传其他字段均视为开启，存量接入零改动）。传 `false` 时端到端关闭：Agent 拿不到任何 `page_*` 工具（后端按连接级声明过滤，模型侧表现为「没有页面操作能力」）；SDK 不创建页面引擎（不 patch `history`、不挂窗口监听、不扫描 DOM）；浮窗不展示授权下拉、确认卡片、动作日志与目标高亮；实例方法 `inspectPage()` / `capturePageScreenshot()` 抛错，`executePageAction()` 返回 `page_operation_disabled`，`getPageAuthorization()` 固定 `per_action`，`setPageAuthorization()` 为空操作。与 `initialLevel` 并传时后者被忽略（禁用态无授权语义）。声明随 WS 连接发送，重连自动重发；后端版本低于 0.0.319 时该字段被忽略（按开启处理）。
+  ```js
+  const chat = MaoChat.init({
+    serverUrl: 'https://mao.example.com',
+    agentId: 1,
+    getToken: () => fetch('/your-backend/embed-token').then(r => r.json()).then(d => d.accessToken),
+    page: {
+      enabled: true,                  // 只控写/操作类；缺省 false。读类工具不受它影响，始终可用
+      initialLevel: 'per_action',     // 可选：默认每次确认；宿主不得借此静默授予高权限
+      screenshotRenderer: myRenderer, // 可选：自定义截图渲染器，缺省用内置视口渲染器
+    },
+  });
+  ```
 
-- **能力**：`page_inspect`（可见交互元素快照，含已打开的下拉建议）、`page_screenshot`（当前视口截图）、`page_observe`、`page_scroll`、`page_focus`、`page_fill`、`page_select`、`page_check` / `page_uncheck`、`page_click`、`page_keyboard`、`page_wait`、`page_actions`（有序批量）。
+- **写/操作总开关**：`page.enabled` **缺省 `false`**（0.0.486 起由缺省开启改为默认关闭，防止宿主一行 `init` 就默认拿到操作页面的能力）；只有显式传 `true` 才开启，传 `false`、不传 `page`、只传 `page` 其他字段（如 `initialLevel`）均为关闭。关闭时：写类工具对 Agent 不可见（后端按连接级声明过滤，模型侧表现为「没有页面操作能力」），SDK 侧写请求直接以 `page_operation_disabled` 失败（双保险，覆盖新旧版本交错）；`executePageAction()` 同样返回 `page_operation_disabled`；截图强制遮罩敏感区域（不弹确认卡）；浮窗不展示授权下拉、确认卡片、动作日志与目标高亮；`getPageAuthorization()` 固定 `per_action`，`setPageAuthorization()` 为空操作。与 `initialLevel` 并传时后者被忽略（关闭态无授权语义）。声明随 WS 连接发送，重连自动重发。**存量宿主**若依赖 0.0.486 之前的缺省开启行为，需在初始化时补 `page: { enabled: true }`。
+- **读能力的固定代价**：读类工具需要页面快照，SDK 因此**始终创建页面引擎**——构造时即 patch 宿主页面 `history.pushState` 并挂 `popstate`/`hashchange`/`beforeunload` 监听（非破坏性，仅用于感知 SPA 导航使快照失效）。这是「读始终提供」的固有成本；没有「连读也全关」的开关，如后续安全场景需要再评估。
 - **元素引用**：只使用快照作用域内的 opaque `elementId`；不向 Agent 暴露 selector、XPath、outerHTML 或任意脚本。页面导航、SPA 路由或 DOM 重建后旧引用立即失效，Agent 必须重新 `page_inspect`。
 - **自定义下拉**：Vue Element / Ant Design 等远程搜索框不是原生 `<select>`。`page_fill` 对 combobox 默认保持焦点并短暂等待建议（可用 `blur: true` 强制失焦）；出现选项后重新 `page_inspect`，再 `page_click` 对应 option。`page_select` 只操作原生 `select`。点中 option 后以 `observation.selected === true`（或重新 inspect 出现选中标签）为准；`multiple`/`allow-create` 下 fill 成功只代表过滤文本已写入，不代表 v-model 已绑定。
-- **授权**：默认 `per_action`（每个写操作前在浮窗确认）；用户可在输入框底部工具栏的授权下拉中切换 `task`（本次任务内有效，任务结束/切换会话/刷新后失效）或 `full`（按 Mao 用户身份、站点 Origin、Agent 持久化到 localStorage，可随时撤销）。授权键按 `serverUrl`、Origin、身份、agentId 和授权版本隔离，不保存 Token。宿主 `page.initialLevel` 与实例方法 `setPageAuthorization()` 只接受 `per_action`/`task`，传 `full` 会被降级；**完全授权只能由用户在浮窗内显式点击授予**，避免宿主一行代码替用户提权。
-- **敏感数据**：`per_action` 下快照中密码/验证码/银行卡等字段值脱敏；截图默认遮罩敏感区域，发送未遮罩原图会先请求确认；`full` 在授权范围内允许未遮罩。
+- **授权**：仅写/操作类走授权，读类工具不需要任何授权。默认 `per_action`（每个写操作前在浮窗确认）；用户可在输入框底部工具栏的授权下拉中切换 `task`（本次任务内有效，任务结束/切换会话/刷新后失效）或 `full`（按 Mao 用户身份、站点 Origin、Agent 持久化到 localStorage，可随时撤销）。授权键按 `serverUrl`、Origin、身份、agentId 和授权版本隔离，不保存 Token。宿主 `page.initialLevel` 与实例方法 `setPageAuthorization()` 只接受 `per_action`/`task`，传 `full` 会被降级；**完全授权只能由用户在浮窗内显式点击授予**，避免宿主一行代码替用户提权。
+- **敏感数据**：快照中密码/验证码/银行卡等字段值始终脱敏（与授权级别无关）；截图默认遮罩敏感区域，`per_action` 下发送未遮罩原图会先请求确认，`full` 在授权范围内允许未遮罩；写能力关闭时截图强制遮罩、不走确认流。
 - **反馈与停止**：待确认动作（含高风险提示）以卡片出现在输入框上方，并高亮目标元素；用户点输入框停止按钮会终止整个任务（含页面操作），SDK 会取消等待中的确认并让后续动作失败。任务进行中会在输入框上方列出最近的页面动作（如「点击『保存』」），绿点成功、红点失败。
 - **截图**：只截当前视口，永远排除 SDK 浮窗；内置渲染器把 DOM 编成良好 XML 再放入 SVG foreignObject 光栅化，并剥掉跨域图片/背景以免 canvas 被污染。跨域图片会缺失；若仍无法导出则回退为 DOM 色块+文字。截图随工具卡默认折叠，展开后显示小缩略图，点击可看大图。不要指望用 Markdown `![](attachment://…)` 在回复里再贴一次。需要更完整像素时可传自定义 `screenshotRenderer`。
-- **角色定义**：管理后台只需为 Embed Agent 填写身份、业务目标与文风。页面上下文协议、可见范围、page 工具纪律、截图展示与安全边界由引擎在持有 `page_*` 的会话上自动注入，不必每个 Agent 复制一份；旧提示词里的重复段可删掉。
+- **角色定义**：管理后台只需为 Embed Agent 填写身份、业务目标与文风。页面上下文协议、可见范围、page 工具纪律、截图展示与安全边界由引擎在持有 `page_*` 工具的会话上自动注入（写能力关闭时注入只读变体，明确告知不能操作页面），不必每个 Agent 复制一份；旧提示词里的重复段可删掉。
 
 ### 明确不支持（会返回可解释错误，不尝试绕过浏览器边界）
 
@@ -135,10 +138,10 @@ const chat = MaoChat.init({
 | 历史展示 | 按服务端消息/工具轮次顺序恢复正文、思考和工具组。单条历史消息仅保存聚合思考与正文，无法还原其中的 delta 交错，按思考→正文→工具组展示；工具有结果显示完成（不推断历史成功/失败），缺失结果显示「结果未记录」，不冒充执行中 |
 | 样式隔离 | 全部渲染在 Shadow DOM 内，`all: initial` 重置继承；宿主的 `!important` 全局样式不侵入 |
 | 入口定位 | 鼠标/触摸直接拖动，移动超过 6px 才视为拖动，松手吸附最近的左右边缘，不误触打开。站点 localStorage 的 `mao_embed_launcher_position` 仅记录边缘和相对高度，刷新恢复、窗口及可视视口变化时自动修正；存储不可用时只保留当次位置。未调整遵循 `position`，浮窗选择上下较宽裕一侧展开；`launcher.visible: false` 不应用拖动定位。清除该 key 后重新初始化可恢复配置默认位置 |
-| 入口标识 | 首次打开后获取 Agent 详情：浮窗标题与入口朗读使用管理后台配置的 Agent 名称（未配置时为「Mao 助手」）；已配置头像时入口和浮窗标题展示同一头像，上传路径按 `serverUrl` 解析；未配置时使用 Mao 品牌图标（深色圆盘 + 金色羽毛，`sdk/embed/src/assets/launcher-icon.png`，由 `desktop/public/embed/sdk_icon_256.png` 修剪周边空白与投影后作为位图内联进产物，不产生额外请求）。入口按钮 28px（窄屏 26px），图标满铺按钮随之同比缩小；保留运行环、未读红点、键盘聚焦与状态朗读 |
+| 入口标识 | 首次打开后获取 Agent 详情：浮窗标题与入口朗读使用管理后台配置的 Agent 名称（未配置时为「Mao 助手」）；已配置头像时入口和浮窗标题展示同一头像，上传路径按 `serverUrl` 解析；未配置时使用 Mao 品牌图标（深色圆盘 + 金色羽毛，`sdk/embed/src/assets/launcher-icon.png`，由 `desktop/public/embed/sdk_icon_256.png` 修剪周边空白与投影后作为位图内联进产物，不产生额外请求）。入口按钮 42px（窄屏 39px），图标满铺按钮随之同比缩小；保留运行环、未读红点、键盘聚焦与状态朗读 |
 | 推荐问题 | Agent 详情含 `suggestedQuestions` 时，新会话空白态在提示文案下方竖排展示（最多 5 条、按后台排序）；点击填入输入框并聚焦，由用户确认后手动发送，不自动发出。发送首条消息后隐藏，「新对话」后重新出现；未配置或拉取失败时不渲染该区块，与未上线该功能时一致 |
 | 视觉与主题 | 设计语言对齐 Mao 桌面端：默认主色 `#0066cc`、发丝描边、分层阴影、8/10/14/16px 圆角阶梯。`theme.primary` 只需给一个色值（`#rgb`/`#rrggbb`/`rgb()`/颜色关键字均可），hover 色 / 浅底色 / 聚焦环由 `color-mix` 自动派生（老浏览器落回静态默认值）；传白色、浅黄等高亮度主色时会按 WCAG 亮度自动换成深色文字并补描边，文字不会消失；动效在 `prefers-reduced-motion: reduce` 下自动关闭。暗色模式暂未支持 |
-| 移动端 | 浮窗高度按 `100dvh` 计算（手机地址栏不顶出底部）；窄屏（≤480px）下选项放大到触控推荐尺寸，布局与字号不变；浮窗入口按钮随桌面端同比减半为 26px |
+| 移动端 | 浮窗高度按 `100dvh` 计算（手机地址栏不顶出底部）；窄屏（≤480px）下选项放大到触控推荐尺寸，布局与字号不变；浮窗入口按钮随桌面端同比缩小为 39px |
 | 全局污染 | 只挂 `window.MaoChat` 与 `window.__maoChatInstance` |
 | 桌面端可见 | SDK 建的会话在 desktop 会话列表可见、可继续；双端同时发送时另一端收到"该任务仍在运行"提示 |
 

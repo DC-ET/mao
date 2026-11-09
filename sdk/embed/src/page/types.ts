@@ -1,4 +1,5 @@
 /** 页面操作 SDK 的公共类型：快照、元素引用、动作与结果。 */
+import type { PageReadToolName, PageWriteToolName } from '@mao/contracts';
 
 export type PageElementKind = 'button' | 'form-control' | 'link' | 'other';
 
@@ -128,6 +129,41 @@ export const PAGE_TOOL_NAMES: readonly PageToolName[] = [
 
 export function isPageToolName(value: string): value is PageToolName {
   return (PAGE_TOOL_NAMES as readonly string[]).includes(value);
+}
+
+/**
+ * 读 / 写分类（类型契约 shared/contracts/src/page.ts）：读类工具不受 page.enabled
+ * 开关控制、始终提供；写/操作类受开关控制，缺省关闭。
+ * 用 Record<联合, true> 而非 string[]：契约联合一变（某工具改分类）这里立刻报类型错误，
+ * 必须与后端 page-tool-kinds.ts 同改，不会静默漂移。
+ */
+const PAGE_WRITE_TOOLS: Record<PageWriteToolName, true> = {
+  page_scroll: true,
+  page_focus: true,
+  page_fill: true,
+  page_select: true,
+  page_check: true,
+  page_uncheck: true,
+  page_click: true,
+  page_keyboard: true,
+  page_actions: true,
+};
+
+const PAGE_READ_TOOLS: Record<PageReadToolName, true> = {
+  page_inspect: true,
+  page_observe: true,
+  page_screenshot: true,
+  page_wait: true,
+};
+
+/** 写/操作类工具判定：page.enabled 关闭时这些工具不可见、请求直接失败。 */
+export function isPageWriteTool(name: string): name is PageWriteToolName {
+  return Object.prototype.hasOwnProperty.call(PAGE_WRITE_TOOLS, name);
+}
+
+/** 读类工具判定：始终提供，不受开关控制。 */
+export function isPageReadTool(name: string): name is PageReadToolName {
+  return Object.prototype.hasOwnProperty.call(PAGE_READ_TOOLS, name);
 }
 
 export function isMutatingAction(type: PageActionType): boolean {

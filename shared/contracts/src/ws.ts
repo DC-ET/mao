@@ -16,7 +16,10 @@ export interface WsAuthFrame {
   type: 'auth';
   token: string;
   client: WsClientType;
-  /** 页面操作能力声明；缺省 true（旧版 SDK 不发送该字段） */
+  /**
+   * 写/操作类页面能力声明；缺省 false（新 SDK 显式发送，旧版 SDK 不发送该字段按 true 兼容）。
+   * 只约束写/操作类 page_* 工具（见 contracts/page.ts）；读类工具不受此开关控制，始终提供。
+   */
   pageEnabled?: boolean;
 }
 

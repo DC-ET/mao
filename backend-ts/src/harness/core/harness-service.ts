@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { nowSql } from '../../common/datetime.js';
 import { AtomicBoolean } from '../atomic-boolean.js';
 import { harnessLog } from '../log.js';
+import { isPageWriteTool } from '../page-tool-kinds.js';
 import { boolish, llmModelToConfig, wsEvent } from '../deps.js';
 import type {
   Agent, AgentMapper, AgentExperienceService, FileChange, FileChangeMapper, LlmModel, LlmModelMapper,
@@ -445,11 +446,15 @@ export class HarnessService {
     context.contextAnchorMsgId = anchor.contextAnchorMsgId;
 
     let sessionTools = HarnessService.filterToolsForSession(this.toolRegistry.getAllTools(), session.projectKey, session.workspace);
-    // 页面工具只在绑定了 embed 页面连接、且该连接未关闭页面能力的会话中暴露；
-    // 其他会话（桌面/CLOUD 他端、微信、子代理）与关闭态 embed 连接均不可见也不可调用。
-    // isEmbedPageSession 为可选方法（存量注入只提供 isEmbedSession）：用可选调用防运行时抛错，
-    // 缺失/非 true 一律按关闭收敛（fail-closed），不暴露 page_* 工具。
-    sessionTools = HarnessService.filterPageTools(sessionTools, this.embedSessionLookup?.isEmbedPageSession?.(sessionId) === true);
+    // 页面工具按读 / 写分别门控（口径见 shared/contracts/src/page.ts）：
+    // 读类（inspect/observe/screenshot/wait）只要绑定了 embed 页面连接就提供，不受开关控制；
+    // 写/操作类还要求该连接声明了页面能力（page.enabled，缺省 false）。
+    // 其他会话（桌面/CLOUD 他端、微信、子代理）与未绑定连接的会话一律不可见也不可调用。
+    // isEmbedSession 为必填方法；isEmbedPageSession 可选（存量注入不提供），
+    // 缺失/非 true 一律按写能力关闭收敛（fail-closed）。
+    const isEmbedSession = this.embedSessionLookup?.isEmbedSession?.(sessionId) === true;
+    const pageOpsEnabled = this.embedSessionLookup?.isEmbedPageSession?.(sessionId) === true;
+    sessionTools = HarnessService.filterPageTools(sessionTools, isEmbedSession, pageOpsEnabled);
     // 工作集工具只按模式注入：先从默认工具集中剔除，避免全量模式凭空多出两个模型可见工具。
     sessionTools = sessionTools.filter((tool) => !MCP_WORKING_SET_TOOL_NAMES.has(tool.getName()));
     // 自定义 HTTP 工具入口同样先剔除；用户有启用工具时在 MCP 块之后条件推入（§5.4）。
@@ -745,8 +750,17 @@ export class HarnessService {
     return result.filter((t) => !isWeixinChannelTool(t) && !isFeishuChannelTool(t) && !isDingtalkChannelTool(t));
   }
 
-  static filterPageTools(tools: Tool[], isEmbedSession: boolean): Tool[] {
-    return isEmbedSession ? [...tools] : tools.filter((t) => !t.getName().startsWith('page_'));
+  /**
+   * 页面工具过滤（读 / 写分别门控，口径见 shared/contracts/src/page.ts）：
+   * - 非 embed 会话：剥掉全部 page_*；
+   * - embed 会话且写能力开启：全部保留；
+   * - embed 会话但写能力关闭：只剥写/操作类，读类保留（始终提供）。
+   * pageOpsEnabled 缺省 true，保持存量两参调用（embed 即全开）的语义。
+   */
+  static filterPageTools(tools: Tool[], isEmbedSession: boolean, pageOpsEnabled = true): Tool[] {
+    if (!isEmbedSession) return tools.filter((t) => !t.getName().startsWith('page_'));
+    if (pageOpsEnabled) return [...tools];
+    return tools.filter((t) => !isPageWriteTool(t.getName()));
   }
 
   static mergeLocalUnsyncedSkills(

@@ -1032,37 +1032,57 @@ describe('EmbedController 页面操作开关（init page.enabled）', () => {
     globalThis.fetch = originalFetch;
   });
 
-  it('缺省 page 选项：引擎创建、auth 帧声明 pageEnabled=true', async () => {
+  it('缺省 page 选项：写能力默认关闭，引擎仍创建（读类可用），auth 帧声明 pageEnabled=false', async () => {
     const h = await makeHarness();
+    expect(h.ui.pageEnabled).toBe(false);
+    expect(h.ui.pageAuthorization).toBe('per_action');
+    // 读类工具（inspect/observe/screenshot/wait）不受开关控制，引擎始终创建
+    expect(h.ctl.pageEngine).not.toBeNull();
+    expect(h.ctl.pageEngine!.actionsEnabled).toBe(false);
+    const socket = await boot(h);
+    expect(socket.framesOfType('auth')[0]).toMatchObject({ client: 'embed', pageEnabled: false });
+    h.ctl.destroy();
+  });
+
+  it('只传 page 其他字段（无 enabled）：写能力仍按关闭处理', async () => {
+    const h = await makeHarness({ page: { initialLevel: 'task' } });
+    expect(h.ui.pageEnabled).toBe(false);
+    expect(h.ctl.pageEngine!.actionsEnabled).toBe(false);
+    h.ctl.destroy();
+  });
+
+  it('page.enabled=true：写能力开启、auth 帧声明 pageEnabled=true', async () => {
+    const h = await makeHarness({ page: { enabled: true } });
     expect(h.ui.pageEnabled).toBe(true);
     expect(h.ctl.pageEngine).not.toBeNull();
+    expect(h.ctl.pageEngine!.actionsEnabled).toBe(true);
     const socket = await boot(h);
     expect(socket.framesOfType('auth')[0]).toMatchObject({ client: 'embed', pageEnabled: true });
     h.ctl.destroy();
   });
 
-  it('page.enabled=false：不创建引擎、不 patch history、auth 帧声明 pageEnabled=false', async () => {
+  it('page.enabled=false：引擎创建且 patch history（读类需要快照管理），写请求仍被拒', async () => {
     const originalPushState = window.history.pushState;
     const h = await makeHarness({ page: { enabled: false } });
     expect(h.ui.pageEnabled).toBe(false);
     expect(h.ui.pageAuthorization).toBe('per_action');
-    expect(h.ctl.pageEngine).toBeNull();
+    expect(h.ctl.pageEngine).not.toBeNull();
+    // 读类工具需要 PageSnapshotManager：构造即把 history.pushState 替换为包装函数
+    expect(window.history.pushState).not.toBe(originalPushState);
     const socket = await boot(h);
     expect(socket.framesOfType('auth')[0]).toMatchObject({ client: 'embed', pageEnabled: false });
-    // 禁用态不创建 PageEngine：PageSnapshotManager 构造即把 history.pushState 替换为包装函数，此处应保持原函数
-    expect(window.history.pushState).toBe(originalPushState);
     h.ctl.destroy();
   });
 
   it('page.enabled=false 且并传 initialLevel：授权固定 per_action（initialLevel 被忽略）', async () => {
     const h = await makeHarness({ page: { enabled: false, initialLevel: 'task' } });
     expect(h.ui.pageAuthorization).toBe('per_action');
-    expect(h.ctl.pageEngine).toBeNull();
+    expect(h.ctl.pageEngine!.actionsEnabled).toBe(false);
     h.ctl.destroy();
   });
 
-  it('page.initialLevel=task（无 enabled）：引擎创建且首个任务自动升到 task 授权', async () => {
-    const h = await makeHarness({ page: { initialLevel: 'task' } });
+  it('page.enabled=true 且 initialLevel=task：引擎创建且首个任务自动升到 task 授权', async () => {
+    const h = await makeHarness({ page: { enabled: true, initialLevel: 'task' } });
     expect(h.ui.pageEnabled).toBe(true);
     expect(h.ctl.pageEngine).not.toBeNull();
     // initialTask 语义：授权在首个任务开始时才生效，init 后徽标仍是 per_action
@@ -1093,6 +1113,22 @@ describe('EmbedController 页面操作开关（init page.enabled）', () => {
     expect(h.ui.pageConfirm).toBeNull();
     expect(h.ui.pageHighlight).toBeNull();
     expect(document.body.innerHTML).toBe(before);
+    h.ctl.destroy();
+  });
+
+  it('page.enabled=false：读类工具（page_inspect）仍可执行并回传快照', async () => {
+    document.body.innerHTML = '<button>保存</button>';
+    const h = await makeHarness({ page: { enabled: false } });
+    const socket = await boot(h);
+    socket.emit({
+      type: 'page_tool_request',
+      sessionId: SESSION_ID,
+      data: { requestId: 'req-read', tool: 'page_inspect', arguments: {} },
+    });
+    await vi.waitFor(() => expect(socket.framesOfType('page_tool_result')).toHaveLength(1));
+    const result = socket.framesOfType('page_tool_result')[0]!;
+    expect(result).toMatchObject({ sessionId: SESSION_ID, requestId: 'req-read', data: { success: true } });
+    expect((result.data as { result: { elements: unknown[] } }).result.elements).toHaveLength(1);
     h.ctl.destroy();
   });
 

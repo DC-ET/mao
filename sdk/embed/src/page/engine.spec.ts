@@ -375,4 +375,65 @@ describe('PageEngine', () => {
     await engine.handleRequest('page_click', { snapshotId: inspect.snapshotId, elementId: 'e1' }, 1);
     expect(logs.some((entry) => entry.startsWith('success:'))).toBe(true);
   });
+
+  describe('actionsEnabled=false（page.enabled 关闭：读可用、写被拒）', () => {
+    function buildReadOnlyEngine(): PageEngine {
+      return new PageEngine({
+        serverUrl: 'https://mao.example.com', agentId: 7, identity: () => 'u1', currentSessionId: () => 1,
+        actionsEnabled: false,
+        onConfirmRequest: (r) => { if (r) confirmRequests.push(r); },
+        onLog: (entry) => { logs.push(`${entry.status}:${entry.summary}`); },
+        onHighlight: (target) => { highlights.push(target); },
+      });
+    }
+
+    it('读类工具正常执行（page_inspect / page_wait）', async () => {
+      document.body.innerHTML = '<button>保存</button>';
+      engine = buildReadOnlyEngine();
+      const inspect = await engine.handleRequest('page_inspect', {}, 1);
+      expect(inspect.success).toBe(true);
+      expect(inspect.snapshotId).toBeTruthy();
+      const waited = await engine.handleRequest('page_wait', { ms: 1 }, 1);
+      expect(waited.success).toBe(true);
+    });
+
+    it('写类工具直接 page_operation_disabled，无确认/日志/高亮等副作用', async () => {
+      document.body.innerHTML = '<button id="b">保存</button>';
+      // body 自身的 dataset 不随 innerHTML 清空：清掉上游用例残留的 clicked 标记再断言
+      delete document.body.dataset.clicked;
+      document.getElementById('b')!.addEventListener('click', () => { document.body.dataset.clicked = '1'; });
+      const before = document.body.innerHTML;
+      engine = buildReadOnlyEngine();
+      const inspect = await engine.handleRequest('page_inspect', {}, 1);
+      for (const tool of ['page_click', 'page_fill', 'page_scroll', 'page_focus', 'page_keyboard', 'page_actions'] as const) {
+        const outcome = await engine.handleRequest(tool, { snapshotId: inspect.snapshotId, elementId: 'e1', value: 'v', key: 'Enter', actions: [] }, 1);
+        expect(outcome.success).toBe(false);
+        expect(outcome.error!.code).toBe('page_operation_disabled');
+      }
+      expect(document.body.dataset.clicked).toBeUndefined();
+      expect(confirmRequests).toHaveLength(0);
+      expect(logs).toHaveLength(0);
+      expect(highlights.every((t) => t == null)).toBe(true);
+      expect(document.body.innerHTML).toBe(before);
+    });
+
+    it('截图强制遮罩：maskSensitive:false 被忽略，不弹确认卡', async () => {
+      document.body.innerHTML = '<input type="password" value="secret">';
+      const renderer = vi.fn(async () => ({
+        width: 100, height: 50,
+        getContext: () => ({ fillRect: vi.fn(), fillStyle: '' }),
+        toBlob: (cb: (blob: Blob | null) => void) => cb(new Blob(['png'], { type: 'image/png' })),
+      } as unknown as HTMLCanvasElement));
+      engine = new PageEngine({
+        serverUrl: 'https://mao.example.com', agentId: 7, identity: () => 'u1', currentSessionId: () => 1,
+        actionsEnabled: false,
+        screenshotRenderer: renderer, onConfirmRequest: (r) => { if (r) confirmRequests.push(r); },
+      });
+      const outcome = await engine.handleRequest('page_screenshot', { maskSensitive: false }, 1);
+      expect(outcome.success).toBe(true);
+      expect((outcome.result as { masked: boolean }).masked).toBe(true);
+      // 不走进 requestConfirmation：确认卡 UI 在该形态下已门控隐藏，弹了会挂起到超时
+      expect(confirmRequests).toHaveLength(0);
+    });
+  });
 });

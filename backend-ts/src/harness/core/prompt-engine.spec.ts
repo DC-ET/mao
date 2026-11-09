@@ -171,7 +171,7 @@ describe('PromptEngine', () => {
     context.workspace = workspace;
     context.isGit = true;
     context.sessionBaseYmd = '2026-09-10';
-    context.tools = [tool('page_screenshot'), tool('page_inspect'), tool('read_file')];
+    context.tools = [tool('page_screenshot'), tool('page_inspect'), tool('page_click'), tool('read_file')];
     const request = await engine.buildRequest(context);
     const system = request.messages[0].content as string;
     expect(system).toContain('你是服务治理页的网页助手');
@@ -194,6 +194,33 @@ describe('PromptEngine', () => {
     expect(system).not.toContain('上传目录：');
     expect(system).not.toContain('should-not-appear');
     expect(system).not.toContain('## 工作区规则');
+  });
+
+  it('injects read-only embed hints when only read page tools are exposed', async () => {
+    const workspace = useTmpDir('pe-embed-ro-');
+    const engine = new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => workspace } as never,
+      RuntimeDataResolver.forTest(join(workspace, 'runtime'), join(workspace, 'home')),
+      { getByUserIdAndName: async () => null } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+    const context = new AgentExecutionContext();
+    context.userId = 3;
+    context.sessionId = 8;
+    context.executionMode = 'CLOUD';
+    context.workspace = workspace;
+    context.tools = [tool('page_inspect'), tool('page_observe'), tool('page_screenshot'), tool('page_wait'), tool('read_file')];
+    const request = await engine.buildRequest(context);
+    const system = request.messages[0].content as string;
+    // 仍是 embed 通道基座，但换只读变体
+    expect(system).toContain('嵌入式对话浮窗');
+    expect(system).toContain('页面上下文与可见范围');
+    expect(system).toContain('本部署未开启页面操作能力');
+    expect(system).toContain('只能查看、不能代操作');
+    // 写操作相关的指引不出现
+    expect(system).not.toContain('自定义搜索下拉');
+    expect(system).not.toContain('等待用户授权');
   });
 
   it('keeps coding workspace guidance when page tools are absent', async () => {

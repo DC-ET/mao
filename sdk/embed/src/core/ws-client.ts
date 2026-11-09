@@ -159,8 +159,9 @@ export class WsClient {
             this.authToken = token;
             this.authExpiresAt = this.hooks.getExpiresAt?.(token) ?? Infinity;
             // 鉴权首帧：必须先于任何业务帧。pageEnabled 为连接级能力声明，随重连自动重发。
+            // 兜底 false：拿不到宿主声明时按关闭处理（fail-closed），避免误开页面操作。
             socket.send(JSON.stringify({
-              type: 'auth', token, client: 'embed', pageEnabled: this.hooks.getPageEnabled?.() ?? true,
+              type: 'auth', token, client: 'embed', pageEnabled: this.hooks.getPageEnabled?.() ?? false,
             }));
             this.startHeartbeat();
             this.connectPromise = null;
