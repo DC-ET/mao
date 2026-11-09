@@ -10,6 +10,12 @@ import Composer from './Composer.vue';
 import QuestionCard from './QuestionCard.vue';
 import PageActionPanel from './PageActionPanel.vue';
 import HistoryPanel from './HistoryPanel.vue';
+import MaoIcon from './MaoIcon.vue';
+import ThinkingRow from './ThinkingRow.vue';
+import ToolCallGroup from './ToolCallGroup.vue';
+import { useRounds } from './useRounds';
+import { renderMarkdown } from './markdown';
+import { ICON_ARROW_DOWN } from './icons';
 import type { EmbedSessionListItem } from '../controller';
 
 const props = defineProps<{
@@ -65,6 +71,12 @@ const running = computed(() => props.phase === 'RUNNING' || props.phase === 'RES
 const isEmpty = computed(() => props.messages.length === 0);
 /** 推荐问题仅在空白态且列表非空时展示；发出首条消息后自然隐藏 */
 const showSuggested = computed(() => isEmpty.value && props.suggestedQuestions.length > 0);
+
+/** 轮次视图：历史轮折叠成「已执行 N 个步骤」条，执行中轮平铺（对齐桌面端 ChatRoundList） */
+const { rounds, isExpanded, toggle } = useRounds(
+  computed(() => props.messages),
+  computed(() => props.phase),
+);
 
 /** 点击推荐问题：填入输入框并聚焦，由用户确认后手动发送 */
 function fillSuggestedQuestion(content: string) {
@@ -146,7 +158,55 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
     </div>
 
     <div ref="listEl" class="mao-messages" aria-live="polite">
-      <MessageBubble v-for="m in messages" :key="m.id" :message="m" />
+      <template v-for="round in rounds" :key="round.key">
+        <MessageBubble v-if="round.user" :message="round.user" />
+        <!-- 已完成轮次：折叠条（默认收起）+ 过程行/最终回复；折叠条常驻，展开后充当标题 -->
+        <template v-if="round.collapsible && !round.active">
+          <button
+            type="button"
+            class="mao-steps"
+            :aria-expanded="isExpanded(round.key)"
+            @click="toggle(round.key)"
+          >
+            <MaoIcon
+              :icon="ICON_ARROW_DOWN"
+              :size="12"
+              class="mao-steps__icon"
+              :class="{ 'mao-chevron--open': isExpanded(round.key) }"
+            />
+            <span>已执行 {{ round.stepCount }} 个步骤{{ round.durationText ? `，任务耗时 ${round.durationText}` : '' }}</span>
+          </button>
+          <template v-if="isExpanded(round.key)">
+            <template v-for="(row, ri) in round.rows" :key="`${round.key}-x${ri}`">
+              <ThinkingRow
+                v-if="row.kind === 'thinking'"
+                :thinking="row.content"
+                :streaming="row.streaming"
+              />
+              <ToolCallGroup v-else-if="row.kind === 'tools'" :tool-calls="row.toolCalls ?? []" />
+              <div v-else class="mao-msg__md mao-step-text" v-html="renderMarkdown(row.content)" />
+            </template>
+            <div v-if="round.replyText" class="mao-msg__md mao-reply" v-html="renderMarkdown(round.replyText)" />
+          </template>
+          <div v-else-if="round.replyText" class="mao-msg__md mao-reply" v-html="renderMarkdown(round.replyText)" />
+        </template>
+        <!-- 执行中轮次 / 不可折叠轮次：思考行、工具组、中间文本平铺 + 最终回复 -->
+        <template v-else>
+          <template v-for="(row, ri) in round.rows" :key="`${round.key}-${ri}`">
+            <ThinkingRow
+              v-if="row.kind === 'thinking'"
+              :thinking="row.content"
+              :streaming="row.streaming"
+            />
+            <ToolCallGroup v-else-if="row.kind === 'tools'" :tool-calls="row.toolCalls ?? []" />
+            <div v-else class="mao-msg__md mao-step-text" v-html="renderMarkdown(row.content)" />
+          </template>
+          <div v-if="round.replyText" class="mao-msg__md mao-reply" v-html="renderMarkdown(round.replyText)" />
+          <div v-if="round.typing" class="mao-typing" aria-hidden="true">
+            <span /><span /><span />
+          </div>
+        </template>
+      </template>
       <div v-if="isEmpty" class="mao-empty">
         <span class="mao-empty__icon" aria-hidden="true">
           <svg viewBox="0 0 24 24"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2ZM7 9h10v2H7V9Zm7 5H7v-2h7v2Zm3-8H7V5h10v1Z"/></svg>

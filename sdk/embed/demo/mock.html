@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mao Embed SDK — 执行过程渲染 Mock 演示</title>
+  <style>
+    body { font-family: -apple-system, 'PingFang SC', sans-serif; margin: 0; padding: 32px; background: #f5f6f8; color: #1d1d1f; }
+    h1 { font-size: 18px; margin: 0 0 8px; }
+    p { margin: 0 0 16px; color: #6e6e73; font-size: 13px; }
+    .bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 24px; }
+    button {
+      padding: 9px 16px; border-radius: 10px; border: 1px solid #d4d4d8;
+      background: #fff; font-size: 13px; cursor: pointer; color: #1d1d1f;
+    }
+    button:hover { border-color: #4f6ef7; color: #4f6ef7; }
+    .doc {
+      max-width: 560px; background: #fff; border-radius: 12px; padding: 20px 24px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05); font-size: 13px; line-height: 1.7; color: #3a3a3c;
+    }
+    .doc code { background: rgba(0,0,0,0.05); padding: 1px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Mao Embed SDK — 执行过程渲染 Mock 演示</h1>
+  <p>纯前端 mock：不连后端，直接驱动 ChatStore 的 WS 事件流，用于验证执行过程（思考行 / 工具组 / 轮次折叠）的渲染与交互。</p>
+  <div class="bar">
+    <button id="btn-history">1) 载入历史轮次（折叠条）</button>
+    <button id="btn-live">2) 模拟执行中轮次（流式动画）</button>
+    <button id="btn-mixed">3) 历史轮 + 接着执行新轮</button>
+    <button id="btn-reset">重置</button>
+  </div>
+  <div class="doc">
+    <strong>查看要点</strong>（与桌面端对话页对照）：
+    <ul>
+      <li>完成任务后过程折叠为 <code>已执行 N 个步骤，任务耗时 X</code> 胶囊，最终回复常显；点击胶囊展开全过程（思考行、工具组、中间文本）。</li>
+      <li>思考行显示「思考完成」，执行中显示「思考中…」+ 尾部滑动预览。</li>
+      <li>工具组：单调用一张卡（带图标）；多调用折叠成「2次执行命令」组头，展开逐卡。</li>
+      <li>工具卡展开：shell 终端块（$ 命令 + 输出 + exit 徽标）、read_file 行号内容、edit_file diff、网页搜索列表；右下「查看原始输入输出」。</li>
+      <li>执行中：工具行右侧秒表与转圈；等待下一轮输出时气泡尾三点。</li>
+    </ul>
+  </div>
+  <script type="module" src="./mock-main.ts"></script>
+</body>
+</html>

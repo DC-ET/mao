@@ -33,6 +33,8 @@ interface HistoryMessageVO extends EmbedMessageVO {
   toolCalls?: string | null;
   toolCallId?: string | null;
   metadata?: string | null;
+  /** MessageVO 带 updatedAt（终态时刷新为本轮结束时刻），轮次折叠条算耗时用 */
+  updatedAt?: string | null;
 }
 
 interface HistoryToolCall {
@@ -666,6 +668,9 @@ export class EmbedController {
         error: false,
         toolCalls,
         quotedSelection,
+        // 轮次折叠条按「用户消息发出 → 本轮最后一条消息结束」算耗时，时间戳随行带上
+        ...(m.createdAt ? { createdAt: m.createdAt } : {}),
+        ...(m.updatedAt ? { updatedAt: m.updatedAt } : {}),
         ...(images.length > 0 ? { images } : {}),
       });
     }

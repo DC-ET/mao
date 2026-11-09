@@ -109,6 +109,12 @@ export interface ChatMessage {
   quotedSelection?: string | null;
   /** 用户消息携带的图片访问地址（粘贴上传后的附件） */
   images?: string[];
+  /**
+   * 消息时间（ISO 字符串）：历史来自 REST 的 createdAt/updatedAt，本地消息在创建时盖章。
+   * 执行过程折叠条用「用户消息发出 → 本轮最后一条消息结束」计算任务耗时（对齐桌面端 buildRound）。
+   */
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ToolCallItem {
@@ -117,7 +123,12 @@ export interface ToolCallItem {
   displayName: string;
   argsText: string;
   status: 'running' | 'done' | 'error' | 'unknown';
+  /** 工具结果原文（WS result 字段 / 历史落库的 TOOL 行内容），富视图与输出块的数据源 */
   resultText: string;
+  /** 后端摘要（WS summary 字段）：工具行头部优先展示的一句话摘要；历史里没有 */
+  summary?: string;
+  /** 执行起表时刻（epoch ms）：执行中的行显示已耗时；重放帧按 elapsed_ms 反推 */
+  startedAtMs?: number;
   /** 页面截图等工具结果的图片 data URI，供气泡与工具卡展示。 */
   imagePreview?: string;
 }

@@ -414,84 +414,64 @@
 .mao-msg__md hr { border: none; border-top: 1px solid var(--mao-border); margin: 10px 0; }
 .mao-msg__md img { max-width: 100%; border-radius: var(--mao-radius-sm); }
 
-/* ── thinking ── */
-.mao-thinking {
-  margin-bottom: 8px;
-  color: var(--mao-text-secondary);
-  font-size: 12px;
-}
-.mao-thinking__summary {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  cursor: pointer;
-  user-select: none;
-  padding: 2px 8px 2px 6px;
-  margin-left: -6px;
-  border-radius: var(--mao-radius-pill);
+/* ── 执行过程行（对齐桌面端 ThinkingBlock / ToolCallGroup / 轮次折叠条） ──
+   展开箭头：收起时指向右（-90deg），展开转正，与桌面端 expand-icon 同一交互语言 */
+.mao-chevron {
   color: var(--mao-text-tertiary);
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: transform 0.2s var(--mao-ease);
+  transform: rotate(-90deg);
 }
-.mao-thinking__summary:hover { background: rgba(0, 0, 0, 0.05); color: var(--mao-text-secondary); }
-.mao-thinking__caret {
-  width: 0;
-  height: 0;
-  border-left: 4px solid currentColor;
-  border-top: 3.5px solid transparent;
-  border-bottom: 3.5px solid transparent;
-  transition: transform 0.18s var(--mao-ease);
+.mao-chevron--open {
+  transform: rotate(0deg);
 }
-.mao-thinking__caret--open,
-.mao-thinking[open] > summary .mao-thinking__caret { transform: rotate(90deg); }
-.mao-thinking__summary::-webkit-details-marker { display: none; }
-.mao-thinking__summary:focus-visible { outline: 2px solid var(--mao-primary); outline-offset: 2px; }
-.mao-toolgroup { margin-bottom: 8px; }
-.mao-toolgroup__summary { border: 0; background: transparent; font: inherit; font-size: 12px; text-align: left; }
-.mao-toolgroup__body { margin-top: 4px; }
-.mao-thinking__caret { flex-shrink: 0; }
-.mao-thinking__body {
-  margin-top: 4px;
-  padding-left: 9px;
-  border-left: 2px solid var(--mao-border);
-  white-space: pre-wrap;
-  max-height: 160px;
-  overflow-y: auto;
-  line-height: 1.6;
+.mao-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--mao-border);
+  border-top-color: var(--mao-primary);
+  border-radius: 50%;
+  animation: mao-spin 0.8s linear infinite;
+  flex-shrink: 0;
 }
 
-/* ── tool card ── */
-.mao-toolcard {
-  border: 1px solid var(--mao-border);
-  border-radius: var(--mao-radius-md);
-  padding: 7px 10px;
-  margin: 0 0 8px;
-  font-size: 12px;
-  background: var(--mao-bg);
-  box-shadow: var(--mao-shadow-card);
-}
-.mao-toolcard__thumb {
-  display: block;
-  margin: 6px 0 0;
-  padding: 0;
+/* 轮次折叠条：羊皮纸底色小胶囊，点击展开全过程（对齐桌面端 execution-steps-collapse） */
+.mao-steps {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 6px 12px;
   border: 0;
-  background: transparent;
-  cursor: zoom-in;
-  max-width: 120px;
+  border-radius: var(--mao-radius-xs);
+  background: rgba(0, 0, 0, 0.045);
+  color: var(--mao-text-tertiary);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: -0.12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease, color 0.15s ease;
+  text-align: left;
 }
-.mao-toolcard__thumb:focus-visible {
-  outline: 2px solid var(--mao-primary);
-  outline-offset: 2px;
-  border-radius: var(--mao-radius-sm);
+.mao-steps:hover {
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--mao-text);
 }
-.mao-toolcard__image {
-  display: block;
-  width: auto;
-  max-width: 120px;
-  max-height: 90px;
-  object-fit: contain;
-  border-radius: var(--mao-radius-sm);
-  border: 1px solid var(--mao-border);
-  background: var(--mao-bg);
+.mao-steps:focus-visible {
+  outline: 1px solid var(--mao-text-tertiary);
+  outline-offset: 1px;
+}
+.mao-steps .mao-steps__icon {
+  transform: rotate(-90deg);
+  transition: transform 0.2s var(--mao-ease);
+}
+
+/* 过程正文 / 最终回复：助手侧不套气泡，markdown 直接落在面板上（沿用 mao-msg__md） */
+.mao-step-text {
+  margin: 2px 0;
+}
+.mao-reply {
+  margin-top: 2px;
 }
 .mao-lightbox {
   position: fixed;
@@ -530,48 +510,6 @@
 .mao-lightbox__close:hover { background: rgba(255, 255, 255, 0.28); }
 .mao-lightbox__close:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .mao-lightbox__close svg { width: 18px; height: 18px; fill: currentColor; }
-.mao-toolcard__head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 500;
-  color: var(--mao-text-secondary);
-}
-.mao-toolcard__name {
-  font-family: var(--mao-font-mono);
-  font-size: 11.5px;
-  color: var(--mao-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.mao-toolcard__status {
-  margin-left: auto;
-  flex-shrink: 0;
-  font-size: 11px;
-  padding: 1px 7px;
-  border-radius: var(--mao-radius-pill);
-  background: rgba(0, 0, 0, 0.05);
-  color: var(--mao-text-tertiary);
-  font-weight: 500;
-}
-.mao-toolcard__status--running { background: var(--mao-primary-soft); color: var(--mao-primary-ink); }
-.mao-toolcard__status--done { background: rgba(36, 138, 61, 0.1); color: var(--mao-success); }
-.mao-toolcard__status--error { background: var(--mao-danger-soft); color: var(--mao-danger); }
-.mao-toolcard__args,
-.mao-toolcard__result {
-  margin-top: 5px;
-  padding-top: 5px;
-  border-top: 1px dashed var(--mao-border);
-  font-family: var(--mao-font-mono);
-  font-size: 11.5px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  word-break: break-all;
-  overflow-y: auto;
-}
-.mao-toolcard__args { color: var(--mao-text-tertiary); max-height: 100px; }
-.mao-toolcard__result { color: var(--mao-text-secondary); max-height: 140px; }
 
 /* 执行中 loading：对齐桌面端三点脉动（ChatPanel typing-dots / MessageBubble stream-dot） */
 .mao-typing {
@@ -1074,7 +1012,7 @@
   .mao-attach__thumb,
   .mao-attach__icon { width: 38px; height: 38px; }
   .mao-attach__close { width: 26px; height: 26px; font-size: 16px; }
-  .mao-thinking__summary { padding: 5px 10px 5px 8px; }
+  .mao-steps { padding: 8px 14px; }
   .mao-q__opt { padding: 10px 12px; }
   .mao-btn { padding: 9px 18px; }
   .mao-banner__retry { padding: 5px 12px; }
@@ -1212,3 +1150,665 @@
 .mao-history__error { color: var(--mao-danger, #d93025); opacity: 0.9; }
 .mao-history__more { cursor: pointer; }
 .mao-panel__btn--on { color: var(--mao-primary, #1a73e8); }
+
+/* ── 执行过程组件样式（ThinkingRow / ToolCallElapsed / ToolCallRow / ToolCallGroup / MaoIcon）──
+   SDK 全部样式集中在本文件（mountApp 注入 Shadow DOM），组件不带 <style> 块。
+   组件级类名均已 mao- 前缀，此处不使用 scoped。 */
+
+/* MaoIcon.vue */
+.mao-icon {
+  display: inline-block;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+/* ThinkingRow.vue */
+.mao-think {
+  margin: 0;
+}
+
+.mao-think__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 5px;
+  margin-bottom: 2px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  user-select: none;
+  border-radius: var(--mao-radius-xs);
+  transition: background 0.15s ease;
+  text-align: left;
+}
+
+.mao-think__header:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.mao-think__header:focus-visible {
+  outline: 2px solid var(--mao-primary);
+  outline-offset: -2px;
+}
+
+.mao-think__info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.mao-think__icon {
+  color: var(--mao-text-tertiary);
+}
+
+.mao-think__label {
+  font-size: 12px;
+  color: var(--mao-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: -0.12px;
+  flex-shrink: 0;
+}
+
+.mao-think__preview {
+  flex: 1;
+  min-width: 24px;
+  overflow: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 20px, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 20px, #000 calc(100% - 24px), transparent);
+}
+
+.mao-think__preview-text {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--mao-text-tertiary);
+  opacity: 0.65;
+  letter-spacing: -0.12px;
+  vertical-align: middle;
+}
+
+.mao-think__body {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.mao-think__content {
+  margin: 0;
+  padding: 0 5px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--mao-text-tertiary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mao-font-mono);
+}
+
+/* ToolCallElapsed.vue */
+.mao-elapsed {
+  font-size: 11px;
+  color: var(--mao-text-tertiary);
+  /* 等宽数字：秒级跳变时宽度不抖，右侧 spinner 不跟着晃 */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ToolCallRow.vue */
+.mao-toolrow {
+  min-width: 0;
+}
+
+.mao-toolrow--standalone {
+  margin-top: 2px;
+}
+
+.mao-toolrow__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 5px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  border-radius: var(--mao-radius-xs);
+  transition: background 0.15s ease;
+}
+
+.mao-toolrow__header:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.mao-toolrow__header:focus-visible {
+  outline: 2px solid var(--mao-primary);
+  outline-offset: -2px;
+}
+
+.mao-toolrow__info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.mao-toolrow__icon {
+  color: var(--mao-text-tertiary);
+}
+
+.mao-toolrow__summary {
+  font-size: 12px;
+  color: var(--mao-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: -0.12px;
+}
+
+.mao-toolrow__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.mao-toolrow__mark--ok { color: var(--mao-success); }
+.mao-toolrow__mark--fail { color: var(--mao-danger); }
+
+.mao-toolrow__unknown {
+  font-size: 11px;
+  color: var(--mao-text-tertiary);
+  white-space: nowrap;
+}
+
+/* 展开体 */
+.mao-toolrow__body {
+  margin: 2px 0 6px 27px;
+  min-width: 0;
+}
+
+.mao-io-label {
+  font-size: 10px;
+  color: var(--mao-text-tertiary);
+  margin: 6px 0 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.mao-code-block {
+  position: relative;
+}
+
+.mao-code-block__pre {
+  margin: 0;
+  padding: 7px 9px;
+  background: rgba(0, 0, 0, 0.045);
+  border-radius: var(--mao-radius-sm);
+  overflow-x: auto;
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: var(--mao-font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--mao-text);
+}
+
+.mao-code-block__pre code {
+  font-family: inherit;
+  white-space: pre;
+}
+
+.mao-copy-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--mao-radius-xs);
+  background: rgba(255, 255, 255, 0.75);
+  color: var(--mao-text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.mao-code-block:hover .mao-copy-btn,
+.mao-shell:hover .mao-copy-btn {
+  opacity: 1;
+}
+
+.mao-copy-btn:hover {
+  color: var(--mao-text);
+}
+
+.mao-toolrow__thumb {
+  display: block;
+  margin: 6px 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.mao-toolrow__thumb:focus-visible {
+  outline: 2px solid var(--mao-primary);
+  outline-offset: 2px;
+  border-radius: var(--mao-radius-sm);
+}
+
+.mao-toolrow__image {
+  display: block;
+  width: auto;
+  max-width: 120px;
+  max-height: 90px;
+  object-fit: contain;
+  border-radius: var(--mao-radius-sm);
+  border: 1px solid var(--mao-border);
+  background: var(--mao-bg);
+}
+
+.mao-toolrow__footer {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.mao-toolrow__footnote {
+  font-family: var(--mao-font-mono);
+  font-size: 10.5px;
+  color: var(--mao-text-tertiary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  min-width: 0;
+}
+
+.mao-badge {
+  flex-shrink: 0;
+  font-family: var(--mao-font-mono);
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: var(--mao-radius-xs);
+  white-space: nowrap;
+}
+
+.mao-badge--ok {
+  color: var(--mao-success);
+  background: rgba(36, 138, 61, 0.12);
+}
+
+.mao-badge--fail {
+  color: var(--mao-danger);
+  background: var(--mao-danger-soft);
+}
+
+.mao-linklike {
+  border: none;
+  background: none;
+  padding: 0;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--mao-primary-ink);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.mao-linklike:hover {
+  text-decoration: underline;
+}
+
+/* diff */
+.mao-diff {
+  padding: 5px 0;
+  background: rgba(0, 0, 0, 0.045);
+  border-radius: var(--mao-radius-sm);
+  overflow-x: auto;
+  max-height: 320px;
+  overflow-y: auto;
+  font-family: var(--mao-font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.mao-diff__line {
+  display: flex;
+  white-space: pre;
+}
+
+.mao-diff__sign {
+  flex-shrink: 0;
+  width: 16px;
+  padding-left: 5px;
+  color: var(--mao-text-tertiary);
+  user-select: none;
+}
+
+.mao-diff__text {
+  color: var(--mao-text);
+  padding-right: 10px;
+}
+
+.mao-diff__line--add {
+  background: rgba(36, 138, 61, 0.14);
+}
+
+.mao-diff__line--add .mao-diff__sign {
+  color: var(--mao-success);
+}
+
+.mao-diff__line--del {
+  background: rgba(215, 0, 21, 0.12);
+}
+
+.mao-diff__line--del .mao-diff__sign {
+  color: var(--mao-danger);
+}
+
+.mao-diff__gap {
+  padding: 1px 0 1px 20px;
+  color: var(--mao-text-tertiary);
+  background: rgba(0, 0, 0, 0.03);
+  font-size: 10.5px;
+}
+
+/* shell 终端块 */
+.mao-shell {
+  position: relative;
+  background: rgba(0, 0, 0, 0.045);
+  border-radius: var(--mao-radius-sm);
+}
+
+.mao-shell__scroll {
+  max-height: 240px;
+  overflow: auto;
+  padding: 7px 9px;
+  font-family: var(--mao-font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.mao-shell__cmd {
+  display: flex;
+  min-width: 0;
+}
+
+.mao-shell__prompt {
+  flex-shrink: 0;
+  width: 1.1em;
+  color: var(--mao-text-tertiary);
+  user-select: none;
+}
+
+.mao-shell__tag {
+  flex-shrink: 0;
+  margin-right: 6px;
+  padding: 0 4px;
+  height: 1.4em;
+  line-height: 1.4;
+  font-size: 10px;
+  color: var(--mao-text-tertiary);
+  border: 1px solid var(--mao-border);
+  border-radius: var(--mao-radius-xs);
+  user-select: none;
+}
+
+.mao-shell__text {
+  min-width: 0;
+  color: var(--mao-text);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.mao-shell__divider {
+  height: 1px;
+  margin: 5px 0;
+  background: var(--mao-border);
+}
+
+.mao-shell__out {
+  margin: 0;
+  color: var(--mao-text-secondary);
+  white-space: pre;
+}
+
+.mao-shell__out--error {
+  color: var(--mao-danger);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* 文件内容（行号槽） */
+.mao-file {
+  background: rgba(0, 0, 0, 0.045);
+  border-radius: var(--mao-radius-sm);
+  overflow: hidden;
+}
+
+.mao-file__cols {
+  display: flex;
+  max-height: 240px;
+  overflow: auto;
+  font-family: var(--mao-font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.mao-file__nos {
+  flex-shrink: 0;
+  padding: 5px 0;
+  text-align: right;
+  color: var(--mao-text-tertiary);
+  opacity: 0.7;
+  user-select: none;
+  position: sticky;
+  left: 0;
+  background: rgba(0, 0, 0, 0.045);
+}
+
+.mao-file__no {
+  padding: 0 6px 0 8px;
+}
+
+.mao-file__code {
+  margin: 0;
+  padding: 5px 8px;
+  overflow-x: auto;
+  color: var(--mao-text);
+  flex: 1;
+  min-width: 0;
+}
+
+.mao-file__code code {
+  font-family: inherit;
+  white-space: pre;
+}
+
+/* glob/grep 命中列表 */
+.mao-hits {
+  background: rgba(0, 0, 0, 0.045);
+  border-radius: var(--mao-radius-sm);
+  padding: 5px 9px;
+  max-height: 240px;
+  overflow: auto;
+  font-family: var(--mao-font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.mao-hits__file {
+  color: var(--mao-text);
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.mao-hits__file:first-child {
+  margin-top: 0;
+}
+
+.mao-hits__row {
+  color: var(--mao-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.mao-hits__row--ctx {
+  opacity: 0.55;
+}
+
+.mao-hits__error {
+  color: var(--mao-danger);
+}
+
+/* web_search 结果列表 */
+.mao-web {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mao-web__item {
+  border: 1px solid var(--mao-border);
+  border-radius: var(--mao-radius-sm);
+  padding: 7px 9px;
+  min-width: 0;
+}
+
+.mao-web__title {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--mao-primary-ink);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+a.mao-web__title:hover {
+  text-decoration: underline;
+}
+
+.mao-web__host {
+  display: block;
+  font-size: 10.5px;
+  color: var(--mao-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+
+.mao-web__snippet {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--mao-text-secondary);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+/* open_web_page 正文 */
+.mao-webpage__content {
+  margin: 6px 0 0;
+  padding: 7px 9px;
+  background: rgba(0, 0, 0, 0.045);
+  border-radius: var(--mao-radius-sm);
+  max-height: 240px;
+  overflow: auto;
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--mao-text-secondary);
+  font-family: inherit;
+}
+
+/* ToolCallGroup.vue */
+.mao-toolgroup {
+  margin: 0;
+}
+
+.mao-toolgroup__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 5px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  border-radius: var(--mao-radius-xs);
+  transition: background 0.15s ease;
+}
+
+.mao-toolgroup__header:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.mao-toolgroup__header:focus-visible {
+  outline: 2px solid var(--mao-primary);
+  outline-offset: -2px;
+}
+
+.mao-toolgroup__info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.mao-toolgroup__icon {
+  color: var(--mao-text-tertiary);
+}
+
+.mao-toolgroup__summary {
+  font-size: 12px;
+  color: var(--mao-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: -0.12px;
+}
+
+.mao-toolgroup__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.mao-toolgroup__body {
+  margin-left: 27px;
+  min-width: 0;
+}
+
+/* 轮次折叠条展开态：'.mao-steps .mao-steps__icon' 双类选择器比 '.mao-chevron--open' 优先级高，
+   展开转正需要同等特异性覆盖 */
+.mao-steps .mao-steps__icon.mao-chevron--open {
+  transform: rotate(0deg);
+}
