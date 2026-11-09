@@ -178,6 +178,39 @@ describe('EmbedController', () => {
     h.ctl.destroy();
   });
 
+  it('页面加载预取 Agent 详情：入口先行展示头像与名称，首次打开不再重复请求', async () => {
+    agentAvatarUrl = '/uploads/agents/3.png';
+    const h = await makeHarness();
+    h.ctl.prefetchLauncherIdentity();
+    await vi.waitFor(() => expect(h.ui.agentAvatarUrl).toBe('https://mao.example.com/uploads/agents/3.png'));
+    expect(h.ui.sessionTitle).toBe('客服助手');
+    await boot(h);
+    expect(h.fetchCalls.filter((call) => call === 'GET https://mao.example.com/api/v1/agents/3')).toHaveLength(1);
+    h.ctl.destroy();
+  });
+
+  it('预取失败静默：不写错误横幅，首次打开仍重新获取 Agent 详情', async () => {
+    agentAvatarUrl = '/uploads/agents/3.png';
+    const h = await makeHarness();
+    vi.mocked(fetch).mockRejectedValueOnce(new Error('Agent unavailable'));
+    h.ctl.prefetchLauncherIdentity();
+    await vi.waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1));
+    expect(h.ui.sessionError).toBeNull();
+    expect(h.ui.agentAvatarUrl).toBeNull();
+    await boot(h);
+    expect(h.ui.agentAvatarUrl).toBe('https://mao.example.com/uploads/agents/3.png');
+    expect(h.ui.sessionTitle).toBe('客服助手');
+    h.ctl.destroy();
+  });
+
+  it('launcher 隐藏时不预取 Agent 详情', async () => {
+    const h = await makeHarness({ launcher: { visible: false } });
+    h.ctl.prefetchLauncherIdentity();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(h.fetchCalls).toHaveLength(0);
+    h.ctl.destroy();
+  });
+
   it('boot 随 Agent 详情拉取推荐问题，过滤空白内容', async () => {
     agentSuggestedQuestions = [
       { content: '帮我总结当前页面' },

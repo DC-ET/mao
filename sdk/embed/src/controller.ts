@@ -273,6 +273,8 @@ export class EmbedController {
   private readonly unconfirmedSaves = new Map<string, string>();
   /** 管理后台配置的 Agent 名称；浮窗标题用这个，不跟会话自动标题走 */
   private agentDisplayName: string | null = null;
+  /** Agent 详情在途/已取请求：页面加载预取（入口头像）与首次打开 boot 共用，失败不缓存 */
+  private agentDetails: Promise<AgentVO> | null = null;
   /** 页面工具 requestId 幂等：已处理过的请求重发缓存结果，处理中的重复请求直接忽略 */
   private readonly pageToolResults = new Map<string, WsPageToolResultData>();
   private readonly pageToolInFlight = new Set<string>();
@@ -461,6 +463,8 @@ export class EmbedController {
     this.applyPanelTitle();
     this.ui.agentAvatarUrl = null;
     this.ui.suggestedQuestions = [];
+    // 身份变化后丢弃旧身份的 Agent 详情缓存：新身份首次打开需按自身权限重新拉取
+    this.agentDetails = null;
     // 身份切换：取消页面任务并清空页面授权/日志，避免跨身份继承
     this.pageEngine?.cancel();
     this.ui.pageLogs = [];
@@ -482,6 +486,45 @@ export class EmbedController {
 
   private applyPanelTitle() {
     this.ui.sessionTitle = this.agentDisplayName ?? FALLBACK_PANEL_TITLE;
+  }
+
+  /**
+   * 页面加载即预取 Agent 详情：入口按钮先展示配置的头像与名称，不必等用户点开浮窗。
+   * 失败静默（保持品牌图标与默认标题），首次打开时 boot 会重新获取并沿用原有错误展示。
+   */
+  prefetchLauncherIdentity(): void {
+    if (this.destroyed || !this.ui.launcherVisible) return;
+    const version = this.identityVersion;
+    void this.ensureAgentDetails()
+      .then((agent) => {
+        if (this.destroyed || version !== this.identityVersion) return;
+        this.applyAgentDetails(agent);
+      })
+      .catch(() => {});
+  }
+
+  /** Agent 详情（头像/名称/推荐问题）：预取与 boot 共用同一在途请求；失败不缓存，便于重试 */
+  private ensureAgentDetails(): Promise<AgentVO> {
+    if (!this.agentDetails) {
+      this.agentDetails = this.rest.request<AgentVO>('GET', `/agents/${this.options.agentId}`).catch((error: unknown) => {
+        this.agentDetails = null;
+        throw error;
+      });
+    }
+    return this.agentDetails;
+  }
+
+  private applyAgentDetails(agent: AgentVO): void {
+    // SDK 嵌在第三方页面：上传路径必须指向 Mao 服务，不能落到宿主域名。
+    this.ui.agentAvatarUrl = agent.avatarUrl
+      ? new URL(agent.avatarUrl, resolveApiBase(this.options.serverUrl)).href
+      : null;
+    this.agentDisplayName = displayAgentName(agent.name);
+    this.applyPanelTitle();
+    // 推荐问题随详情一次拉取；为空或接口未返回时保持空数组（空白态不渲染该区块）
+    this.ui.suggestedQuestions = (agent.suggestedQuestions ?? [])
+      .map((q) => (q.content ?? '').trim())
+      .filter((content) => content.length > 0);
   }
 
   /** 附件大小上限：后台集成配置变更后，下次 boot/重试即可生效 */
@@ -597,21 +640,12 @@ export class EmbedController {
     this.store.sessionError.value = null;
     try {
       const [agent] = await Promise.all([
-        this.rest.request<AgentVO>('GET', `/agents/${this.options.agentId}`),
+        this.ensureAgentDetails(),
         // 附件上限用于输入区即时校验；拉取失败保持默认值，不阻断 boot
         this.loadAttachmentLimit(),
       ]);
       if (stale()) return;
-      // SDK 嵌在第三方页面：上传路径必须指向 Mao 服务，不能落到宿主域名。
-      this.ui.agentAvatarUrl = agent.avatarUrl
-        ? new URL(agent.avatarUrl, resolveApiBase(this.options.serverUrl)).href
-        : null;
-      this.agentDisplayName = displayAgentName(agent.name);
-      this.applyPanelTitle();
-      // 推荐问题随详情一次拉取；为空或接口未返回时保持空数组（空白态不渲染该区块）
-      this.ui.suggestedQuestions = (agent.suggestedQuestions ?? [])
-        .map((q) => (q.content ?? '').trim())
-        .filter((content) => content.length > 0);
+      this.applyAgentDetails(agent);
       // 多 tab 竞态：先问其他 tab 是否已有会话
       const claimed = await this.tabs.inquire();
       if (stale()) return;

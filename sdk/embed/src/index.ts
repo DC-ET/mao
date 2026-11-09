@@ -57,6 +57,8 @@ function createInstance(options: MaoChatInitOptions): MaoChatInstance {
       /* 宿主回调异常不阻断 SDK */
     }
   }, cleanup, host);
+  // 页面加载即预取 Agent 详情：入口按钮先展示配置的头像与名称，不必等用户点开浮窗
+  controller.prefetchLauncherIdentity();
   const instance: EmbeddedInstance = {
     open: () => controller.open(),
     close: () => controller.close(),

@@ -8,6 +8,21 @@ let el: HTMLDivElement;
 afterEach(() => { app?.unmount(); el?.remove(); });
 
 describe('Agent avatar', () => {
+  it('面板未打开时入口按钮即显示 Agent 头像', () => {
+    const ui = createUiState({ serverUrl: 'https://mao.example.com', agentId: 3, getToken: async () => '' });
+    ui.panelOpen = false;
+    ui.agentAvatarUrl = 'https://mao.example.com/uploads/agents/3.png';
+    el = document.createElement('div');
+    document.body.appendChild(el);
+    app = createApp({ render: () => h(RootApp, { ui }) });
+    app.mount(el);
+    const launcher = el.querySelector('.mao-launcher');
+    expect(launcher).not.toBeNull();
+    const avatar = launcher!.querySelector<HTMLImageElement>('.mao-agent-avatar');
+    expect(avatar?.src).toBe(ui.agentAvatarUrl);
+    expect(launcher!.querySelector('.mao-brand-icon')).toBeNull();
+  });
+
   it('入口和面板使用同一头像，移除后恢复品牌图标并保留运行提示', async () => {
     const ui = createUiState({ serverUrl: 'https://mao.example.com', agentId: 3, getToken: async () => '' });
     ui.panelOpen = true;

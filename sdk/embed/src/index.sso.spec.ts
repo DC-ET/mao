@@ -1,9 +1,15 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { init } from './index';
 
+const prefetchSpy = vi.hoisted(() => vi.fn());
 vi.mock('./controller', () => ({
   createUiState: vi.fn(() => ({})), mountApp: vi.fn(() => ({ cleanup: vi.fn(), root: {}, host: null })),
-  EmbedController: vi.fn(function () { return { open: vi.fn(), close: vi.fn(), toggle: vi.fn(), newSession: vi.fn(), setContext: vi.fn(), destroy: vi.fn() }; }),
+  EmbedController: vi.fn(function () {
+    return {
+      open: vi.fn(), close: vi.fn(), toggle: vi.fn(), newSession: vi.fn(), setContext: vi.fn(), destroy: vi.fn(),
+      prefetchLauncherIdentity: prefetchSpy,
+    };
+  }),
 }));
 vi.mock('./ui/theme', () => ({ applyTheme: vi.fn() }));
 
@@ -16,6 +22,11 @@ describe('MaoChat.init SSO checkUrl', () => {
     expect(() => init(options)).toThrow();
   });
   it('accepts and passes a legal checkUrl', () => expect(() => init(base())).not.toThrow());
+  it('初始化即预取入口身份，不等用户打开浮窗', () => {
+    prefetchSpy.mockClear();
+    init(base());
+    expect(prefetchSpy).toHaveBeenCalledTimes(1);
+  });
   it('keeps getToken and SSO mutually exclusive', () => {
     expect(() => init({ ...base(), getToken: async () => 'x' } as any)).toThrow(/exactly one/);
   });

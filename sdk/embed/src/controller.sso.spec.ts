@@ -78,6 +78,21 @@ describe('embed SSO controller identity lifecycle', () => {
     await rejected;
   });
 
+  it('页面加载预取：完成换票后拉取 Agent 详情，入口先行展示头像与名称', async () => {
+    const { controller, ui, fetcher } = setup();
+    // 第 1 次 fetch 是换票，第 2 次是 Agent 详情
+    fetcher
+      .mockImplementationOnce(async () => new Response(JSON.stringify({ code: 0, data: {
+        accessToken: 'mao-1', expiresIn: 300, expiresAt: Date.now() + 300000, refreshAfter: 100, user: { id: 1, displayName: 'Test' },
+      } })))
+      .mockImplementationOnce(async () => new Response(JSON.stringify({ code: 0, data: {
+        id: 9, name: '客服助手', avatarUrl: '/uploads/agents/9.png',
+      } })));
+    controller.prefetchLauncherIdentity();
+    await vi.waitFor(() => expect(ui.agentAvatarUrl).toBe('https://mao.example.test/uploads/agents/9.png'));
+    expect(ui.sessionTitle).toBe('客服助手');
+  });
+
   it('separates persistent session IDs by server and identity scope', () => {
     const a = new SessionManager({ rest: {} as never, agentId: 9, scope: () => 'server/user1' });
     const b = new SessionManager({ rest: {} as never, agentId: 9, scope: () => 'server/user2' });
