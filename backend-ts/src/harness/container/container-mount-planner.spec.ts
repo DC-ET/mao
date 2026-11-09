@@ -27,8 +27,8 @@ describe('container mount planner', () => {
     for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
     const planner = new ContainerMountPlanner(roots(base));
     const mounts = planner.plan(7, 5);
-    // 除共享目录根（团队经验库 rw，2026-10-24）外，每条 rw 挂载都只含 user=7 的路径
-    for (const m of mounts.filter((x) => x.mode === 'rw' && x.purpose !== 'share')) {
+    // 除 share 两条按 Agent 收窄的子路径（2026-11-09）外，每条 rw 挂载都只含 user=7 的路径
+    for (const m of mounts.filter((x) => x.mode === 'rw' && x.purpose !== 'share' && x.purpose !== 'shareAgent')) {
       expect(m.hostPath).toContain('/7');
       expect(m.hostPath.startsWith(base)).toBe(true);
     }
@@ -104,33 +104,40 @@ describe('container mount planner', () => {
     expect(planner.standardMountsFingerprint(8, 5)).not.toBe(fp);
   });
 
-  it('mountsShareDirReadWrite', () => {
-    // 团队经验库方案 2026-10-24 D10：share 由 ro 改 rw（agent-experience/ 子目录需容器内写入）。
-    // 容器内路径与宿主机逐字节一致；防误删从 ro 挂载退化为信任 + 宿主快照兜底。
-    // mode 参与指纹（fingerprintTracksStandardMountPlan 的序列化含 mode），ro→rw 上线即触发存量容器重建。
+  it('mountsAgentScopedShareTreesReadWrite', () => {
+    // 2026-11-09 形态 C：share 由整根 rw 改为两条子路径 rw（本 Agent 经验库 + 私有区）。
+    // 容器内路径与宿主机逐字节一致；其他 Agent 目录既不在挂载面、也不在沙箱面。
     const base = useTmpDir('mao-mount-share-');
     for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
     const planner = new ContainerMountPlanner(roots(base));
-    const share = planner.plan(7, 5).find((m) => m.purpose === 'share');
-    expect(share).toBeDefined();
-    expect(share!.mode).toBe('rw');
-    expect(share!.hostPath).toBe(join(base, 'share'));
-    expect(share!.containerPath).toBe(share!.hostPath);
-    // 同一 roots 把 share 拨回 ro 的指纹必须不同：ro→rw 变更可被指纹感知
-    const roVariant = planner.plan(7, 5).map((m) => (m.purpose === 'share' ? { ...m, mode: 'ro' as const } : m));
+    const mounts = planner.plan(7, 5);
+    const experience = mounts.find((m) => m.purpose === 'share');
+    const privateArea = mounts.find((m) => m.purpose === 'shareAgent');
+    expect(experience?.mode).toBe('rw');
+    expect(experience?.hostPath).toBe(join(base, 'share', 'agent-experience', '5'));
+    expect(experience?.containerPath).toBe(experience?.hostPath);
+    expect(privateArea?.mode).toBe('rw');
+    expect(privateArea?.hostPath).toBe(join(base, 'share', 'agents', '5'));
+    expect(privateArea?.containerPath).toBe(privateArea?.hostPath);
+    // share 整根不再挂载；其他 Agent 的目录不出现在清单里
+    expect(mounts.some((m) => m.hostPath === join(base, 'share'))).toBe(false);
+    expect(JSON.stringify(mounts)).not.toContain(join(base, 'share', 'agent-experience', '6'));
+    // mode 参与指纹：share 条目拨回 ro 的指纹必须不同
+    const roVariant = planner.plan(7, 5).map((m) => ((m.purpose === 'share' || m.purpose === 'shareAgent') ? { ...m, mode: 'ro' as const } : m));
     expect(planner.fingerprintOf(roVariant)).not.toBe(planner.standardMountsFingerprint(7, 5));
   });
 
   it('shareDirMissingIsTolerated', () => {
-    // ro 项不强制创建：shareDir 不存在时 plan 不抛错（docker -v 对缺失源自动建空目录，
-    // 叠加后端启动 mkdirSync 兜底，双保险）
+    // share 两条子路径均为 rw：shareDir 不存在时 plan 不抛错，assertSafe 递归创建子路径
+    // （容器启动前由宿主机就位）。旧整根挂载已删除。
     const base = useTmpDir('mao-mount-share-miss-');
     for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
     const planner = new ContainerMountPlanner({ ...roots(base), shareDir: join(base, 'no-such-share') });
     const mounts = planner.plan(7, 5);
-    // rw 项缺失时 assertSafe 自动创建（容器启动前由宿主机就位）
-    expect(mounts.find((m) => m.purpose === 'share')?.hostPath).toBe(join(base, 'no-such-share'));
-    expect(existsSync(join(base, 'no-such-share'))).toBe(true);
+    expect(mounts.find((m) => m.purpose === 'share')?.hostPath).toBe(join(base, 'no-such-share', 'agent-experience', '5'));
+    expect(mounts.find((m) => m.purpose === 'shareAgent')?.hostPath).toBe(join(base, 'no-such-share', 'agents', '5'));
+    expect(existsSync(join(base, 'no-such-share', 'agent-experience', '5'))).toBe(true);
+    expect(existsSync(join(base, 'no-such-share', 'agents', '5'))).toBe(true);
   });
 
   it('rejectsShareDirAsParentOfRoot', () => {
@@ -356,34 +363,43 @@ describe('container mount planner', () => {
     expect(planner.plan(7, 5, [groupWs]).some((m) => m.hostPath === groupWs)).toBe(true);
   });
 
-  it('mountsAgentScopedViewsAndChannelWithWholeShareRoot', () => {
-    // 2026-11-07 复合容器方案 §3.2（决策 13 修订）：skillViews/channel 按 {root}/{userId}/{agentId}
-    // 收窄；share 维持整根 rw（管理员投放与运维共享文件全员可读写，经验库不做容器级隔离）
+  it('mountsAgentScopedViewsChannelAndShareTrees', () => {
+    // 2026-11-07 复合容器方案 §3.2 + 2026-11-09 形态 C：skillViews/channel/share 均按
+    // {root}/{userId}/{agentId}（share 为两条子路径）收窄
     const base = useTmpDir('mao-mount-agent-');
     for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
     const planner = new ContainerMountPlanner(roots(base));
     const mounts = planner.plan(7, 5);
     expect(mounts.find((m) => m.purpose === 'skillViews')?.hostPath).toBe(join(base, 'mao', 'data', 'skill-views', '7', '5'));
-    expect(mounts.find((m) => m.purpose === 'share')?.hostPath).toBe(join(base, 'share'));
+    expect(mounts.find((m) => m.purpose === 'share')?.hostPath).toBe(join(base, 'share', 'agent-experience', '5'));
+    expect(mounts.find((m) => m.purpose === 'shareAgent')?.hostPath).toBe(join(base, 'share', 'agents', '5'));
     expect(mounts.find((m) => m.purpose === 'channel')?.hostPath).toBe(join(base, 'runtime', 'channels', '7', '5'));
     // 不同 agent 的标准清单不同（agentId 段进指纹）
     expect(planner.standardMountsFingerprint(7, 6)).not.toBe(planner.standardMountsFingerprint(7, 5));
   });
 
-  it('rejectsSharePurposeSubpathsAndRequiresExactRoot', () => {
-    // share 整根 rw 例外只对恰为登记根的条目生效：借 purpose 挂子路径（含经验库子目录）
-    // 或上级一律拒绝（2026-10-24 D10 原语义，决策 13 维持）
+  it('rejectsSharePurposePathMismatchAndLookalikes', () => {
+    // 2026-11-09 形态 C（评审 P2-3）：purpose 与路径 1:1 绑定——share 必须恰为
+    // agent-experience/{agentId}，shareAgent 必须恰为 agents/{agentId}；
+    // 整根 / 其他 Agent / 上级 / 形似路径（5x）一律拒绝。
     const base = useTmpDir('mao-mount-agent-bad-');
     for (const dir of Object.values(roots(base))) mkdirSync(dir, { recursive: true });
     const planner = new ContainerMountPlanner(roots(base));
-    // 恰为 share 根 → 放行（无需 userId 段）
-    expect(() => planner.assertSafe([
-      { hostPath: join(base, 'share'), containerPath: join(base, 'share'), mode: 'rw', purpose: 'share' },
-    ], 7, 5)).not.toThrow();
-    // 借 purpose 挂经验库子目录 → 拒绝（rw 无 userId 段）
-    expect(() => planner.assertSafe([
-      { hostPath: join(base, 'share', 'agent-experience', '5'), containerPath: join(base, 'share', 'agent-experience', '5'), mode: 'rw', purpose: 'share' },
-    ], 7, 5)).toThrow(/must contain/);
+    const mount = (purpose: string, ...segs: string[]) => ({
+      hostPath: join(base, 'share', ...segs), containerPath: join(base, 'share', ...segs), mode: 'rw' as const, purpose,
+    });
+    // 正确路径放行
+    expect(() => planner.assertSafe([mount('share', 'agent-experience', '5')], 7, 5)).not.toThrow();
+    expect(() => planner.assertSafe([mount('shareAgent', 'agents', '5')], 7, 5)).not.toThrow();
+    // 整根 / 其他 Agent / 上级 / 形似路径
+    expect(() => planner.assertSafe([mount('share')], 7, 5)).toThrow(/must be exactly/);
+    expect(() => planner.assertSafe([mount('share', 'agent-experience', '6')], 7, 5)).toThrow(/must be exactly/);
+    expect(() => planner.assertSafe([mount('shareAgent', 'agents', '6')], 7, 5)).toThrow(/must be exactly/);
+    expect(() => planner.assertSafe([mount('shareAgent', 'agents')], 7, 5)).toThrow(/must be exactly/);
+    expect(() => planner.assertSafe([mount('shareAgent', 'agents', '5x')], 7, 5)).toThrow(/must be exactly/);
+    // purpose 与路径绑定：路径形状对但 purpose 错 → 拒绝
+    expect(() => planner.assertSafe([mount('share', 'agents', '5')], 7, 5)).toThrow(/must be exactly/);
+    expect(() => planner.assertSafe([mount('shareAgent', 'agent-experience', '5')], 7, 5)).toThrow(/must be exactly/);
     // skillViews / channel 挂到用户根（缺 agentId 段）→ 拒绝
     expect(() => planner.assertSafe([
       { hostPath: join(base, 'mao', 'data', 'skill-views', '7'), containerPath: join(base, 'mao', 'data', 'skill-views', '7'), mode: 'ro', purpose: 'skillViews' },

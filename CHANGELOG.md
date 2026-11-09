@@ -1,3 +1,14 @@
+## 0.0.492 (2026-11-09)
+
+### 后端
+- **`/opt/mao-data/share` 按 Agent 隔离（形态 C）**：容器内由「整根 rw 挂载」改为两条子路径 rw——`agent-experience/<agentId>/`（本 Agent 团队经验库）与 `agents/<agentId>/`（本 Agent 私有区：投放品/脚本/产物）；其他 Agent 目录在容器文件系统层面不复存在（含经验库跨 Agent 零可见，此前为"软链 + 提示词收口"的接受项）。配套调整：
+  - 挂载计划 `assertSafe` 对两条子路径做 purpose 绑定的精确校验（整根 / 其他 Agent / 形似路径一律拒绝）；
+  - 容器内沙箱允许根同步收窄为上述两条子路径（与挂载面严格一致，share 根不再放行）；
+  - `runtime-agent` 硬依赖 `MAO_CONTAINER_AGENT_ID`（缺失/非法即退出，与 `MAO_CONTAINER_USER_ID` 同口径）；
+  - 管理员公共投放区取消：投放改为落到 `agents/<目标AgentId>/`（目录级挂载即时生效，多 Agent 需同一文件时逐个复制）；
+  - 存量容器随挂载指纹漂移一次性自动重建；`agent-experience/` 路径本身不变（工作区 `团队经验/` 软链不受影响）。
+- **存量数据迁移**：由 `scripts/migrate-share-per-agent.sh` 完成（分发 settings/scripts 至各 Agent 目录、DB 引用更新、旧残留清理；含 DB 前像与分阶段校验）。提示词同步为新文案（"本 Agent 的文件放 `agents/<agentId>/`；无跨 Agent 公共共享目录；旧路径已迁移，勿自行重建"）。
+
 ## 0.0.491 (2026-11-09)
 
 ### Embed SDK

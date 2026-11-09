@@ -26,12 +26,12 @@
 
 与「最佳实践经验」（短条目、全量注入提示词）互补的**长经验渐进式发现**机制，按 Agent 一库（`agent.experienceLibraryEnabled`，V169 默认启用）：
 
-- 存放于共享目录 `<MAO_SHARE_DIR>/agent-experience/<agentId>/`：`INDEX.md`（系统自动生成的索引，勿手改）+ 若干 `YYYY-MM-DD-主题.md` 子文档（首部 frontmatter：`title` / `keywords` / `summary` / `applicable` / `last_verified`）。
+- 存放于 `<MAO_SHARE_DIR>/agent-experience/<agentId>/`（share 已按 Agent 隔离，容器内只挂本 Agent 子路径）：`INDEX.md`（系统自动生成的索引，勿手改）+ 若干 `YYYY-MM-DD-主题.md` 子文档（首部 frontmatter：`title` / `keywords` / `summary` / `applicable` / `last_verified`）。
 - 仅 CLOUD 会话生效：会话创建时工作区自动挂符号链接 `团队经验/`（git 工作区自动加入 `.git/info/exclude`），系统提示注入一小节固定路标——Agent 接手复杂任务先 grep 索引、命中再读子文档；多轮探索解决难题后自行写带日期的新子文档（write_file / edit_file 落盘后索引自动重建）。LOCAL 不挂载、不注入。会话文件管理可只读打开这个目录（预览、搜索、下载）；新建、改名、删除、上传仍拒绝，避免从文件管理改到全体成员共享的库。
 - 管理后台「Agent 管理 → 经验库」维护：开关启用、浏览 / 新建 / 编辑 / 删除文档、强制重建索引、查看索引原文。REST（相对 `/api/v1`，读需登录、写需 `agent:write`；CLI 暂无子命令）：
   - `PATCH /agents/:id/experience-library` `{ enabled }`；`GET /agents/:id/experience-library/docs`（含 `docs` 元信息列表与 `indexContent`）
   - `GET|PUT /agents/:id/experience-library/docs/content?file=`（读 / upsert 单篇，PUT 传 JSON `{ fileName, content }`；单篇上限 1MB）；`DELETE /agents/:id/experience-library/docs?file=`（禁删 `INDEX.md`）；`POST /agents/:id/experience-library/index/rebuild`
-- 边界：库内容由 Agent 会话写入、团队内同信任级共享（含跨 Agent 互写，同根目录）；容器模式共享目录 0.0.342 起 rw 挂载（存量容器自动重建），建议对整个 share 做每日快照（见 [deploy.md](deploy.md#公共共享目录)）。
+- 边界：库内容由 Agent 会话写入；2026-11-09 起 share 按 Agent 隔离——容器内只能读写本 Agent 的经验库与私有区，其他 Agent 目录在容器文件系统层面不可见（跨 Agent 互写不再成立）；建议对整个 share 做每日快照（见 [deploy.md](deploy.md) 容器隔离运行时一节）。
 
 ## 系统提示词版本（REST / 管理后台）
 

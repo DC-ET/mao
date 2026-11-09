@@ -37,7 +37,7 @@ function parseArgs(argv: string[]): { socketPath: string } {
   return { socketPath };
 }
 
-function resolveRoots(): ContainerRoots {
+function resolveRoots(agentId: number): ContainerRoots {
   const workspaceRoot = process.env.MAO_WORKSPACE_ROOT ?? '/opt/mao-data/workspace';
   const runtimeDir = process.env.MAO_RUNTIME_DIR ?? '/opt/mao-data/runtime';
   const userHomeDir = process.env.MAO_USER_HOME_DIR ?? '/opt/mao-data/users';
@@ -45,7 +45,13 @@ function resolveRoots(): ContainerRoots {
   const skillViewsDir = process.env.MAO_SKILL_VIEWS_DIR ?? '/opt/mao-data/skill-views';
   const uploadDir = process.env.MAO_UPLOAD_DIR ?? '/opt/mao-data/uploads';
   const shareDir = process.env.MAO_SHARE_DIR ?? '/opt/mao-data/share';
-  return { workspaceRoot, runtimeDir, userHomeDir, userSkillsDir, skillViewsDir, uploadDir, shareDir };
+  const a = String(agentId);
+  return {
+    workspaceRoot, runtimeDir, userHomeDir, userSkillsDir, skillViewsDir, uploadDir, shareDir,
+    // share 按 Agent 隔离（2026-11-09 形态 C）：两条子路径与容器挂载面 1:1 对应
+    shareExperienceDir: path.join(shareDir, 'agent-experience', a),
+    shareAgentDir: path.join(shareDir, 'agents', a),
+  };
 }
 
 function readToken(socketPath: string): string {
@@ -72,6 +78,8 @@ export class RuntimeAgent {
     private readonly socketPath: string,
     private readonly token: string,
     private readonly userId: number,
+    /** 容器归属 Agent（MAO_CONTAINER_AGENT_ID）：share 按 Agent 收窄的路径推导依据。 */
+    private readonly agentId: number,
     /** pty spawn 工厂（生产用 node-pty；宿主机单测注入 fake 验证 pty_open 往返）。 */
     private readonly ptyFactory?: ContainerPtyFactory,
     /** 容器内代码版本（默认读模块同目录 runtime-build.json；测试可注入；null = 不上报）。 */
@@ -81,7 +89,7 @@ export class RuntimeAgent {
     if (this.runtimeBuildId == null) {
       console.warn('[runtime-agent] runtime-build.json missing next to module; build id will not be reported');
     }
-    this.executor = new ContainerToolExecutor(resolveRoots(), this.userId);
+    this.executor = new ContainerToolExecutor(resolveRoots(this.agentId), this.userId);
     this.mcpBridge = new ContainerMcpBridge();
     this.ptyHub = new PtyHub({
       sendData: (ptyId, data) => this.send({ v: 1, type: 'pty_data', ptyId, data }),
@@ -473,6 +481,13 @@ if (isMainModule()) {
     console.error('[runtime-agent] missing MAO_CONTAINER_USER_ID');
     process.exit(1);
   }
+  // 容器 agent 硬依赖（2026-11-09）：share 按 Agent 收窄后，agentId 决定沙箱允许根与
+  // 经验索引范围，缺失/非法直接退出（与 MAO_CONTAINER_USER_ID 同口径），不落任何宽松默认。
+  const agentId = Number(process.env.MAO_CONTAINER_AGENT_ID ?? 0);
+  if (!Number.isFinite(agentId) || agentId <= 0) {
+    console.error('[runtime-agent] missing MAO_CONTAINER_AGENT_ID');
+    process.exit(1);
+  }
   // 容器时区对齐（镜像默认 Etc/UTC）：process.env.TZ 优先级最高、立即生效（agent 自身与其
   // 派生进程）；/etc/localtime + /etc/timezone 覆盖 agent 之外启动的进程（docker exec 等）。
   // 失败仅告警，不阻塞 agent 启动。
@@ -502,14 +517,14 @@ if (isMainModule()) {
   // 路径 {skillViewsDir}/{userId}/{skillName} 的解析（deps 软链未随 (user, agent) 视图迁移）。
   // 失败仅告警，不阻塞 agent 启动。
   try {
-    const created = prepareSkillViewCompatLinks(resolveRoots().skillViewsDir);
+    const created = prepareSkillViewCompatLinks(resolveRoots(agentId).skillViewsDir);
     if (created > 0) {
       console.log(`[runtime-agent] skill-view compat links restored: ${created}`);
     }
   } catch (e) {
     console.error('[runtime-agent] prepare skill-view compat links failed (non-fatal):', (e as Error).message);
   }
-  const agent = new RuntimeAgent(socketPath, token, userId);
+  const agent = new RuntimeAgent(socketPath, token, userId, agentId);
   void agent.run().catch((e) => {
     console.error('[runtime-agent] fatal:', e);
     process.exit(1);

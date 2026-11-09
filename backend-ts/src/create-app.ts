@@ -285,6 +285,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // （含 .env 密钥）ro 挂进所有用户容器（round-02 review Bug 1）。
   const shareDir = resolveShareDir(cfg.app.harness.shareDir);
   mkdirSync(shareDir, { recursive: true });
+  // share 按 Agent 隔离（2026-11-09 形态 C）：容器内改为挂两条子路径
+  // （agent-experience/{agentId} 与 agents/{agentId}），启动兜底创建 agents/ 父目录；
+  // 具体 Agent 子目录由挂载校验（assertSafe）与运行时按需创建。
+  mkdirSync(join(shareDir, 'agents'), { recursive: true });
   await registerUploadStatic(app, uploadDir, apiPrefix);
   await app.register(swagger, {
     openapi: { info: { title: 'Mao API', version: '0.1.0' } },

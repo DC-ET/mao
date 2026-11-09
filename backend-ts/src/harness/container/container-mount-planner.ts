@@ -11,11 +11,11 @@ import { channelWorkspaceRoots, parseChannelWorkspace } from './channel-workspac
  * 路径空间原则（决策 15/16）：容器内绝对路径与宿主机逐字节一致，不做翻译。
  * 唯一例外：每用户 /tmp（{tmpDir}/{userId} -> /tmp，持久化），见 purpose='tmp'。
  *
- * Agent 维度（2026-11-07）：skillViews / channel 两条按 {root}/{userId}/{agentId} 收窄——
- * 容器内可见的技能视图 = 当前 (user, agent) 的技能，其他 Agent 的技能视图在容器文件系统
- * 层面不存在。share 维持整根 rw 挂载（2026-11-07 决策 13：管理员投放与运维共享文件继续
- * 全员可读写，经验库不做容器级隔离，保留软链 + 提示词收口）；deps/HOME/tmp/workspace/
- * userSkills 维持用户级共享（已拍板决策 2/3）。
+ * Agent 维度（2026-11-07 / 2026-11-09）：skillViews / channel / share 均按 Agent 收窄——
+ * 容器内可见的技能视图与 share 数据都只有当前 (user, agent) 的那份，其他 Agent 的目录在
+ * 容器文件系统层面不存在。share 于 2026-11-09 由整根 rw 改为两条子路径 rw（形态 C：
+ * 本 Agent 经验库 + 私有区；取消公共投放区）；deps/HOME/tmp/workspace/userSkills 维持
+ * 用户级共享（已拍板决策 2/3）。
  */
 export interface ContainerMount {
   hostPath: string;
@@ -58,9 +58,10 @@ export interface MountPlannerRoots {
   /** rw 项：每用户 /tmp 持久根，{tmpDir}/{userId} 映射到容器 /tmp。 */
   tmpDir: string;
   /**
-   * rw 项：公共共享目录根（共享目录方案 2026-10-21：管理员宿主机投放，全员只读语义
-   * 在经验库方案 2026-10-24 起放宽为整根 rw）。2026-11-07 决策 13：维持整根 rw 挂载，
-   * 管理员投放与运维共享文件对所有容器可读写；经验库隔离保留软链 + 提示词收口。
+   * share 根（共享目录方案 2026-10-21；2026-11-09 起按 Agent 隔离，形态 C）：
+   * 容器内不再挂整根，改为两条子路径 rw——{shareDir}/agent-experience/{agentId}（经验库）
+   * 与 {shareDir}/agents/{agentId}（私有区：投放品/脚本/产物）。宿主机侧仍用于路径解析、
+   * 启动兜底与经验索引根（{shareDir}/agent-experience）。
    */
   shareDir: string;
 }
@@ -109,11 +110,12 @@ export class ContainerMountPlanner {
       // 跨 stop/重建保留；3077 语义由 assertSafe 统一 chmod 1777。用户级共享（决策 2）。
       { hostPath: this.under(this.roots.tmpDir, u), containerPath: '/tmp', mode: 'rw', purpose: 'tmp' },
       { hostPath: this.under(this.roots.distDir, ''), containerPath: this.under(this.roots.distDir, ''), mode: 'ro', purpose: 'dist' },
-      // 公共共享目录（2026-10-21 方案 + 2026-10-24 经验库；2026-11-07 决策 13 维持原状）：
-      // 整根 rw——管理员投放与运维共享文件对全员可读写；经验库由工作区软链收口到本 Agent
-      // 子目录（容器内仍可经 share 根触达其他 Agent 的库，属已拍板的接受项）。
-      // 注意 mode 参与挂载指纹：ro→rw 变更会触发存量容器自动重建。
-      { hostPath: this.under(this.roots.shareDir, ''), containerPath: this.under(this.roots.shareDir, ''), mode: 'rw', purpose: 'share' },
+      // share 按 Agent 隔离（2026-11-09 形态 C，取代 2026-11-07 决策 13 的整根 rw）：
+      // 只挂本 Agent 的经验库与私有区两条子路径（rw）。其他 Agent 的目录在容器文件
+      // 系统层面不存在；原整根下的公共投放区取消，管理员投放落到 agents/{agentId}/。
+      // 注意挂载清单参与指纹：条目变化会触发存量容器一次性自动重建。
+      { hostPath: this.under(this.roots.shareDir, 'agent-experience', a), containerPath: this.under(this.roots.shareDir, 'agent-experience', a), mode: 'rw', purpose: 'share' },
+      { hostPath: this.under(this.roots.shareDir, 'agents', a), containerPath: this.under(this.roots.shareDir, 'agents', a), mode: 'rw', purpose: 'shareAgent' },
       // 技能视图（技术方案 2026-11-03 §4.4；2026-11-07 按 agent 收窄）：系统技能的
       // 用户+Agent 级只读副本，会话软链指向这里；源目录（skillsDir）整体不进容器
       // （G1：容器内不可见 / G2：只读）。挂载路径恒定：skillNames 增删 / 技能源更新
@@ -199,7 +201,8 @@ export class ContainerMountPlanner {
    * 校验规则（技术方案 §5.1；2026-11-07 增补 agent 维度）：
    * - 每条源路径必须位于已登记数据根之下（或 ro 项等于其根自身）；
    * - rw 项的源路径必须以 /{userId} 结尾或包含 /{userId}/ 段，拒绝任何上级目录；
-   * - agent 维度条目（skillViews / channel）必须恰为 {登记根}/{userId}/{agentId}，
+   * - agent 维度条目（skillViews / channel / share / shareAgent）必须恰为
+   *   {登记根}/{userId}/{agentId} 或 {shareDir}/agent-experience|agents/{agentId}，
    *   防借 purpose 扩大到其他 Agent 或上级；
    * - dist 只读，不得被覆写为 rw；
    * - 源路径不得是另一个已登记数据根的父目录（如挂 /opt/mao-data 整体）；
@@ -212,6 +215,10 @@ export class ContainerMountPlanner {
     const expectedAgentPaths: Record<string, string> = {
       skillViews: this.under(this.roots.skillViewsDir, u, a),
       channel: this.under(this.roots.channelDir, u, a),
+      // share 按 Agent 隔离（2026-11-09 形态 C）：两条子路径均为精确值，
+      // purpose ↔ 路径 1:1 绑定（不能只按路径判断，防止任意 purpose 借形状绕过段位规则）。
+      share: this.under(this.roots.shareDir, 'agent-experience', a),
+      shareAgent: this.under(this.roots.shareDir, 'agents', a),
     };
     // 技能视图根与 shareDir 互不包含（技术方案 2026-11-03 §4.4 评审修订）：share 子目录 rw
     // 与视图根嵌套会产生挂载语义歧义（同一视图目录既被 ro 精确挂载、其父又被 rw 粗粒度打通）。
@@ -257,14 +264,16 @@ export class ContainerMountPlanner {
         throw new MountPlanError(`mount ${mount.purpose}: host path ${host} is not under any registered data root`);
       }
       if (!ro && !mount.sessionWorkspace) {
-        // 共享目录整根 rw 例外（2026-10-24 D10；2026-11-07 决策 13 维持）：share 根
-        // 需容器内写入（经验库 + 管理员投放共享语义），必须恰为登记的 shareDir 根，
-        // 防借 purpose 扩大到子路径外或上级。
-        const isSharedShareRoot = mount.purpose === 'share' && host === path.resolve(this.roots.shareDir);
+        // share 子路径豁免（2026-11-09 形态 C，取代原整根特例）：rw 的 share/shareAgent
+        // 条目豁免「必须含 /{userId}/ 段」规则，但必须 purpose 绑定且恰为对应子路径
+        // （前面 expectedAgentPaths 已做精确校验；这里再固化语义，防未来放宽）。
+        const isShareSubtree =
+          (mount.purpose === 'share' && host === this.under(this.roots.shareDir, 'agent-experience', a)) ||
+          (mount.purpose === 'shareAgent' && host === this.under(this.roots.shareDir, 'agents', a));
         // rw 项必须含 userId 尾段/中间段，拒绝把整个数据根或上级挂进容器。
         // 通道会话工作区（sessionWorkspace）按 {account}/{leaf} 结构性豁免 + 私聊
         // 叶子归属校验（planSessionWorkspace），并由调用方按数据库 (user_id, agent_id) 过滤保证
-        if (!isSharedShareRoot) {
+        if (!isShareSubtree) {
           const rel = path.relative(owningRoot, host);
           if (!this.containsUserSegment(rel, u)) {
             throw new MountPlanError(`mount ${mount.purpose}: rw path ${host} must contain /${u}/ segment (got relative '${rel}')`);

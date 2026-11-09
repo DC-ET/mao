@@ -7,6 +7,18 @@ import { useTmpDir } from '../../testing/tmp-dir.js';
 
 const USER_ID = 7;
 
+/** ContainerRoots 测试夹具：2026-11-09 起 share 按 Agent 收窄为两条子路径（经验库 + 私有区）。 */
+function withShareTrees<T extends { shareDir: string }>(
+  roots: T,
+  agentId = USER_ID,
+): T & { shareExperienceDir: string; shareAgentDir: string } {
+  return {
+    ...roots,
+    shareExperienceDir: join(roots.shareDir, 'agent-experience', String(agentId)),
+    shareAgentDir: join(roots.shareDir, 'agents', String(agentId)),
+  };
+}
+
 function envelopeOf(
   workspace: string | null,
   sessionId = 11,
@@ -45,7 +57,7 @@ describe('container tool executor', () => {
     writeFileSync(join(userWorkspace, 'a.txt'), 'hello container');
     writeFileSync(join(otherUser, 'secret.txt'), 'foreign');
 
-    const executor = new ContainerToolExecutor({ workspaceRoot, runtimeDir, userHomeDir, userSkillsDir, skillViewsDir: join(base, 'skill-views'), uploadDir: join(base, 'uploads'), shareDir: join(base, 'share') }, USER_ID);
+    const executor = new ContainerToolExecutor(withShareTrees({ workspaceRoot, runtimeDir, userHomeDir, userSkillsDir, skillViewsDir: join(base, 'skill-views'), uploadDir: join(base, 'uploads'), shareDir: join(base, 'share') }), USER_ID);
 
     // read_file 工作区相对路径
     const read = await executor.handleToolCall('read_file', JSON.stringify({ path: 'a.txt' }), envelopeOf(userWorkspace));
@@ -82,7 +94,7 @@ describe('container tool executor', () => {
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, 'secret.txt'), 'foreign');
     }
-    const executor = new ContainerToolExecutor({ workspaceRoot, runtimeDir, userHomeDir, userSkillsDir, skillViewsDir: join(base, 'skill-views'), uploadDir: join(base, 'uploads'), shareDir: join(base, 'share') }, USER_ID);
+    const executor = new ContainerToolExecutor(withShareTrees({ workspaceRoot, runtimeDir, userHomeDir, userSkillsDir, skillViewsDir: join(base, 'skill-views'), uploadDir: join(base, 'uploads'), shareDir: join(base, 'share') }), USER_ID);
     const env = envelopeOf(userWorkspace);
 
     for (const path of [
@@ -119,9 +131,9 @@ describe('container tool executor', () => {
     writeFileSync(join(uploadDir, '8', 'gen.png'), 'foreign');
     mkdirSync(join(uploadDir, 'releases'), { recursive: true });
     writeFileSync(join(uploadDir, 'releases', 'latest.yml'), 'release');
-    const executor = new ContainerToolExecutor({
+    const executor = new ContainerToolExecutor(withShareTrees({
       workspaceRoot, runtimeDir, userHomeDir, userSkillsDir,
-      skillViewsDir: join(base, 'skill-views'), uploadDir, shareDir: join(base, 'share') }, USER_ID);
+      skillViewsDir: join(base, 'skill-views'), uploadDir, shareDir: join(base, 'share') }), USER_ID);
     const env = envelopeOf(userWorkspace);
 
     const runtimeRead = await executor.handleToolCall(
@@ -147,14 +159,14 @@ describe('container tool executor', () => {
     const userWorkspace = join(workspaceRoot, '7');
     mkdirSync(userWorkspace, { recursive: true });
     writeFileSync(join(userWorkspace, 'pic.txt'), 'A'.repeat(100));
-    const executor = new ContainerToolExecutor({
+    const executor = new ContainerToolExecutor(withShareTrees({
       workspaceRoot,
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
       skillViewsDir: join(base, 'skill-views'),
       uploadDir: join(base, 'uploads'),
-      shareDir: join(base, 'share') }, USER_ID);
+      shareDir: join(base, 'share') }), USER_ID);
     const env = envelopeOf(userWorkspace);
 
     const ok = executor.handleReadBytes('pic.txt', 1000, env);
@@ -189,7 +201,7 @@ describe('container tool executor', () => {
     mkdirSync(join(uploadDir, '8'), { recursive: true });
     writeFileSync(join(uploadDir, '7', 'gen-x.txt'), 'own-image');
     writeFileSync(join(uploadDir, '8', 'gen-y.txt'), 'foreign');
-    const executor = new ContainerToolExecutor({
+    const executor = new ContainerToolExecutor(withShareTrees({
       workspaceRoot,
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
@@ -197,7 +209,7 @@ describe('container tool executor', () => {
       skillViewsDir: join(base, 'skill-views'),
       uploadDir,
       shareDir,
-    }, USER_ID);
+    }), USER_ID);
     const env = envelopeOf(userWorkspace);
 
     const own = await executor.handleToolCall('read_file', JSON.stringify({ path: join(uploadDir, '7', 'gen-x.txt') }), env);
@@ -212,28 +224,30 @@ describe('container tool executor', () => {
     expect(otherBytes.ok).toBe(false);
   });
 
-  it('readsFileUnderShareRoot', async () => {
-    // 2026-11-07 决策 13 维持整根：shareDir 挂载整根 rw 并登记为唯一跨用户共享允许根——
-    // 管理员投放内容与团队经验库（含其他 Agent 的子目录）容器内均按绝对路径可读写；
-    // 经验库跨 Agent 的收口由工作区软链 + 提示词承担，路径沙箱不额外设防（已拍板）。
-    // share 内指向外部的 symlink 仍被 strict resolve + realpath 逃逸检测拒绝
+  it('readsFileUnderOwnShareTreesAndRejectsCrossAgent', async () => {
+    // 2026-11-09 形态 C：沙箱允许根 = 本 Agent 经验库 + 私有区两条子路径。
+    // 其他 Agent 目录 / share 根公共文件在容器内既无挂载、也无允许根（双层拒绝）。
+    // 本 Agent 子树内指向外部的 symlink 仍被 strict resolve + realpath 逃逸检测拒绝。
     const base = useTmpDir('mao-exec-share-');
     const workspaceRoot = join(base, 'workspace');
     const shareDir = join(base, 'share');
     const experienceAgentDir = join(shareDir, 'agent-experience', String(USER_ID));
+    const agentPrivateDir = join(shareDir, 'agents', String(USER_ID));
     const otherAgentDir = join(shareDir, 'agent-experience', '6');
     const userWorkspace = join(workspaceRoot, '7');
     const outside = join(base, 'outside');
     mkdirSync(userWorkspace, { recursive: true });
     mkdirSync(experienceAgentDir, { recursive: true });
+    mkdirSync(agentPrivateDir, { recursive: true });
     mkdirSync(otherAgentDir, { recursive: true });
     mkdirSync(outside, { recursive: true });
     writeFileSync(join(experienceAgentDir, 'doc.md'), 'shared-content');
+    writeFileSync(join(agentPrivateDir, 'tool.txt'), 'private-content');
     writeFileSync(join(otherAgentDir, 'doc.md'), 'other-agent');
     writeFileSync(join(shareDir, 'public.txt'), 'platform-content');
     writeFileSync(join(outside, 'secret.txt'), 'secret');
     symlinkSync(join(outside, 'secret.txt'), join(experienceAgentDir, 'escape.txt'));
-    const executor = new ContainerToolExecutor({
+    const executor = new ContainerToolExecutor(withShareTrees({
       workspaceRoot,
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
@@ -241,21 +255,25 @@ describe('container tool executor', () => {
       skillViewsDir: join(base, 'skill-views'),
       uploadDir: join(base, 'uploads'),
       shareDir,
-    }, USER_ID);
+    }), USER_ID);
     const env = envelopeOf(userWorkspace);
 
-    // 管理员投放内容与本 Agent 经验库文档按绝对路径可读
-    const read = await executor.handleToolCall('read_file', JSON.stringify({ path: join(shareDir, 'public.txt') }), env);
-    expect(JSON.parse(read).content).toBe('platform-content');
+    // 本 Agent 经验库与私有区按绝对路径可读写
     const own = await executor.handleToolCall('read_file', JSON.stringify({ path: join(experienceAgentDir, 'doc.md') }), env);
     expect(JSON.parse(own).content).toBe('shared-content');
+    const ownPrivate = await executor.handleToolCall('read_file', JSON.stringify({ path: join(agentPrivateDir, 'tool.txt') }), env);
+    expect(JSON.parse(ownPrivate).content).toBe('private-content');
     // read_bytes 桥同口径
-    const bytes = executor.handleReadBytes(join(shareDir, 'public.txt'), 1000, env);
-    expect(bytes.ok).toBe(true);
-    // 决策 13 的接受项：其他 Agent 的经验库在 share 根下同样可达
+    expect(executor.handleReadBytes(join(experienceAgentDir, 'doc.md'), 1000, env).ok).toBe(true);
+    expect(executor.handleReadBytes(join(agentPrivateDir, 'tool.txt'), 1000, env).ok).toBe(true);
+    // 跨 Agent 目录：不在允许根内 → 拒绝
     const otherAgent = await executor.handleToolCall('read_file', JSON.stringify({ path: join(otherAgentDir, 'doc.md') }), env);
-    expect(JSON.parse(otherAgent).content).toBe('other-agent');
-    // share 内指向外部的 symlink 被逃逸检测拒绝
+    expect(JSON.parse(otherAgent).error).toBeDefined();
+    // share 根公共文件：公共投放区已取消 → 拒绝
+    const publicFile = await executor.handleToolCall('read_file', JSON.stringify({ path: join(shareDir, 'public.txt') }), env);
+    expect(JSON.parse(publicFile).error).toBeDefined();
+    expect(executor.handleReadBytes(join(shareDir, 'public.txt'), 1000, env).ok).toBe(false);
+    // 本 Agent 子树内指向外部的 symlink 被逃逸检测拒绝
     const escape = await executor.handleToolCall('read_file', JSON.stringify({ path: join(experienceAgentDir, 'escape.txt') }), env);
     expect(JSON.parse(escape).error).toBeDefined();
   });
@@ -286,14 +304,14 @@ describe('container tool executor', () => {
     symlinkSync(viewDir, join(sessionSkillsDir, 'bigdata-cli'), 'dir');
     symlinkSync(otherViewDir, join(sessionSkillsDir, 'other-user-view'), 'dir');
     symlinkSync(outside, join(sessionSkillsDir, 'leak'), 'dir');
-    const executor = new ContainerToolExecutor({
+    const executor = new ContainerToolExecutor(withShareTrees({
       workspaceRoot,
       runtimeDir,
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
       skillViewsDir,
       uploadDir: join(base, 'uploads'),
-      shareDir: join(base, 'share') }, USER_ID);
+      shareDir: join(base, 'share') }), USER_ID);
     const env = envelopeOf(userWorkspace);
 
     // read_file / read_bytes 同口径放行（技能 SKILL.md 在系统提示词里就是这条绝对路径）
@@ -309,18 +327,17 @@ describe('container tool executor', () => {
     expect(JSON.parse(escape).error).toBeDefined();
   });
 
-  it('shellWorkdirUnderShareRootIsAllowed', async () => {
-    // 设计 §1.2 目标 2 / CHANGELOG：shell workdir 对 share 根下的目录可达（与 read_file
-    // 同一 resolveLenient 代码路径）。补 shell workdir 一例（round-02 review 观察 2：
-    // 此前只有 read_file 有覆盖）
+  it('shellWorkdirUnderShareAgentTreeIsAllowed', async () => {
+    // CHANGELOG（2026-11-09）：shell workdir 对本 Agent share 子树（私有区/经验库）可达
+    // （与 read_file 同一 resolveLenient 代码路径）。share 整根不再放行。
     const base = useTmpDir('mao-exec-share-shell-');
     const workspaceRoot = join(base, 'workspace');
     const userWorkspace = join(workspaceRoot, '7');
     const shareDir = join(base, 'share');
-    const shareSub = join(shareDir, 'docs');
+    const shareSub = join(shareDir, 'agents', String(USER_ID), 'docs');
     mkdirSync(userWorkspace, { recursive: true });
     mkdirSync(shareSub, { recursive: true });
-    const executor = new ContainerToolExecutor({
+    const executor = new ContainerToolExecutor(withShareTrees({
       workspaceRoot,
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
@@ -328,7 +345,7 @@ describe('container tool executor', () => {
       skillViewsDir: join(base, 'skill-views'),
       uploadDir: join(base, 'uploads'),
       shareDir,
-    }, USER_ID);
+    }), USER_ID);
     const result = await executor.handleToolCall('shell', JSON.stringify({
       action: 'exec', command: 'pwd', workdir: shareSub,
     }), envelopeOf(userWorkspace));
@@ -344,14 +361,14 @@ describe('container tool executor', () => {
     const otherUser = join(base, 'users', '8');
     mkdirSync(userWorkspace, { recursive: true });
     mkdirSync(otherUser, { recursive: true });
-    const executor = new ContainerToolExecutor({
+    const executor = new ContainerToolExecutor(withShareTrees({
       workspaceRoot,
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
       skillViewsDir: join(base, 'skill-views'),
       uploadDir: join(base, 'uploads'),
-      shareDir: join(base, 'share') }, USER_ID);
+      shareDir: join(base, 'share') }), USER_ID);
     // workdir 越界（他人目录）被严格 resolve 拒绝
     const result = await executor.handleToolCall('shell', JSON.stringify({
       action: 'exec', command: 'pwd', workdir: otherUser,
@@ -368,14 +385,14 @@ describe('container tool executor', () => {
     mkdirSync(outside, { recursive: true });
     writeFileSync(join(outside, 'note.txt'), 'secret');
     symlinkSync(join(outside, 'note.txt'), join(userWorkspace, 'leak.txt'));
-    const executor = new ContainerToolExecutor({
+    const executor = new ContainerToolExecutor(withShareTrees({
       workspaceRoot,
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
       skillViewsDir: join(base, 'skill-views'),
       uploadDir: join(base, 'uploads'),
-      shareDir: join(base, 'share') }, USER_ID);
+      shareDir: join(base, 'share') }), USER_ID);
     const read = await executor.handleToolCall('read_file', JSON.stringify({ path: 'leak.txt' }), envelopeOf(userWorkspace));
     expect(JSON.parse(read).error).toBeDefined();
   });
@@ -388,14 +405,14 @@ describe('container tool executor', () => {
     const depsUserDir = join(base, 'deps', '7');
     mkdirSync(userWorkspace, { recursive: true });
     mkdirSync(join(depsUserDir, 'npm', 'bin'), { recursive: true });
-    const executor = new ContainerToolExecutor({
+    const executor = new ContainerToolExecutor(withShareTrees({
       workspaceRoot,
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
       skillViewsDir: join(base, 'skill-views'),
       uploadDir: join(base, 'uploads'),
-      shareDir: join(base, 'share') }, USER_ID);
+      shareDir: join(base, 'share') }), USER_ID);
     const depsEnv = {
       NPM_CONFIG_PREFIX: join(depsUserDir, 'npm'),
       PIP_TARGET: join(depsUserDir, 'py'),
@@ -422,14 +439,14 @@ describe('container tool executor', () => {
     const workspaceRoot = join(base, 'workspace');
     const userWorkspace = join(workspaceRoot, String(USER_ID), 'proj');
     mkdirSync(userWorkspace, { recursive: true });
-    const executor = new ContainerToolExecutor({
+    const executor = new ContainerToolExecutor(withShareTrees({
       workspaceRoot,
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
       skillViewsDir: join(base, 'skill-views'),
       uploadDir: join(base, 'uploads'),
-      shareDir: join(base, 'share') }, USER_ID);
+      shareDir: join(base, 'share') }), USER_ID);
     const result = await executor.handleToolCall('shell', JSON.stringify({
       action: 'exec',
       command: 'echo "REG=[$NPM_REGISTRY] PATHHEAD=[${PATH%%:*}]"',
@@ -452,14 +469,14 @@ describe('container tool executor', () => {
     const depsUserDir = join(base, 'deps', '7');
     mkdirSync(userWorkspace, { recursive: true });
     mkdirSync(join(depsUserDir, 'npm', 'bin'), { recursive: true });
-    const executor = new ContainerToolExecutor({
+    const executor = new ContainerToolExecutor(withShareTrees({
       workspaceRoot,
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
       skillViewsDir: join(base, 'skill-views'),
       uploadDir: join(base, 'uploads'),
-      shareDir: join(base, 'share') }, USER_ID);
+      shareDir: join(base, 'share') }), USER_ID);
     const depsBin = join(depsUserDir, 'npm', 'bin');
     const depsEnv = {
       NPM_CONFIG_PREFIX: join(depsUserDir, 'npm'),
@@ -495,14 +512,14 @@ describe('container tool executor', () => {
     mkdirSync(userWorkspace, { recursive: true });
     const probeFile = join(userWorkspace, 'probe.txt');
     writeFileSync(probeFile, 'hello');
-    const executor = new ContainerToolExecutor({
+    const executor = new ContainerToolExecutor(withShareTrees({
       workspaceRoot,
       runtimeDir: join(base, 'runtime'),
       userHomeDir: join(base, 'users'),
       userSkillsDir: join(base, 'userskills'),
       skillViewsDir: join(base, 'skill-views'),
       uploadDir: join(base, 'uploads'),
-      shareDir: join(base, 'share') }, USER_ID);
+      shareDir: join(base, 'share') }), USER_ID);
     const depsEnv = {
       NPM_CONFIG_PREFIX: join(depsUserDir, 'npm'),
       PIP_TARGET: join(depsUserDir, 'py'),

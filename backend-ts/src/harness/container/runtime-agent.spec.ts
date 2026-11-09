@@ -79,7 +79,7 @@ describe('runtime agent channel behavior', () => {
     process.env.MAO_USER_SKILLS_DIR = join(base, 'userskills');
     process.env.MAO_SHARE_DIR = join(base, 'share');
     const socketPath = await server.ensureListening(7, 5);
-    agent = new RuntimeAgent(socketPath, 'probe-token', 7, ptyFactory, agentBuild ?? null);
+    agent = new RuntimeAgent(socketPath, 'probe-token', 7, 5, ptyFactory, agentBuild ?? null);
     void agent.run();
     await vi.waitFor(() => expect(server!.getConnection(7, 5)).not.toBeNull(), { timeout: 5000 });
     return server!.getConnection(7, 5)!;
@@ -215,10 +215,12 @@ describe('runtime agent channel behavior', () => {
     const registered: string[] = [];
     const spy = vi.spyOn(PathSandbox.prototype, 'addAllowedRoot')
       .mockImplementation((root: string) => { registered.push(root); });
-    const agent = new RuntimeAgent('/tmp/mao-probe.sock', 'probe-token', 7);
+    const agent = new RuntimeAgent('/tmp/mao-probe.sock', 'probe-token', 7, 5);
     try {
-      // 2026-11-07 决策 13 维持：share 根整根 rw 挂载并登记为允许根
-      expect(registered).toContain('/opt/mao-data/share');
+      // 2026-11-09 形态 C：share 按 Agent 收窄——登记本 Agent 两条子路径，不再登记 share 根
+      expect(registered).toContain('/opt/mao-data/share/agent-experience/5');
+      expect(registered).toContain('/opt/mao-data/share/agents/5');
+      expect(registered).not.toContain('/opt/mao-data/share');
     } finally {
       agent.dispose();
       spy.mockRestore();
@@ -239,7 +241,7 @@ describe('runtime agent channel behavior', () => {
     const registered: string[] = [];
     const spy = vi.spyOn(PathSandbox.prototype, 'addAllowedRoot')
       .mockImplementation((root: string) => { registered.push(root); });
-    const agent = new RuntimeAgent('/tmp/mao-probe-skills.sock', 'probe-token', 7);
+    const agent = new RuntimeAgent('/tmp/mao-probe-skills.sock', 'probe-token', 7, 5);
     try {
       // 2026-11-07：MAO_SKILL_VIEWS_DIR 注入值即当前 (user, agent) 视图目录，允许根 = 该值本身
       expect(registered).toContain('/opt/mao-data/skill-views');

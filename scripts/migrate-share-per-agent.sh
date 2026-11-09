@@ -26,7 +26,7 @@ set -euo pipefail
 SHARE_DIR="/opt/mao-data/share"
 BACKEND_ENV="/opt/mao/backend-ts/.env"
 BACKUP_ROOT="/opt/mao-data/backup"
-AGENTS=(1 3 4 5 6)   # 存量 Agent（未来新增 Agent 由平台运行期懒建，不需补迁移）
+AGENTS=(1 3 4 5 6 7)   # 存量 Agent（2 未启用：无经验库/会话，按懒建处理；7 为 2026-11-09 18:13 新增，已后补）
 
 MODE="plan"; PHASE=""; ASSUME_YES=0
 VERIFY_MODE="pre"          # pre-phase3（默认）| post-phase3
@@ -268,7 +268,7 @@ db_apply_updates() {
   db_run_update "agent_experiences#66 settings_t 路径" \
     "UPDATE agent_experiences SET content = REPLACE(content, '/opt/mao-data/share/settings_t.xml', '/opt/mao-data/share/agents/6/settings_t.xml') WHERE id = 66 AND content LIKE '%/opt/mao-data/share/settings_t.xml%';"
   local pair id a
-  for pair in "74:5" "75:1" "76:6"; do
+  for pair in "74:5" "75:1" "76:6" "94:7"; do
     id="${pair%%:*}"; a="${pair##*:}"
     db_run_update "agent_experiences#$id 共享文案" \
       "UPDATE agent_experiences SET content = REPLACE(content, '有需要跨用户共享的文件一律放到 /opt/mao-data/share 目录下', '本 Agent 的文件一律放到 /opt/mao-data/share/agents/$a/ 目录下（share 已按 Agent 隔离，无跨 Agent 公共共享目录；旧路径已迁移，勿自行重建）') WHERE id = $id AND content LIKE '%有需要跨用户共享的文件一律放到 /opt/mao-data/share 目录下%';"

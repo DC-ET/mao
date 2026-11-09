@@ -120,7 +120,7 @@ export interface AppConfig {
       skillViewsDir: string;
       userSkillsDir: string;
       skillsCacheSeconds: number;
-      /** 公共共享目录（MAO_SHARE_DIR）：管理员宿主机投放，全员只读。 */
+      /** share 根（MAO_SHARE_DIR，2026-11-09 起按 Agent 隔离）：容器内挂 {shareDir}/agent-experience/{agentId} 与 {shareDir}/agents/{agentId} 两条子路径。 */
       shareDir: string;
       shell: {
         output: { maxPreviewLines: number; maxPreviewChars: number };
