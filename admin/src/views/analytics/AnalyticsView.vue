@@ -22,10 +22,6 @@
           @select="handlePeriodSelect"
           @custom="handleCustomRange"
         />
-        <template v-if="activeTab === 'run-trace'">
-          <span class="toolbar-label">排行维度</span>
-          <el-segmented v-model="runTraceDimension" :options="runTraceDimensionOptions" @change="handleRunTraceDimensionChange" />
-        </template>
         <span class="toolbar-label auto-refresh-label">自动刷新</span>
         <el-select
           v-model="autoRefreshMs"
@@ -98,11 +94,6 @@
         :payload="sessionsPayload"
         :loading="activeLoading"
       />
-      <RunTraceTab
-        v-else-if="activeTab === 'run-trace'"
-        :payload="runTracePayload"
-        :loading="activeLoading"
-      />
     </template>
   </div>
 </template>
@@ -131,8 +122,6 @@ import type {
   ModelsPayload,
   OverviewPayload,
   PeriodValue,
-  RunTraceDimension,
-  RunTracePayload,
   SessionsPayload,
   TrendsPayload,
   UsersPayload
@@ -143,7 +132,6 @@ import ModelTab from './tabs/ModelTab.vue'
 import UserTab from './tabs/UserTab.vue'
 import AgentTab from './tabs/AgentTab.vue'
 import SessionTab from './tabs/SessionTab.vue'
-import RunTraceTab from './tabs/RunTraceTab.vue'
 import TabEmpty from './tabs/TabEmpty.vue'
 import TabError from './tabs/TabError.vue'
 import OverviewEmpty from './tabs/OverviewEmpty.vue'
@@ -155,8 +143,7 @@ const TABS = [
   { label: '模型', value: 'models' },
   { label: '用户', value: 'users' },
   { label: 'Agent', value: 'agents' },
-  { label: '会话', value: 'sessions' },
-  { label: '运行轨迹', value: 'run-trace' }
+  { label: '会话', value: 'sessions' }
 ] as const
 
 type TabId = (typeof TABS)[number]['value']
@@ -166,8 +153,7 @@ const EMPTY_COPY: Record<Exclude<TabId, 'overview'>, { title: string; hint: stri
   models: { title: '窗口内暂无模型调用', hint: '可放宽统计周期，或先在模型管理中确认可用模型。' },
   users: { title: '窗口内暂无用户活跃', hint: '该周期没有创建会话或发送消息的用户。' },
   agents: { title: '窗口内暂无 Agent 活跃', hint: '该周期没有创建会话或发送消息的 Agent。' },
-  sessions: { title: '窗口内暂无会话', hint: '可切换更长周期，或确认是否有用户在使用。' },
-  'run-trace': { title: '窗口内暂无运行轨迹', hint: '可放宽统计周期；轨迹榜只统计对话轮（scene=agent）。' }
+  sessions: { title: '窗口内暂无会话', hint: '可切换更长周期，或确认是否有用户在使用。' }
 }
 
 const route = useRoute()
@@ -184,8 +170,6 @@ const sceneModelId = ref<number | undefined>(
 )
 // 「含自检调用」开关仅属于模型 Tab：默认含（URL 无 conn 时），conn=0 表示排除
 const includeConnectivity = ref(route.query.conn !== '0')
-/** 运行轨迹榜的排行维度：Agent / 用户，走 URL（rtScope）供分享与刷新还原 */
-const runTraceDimension = ref<RunTraceDimension>(route.query.rtScope === 'user' ? 'user' : 'agent')
 /** 0=关闭；仅内存态，不持久化，保证默认关闭 */
 const AUTO_REFRESH_OPTIONS = [
   { label: '关闭', value: 0 },
@@ -195,10 +179,6 @@ const AUTO_REFRESH_OPTIONS = [
   { label: '1m', value: 60_000 }
 ] as const
 
-const runTraceDimensionOptions = [
-  { label: 'Agent', value: 'agent' as RunTraceDimension },
-  { label: '用户', value: 'user' as RunTraceDimension }
-]
 const autoRefreshMs = ref(0)
 let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
 let everLoaded = false
@@ -209,7 +189,6 @@ const models = useScopeQuery<ModelsPayload>('models')
 const users = useScopeQuery<UsersPayload>('users')
 const agents = useScopeQuery<AgentsPayload>('agents')
 const sessions = useScopeQuery<SessionsPayload>('sessions')
-const runTrace = useScopeQuery<RunTracePayload>('run-trace')
 
 const scopeMap = {
   overview,
@@ -217,8 +196,7 @@ const scopeMap = {
   models,
   users,
   agents,
-  sessions,
-  'run-trace': runTrace
+  sessions
 } as const
 
 const activeScope = computed(() => scopeMap[activeTab.value])
@@ -233,7 +211,6 @@ const modelsPayload = computed(() => models.data.value)
 const usersPayload = computed(() => users.data.value)
 const agentsPayload = computed(() => agents.data.value)
 const sessionsPayload = computed(() => sessions.data.value)
-const runTracePayload = computed(() => runTrace.data.value)
 
 const fetchedAtText = computed(() =>
   activeFetchedAt.value == null ? '' : formatDateTime(new Date(activeFetchedAt.value).toISOString())
@@ -270,14 +247,6 @@ const isEmpty = computed(() => {
   if (activeTab.value === 'sessions') {
     return ((data.phaseDistribution as Array<{ count: number }>) || []).every((row) => Number(row.count || 0) === 0)
   }
-  if (activeTab.value === 'run-trace') {
-    const payload = data as unknown as RunTracePayload
-    return (
-      (payload.slowestRounds || []).length === 0 &&
-      (payload.mostExpensiveRounds || []).length === 0 &&
-      (payload.toolFailureRates || []).length === 0
-    )
-  }
   return false
 })
 
@@ -310,11 +279,6 @@ function currentQuery() {
   if (activeTab.value === 'trends') {
     query.granularity = grain.value
   }
-  if (activeTab.value === 'run-trace') {
-    // 只统计对话轮：标题生成 / 连通性测试会占据「最慢轮」
-    query.scene = 'agent'
-    query.scope = runTraceDimension.value
-  }
   return query
 }
 
@@ -322,7 +286,7 @@ async function loadActive(force = false) {
   await activeScope.value.fetchScope(currentQuery(), force)
 }
 
-/** tab/period/自定义区间/grain/conn/modelId/rtScope 以 URL query 为唯一数据源，同步出去供分享与刷新还原 */
+/** tab/period/自定义区间/grain/conn/modelId 以 URL query 为唯一数据源，同步出去供分享与刷新还原 */
 function syncUrl() {
   const nextTab = activeTab.value
   const nextPeriod = periodToQueryValue(period.value)
@@ -335,15 +299,14 @@ function syncUrl() {
     nextTab === 'models' && sceneModelId.value != null && Number.isFinite(sceneModelId.value)
       ? String(sceneModelId.value)
       : null
-  const nextRtScope = nextTab === 'run-trace' && runTraceDimension.value === 'user' ? 'user' : null
   if (
     route.query.tab === nextTab &&
     route.query.period === nextPeriod &&
     route.query.view == null &&
+    route.query.rtScope == null &&
     (route.query.grain ?? null) === nextGrain &&
     (route.query.conn ?? null) === nextConn &&
     (route.query.modelId ?? null) === nextModelId &&
-    (route.query.rtScope ?? null) === nextRtScope &&
     (route.query.start ?? null) === nextStart &&
     (route.query.end ?? null) === nextEnd
   ) {
@@ -355,6 +318,8 @@ function syncUrl() {
     period: nextPeriod
   }
   delete query.view
+  // 运行轨迹 Tab 已移除：旧链接上的排行维度参数一并清掉
+  delete query.rtScope
   // 旧链接的 days 已被 period 取代，同步时清掉避免两个参数并存
   delete query.days
   query.grain = nextGrain
@@ -367,11 +332,6 @@ function syncUrl() {
     query.modelId = nextModelId
   } else {
     delete query.modelId
-  }
-  if (nextRtScope != null) {
-    query.rtScope = nextRtScope
-  } else {
-    delete query.rtScope
   }
   if (nextStart != null && nextEnd != null) {
     query.start = nextStart
@@ -467,13 +427,6 @@ function handleModelsRefresh(include: boolean) {
   void loadActive(true)
 }
 
-function handleRunTraceDimensionChange(value: RunTraceDimension) {
-  runTraceDimension.value = value === 'user' ? 'user' : 'agent'
-  invalidateAnalytics('run-trace')
-  syncUrl()
-  void loadActive(true)
-}
-
 // ---- 浏览器前进/后退、外部分享链接等 URL 直变：由此 watch 驱动状态与加载 ----
 
 watch(
@@ -502,13 +455,11 @@ watch(
       modelIdValue != null && modelIdValue !== '' && Number.isFinite(Number(modelIdValue))
         ? Number(modelIdValue)
         : undefined
-    const nextRtScope: RunTraceDimension = rtScopeValue === 'user' ? 'user' : 'agent'
     const periodChanged = nextPeriod !== period.value
     const customChanged = nextCustom.start !== customRange.value.start || nextCustom.end !== customRange.value.end
     const grainChanged = nextGrain !== grain.value
     const connChanged = nextIncludeConn !== includeConnectivity.value
     const modelChanged = nextModelId !== sceneModelId.value
-    const rtScopeChanged = nextRtScope !== runTraceDimension.value
 
     if (periodChanged) {
       period.value = nextPeriod
@@ -524,10 +475,6 @@ watch(
       sceneModelId.value = nextModelId
       invalidateAnalytics('models')
     }
-    if (rtScopeChanged) {
-      runTraceDimension.value = nextRtScope
-      if (nextTab === 'run-trace') invalidateAnalytics('run-trace')
-    }
 
     const tabChanged = nextTab !== activeTab.value
     activeTab.value = nextTab
@@ -537,19 +484,17 @@ watch(
       customChanged ||
       (grainChanged && nextTab === 'trends') ||
       (modelChanged && nextTab === 'models') ||
-      (connChanged && nextTab === 'models') ||
-      (rtScopeChanged && nextTab === 'run-trace')
+      (connChanged && nextTab === 'models')
     ) {
       void loadActive(true)
     } else if (tabChanged || !everLoaded) {
       void loadActive(false)
     }
     everLoaded = true
-    // 趋势图已同页平铺，旧链接里的 view 不再表示当前图表
-    if (route.query.view != null) {
-      const query = { ...route.query }
-      delete query.view
-      void router.replace({ query })
+    // 趋势图已同页平铺，旧链接里的 view 不再表示当前图表。
+    // tab=run-trace / rtScope 是已移除的运行轨迹 Tab，落到总览并清掉参数。
+    if (route.query.view != null || tabValue === 'run-trace' || rtScopeValue != null) {
+      syncUrl()
     }
   },
   { immediate: true }

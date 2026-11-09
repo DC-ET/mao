@@ -5,41 +5,6 @@ export type AnalyticsScope =
   | 'users'
   | 'agents'
   | 'sessions'
-  | 'run-trace'
-
-/** 运行轨迹榜单的排行维度：按 Agent 或按用户 */
-export type RunTraceDimension = 'agent' | 'user'
-
-export interface RunTraceRoundRow {
-  scopeKey: number
-  scopeName: string
-  sessionId: number | null
-  modelName: string | null
-  createdAt: string | null
-  durationMs: number
-  totalTokens: number
-  costMicros: number | null
-  /** 该维度在窗口内的调用总数，供标注样本量 */
-  callCount: number
-}
-
-export interface RunTraceToolFailureRow {
-  toolType: string
-  errorCount: number
-  totalCount: number
-  /** 失败率（%），保留一位小数 */
-  failRate: number
-}
-
-export interface RunTracePayload {
-  period: AnalyticsPeriodMeta
-  /** 榜单口径的 llm_call scene，默认 agent */
-  scene: string
-  scope: RunTraceDimension
-  slowestRounds: RunTraceRoundRow[]
-  mostExpensiveRounds: RunTraceRoundRow[]
-  toolFailureRates: RunTraceToolFailureRow[]
-}
 
 /**
  * 统计周期：滚动天数（3 / 7 / 30 / 90）、今日 / 昨日、日历周期（本周 / 上周 / 本月 / 上月）、
@@ -332,8 +297,4 @@ export interface AnalyticsQuery {
   modelId?: number
   excludeConnectivity?: boolean
   granularity?: 'hour' | 'day'
-  /** 运行轨迹榜单的 llm_call scene 口径 */
-  scene?: string
-  /** 运行轨迹榜单的排行维度（与后端 /admin/analytics/run-trace 的 scope 参数同名） */
-  scope?: RunTraceDimension
 }

@@ -137,7 +137,7 @@ mao auth login --username <用户名> --password <密码>
 | 内置工具查询 | [reference/tool.md](reference/tool.md) |
 | 微信 Bot | [reference/weixin.md](reference/weixin.md) |
 | 运行监控 | [reference/runtime.md](reference/runtime.md) |
-| 分析汇总 / 分维度（含运行轨迹三个榜） | [reference/analytics.md](reference/analytics.md) |
+| 分析汇总 / 分维度 | [reference/analytics.md](reference/analytics.md) |
 | LLM 调用流水 | [reference/llm-call.md](reference/llm-call.md) |
 | 信号哨兵 | [reference/signal-watcher.md](reference/signal-watcher.md) |
 | 消息点踩反馈 | [reference/feedback.md](reference/feedback.md) |
