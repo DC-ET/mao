@@ -152,4 +152,53 @@ describe('fetchFeishuMessageDetail 卡片文本提取', () => {
     } as unknown as Lark.Client;
     await expect(fetchFeishuMessageDetail(client, 'om_child')).rejects.toThrow('socket hang up');
   });
+
+  it('extracts post multi-file message into file placeholders with file_key', async () => {
+    // 飞书「一次发送多个文件」：msg_type=post，文件在 content 顶层 files 数组，正文为空。
+    const post = {
+      title: '',
+      content: [[]],
+      content_v2: [[]],
+      files: [
+        { file_key: 'file_v3_a', file_name: 'a.pptx', is_folder: false },
+        { file_key: 'file_v3_b', file_name: 'b.pptx', is_folder: false },
+      ],
+    };
+    const detail = await fetchDetail({ msg_type: 'post', body: { content: JSON.stringify(post) } });
+    expect(detail?.msgType).toBe('post');
+    expect(detail?.postFiles).toEqual([
+      { fileKey: 'file_v3_a', fileName: 'a.pptx' },
+      { fileKey: 'file_v3_b', fileName: 'b.pptx' },
+    ]);
+    // 单值字段取首个文件，兼容只认 fileKey/fileName 的旧调用。
+    expect(detail?.fileKey).toBe('file_v3_a');
+    expect(detail?.fileName).toBe('a.pptx');
+    expect(detail?.text).toBe(
+      '[文件:a.pptx msg=om_card file_key=file_v3_a]\n[文件:b.pptx msg=om_card file_key=file_v3_b]',
+    );
+  });
+
+  it('skips folder entries in post files and keeps a folder placeholder', async () => {
+    const post = {
+      content: [[]],
+      files: [
+        { file_key: 'file_v3_dir', file_name: '资料', is_folder: true },
+        { file_key: 'file_v3_a', file_name: 'a.pdf', is_folder: false },
+      ],
+    };
+    const detail = await fetchDetail({ msg_type: 'post', body: { content: JSON.stringify(post) } });
+    expect(detail?.postFiles).toEqual([{ fileKey: 'file_v3_a', fileName: 'a.pdf' }]);
+    // 文件夹不可下载，但占位要能看出消息里有什么，不能退化为 [post msg=…]。
+    expect(detail?.text).toBe('[文件:a.pdf msg=om_card file_key=file_v3_a]\n[文件夹:资料]');
+  });
+
+  it('keeps post body text alongside multi-file placeholders', async () => {
+    const post = {
+      title: '',
+      content: [[{ tag: 'text', text: '参考这两个材料' }]],
+      files: [{ file_key: 'file_v3_a', file_name: 'a.pptx' }],
+    };
+    const detail = await fetchDetail({ msg_type: 'post', body: { content: JSON.stringify(post) } });
+    expect(detail?.text).toBe('参考这两个材料\n[文件:a.pptx msg=om_card file_key=file_v3_a]');
+  });
 });

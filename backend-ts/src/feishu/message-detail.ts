@@ -1,5 +1,6 @@
 import type * as Lark from '@larksuiteoapi/node-sdk';
 import { wrapFeishuApiError } from './feishu-api-error.js';
+import type { FeishuPostFileItem } from './types.js';
 
 /** 通过 im/v1/messages/{message_id} 拉取的消息详情（已归一化）。 */
 export interface FeishuMessageDetail {
@@ -11,6 +12,8 @@ export interface FeishuMessageDetail {
   text: string;
   fileKey?: string | null;
   fileName?: string | null;
+  /** post 多文件消息的全部文件（单文件消息为 null）：下载工具据此逐个下载。 */
+  postFiles?: FeishuPostFileItem[] | null;
   senderId?: string | null;
   createTime?: string | null;
 }
@@ -52,7 +55,10 @@ export async function fetchFeishuMessageDetail(client: Lark.Client, messageId: s
   // sticker（表情包）消息的媒体键也是 file_key（实测 v3_ 前缀），仅 image 用 image_key。
   const mediaKey = msgType === 'image' ? 'image_key' : 'file_key';
   let fileKey = typeof content[mediaKey] === 'string' ? content[mediaKey] as string : null;
+  let fileName = typeof content.file_name === 'string' ? content.file_name as string : null;
   let effectiveMsgType = msgType;
+  // post 多文件消息（一次发送多个文件）：文件在 content 顶层 files 数组，不在富文本元素里。
+  const postFiles = msgType === 'post' ? collectPostFiles(content) : [];
   // 图文消息（post 内嵌 img）没有顶层媒体键：取第一张 image_key 并把 msgType 归一为 image，
   // 让按消息 ID 懒加载的下载接口拿对 type；text 仍按原 post 类型提取，引用/回复不丢正文。
   // 多图完整集合由入站预下载与合并转发展开负责，这里只兜底第一张。
@@ -61,6 +67,10 @@ export async function fetchFeishuMessageDetail(client: Lark.Client, messageId: s
     if (imageKeys.length > 0) {
       fileKey = imageKeys[0];
       effectiveMsgType = 'image';
+    } else if (postFiles.length > 0) {
+      // 多文件消息没有单值语义：fileKey/fileName 取首个兼容旧调用，完整清单由 postFiles 承载。
+      fileKey = postFiles[0].fileKey;
+      fileName = postFiles[0].fileName;
     }
   }
   return {
@@ -70,7 +80,8 @@ export async function fetchFeishuMessageDetail(client: Lark.Client, messageId: s
     msgType: effectiveMsgType,
     text: describeMessageText(msgType, content, raw.message_id),
     fileKey,
-    fileName: typeof content.file_name === 'string' ? content.file_name as string : null,
+    fileName,
+    postFiles: postFiles.length > 0 ? postFiles : null,
     senderId: raw.sender?.id ?? null,
     createTime: raw.create_time ?? null,
   };
@@ -84,15 +95,28 @@ export function describeMessageText(msgType: string, content: Record<string, unk
   if (msgType === 'audio') return `[语音 msg=${messageId}]`;
   if (msgType === 'media') return `[视频 msg=${messageId}]`;
   if (msgType === 'sticker') return `[表情包 msg=${messageId}]`;
-  if (msgType === 'post') return extractPostText(content);
+  if (msgType === 'post') return extractPostText(content, messageId);
   if (msgType === 'interactive') return extractInteractiveText(content);
   return `[${msgType} msg=${messageId}]`;
 }
 
-/** 富文本（post）：递归收集 text / a / at 元素的文本。 */
-function extractPostText(content: Record<string, unknown>): string {
+/** post 富文本正文（title + content 元素），不含内嵌文件清单：判断「纯附件消息」时使用。 */
+export function extractPostBodyText(content: Record<string, unknown>): string {
   const title = typeof content.title === 'string' && content.title.trim() !== '' ? `${content.title}\n` : '';
-  return title + collectText(content.content).trim();
+  return (title + collectText(content.content)).trim();
+}
+
+/** 富文本（post）：递归收集 text / a / at 元素的文本；多文件消息追加逐文件占位（带 file_key 供精确下载），
+ *  文件夹项（is_folder=true，不可下载）单独占位，避免整条消息退化为无信息占位。 */
+function extractPostText(content: Record<string, unknown>, messageId: string): string {
+  const body = extractPostBodyText(content);
+  const files = collectPostFiles(content).map(
+    (file) => `[文件:${file.fileName ?? '未知文件'} msg=${messageId} file_key=${file.fileKey}]`,
+  );
+  const folders = collectPostFolderNames(content).map((name) => `[文件夹:${name}]`);
+  const fileLines = [...files, ...folders].join('\n');
+  if (fileLines === '') return body;
+  return body === '' ? fileLines : `${body}\n${fileLines}`;
 }
 
 function collectText(node: unknown): string {
@@ -101,7 +125,7 @@ function collectText(node: unknown): string {
   if (node != null && typeof node === 'object') {
     const record = node as Record<string, unknown>;
     // 图片/视频/表情输出占位符（而非丢弃），让 Agent 知道消息中存在媒体；
-    // 图片本体由 downloadMedia / prewarmGroupImage 按 imageKeys 下载注入。
+    // 图片本体由 downloadMedia / prewarmGroupMedia 按 imageKeys 下载注入。
     if (record.tag === 'img') return ' [图片] ';
     if (record.tag === 'media') return ' [视频] ';
     if (record.tag === 'emotion') return ' ';
@@ -127,6 +151,41 @@ export function collectPostImageKeys(node: unknown): string[] {
   const record = node as Record<string, unknown>;
   if (record.tag === 'img' && typeof record.image_key === 'string' && record.image_key !== '') return [record.image_key];
   return Object.values(record).flatMap(collectPostImageKeys);
+}
+
+/**
+ * post 多文件消息（一次发送多个文件）的文件项：读 content 顶层的 `files` 数组
+ * （实测结构 `{"content":[[]],"files":[{"file_key":"file_v3_...","file_name":"a.pptx","is_folder":false}]}`）。
+ * 文件夹项（is_folder=true）不参与下载。入站预下载、详情兜底与下载工具共用同一套收集。
+ */
+export function collectPostFiles(node: unknown): FeishuPostFileItem[] {
+  if (node == null || typeof node !== 'object' || Array.isArray(node)) return [];
+  const files = (node as Record<string, unknown>).files;
+  if (!Array.isArray(files)) return [];
+  const items: FeishuPostFileItem[] = [];
+  for (const entry of files) {
+    if (entry == null || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const record = entry as Record<string, unknown>;
+    if (record.is_folder === true) continue;
+    if (typeof record.file_key !== 'string' || record.file_key === '') continue;
+    items.push({ fileKey: record.file_key, fileName: typeof record.file_name === 'string' ? record.file_name : null });
+  }
+  return items;
+}
+
+/** post 多文件消息里的文件夹项名字（is_folder=true）：不可下载，仅生成占位让 Agent/用户知道消息里有文件夹。 */
+function collectPostFolderNames(node: unknown): string[] {
+  if (node == null || typeof node !== 'object' || Array.isArray(node)) return [];
+  const files = (node as Record<string, unknown>).files;
+  if (!Array.isArray(files)) return [];
+  const names: string[] = [];
+  for (const entry of files) {
+    if (entry == null || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const record = entry as Record<string, unknown>;
+    if (record.is_folder !== true) continue;
+    names.push(typeof record.file_name === 'string' && record.file_name !== '' ? record.file_name : '未知文件夹');
+  }
+  return names;
 }
 
 /** 飞书对无法透出原始卡片 JSON 时返回的降级文案（receive 事件 / 详情接口均可能出现）。 */

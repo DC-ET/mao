@@ -10,7 +10,7 @@ import { expandFeishuMergeForward } from './feishu/merge-forward.js';
 import { chatFilesDirOf, resolveChatFileTarget } from './feishu/chat-files.js';
 import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
 import { wrapFeishuApiError } from './feishu/feishu-api-error.js';
-import type { FeishuNormalizedMessage } from './feishu/types.js';
+import type { FeishuNormalizedMessage, FeishuPostFileItem } from './feishu/types.js';
 import type { MysqlFeishuBindingRepository } from './feishu/binding.repository.js';
 import type { MysqlFeishuMessageRepository } from './feishu/message.repository.js';
 import type { MysqlUserRepository } from './user/user.repository.js';
@@ -106,7 +106,8 @@ export interface FeishuMediaHelper {
   resolveQuotedWorkspace(accountId: string, event: FeishuNormalizedMessage): Promise<string | null>;
   downloadFeishuGroupImage(accountId: string, event: FeishuNormalizedMessage, imageKey: string, index?: number): Promise<string | null>;
   downloadFeishuImageTo(accountId: string, workspace: string, messageId: string, imageKey: string, index?: number, nameMessageId?: string): Promise<string | null>;
-  downloadFeishuGroupFile(accountId: string, event: FeishuNormalizedMessage): Promise<string | null>;
+  /** item 指定多文件消息（post.files）中的单个文件；缺省取事件顶层 file_key（单文件消息）。 */
+  downloadFeishuGroupFile(accountId: string, event: FeishuNormalizedMessage, item?: FeishuPostFileItem, index?: number): Promise<string | null>;
 }
 
 export function createFeishuMediaHelper(deps: FeishuMediaHelperDeps): FeishuMediaHelper {
@@ -229,18 +230,24 @@ export function createFeishuMediaHelper(deps: FeishuMediaHelperDeps): FeishuMedi
     return downloadFeishuImageTo(accountId, workspace, event.messageId, imageKey, index);
   };
 
-  const downloadFeishuGroupFile = async (accountId: string, event: FeishuNormalizedMessage): Promise<string | null> => {
-    if (event.chatType !== 'group' || event.chatId == null || event.messageId == null || event.fileKey == null) return null;
+  const downloadFeishuGroupFile = async (
+    accountId: string, event: FeishuNormalizedMessage, item?: FeishuPostFileItem, index = 0,
+  ): Promise<string | null> => {
+    // 多文件消息（post.files）逐项传入；单文件消息退化为事件顶层 file_key/file_name。
+    const fileKey = item?.fileKey ?? event.fileKey;
+    const fileName = item != null ? item.fileName : event.fileName;
+    if (event.chatType !== 'group' || event.chatId == null || event.messageId == null || fileKey == null) return null;
     const client = await getFeishuClient(Number(accountId));
     if (client == null) return null;
     const workspace = resolveFeishuChatWorkspace(workspaceRoot, accountId, event.chatId);
     const maxBytes = Math.max(1, maxInboundFileMb) * 1024 * 1024;
-    const { buffer } = await downloadFeishuMediaBuffer(client, event.messageId, event.fileKey, 'file', maxBytes);
+    const { buffer } = await downloadFeishuMediaBuffer(client, event.messageId, fileKey, 'file', maxBytes);
     if (buffer.length === 0) return null;
     const dir = chatFilesDirOf(workspace);
     mkdirSync(dir, { recursive: true });
-    const fileName = sanitizeFeishuFileName(event.fileName, `feishu-${event.fileKey}`);
-    const target = resolveChatFileTarget(dir, fileName, event.messageId);
+    const safeName = sanitizeFeishuFileName(fileName, `feishu-${fileKey}`);
+    // index 参与重名避让：同一消息内的多个文件不会互相覆盖。
+    const target = resolveChatFileTarget(dir, safeName, event.messageId, index);
     await writeFile(target, buffer);
     return target;
   };

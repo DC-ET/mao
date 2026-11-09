@@ -226,7 +226,7 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
         const client = await d.getFeishuClient(Number(appId));
         if (client == null) throw new Error(`飞书Bot不存在或未启用: ${appId}`);
         const detail = await fetchFeishuMessageDetail(client, messageId);
-        return detail == null ? null : { fileKey: detail.fileKey ?? null, fileName: detail.fileName ?? null, msgType: detail.msgType };
+        return detail == null ? null : { fileKey: detail.fileKey ?? null, fileName: detail.fileName ?? null, msgType: detail.msgType, postFiles: detail.postFiles ?? null };
       },
     },
     feishuMaxInboundFileBytes: Math.max(1, cfg.feishu.bot.file.maxInboundFileMb) * 1024 * 1024,

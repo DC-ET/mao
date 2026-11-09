@@ -92,6 +92,136 @@ describe('FeishuDownloadFileTool', () => {
     expect(JSON.parse(result).error).toContain('未找到包含文件/图片的群聊消息');
   });
 
+  it('downloads all files of a post multi-file message resolved via the detail API', async () => {
+    const download = vi.fn(async () => ({ buffer: Buffer.from('bin'), contentType: 'application/octet-stream' }));
+    const tool = new FeishuDownloadFileTool(
+      { resolveBotAppId: vi.fn(async () => 'cli_bot') },
+      { findMediaByMessageId: vi.fn(async () => null) },
+      { download },
+      100 * 1024 * 1024,
+      {
+        fetchMessageDetail: vi.fn(async () => ({
+          fileKey: 'file_v3_a', fileName: 'a.pptx', msgType: 'post',
+          postFiles: [
+            { fileKey: 'file_v3_a', fileName: 'a.pptx' },
+            { fileKey: 'file_v3_b', fileName: 'b.pptx' },
+          ],
+        })),
+      },
+    );
+    const result = await tool.execute(JSON.stringify({ message_id: 'om_files' }), 9, 1, workspace);
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.paths).toEqual([
+      join(chatFilesDirOf(workspace), 'a.pptx'),
+      join(chatFilesDirOf(workspace), 'b.pptx'),
+    ]);
+    expect(download).toHaveBeenCalledWith('cli_bot', 'om_files', 'file_v3_a', 'file', 100 * 1024 * 1024);
+    expect(download).toHaveBeenCalledWith('cli_bot', 'om_files', 'file_v3_b', 'file', 100 * 1024 * 1024);
+  });
+
+  it('downloads a single file from a multi-file message when file_key is given and keeps its original name', async () => {
+    const download = vi.fn(async () => ({ buffer: Buffer.from('bin'), contentType: 'application/octet-stream' }));
+    const fetchMessageDetail = vi.fn(async () => ({
+      fileKey: 'file_v3_a', fileName: 'a.pptx', msgType: 'post',
+      postFiles: [
+        { fileKey: 'file_v3_a', fileName: 'a.pptx' },
+        { fileKey: 'file_v3_b', fileName: 'b.pptx' },
+      ],
+    }));
+    const tool = new FeishuDownloadFileTool(
+      { resolveBotAppId: vi.fn(async () => 'cli_bot') },
+      { findMediaByMessageId: vi.fn(async () => null) },
+      { download },
+      100 * 1024 * 1024,
+      { fetchMessageDetail },
+    );
+    const result = await tool.execute(JSON.stringify({ message_id: 'om_files', file_key: 'file_v3_b' }), 9, 1, workspace);
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(true);
+    // 文件名回查成功：落盘保留原名，扩展名不丢。
+    expect(parsed.path).toBe(join(chatFilesDirOf(workspace), 'b.pptx'));
+    expect(fetchMessageDetail).toHaveBeenCalledWith('cli_bot', 'om_files');
+    expect(download).toHaveBeenCalledTimes(1);
+    expect(download).toHaveBeenCalledWith('cli_bot', 'om_files', 'file_v3_b', 'file', 100 * 1024 * 1024);
+  });
+
+  it('still downloads the specified file when the file-name backfill fails', async () => {
+    const download = vi.fn(async () => ({ buffer: Buffer.from('bin'), contentType: 'application/octet-stream' }));
+    const tool = new FeishuDownloadFileTool(
+      { resolveBotAppId: vi.fn(async () => 'cli_bot') },
+      { findMediaByMessageId: vi.fn(async () => null) },
+      { download },
+      100 * 1024 * 1024,
+      { fetchMessageDetail: vi.fn(async () => { throw new Error('detail api down'); }) },
+    );
+    const result = await tool.execute(JSON.stringify({ message_id: 'om_files', file_key: 'file_v3_b' }), 9, 1, workspace);
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.path).toContain('feishu-file-');
+    expect(download).toHaveBeenCalledWith('cli_bot', 'om_files', 'file_v3_b', 'file', 100 * 1024 * 1024);
+  });
+
+  it('downloads post files as file resources even when the message also contains images', async () => {
+    const download = vi.fn(async () => ({ buffer: Buffer.from('bin'), contentType: 'application/octet-stream' }));
+    const tool = new FeishuDownloadFileTool(
+      { resolveBotAppId: vi.fn(async () => 'cli_bot') },
+      { findMediaByMessageId: vi.fn(async () => null) },
+      { download },
+      100 * 1024 * 1024,
+      {
+        // 混合 post（图 + 文件）：详情接口把 msgType 归一为 image，但 postFiles 里的 key 是文件资源。
+        fetchMessageDetail: vi.fn(async () => ({
+          fileKey: 'img_v3_pic', fileName: null, msgType: 'image',
+          postFiles: [{ fileKey: 'file_v3_a', fileName: 'a.pptx' }],
+        })),
+      },
+    );
+    const result = await tool.execute(JSON.stringify({ message_id: 'om_mixed' }), 9, 1, workspace);
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.path).toBe(join(chatFilesDirOf(workspace), 'a.pptx'));
+    expect(download).toHaveBeenCalledWith('cli_bot', 'om_mixed', 'file_v3_a', 'file', 100 * 1024 * 1024);
+  });
+
+  it('downloads a post image resolved through the group log as an image', async () => {
+    // 群日志里 post 内嵌图片的 file_key 列存的是 image_key，msg_type 却是 post：按 key 类型走 type=image。
+    const download = vi.fn(async () => ({ buffer: Buffer.from('png'), contentType: 'image/png' }));
+    const tool = makeTool({ media: { appId: '1', fileKey: 'img_v3_pic', fileName: null, msgType: 'post' }, download });
+    const result = await tool.execute(JSON.stringify({ message_id: 'om_post' }), 9, 1, workspace);
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.path.endsWith('.png')).toBe(true);
+    expect(download).toHaveBeenCalledWith('cli_bot', 'om_post', 'img_v3_pic', 'image', 100 * 1024 * 1024);
+  });
+
+  it('keeps the rest of the results when one file of a multi-file message fails', async () => {
+    const download = vi.fn(async (_appId: string, _messageId: string, fileKey: string) => {
+      if (fileKey === 'file_v3_b') throw new Error('下载飞书资源失败: code=234003');
+      return { buffer: Buffer.from('bin'), contentType: 'application/octet-stream' };
+    });
+    const tool = new FeishuDownloadFileTool(
+      { resolveBotAppId: vi.fn(async () => 'cli_bot') },
+      { findMediaByMessageId: vi.fn(async () => null) },
+      { download },
+      100 * 1024 * 1024,
+      {
+        fetchMessageDetail: vi.fn(async () => ({
+          fileKey: 'file_v3_a', fileName: 'a.pptx', msgType: 'post',
+          postFiles: [
+            { fileKey: 'file_v3_a', fileName: 'a.pptx' },
+            { fileKey: 'file_v3_b', fileName: 'b.pptx' },
+          ],
+        })),
+      },
+    );
+    const result = await tool.execute(JSON.stringify({ message_id: 'om_files' }), 9, 1, workspace);
+    const parsed = JSON.parse(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.paths).toEqual([join(chatFilesDirOf(workspace), 'a.pptx')]);
+    expect(parsed.failures).toEqual([expect.stringContaining('b.pptx')]);
+  });
+
   it('rejects sticker messages with an explicit unsupported notice', async () => {
     const download = vi.fn();
     const result = await makeTool({ media: { appId: '1', fileKey: 'v3_sticker', fileName: null, msgType: 'sticker' }, download })

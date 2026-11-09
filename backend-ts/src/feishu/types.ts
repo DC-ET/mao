@@ -21,7 +21,14 @@ export interface FeishuBotRepository {
 import type { AgentEventListener } from '../harness/core/agent-event-listener.js';
 export type FeishuChatType = 'p2p' | 'group' | 'unknown';
 export interface FeishuEventHeader { eventId?: string; eventType?: string; createTime?: string; tenantKey?: string; appId?: string; token?: string; }
-export interface FeishuNormalizedMessage { eventId: string | null; messageId: string | null; parentId?: string | null; rootId?: string | null; /** 话题 ID (omt_xxx)；非话题消息为 null。话题内回复的 parent_id 恒指向话题根，≠ 用户主动引用。 */ threadId?: string | null; chatId: string | null; chatType: FeishuChatType; senderId: string | null; senderUnionId: string | null; senderName?: string; maoUserId?: number; senderType: string | null; messageType: string; imageKey?: string | null; /** post 富文本内嵌图片 key（image 消息也含单元素数组）；imageKey 为首个，兼容群媒体单值落库。 */ imageKeys?: string[] | null; fileKey?: string | null; fileName?: string | null; text: string; mentions: string[]; isBotMentioned: boolean; content: unknown; rawEvent: unknown; header?: FeishuEventHeader; progressCardMessageId?: string | null; }
+
+/**
+ * 飞书「一次发送多个文件」的消息形态：msg_type=post，文件挂在 content 顶层 `files` 数组
+ * （与普通富文本的 content 元素不同）。是单文件消息（msg_type=file + 顶层 file_key）的多文件版本。
+ */
+export interface FeishuPostFileItem { fileKey: string; fileName: string | null; }
+
+export interface FeishuNormalizedMessage { eventId: string | null; messageId: string | null; parentId?: string | null; rootId?: string | null; /** 话题 ID (omt_xxx)；非话题消息为 null。话题内回复的 parent_id 恒指向话题根，≠ 用户主动引用。 */ threadId?: string | null; chatId: string | null; chatType: FeishuChatType; senderId: string | null; senderUnionId: string | null; senderName?: string; maoUserId?: number; senderType: string | null; messageType: string; imageKey?: string | null; /** post 富文本内嵌图片 key（image 消息也含单元素数组）；imageKey 为首个，兼容群媒体单值落库。 */ imageKeys?: string[] | null; fileKey?: string | null; fileName?: string | null; /** post 多文件消息的内嵌文件（一次发多个文件）；单文件消息为 null/空。 */ postFiles?: FeishuPostFileItem[] | null; text: string; mentions: string[]; isBotMentioned: boolean; content: unknown; rawEvent: unknown; header?: FeishuEventHeader; progressCardMessageId?: string | null; }
 export interface FeishuInboundContext extends FeishuNormalizedMessage {
   accountId: string;
   /** Group messages are annotated before reaching the agent handler. */

@@ -47,7 +47,7 @@ import { createUnauthorizedTextHelper } from './feishu-cards.js';
 import { FeishuCardActionService } from './feishu/card-action.service.js';
 import { persistFeishuCancelIfIdle } from './feishu/cancel-running.js';
 import { FEISHU_DISLIKE_SOURCE } from './feedback/feedback.repository.js';
-import { inboundImageKeys } from './feishu/event-normalizer.js';
+import { inboundFileItems, inboundImageKeys } from './feishu/event-normalizer.js';
 import { chatFilesDirOf, resolveChatFileTarget } from './feishu/chat-files.js';
 import { parseSqlTimeMs } from './app-utils.js';
 import { createDingtalkRuntime } from './dingtalk/runtime.js';
@@ -262,7 +262,8 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
       const client = await getFeishuClient(botId);
       if (client == null) return null;
       const inboundKeys = inboundImageKeys(context);
-      const isMedia = inboundKeys.length > 0 || context.messageType === 'file' && context.fileKey != null;
+      const fileItems = inboundFileItems(context);
+      const isMedia = inboundKeys.length > 0 || fileItems.length > 0;
       if (!isMedia || context.messageId == null) return null;
       const maxBytes = Math.max(1, cfg.feishu.bot.file.maxInboundFileMb) * 1024 * 1024;
       const images: string[] = [];
@@ -298,25 +299,29 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
             errors.push('图片（接收失败）');
           }
         }
-        if (context.messageType === 'file' && context.fileKey != null) {
+        // 单文件消息（msg_type=file）与多文件消息（post.files）统一按文件项逐个下载。
+        if (fileItems.length > 0) {
           if (workspace == null || workspace === '') {
-            errors.push(context.fileName ?? '文件（接收失败）');
+            for (const item of fileItems) errors.push(item.fileName ?? '文件（接收失败）');
           } else {
-            try {
-              const { buffer } = await downloadFeishuMediaBuffer(client, context.messageId, context.fileKey, 'file', maxBytes);
-              if (buffer.length === 0) {
-                errors.push(context.fileName ?? '文件（接收失败）');
-              } else {
-                const fileName = sanitizeFeishuFileName(context.fileName, `feishu-${context.fileKey}`);
+            for (let fileIndex = 0; fileIndex < fileItems.length; fileIndex++) {
+              const item = fileItems[fileIndex];
+              try {
+                const { buffer } = await downloadFeishuMediaBuffer(client, context.messageId, item.fileKey, 'file', maxBytes);
+                if (buffer.length === 0) {
+                  errors.push(item.fileName ?? '文件（接收失败）');
+                  continue;
+                }
+                const fileName = sanitizeFeishuFileName(item.fileName, `feishu-${item.fileKey}`);
                 const dir = chatFilesDirOf(workspace);
                 mkdirSync(dir, { recursive: true });
-                const target = resolveChatFileTarget(dir, fileName, context.messageId);
+                const target = resolveChatFileTarget(dir, fileName, context.messageId, fileIndex);
                 await writeFile(target, buffer);
                 filePaths.push(target);
+              } catch (error) {
+                console.error(`飞书文件下载失败, bot=${botId}, messageId=${context.messageId}`, error);
+                errors.push(item.fileName ?? '文件（接收失败）');
               }
-            } catch (error) {
-              console.error(`飞书文件下载失败, bot=${botId}, messageId=${context.messageId}`, error);
-              errors.push(context.fileName ?? '文件（接收失败）');
             }
           }
         }

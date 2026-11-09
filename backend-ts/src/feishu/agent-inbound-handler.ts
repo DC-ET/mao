@@ -6,7 +6,7 @@ import { wsEvent } from '../session/ws/ws-event.js';
 import { CompositeAgentEventListener } from '../harness/core/composite-agent-event-listener.js';
 import { NoopAgentEventListener } from '../harness/core/agent-event-listener.js';
 import { FeishuCardProgressListener, countCompletedAgentRounds, type FeishuCardProgress } from './card-progress-listener.js';
-import { isInboundFileMessage } from './event-normalizer.js';
+import { inboundFileItems, isInboundAttachmentOnly } from './event-normalizer.js';
 import { toWorkspaceRelative } from '../common/workspace-path.js';
 import { mapWithConcurrency } from '../common/concurrency.js';
 import { isActivePhase } from '../session/util/session-group-key.js';
@@ -421,8 +421,8 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
   private async onP2pMessage(context: FeishuInboundContext): Promise<FeishuReply | null> {
     const outcome = await this.withP2pChatLock(context, async () => {
       const resolved = await this.resolveP2pInbound(context);
-      // 文件入站放在 chat 锁内：下一句文字的归属判定会等到下载/落库完成，避免未带附件就开跑。
-      if (!resolved.intercepted && resolved.session != null && isInboundFileMessage(context)) {
+      // 纯附件入站放在 chat 锁内：下一句文字的归属判定会等到下载/落库完成，避免未带附件就开跑。
+      if (!resolved.intercepted && resolved.session != null && isInboundAttachmentOnly(context)) {
         await this.ingestFileWithoutExecute(resolved.session, context);
         return { ...resolved, intercepted: true };
       }
@@ -540,7 +540,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     context: FeishuInboundContext,
   ): Promise<FeishuReply | null> {
     const sessionId = session.id;
-    if (isInboundFileMessage(context)) {
+    if (isInboundAttachmentOnly(context)) {
       await this.ingestFileWithoutExecute(session, context);
       return null;
     }
@@ -875,9 +875,13 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
 
   private async fileAttachmentContent(context: FeishuInboundContext, media: FeishuMediaDownload, workspace: string | null): Promise<string> {
     const named = context.fileName?.trim();
+    // 单文件消息优先用顶层文件名；多文件消息（post.files）没有单值文件名，按文件清单逐行标注。
+    const items = inboundFileItems(context);
     const label = named != null && named !== ''
       ? `[文件:${named}]`
-      : (context.text?.trim() || '[文件]');
+      : items.length > 0
+        ? items.map((item) => `[文件:${item.fileName ?? '未知文件'}]`).join('\n')
+        : (context.text?.trim() || '[文件]');
     const composed = await this.composeContent(label, media, workspace);
     return typeof composed === 'string' ? composed : label;
   }

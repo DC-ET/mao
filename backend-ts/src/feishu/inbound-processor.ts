@@ -1,5 +1,5 @@
-import type { FeishuInboundHandler, FeishuNormalizedMessage, FeishuInboundContext, FeishuReply } from './types.js';
-import { inboundImageKeys, isInboundFileMessage } from './event-normalizer.js';
+import type { FeishuInboundHandler, FeishuNormalizedMessage, FeishuInboundContext, FeishuReply, FeishuPostFileItem } from './types.js';
+import { inboundFileItems, inboundImageKeys, isInboundAttachmentOnly } from './event-normalizer.js';
 import { isNewSessionCommand } from './agent-inbound-handler.js';
 import type { FeishuMessageService } from './message.service.js';
 import { botSenderLabel, isBotSender } from './message.service.js';
@@ -29,8 +29,9 @@ export interface FeishuInboundProcessorOptions {
   resolveQuotedMessage?: (accountId: string, event: FeishuNormalizedMessage) => Promise<string | null>;
   /** 群聊图片入站即下载（非懒加载）：按 imageKey 下载并返回落盘绝对路径嵌入占位文本；null/抛错表示失败，保留懒加载占位符。 */
   downloadGroupImage?: (accountId: string, event: FeishuNormalizedMessage, imageKey: string, index: number) => Promise<string | null>;
-  /** 群聊文件入站即下载：返回落盘绝对路径嵌入占位文本；null/抛错保留懒加载占位符。 */
-  downloadGroupFile?: (accountId: string, event: FeishuNormalizedMessage) => Promise<string | null>;
+  /** 群聊文件入站即下载：返回落盘绝对路径嵌入占位文本；null/抛错保留懒加载占位符。
+   *  item 指定多文件消息（post.files）中的单个文件；缺省取事件顶层 file_key（单文件消息）。 */
+  downloadGroupFile?: (accountId: string, event: FeishuNormalizedMessage, item?: FeishuPostFileItem, index?: number) => Promise<string | null>;
   /** 话题会话映射查询：threadId 存在且映射命中（机器人已在该话题中）时免 @ 触发。 */
   resolveThreadSession?: (accountId: string, event: FeishuNormalizedMessage) => Promise<{ sessionId: number } | null>;
   /**
@@ -196,7 +197,7 @@ export class FeishuInboundProcessor {
       // 需要富化的媒体/卡片/合并转发行落 enrich_pending=1：水位线不得越过未富化行，
       // 否则下载或展开期间后续 @ 触发会推进水位线，回填后的内容永远进不了 Agent 会话。
       const needsEnrich = inboundImageKeys(normalized).length > 0
-        || isInboundFileMessage(normalized)
+        || inboundFileItems(normalized).length > 0
         || normalized.messageType === 'interactive'
         || normalized.messageType === 'merge_forward';
       const logId = await this.runInChatOrder(accountId, normalized.chatId,
@@ -220,8 +221,9 @@ export class FeishuInboundProcessor {
         if (mergeForward) named = await this.persistExpandedMergeForward(accountId, logId, named);
         const resolvedUserId = await this.options.resolveUserId?.(accountId, named);
         entry = {
-          // 纯文件：只下载并交给 handler 落库，不拼群上下文、不触发任务（飞书文件与文字分两条消息）。
-          kind: isInboundFileMessage(named) ? 'file' : 'trigger', accountId, event: named,
+          // 纯附件：只下载并交给 handler 落库，不拼群上下文、不触发任务（飞书文件与文字分两条消息）。
+          // 单文件消息（msg_type=file）与「只带文件、无正文」的多文件 post 走同一分支。
+          kind: isInboundAttachmentOnly(named) ? 'file' : 'trigger', accountId, event: named,
           senderLabel: this.options.senderLabel?.(named) ?? defaultSenderLabel(named),
           maoUserId: resolvedUserId ?? undefined, messageId, arrivalSeq, logId,
         };
@@ -358,6 +360,8 @@ export class FeishuInboundProcessor {
     if (!JOINABLE_MESSAGE_TYPES.has(event.messageType)) return false;
     // 带内嵌图片的富文本（post）：媒体不跨消息合并，其 imageKeys 随首条字段合并会丢，整体豁免。
     if (inboundImageKeys(event).length > 0) return false;
+    // 带内嵌文件的 post（一次发多个文件）：同媒体语义，文件清单不能跨消息合并，整体豁免。
+    if (inboundFileItems(event).length > 0) return false;
     // `---` 新建会话（p2p 专属）与 p2p 引用切换：混入批次会让指令/指针切换失效或错位。
     if (isNewSessionCommand(event.text)) return false;
     if (event.chatType === 'p2p' && event.parentId != null && event.parentId !== '') return false;
@@ -400,8 +404,7 @@ export class FeishuInboundProcessor {
       if (resolved?.senderName != null && resolved.senderName.trim() !== '') {
         await messageService.updateGroupMessageSenderName(logId, resolved.senderName);
       }
-      await this.prewarmGroupImage(accountId, logId, event);
-      await this.prewarmGroupFile(accountId, logId, event);
+      await this.prewarmGroupMedia(accountId, logId, event);
       await this.prewarmGroupCardText(accountId, logId, event);
       if (options?.skipMergeForward !== true) await this.prewarmMergeForward(accountId, logId, event);
     } catch (error) {
@@ -467,37 +470,37 @@ export class FeishuInboundProcessor {
     }
   }
 
-  /** 群图片预下载：成功回填日志行内容为本地路径引用；失败保留 msg 占位符走 feishu_download_file 懒加载兜底。
-   *  独立图片消息整体替换占位文本；post 富文本（图片+文字）在原文后追加图片引用，保留文字内容。 */
-  private async prewarmGroupImage(accountId: string, logId: number, event: FeishuNormalizedMessage): Promise<void> {
-    const keys = inboundImageKeys(event);
-    if (keys.length === 0 || this.options.downloadGroupImage == null) return;
+  /** 群图片/文件预下载：成功回填日志行为本地路径引用；失败保留 msg 占位符走 feishu_download_file 懒加载兜底。
+   *  图片与文件必须合并为一次写入：post 富文本两者可并存，分开写会互相覆盖（正文、已回填的引用与失败占位丢失）。
+   *  独立图片/文件消息整体替换为保存占位；post 保留正文与各文件 msg 占位，路径追加在文末。 */
+  private async prewarmGroupMedia(accountId: string, logId: number, event: FeishuNormalizedMessage): Promise<void> {
+    const imageKeys = inboundImageKeys(event);
+    const fileItems = inboundFileItems(event);
+    if (imageKeys.length === 0 && fileItems.length === 0) return;
     const refs: string[] = [];
-    for (let i = 0; i < keys.length; i++) {
+    for (let index = 0; index < imageKeys.length; index++) {
       try {
-        const path = await this.options.downloadGroupImage(accountId, event, keys[i], i);
+        const path = await this.options.downloadGroupImage?.(accountId, event, imageKeys[index], index);
         if (path != null && path !== '') refs.push(`@{${path}}@`);
       } catch (error) {
         console.warn(`飞书群图片预下载失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
+    for (let index = 0; index < fileItems.length; index++) {
+      try {
+        const path = await this.options.downloadGroupFile?.(accountId, event, fileItems[index], index);
+        if (path != null && path !== '') refs.push(`@{${path}}@`);
+      } catch (error) {
+        console.warn(`飞书群文件预下载失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     if (refs.length === 0) return;
     const content = event.messageType === 'image'
       ? `[图片已保存: ${refs.join(' ')}]`
-      : `${event.text}\n${refs.join('\n')}`;
+      : event.messageType === 'file'
+        ? `[文件已保存: ${refs.join(' ')}]`
+        : `${event.text}\n${refs.join('\n')}`;
     await this.options.messageService?.updateGroupMessageContent(logId, content);
-  }
-
-  /** 群文件预下载：成功回填日志行为本地路径引用；失败保留 msg 占位符走 feishu_download_file 懒加载兜底。 */
-  private async prewarmGroupFile(accountId: string, logId: number, event: FeishuNormalizedMessage): Promise<void> {
-    if (!isInboundFileMessage(event) || this.options.downloadGroupFile == null) return;
-    try {
-      const path = await this.options.downloadGroupFile(accountId, event);
-      if (path == null || path === '') return;
-      await this.options.messageService?.updateGroupMessageContent(logId, `[文件已保存: @{${path}}@]`);
-    } catch (error) {
-      console.warn(`飞书群文件预下载失败, messageId=${event.messageId}: ${error instanceof Error ? error.message : String(error)}`);
-    }
   }
 
   /** 展开一条合并转发并返回摘录；未配置展开函数、调用失败或结果为空时返回 null（调用方保留固定英文）。 */

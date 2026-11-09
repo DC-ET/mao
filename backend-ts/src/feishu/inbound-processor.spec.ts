@@ -491,6 +491,74 @@ describe('FeishuInboundProcessor', () => {
     expect(messageService.buildGroupContext).not.toHaveBeenCalled();
   });
 
+  it('pre-downloads every file of a post multi-file message and upgrades log content', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    messageService.recordGroupMessage.mockResolvedValueOnce(203);
+    const downloadGroupFile = vi.fn(async (_accountId: string, _event: FeishuNormalizedMessage, item?: { fileKey: string }) => `/ws/files/${item?.fileKey}.pptx`);
+    const processor = new FeishuInboundProcessor(makeHandler(), { messageService, downloadGroupFile });
+    const text = '[文件:a.pptx msg=om_1 file_key=file_v3_a]\n[文件:b.pptx msg=om_1 file_key=file_v3_b]';
+    await processor.process('1', makeEvent({
+      messageType: 'post', isBotMentioned: false, text,
+      postFiles: [
+        { fileKey: 'file_v3_a', fileName: 'a.pptx' },
+        { fileKey: 'file_v3_b', fileName: 'b.pptx' },
+      ],
+    }));
+    expect(messageService.recordGroupMessage).toHaveBeenCalledWith('1',
+      expect.objectContaining({ text }), false, { enrichPending: true });
+    await vi.waitFor(() => expect(downloadGroupFile).toHaveBeenCalledTimes(2));
+    expect(downloadGroupFile).toHaveBeenNthCalledWith(1, '1', expect.objectContaining({ messageId: 'om_1' }), { fileKey: 'file_v3_a', fileName: 'a.pptx' }, 0);
+    expect(downloadGroupFile).toHaveBeenNthCalledWith(2, '1', expect.objectContaining({ messageId: 'om_1' }), { fileKey: 'file_v3_b', fileName: 'b.pptx' }, 1);
+    // post 保留正文与文件占位（失败项仍可懒加载），路径追加在文末。
+    await vi.waitFor(() => expect(messageService.updateGroupMessageContent)
+      .toHaveBeenCalledWith(203, `${text}\n@{/ws/files/file_v3_a.pptx}@\n@{/ws/files/file_v3_b.pptx}@`));
+  });
+
+  it('keeps post body and failed file placeholders when pre-download partially fails', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    messageService.recordGroupMessage.mockResolvedValueOnce(205);
+    const downloadGroupFile = vi.fn(async (_accountId: string, _event: FeishuNormalizedMessage, item?: { fileKey: string }) => {
+      if (item?.fileKey === 'file_v3_b') throw new Error('download failed');
+      return '/ws/files/a.pptx';
+    });
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const processor = new FeishuInboundProcessor(makeHandler(), { messageService, downloadGroupFile });
+      const text = '帮我看看这两个材料\n[文件:a.pptx msg=om_1 file_key=file_v3_a]\n[文件:b.pptx msg=om_1 file_key=file_v3_b]';
+      await processor.process('1', makeEvent({
+        messageType: 'post', isBotMentioned: false, text,
+        postFiles: [
+          { fileKey: 'file_v3_a', fileName: 'a.pptx' },
+          { fileKey: 'file_v3_b', fileName: 'b.pptx' },
+        ],
+      }));
+      // 正文不被覆盖；失败文件保留 [文件:… file_key=…] 占位供 Agent 懒加载重试。
+      await vi.waitFor(() => expect(messageService.updateGroupMessageContent)
+        .toHaveBeenCalledWith(205, `${text}\n@{/ws/files/a.pptx}@`));
+    } finally {
+      consoleWarn.mockRestore();
+    }
+  });
+
+  it('does not build group context when a mentioned post multi-file message is ingested', async () => {
+    messageService.claimInboundMessage.mockResolvedValueOnce(true);
+    messageService.recordGroupMessage.mockResolvedValueOnce(204);
+    messageService.buildGroupContext.mockClear();
+    const onMessage = vi.fn(async () => null);
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService,
+      authorizeSender: async () => true,
+    });
+    // 只带文件、没有正文的 post 与单文件消息同语义：走纯附件分支，不拼群上下文、不当作任务触发。
+    await processor.process('1', makeEvent({
+      messageType: 'post', text: '[文件:a.pptx msg=om_1 file_key=file_v3_a]', isBotMentioned: true,
+      content: { content: [[]], files: [{ file_key: 'file_v3_a', file_name: 'a.pptx' }] },
+      postFiles: [{ fileKey: 'file_v3_a', fileName: 'a.pptx' }],
+    }));
+    expect(onMessage).toHaveBeenCalledOnce();
+    expect(messageService.buildGroupContext).not.toHaveBeenCalled();
+  });
+
   it('normalizes p2p post image+text keeping text and image keys (图片+文字)', async () => {
     messageService.claimInboundMessage.mockResolvedValueOnce(true);
     const onMessage = vi.fn(async (ctx: FeishuInboundContext) => ({ text: ctx.text }));
@@ -1048,6 +1116,22 @@ describe('FeishuInboundProcessor 合并窗口', () => {
     expect(onMessage).toHaveBeenCalledTimes(2);
     expect(onMessage.mock.calls[1][0].messageId).toBe('om_post');
     expect(onMessage.mock.calls[1][0].imageKeys).toEqual(['img_x']);
+  });
+
+  it('带内嵌文件的 post（一次发多个文件）豁免出窗，单独触发', async () => {
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = windowedProcessor(onMessage);
+    await processor.process('1', makeEvent({ messageId: 'om_t', text: '看这条', isBotMentioned: true }));
+    await processor.process('1', makeEvent({
+      messageId: 'om_post_files', messageType: 'post', text: '[文件:a.pptx msg=om_post_files file_key=file_v3_a]',
+      postFiles: [{ fileKey: 'file_v3_a', fileName: 'a.pptx' }], isBotMentioned: true,
+    }));
+    // 带文件的 post 不并入文本批次：两次独立触发，post 携带完整文件清单。
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    const contexts = onMessage.mock.calls.map((call) => call[0]);
+    expect(contexts.some((ctx) => ctx.messageId === 'om_t')).toBe(true);
+    const postCall = contexts.find((ctx) => ctx.messageId === 'om_post_files');
+    expect(postCall?.postFiles).toEqual([{ fileKey: 'file_v3_a', fileName: 'a.pptx' }]);
   });
 
   it('不同发送者同群窗口期内仍是两次触发', async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isInboundFileMessage, normalizeFeishuEvent } from './event-normalizer.js';
+import { inboundFileItems, isInboundAttachmentOnly, normalizeFeishuEvent } from './event-normalizer.js';
 
 describe('normalizeFeishuEvent', () => {
   it('parses p2p text message with sender ids', () => {
@@ -388,9 +388,8 @@ describe('normalizeFeishuEvent', () => {
     expect(event!.messageType).toBe('file');
     expect(event!.fileKey).toBe('file_xyz');
     expect(event!.fileName).toBe('report.pdf');
-    expect(isInboundFileMessage(event!)).toBe(true);
-    expect(isInboundFileMessage({ messageType: 'image' })).toBe(false);
-    expect(isInboundFileMessage({ messageType: 'text' })).toBe(false);
+    expect(inboundFileItems(event!)).toEqual([{ fileKey: 'file_xyz', fileName: 'report.pdf' }]);
+    expect(isInboundAttachmentOnly(event!)).toBe(true);
   });
 
   it('parses post rich text message with embedded images (图片+文字)', () => {
@@ -429,6 +428,67 @@ describe('normalizeFeishuEvent', () => {
     });
     expect(event!.imageKey).toBeNull();
     expect(event!.imageKeys).toBeUndefined();
+  });
+
+  it('parses post multi-file message (一次发多个文件) into postFiles and placeholders', () => {
+    const event = normalizeFeishuEvent({
+      header: { app_id: 'cli_mybot' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' } },
+        message: {
+          message_id: 'om_files', chat_type: 'p2p', message_type: 'post',
+          content: JSON.stringify({
+            title: '', content: [[]], content_v2: [[]],
+            files: [
+              { file_key: 'file_v3_a', file_name: 'a.pptx', is_folder: false },
+              { file_key: 'file_v3_b', file_name: 'b.pptx', is_folder: false },
+            ],
+          }),
+        },
+      },
+    });
+    expect(event!.postFiles).toEqual([
+      { fileKey: 'file_v3_a', fileName: 'a.pptx' },
+      { fileKey: 'file_v3_b', fileName: 'b.pptx' },
+    ]);
+    expect(event!.text).toBe('[文件:a.pptx msg=om_files file_key=file_v3_a]\n[文件:b.pptx msg=om_files file_key=file_v3_b]');
+    expect(inboundFileItems(event!)).toEqual(event!.postFiles);
+    expect(isInboundAttachmentOnly(event!)).toBe(true);
+  });
+
+  it('treats post with body text and files as a trigger message (not attachment-only)', () => {
+    const event = normalizeFeishuEvent({
+      header: { app_id: 'cli_mybot' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' } },
+        message: {
+          message_id: 'om_files_text', chat_type: 'p2p', message_type: 'post',
+          content: JSON.stringify({
+            title: '', content: [[{ tag: 'text', text: '看看这两个文件' }]],
+            files: [{ file_key: 'file_v3_a', file_name: 'a.pptx', is_folder: false }],
+          }),
+        },
+      },
+    });
+    expect(event!.text).toBe('看看这两个文件\n[文件:a.pptx msg=om_files_text file_key=file_v3_a]');
+    expect(isInboundAttachmentOnly(event!)).toBe(false);
+  });
+
+  it('inboundFileItems covers single file message and yields empty for text', () => {
+    const fileEvent = normalizeFeishuEvent({
+      header: { app_id: 'cli_mybot' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' } },
+        message: {
+          message_id: 'om_file', chat_type: 'p2p', message_type: 'file',
+          content: '{"file_key":"file_xyz","file_name":"report.pdf"}',
+        },
+      },
+    });
+    expect(inboundFileItems(fileEvent!)).toEqual([{ fileKey: 'file_xyz', fileName: 'report.pdf' }]);
+    expect(inboundFileItems({ messageType: 'text', fileKey: null, fileName: null, postFiles: null })).toEqual([]);
+    expect(isInboundAttachmentOnly(fileEvent!)).toBe(true);
+    expect(isInboundAttachmentOnly({ messageType: 'post', fileKey: null, fileName: null, postFiles: null, content: {} })).toBe(false);
   });
 
   it('falls back to is_at_me true when mentions exist', () => {

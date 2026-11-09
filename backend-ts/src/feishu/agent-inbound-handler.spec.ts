@@ -1538,6 +1538,40 @@ describe('AgentFeishuInboundHandler p2p multi-session', () => {
     expect(harness.execute).toHaveBeenCalledOnce();
   });
 
+  it('records a p2p post multi-file message without executing and saves every downloaded file', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const control = makeP2pControl();
+    const downloadMedia = vi.fn(async () => ({
+      images: [], imagePaths: [], filePaths: ['/ws/a.pptx', '/ws/b.pptx'], errors: [],
+    }));
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      listenerFactory: async () => listener,
+      p2pSessionControl: control as never,
+      downloadMedia,
+    });
+    // 只带文件、没有正文的 post（一次发多个文件）与单文件消息同语义：下载落库、不执行。
+    await handler.onMessage(makeP2pContext({
+      messageType: 'post', messageId: 'om_files',
+      text: '[文件:a.pptx msg=om_files file_key=file_v3_a]\n[文件:b.pptx msg=om_files file_key=file_v3_b]',
+      postFiles: [
+        { fileKey: 'file_v3_a', fileName: 'a.pptx' },
+        { fileKey: 'file_v3_b', fileName: 'b.pptx' },
+      ],
+      content: { content: [[]], files: [] },
+    }));
+    expect(control.recordMessageMapping).toHaveBeenCalledWith('1', 'om_files', 7, 'IN');
+    expect(harness.execute).not.toHaveBeenCalled();
+    expect(downloadMedia).toHaveBeenCalledWith(expect.objectContaining({ messageId: 'om_files', messageType: 'post' }), null);
+    const saved = String(sessionService.saveUserMessage.mock.calls.at(-1)?.[1] ?? '');
+    expect(saved).toContain('[文件:a.pptx]');
+    expect(saved).toContain('[文件:b.pptx]');
+    expect(saved).toContain('@{/ws/a.pptx}@');
+    expect(saved).toContain('@{/ws/b.pptx}@');
+  });
+
   // ─── 话题会话 ────────────────────────────────────────────────────────
 
   it('routes thread root message to a new thread session', async () => {

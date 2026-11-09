@@ -1,5 +1,5 @@
-import type { FeishuChatType, FeishuEventHeader, FeishuNormalizedMessage } from './types.js';
-import { collectPostImageKeys, describeMessageText, FEISHU_CARD_UPGRADE_FALLBACK } from './message-detail.js';
+import type { FeishuChatType, FeishuEventHeader, FeishuNormalizedMessage, FeishuPostFileItem } from './types.js';
+import { collectPostFiles, collectPostImageKeys, describeMessageText, extractPostBodyText, FEISHU_CARD_UPGRADE_FALLBACK } from './message-detail.js';
 
 export function normalizeFeishuEvent(input: unknown, botOpenId?: string): FeishuNormalizedMessage | null {
   const root = asRecord(input);
@@ -62,6 +62,7 @@ export function normalizeFeishuEvent(input: unknown, botOpenId?: string): Feishu
       imageKeys: media.imageKeys,
       fileKey: media.fileKey ?? null,
       fileName: media.fileName ?? null,
+      postFiles: media.postFiles ?? null,
       // 文本中的 @提及 是 @_user_N 占位符，需用 mentions 的姓名还原，否则 Agent 不知道 @ 的是谁。
       text,
       mentions,
@@ -167,13 +168,18 @@ function isPrefixOfLongerMention(text: string, index: number, key: string, known
   return longer !== key && known.has(longer);
 }
 
-function extractMedia(messageType: string, content: unknown): { imageKey?: string; imageKeys?: string[]; fileKey?: string; fileName?: string } {
+function extractMedia(messageType: string, content: unknown): { imageKey?: string; imageKeys?: string[]; fileKey?: string; fileName?: string; postFiles?: FeishuPostFileItem[] } {
   const record = asRecord(content);
   if (messageType === 'image') return { imageKey: firstString(record.image_key), imageKeys: [firstString(record.image_key)].filter((k): k is string => k != null) };
   // 图片+文字在飞书以富文本（post）发送：递归收集 img 元素的 image_key，否则 Agent 收不到图。
+  // 一次发送多个文件同样是 post（文件在顶层 files 数组），与正文元素互斥/并存，一并收集。
   if (messageType === 'post') {
     const imageKeys = collectPostImageKeys(record.content);
-    return imageKeys.length > 0 ? { imageKey: imageKeys[0], imageKeys } : {};
+    const postFiles = collectPostFiles(record);
+    return {
+      ...(imageKeys.length > 0 ? { imageKey: imageKeys[0], imageKeys } : {}),
+      ...(postFiles.length > 0 ? { postFiles } : {}),
+    };
   }
   if (messageType === 'file') return { fileKey: firstString(record.file_key), fileName: firstString(record.file_name) };
   // sticker（表情包）媒体键同为 file_key（实测 v3_ 前缀）；落库供下载工具识别消息类型。
@@ -188,9 +194,31 @@ export function inboundImageKeys(event: Pick<FeishuNormalizedMessage, 'messageTy
   return [];
 }
 
-/** 飞书独立文件消息：不能与文字同条发送，入站只下载/落库，不单独触发 Agent。 */
-export function isInboundFileMessage(event: Pick<FeishuNormalizedMessage, 'messageType'>): boolean {
-  return event.messageType === 'file';
+/** 入站消息待下载文件项：单文件消息取顶层 file_key；post 多文件消息（一次发多个文件）取内嵌 files。 */
+export function inboundFileItems(
+  event: Pick<FeishuNormalizedMessage, 'messageType' | 'fileKey' | 'fileName' | 'postFiles'>,
+): FeishuPostFileItem[] {
+  if (event.messageType === 'file') {
+    return event.fileKey != null ? [{ fileKey: event.fileKey, fileName: event.fileName ?? null }] : [];
+  }
+  if (event.messageType === 'post') return event.postFiles ?? [];
+  return [];
+}
+
+/**
+ * 纯附件消息（只下载/落库、不触发 Agent）：单文件消息，或「只有文件、没有正文」的 post。
+ * post 的 text 已包含文件占位（非空），是否有正文必须回看原始 content。
+ */
+export function isInboundAttachmentOnly(
+  event: Pick<FeishuNormalizedMessage, 'messageType' | 'fileKey' | 'fileName' | 'postFiles' | 'content'>,
+): boolean {
+  if (event.messageType === 'file') return true;
+  if (event.messageType !== 'post') return false;
+  if (inboundFileItems(event).length === 0) return false;
+  const record = event.content != null && typeof event.content === 'object' && !Array.isArray(event.content)
+    ? event.content as Record<string, unknown>
+    : {};
+  return extractPostBodyText(record) === '';
 }
 
 function asRecord(value: unknown): Record<string, any> {
