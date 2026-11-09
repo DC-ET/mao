@@ -44,7 +44,7 @@ defineProps<{
 }
 
 .tag-skill {
-  background: #0066cc;
+  background: var(--aw-primary);
   color: white;
 }
 

@@ -19,6 +19,7 @@ import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import App from './App.vue'
 import router from './router'
 import { useTheme } from './utils/theme'
+import { useAppearance } from './utils/appearance'
 import { initAuthStorage } from './utils/auth-storage'
 import { useForegroundRecovery } from './composables/useForegroundRecovery'
 import './style.css'
@@ -73,6 +74,8 @@ async function bootstrap() {
 
   // Initialize theme after mount
   useTheme()
+  // 外观个性化（强调色 / 字号）在主题之后初始化（模块级幂等，与 useTheme 并列）
+  useAppearance()
 
   // 安卓回前台恢复：检测连接断开 → 静默整页刷新（WebView 卡死由 MainActivity 原生兜底）
   useForegroundRecovery().init()

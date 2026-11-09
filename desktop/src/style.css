@@ -7,11 +7,12 @@
   --aw-primary: #0066cc;
   --aw-primary-focus: #0071e3;
   --aw-primary-on-dark: #2997ff;
-  --aw-primary-lighter: rgba(0, 102, 204, 0.10);
-  --aw-primary-soft: rgba(0, 102, 204, 0.05);
-  --aw-primary-hover: rgba(0, 102, 204, 0.08);
-  --aw-primary-ring: rgba(0, 102, 204, 0.12);
-  --aw-primary-line: rgba(0, 102, 204, 0.20);
+  /* alpha 家族引用 --aw-accent-rgb 三元组（默认展开值与原字面量逐字节同值），强调色预设切换的传导机制 */
+  --aw-primary-lighter: rgba(var(--aw-accent-rgb), 0.10);
+  --aw-primary-soft: rgba(var(--aw-accent-rgb), 0.05);
+  --aw-primary-hover: rgba(var(--aw-accent-rgb), 0.08);
+  --aw-primary-ring: rgba(var(--aw-accent-rgb), 0.12);
+  --aw-primary-line: rgba(var(--aw-accent-rgb), 0.20);
   --aw-on-primary: #ffffff;
 
   /* Colors — Surface */
@@ -55,7 +56,7 @@
   /* Colors — Accent aliases */
   --aw-accent: #0066cc;
   --aw-accent-rgb: 0, 102, 204;
-  --aw-accent-bg: rgba(0, 102, 204, 0.08);
+  --aw-accent-bg: rgba(var(--aw-accent-rgb), 0.08);
 
   /* Colors — Status */
   --aw-success: #34c759;
@@ -330,14 +331,14 @@ html.android-capacitor .terminal-keybar-btn {
   --aw-border: #38383a;
 
   --aw-primary-on-dark: #2997ff;
-  --aw-primary-lighter: rgba(41, 151, 255, 0.18);
-  --aw-primary-soft: rgba(41, 151, 255, 0.08);
-  --aw-primary-hover: rgba(41, 151, 255, 0.14);
-  --aw-primary-ring: rgba(41, 151, 255, 0.22);
-  --aw-primary-line: rgba(41, 151, 255, 0.32);
+  --aw-primary-lighter: rgba(var(--aw-accent-rgb), 0.18);
+  --aw-primary-soft: rgba(var(--aw-accent-rgb), 0.08);
+  --aw-primary-hover: rgba(var(--aw-accent-rgb), 0.14);
+  --aw-primary-ring: rgba(var(--aw-accent-rgb), 0.22);
+  --aw-primary-line: rgba(var(--aw-accent-rgb), 0.32);
   --aw-accent: #2997ff;
   --aw-accent-rgb: 41, 151, 255;
-  --aw-accent-bg: rgba(41, 151, 255, 0.12);
+  --aw-accent-bg: rgba(var(--aw-accent-rgb), 0.12);
 
   --aw-nav-bg:#1a1a1a;
   --aw-nav-text: #f5f5f7;
@@ -369,6 +370,152 @@ html.android-capacitor .terminal-keybar-btn {
   /* Terminal */
   --aw-terminal-bg: #252525;
   --aw-terminal-header-bg: #252525;
+}
+
+/* ============================================
+   Accent Presets — html[data-accent] 切换（blue 默认不写属性，属性缺省即 :root 现值）
+   色值定案见 docs/plan/2026-11-08-appearance-personalization-technical-design.md §3.1。
+   亮色块 10 项（含 EP 主色派生 5 项覆写，默认派生保留字面量不改）；
+   暗色块在 9 项 --aw-* 之外显式覆写 EP 主色本值 / hover（--el-color-primary /
+   --el-color-primary-dark-2）：EP 暗色皮肤 html.dark (0,1,1) 定义了 EP 蓝字面量，
+   压过 :root (0,1,0) 的 var(--aw-primary) 引用，预设暗色块以 (0,2,1) 才能接管
+   ——默认档暗色维持 EP 蓝为既有行为，不在本节处理。
+   alpha 值与默认块逐项同值；预设暗色块特异性 (0,2,1) 高于暗色默认块 (0,1,0)，
+   亮色块 (0,1,1) 高于 :root (0,1,0)。
+   ============================================ */
+
+html[data-accent='violet'] {
+  --aw-primary: #6E56CF;
+  --aw-primary-focus: #7C66D6;
+  --aw-primary-on-dark: #A78BFA;
+  --aw-accent: #6E56CF;
+  --aw-accent-rgb: 110, 86, 207;
+  --el-color-primary-light-3: #8B78D9;
+  --el-color-primary-light-5: rgba(110, 86, 207, 0.15);
+  --el-color-primary-light-7: rgba(110, 86, 207, 0.10);
+  --el-color-primary-light-8: rgba(110, 86, 207, 0.08);
+  --el-color-primary-light-9: rgba(110, 86, 207, 0.05);
+}
+
+html[data-theme='dark'][data-accent='violet'] {
+  --el-color-primary: var(--aw-primary);
+  --el-color-primary-dark-2: var(--aw-primary-focus);
+  --aw-primary-on-dark: #A78BFA;
+  --aw-primary-lighter: rgba(167, 139, 250, 0.18);
+  --aw-primary-soft: rgba(167, 139, 250, 0.08);
+  --aw-primary-hover: rgba(167, 139, 250, 0.14);
+  --aw-primary-ring: rgba(167, 139, 250, 0.22);
+  --aw-primary-line: rgba(167, 139, 250, 0.32);
+  --aw-accent: #A78BFA;
+  --aw-accent-rgb: 167, 139, 250;
+  --aw-accent-bg: rgba(167, 139, 250, 0.12);
+}
+
+html[data-accent='green'] {
+  --aw-primary: #15803D;
+  --aw-primary-focus: #1A9247;
+  --aw-primary-on-dark: #46A758;
+  --aw-accent: #15803D;
+  --aw-accent-rgb: 21, 128, 61;
+  --el-color-primary-light-3: #449964;
+  --el-color-primary-light-5: rgba(21, 128, 61, 0.15);
+  --el-color-primary-light-7: rgba(21, 128, 61, 0.10);
+  --el-color-primary-light-8: rgba(21, 128, 61, 0.08);
+  --el-color-primary-light-9: rgba(21, 128, 61, 0.05);
+}
+
+html[data-theme='dark'][data-accent='green'] {
+  --el-color-primary: var(--aw-primary);
+  --el-color-primary-dark-2: var(--aw-primary-focus);
+  --aw-primary-on-dark: #46A758;
+  --aw-primary-lighter: rgba(70, 167, 88, 0.18);
+  --aw-primary-soft: rgba(70, 167, 88, 0.08);
+  --aw-primary-hover: rgba(70, 167, 88, 0.14);
+  --aw-primary-ring: rgba(70, 167, 88, 0.22);
+  --aw-primary-line: rgba(70, 167, 88, 0.32);
+  --aw-accent: #46A758;
+  --aw-accent-rgb: 70, 167, 88;
+  --aw-accent-bg: rgba(70, 167, 88, 0.12);
+}
+
+html[data-accent='orange'] {
+  --aw-primary: #C2410C;
+  --aw-primary-focus: #D64B14;
+  --aw-primary-on-dark: #F97316;
+  --aw-accent: #C2410C;
+  --aw-accent-rgb: 194, 65, 12;
+  --el-color-primary-light-3: #CE673D;
+  --el-color-primary-light-5: rgba(194, 65, 12, 0.15);
+  --el-color-primary-light-7: rgba(194, 65, 12, 0.10);
+  --el-color-primary-light-8: rgba(194, 65, 12, 0.08);
+  --el-color-primary-light-9: rgba(194, 65, 12, 0.05);
+}
+
+html[data-theme='dark'][data-accent='orange'] {
+  --el-color-primary: var(--aw-primary);
+  --el-color-primary-dark-2: var(--aw-primary-focus);
+  --aw-primary-on-dark: #F97316;
+  --aw-primary-lighter: rgba(249, 115, 22, 0.18);
+  --aw-primary-soft: rgba(249, 115, 22, 0.08);
+  --aw-primary-hover: rgba(249, 115, 22, 0.14);
+  --aw-primary-ring: rgba(249, 115, 22, 0.22);
+  --aw-primary-line: rgba(249, 115, 22, 0.32);
+  --aw-accent: #F97316;
+  --aw-accent-rgb: 249, 115, 22;
+  --aw-accent-bg: rgba(249, 115, 22, 0.12);
+}
+
+html[data-accent='graphite'] {
+  --aw-primary: #475569;
+  --aw-primary-focus: #5A6B85;
+  --aw-primary-on-dark: #94A3B8;
+  --aw-accent: #475569;
+  --aw-accent-rgb: 71, 85, 105;
+  --el-color-primary-light-3: #6C7787;
+  --el-color-primary-light-5: rgba(71, 85, 105, 0.15);
+  --el-color-primary-light-7: rgba(71, 85, 105, 0.10);
+  --el-color-primary-light-8: rgba(71, 85, 105, 0.08);
+  --el-color-primary-light-9: rgba(71, 85, 105, 0.05);
+}
+
+html[data-theme='dark'][data-accent='graphite'] {
+  --el-color-primary: var(--aw-primary);
+  --el-color-primary-dark-2: var(--aw-primary-focus);
+  --aw-primary-on-dark: #94A3B8;
+  --aw-primary-lighter: rgba(148, 163, 184, 0.18);
+  --aw-primary-soft: rgba(148, 163, 184, 0.08);
+  --aw-primary-hover: rgba(148, 163, 184, 0.14);
+  --aw-primary-ring: rgba(148, 163, 184, 0.22);
+  --aw-primary-line: rgba(148, 163, 184, 0.32);
+  --aw-accent: #94A3B8;
+  --aw-accent-rgb: 148, 163, 184;
+  --aw-accent-bg: rgba(148, 163, 184, 0.12);
+}
+
+/* ============================================
+   Font Scale — html[data-font-scale] 三档字号（std 默认不写属性）
+   覆写 4 个 --aw-text-* 令牌 + 3 个 Element Plus 字号变量；
+   marketing 尺寸（--aw-text-hero/display/lead/tagline）三档一律不动。
+   ============================================ */
+
+html[data-font-scale='small'] {
+  --aw-text-body: 15px;
+  --aw-text-caption: 13px;
+  --aw-text-fine: 11px;
+  --aw-text-micro: 10px;
+  --el-font-size-base: 12px;
+  --el-font-size-small: 11px;
+  --el-font-size-extra-small: 11px;
+}
+
+html[data-font-scale='large'] {
+  --aw-text-body: 19px;
+  --aw-text-caption: 15px;
+  --aw-text-fine: 13px;
+  --aw-text-micro: 11px;
+  --el-font-size-base: 14px;
+  --el-font-size-small: 13px;
+  --el-font-size-extra-small: 13px;
 }
 
 /* ============================================

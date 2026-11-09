@@ -988,7 +988,7 @@ async function copyMessage() {
 }
 
 :root[data-theme="dark"] .user-text {
-  background: rgba(41, 151, 255, 0.12);
+  background: var(--aw-accent-bg);
 }
 
 .user-text.collapsed .user-text-content {

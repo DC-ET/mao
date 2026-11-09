@@ -522,6 +522,17 @@ onMounted(() => {
 }
 
 .history-row.current {
+  background: rgba(var(--aw-accent-rgb), 0.08);
+  border-color: rgba(var(--aw-accent-rgb), 0.25);
+}
+
+/*
+ * 暗色默认档零变化锚点：本组件无暗色覆盖语境，三处原字面量 rgba(0,102,204,α)（亮蓝）
+ * 在暗色下同样生效；收编为 var(--aw-accent-rgb) 后，暗色默认档会重定义为暗色家族
+ * (41,151,255) 而偏离旧版渲染。仅在未写 data-accent（默认档）时回填原字面量；
+ * 非默认强调色下继续跟随 --aw-accent-rgb（预设暗色块会重定义该三元组）。
+ */
+:root[data-theme="dark"]:not([data-accent]) .history-row.current {
   background: rgba(0, 102, 204, 0.08);
   border-color: rgba(0, 102, 204, 0.25);
 }
@@ -584,9 +595,14 @@ onMounted(() => {
   flex-shrink: 0;
   font-size: 11px;
   color: var(--aw-primary, #0066cc);
-  border: 1px solid rgba(0, 102, 204, 0.4);
+  border: 1px solid rgba(var(--aw-accent-rgb), 0.4);
   border-radius: 999px;
   padding: 2px 8px;
+}
+
+/* 同上：暗色默认档零变化锚点（回填原字面量，非默认强调色下跟随 --aw-accent-rgb） */
+:root[data-theme="dark"]:not([data-accent]) .current-badge {
+  border-color: rgba(0, 102, 204, 0.4);
 }
 
 .server-form :deep(.el-form-item__label) {

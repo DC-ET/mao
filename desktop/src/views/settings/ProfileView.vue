@@ -5,7 +5,7 @@
       <p class="page-desc">管理你的头像与个人资料，头像会展示在顶栏。</p>
     </div>
 
-    <!-- 主题色偏好：与个人资料同页，作为「这台设备上只看我自己的展示偏好」的收口 -->
+    <!-- 外观偏好：与个人资料同页，作为「这台设备上只看我自己的展示偏好」的收口 -->
     <div class="profile-card theme-card">
       <div class="theme-row">
         <div>
@@ -16,6 +16,34 @@
           <el-radio-button value="light">浅色</el-radio-button>
           <el-radio-button value="dark">深色</el-radio-button>
           <el-radio-button value="auto">跟随系统</el-radio-button>
+        </el-radio-group>
+      </div>
+      <div class="theme-row">
+        <div>
+          <div class="theme-label">强调色</div>
+          <div class="theme-hint">应用于按钮、链接与选中态，亮暗主题各自适配。</div>
+        </div>
+        <div class="accent-swatches">
+          <button
+            v-for="p in ACCENT_PRESETS"
+            :key="p.id"
+            type="button"
+            class="accent-swatch"
+            :class="{ active: accent === p.id }"
+            :style="{ background: p.swatch }"
+            :aria-label="`强调色：${p.label}`"
+            :aria-pressed="accent === p.id"
+            @click="setAccent(p.id)"
+          ></button>
+        </div>
+      </div>
+      <div class="theme-row">
+        <div>
+          <div class="theme-label">界面字号</div>
+          <div class="theme-hint">三档影响界面与正文字号，立即生效。</div>
+        </div>
+        <el-radio-group v-model="fontScaleMode" class="theme-radio-group" @change="handleFontScaleChange">
+          <el-radio-button v-for="opt in FONT_SCALE_OPTIONS" :key="opt.id" :value="opt.id">{{ opt.label }}</el-radio-button>
         </el-radio-group>
       </div>
     </div>
@@ -94,6 +122,7 @@ import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import { uploadImages } from '../../utils/imageUpload'
 import { useTheme, type ThemeMode } from '../../utils/theme'
+import { useAppearance, type FontScaleId } from '../../utils/appearance'
 import ChangePasswordDialog from './ChangePasswordDialog.vue'
 
 const passwordDialogVisible = ref(false)
@@ -102,12 +131,20 @@ const MAX_SIZE = 5 * 1024 * 1024
 
 const authStore = useAuthStore()
 const { theme, setTheme } = useTheme()
+const { accent, setAccent, fontScale, setFontScale, ACCENT_PRESETS, FONT_SCALE_OPTIONS } = useAppearance()
 
 /** 主题模式：与 theme.ts 的单例 ref 同源，写入 localStorage 后立即生效 */
 const themeMode = ref<ThemeMode>(theme.value)
 
 function handleThemeChange(value: ThemeMode) {
   setTheme(value)
+}
+
+/** 字号档位：与 appearance.ts 的单例 ref 同源，选择即写入 localStorage 并立即生效 */
+const fontScaleMode = ref<FontScaleId>(fontScale.value)
+
+function handleFontScaleChange(value: FontScaleId) {
+  setFontScale(value)
 }
 
 const form = reactive({
@@ -300,6 +337,31 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
+}
+
+/* 外观卡内多行排布：行间距 */
+.theme-row + .theme-row {
+  margin-top: 16px;
+}
+
+.accent-swatches {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.accent-swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.accent-swatch.active {
+  border-color: var(--aw-primary);
 }
 
 .theme-label {
