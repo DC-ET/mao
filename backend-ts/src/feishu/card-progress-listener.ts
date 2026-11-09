@@ -33,6 +33,8 @@ export class FeishuCardProgressListener implements AgentEventListener {
   private content = '';
   /** 上一轮收尾时留下的正文：本轮没有 assistant content 时用它撑住卡片。 */
   private carriedContent = '';
+  /** 首个轮次的「正在思考…」占位是否已推送：仅首次思考推送，后续轮次不重刷（避免进度重置感）。 */
+  private initialThinkingPushed = false;
   private readonly tools = new Map<string, ToolProgress>();
   private pending: Promise<void> = Promise.resolve();
   /** 在途工具耗时的周期刷新定时器；仅在有工具在跑期间存在（见 ensureTicker/stopTicker）。 */
@@ -58,9 +60,12 @@ export class FeishuCardProgressListener implements AgentEventListener {
 
   onRoundStart(round: number): void {
     this.round = this.displayRound(round);
-    // LLM 请求已发起（真正进入思考阶段）：立即刷新卡片，轮次也随之向上走。
-    // 首次调用常要几十秒才产出内容，卡片若停在首卡的「任务已接收，正在准备执行。」，
-    // 用户会误以为任务卡住；尚无正文（本轮未产出、上轮也没有可兜底内容）时用思考提示占位。
+    // 仅首个轮次推送「正在思考…」占位：把首卡的「任务已接收，正在准备执行。」推进到思考态，
+    // 首次调用常要几十秒才产出内容，卡片不动会让用户以为任务卡住。
+    // 后续轮次保持卡片现状（已展示的进展与轮次）不再重刷——每轮开始都重刷成「正在思考…」
+    // 会抹掉已完成的轮次记录（如第 36 轮时正文只剩「正在思考…」），让人误以为进度重置。
+    if (this.initialThinkingPushed) return;
+    this.initialThinkingPushed = true;
     const content = this.displayContent();
     this.queue('RUNNING', content.trim() === '' ? THINKING_TEXT : content, this.toolsList(this.now()), this.round);
   }

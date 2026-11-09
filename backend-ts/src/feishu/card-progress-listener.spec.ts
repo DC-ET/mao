@@ -33,6 +33,25 @@ describe('FeishuCardProgressListener', () => {
     expect(updates).toEqual([{ status: 'RUNNING', round: 1, content: '正在思考…', tools: [] }]);
   });
 
+  it('does not re-announce thinking at later rounds so prior progress stays visible', async () => {
+    // 第 36 轮时若正文被重刷成「正在思考…」，已执行的进展被抹掉，像进度重置。
+    const updates: Array<{ status: string; round: number; content: string; tools: string[] }> = [];
+    const listener = new FeishuCardProgressListener({
+      update: async (status, round, content, tools) => { updates.push({ status, round, content, tools }); },
+    });
+    listener.onRoundStart(1);
+    listener.onContentDelta('已完成配置检查。');
+    listener.onRoundEnd(1);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const afterFirstRound = updates.length;
+    listener.onRoundStart(2);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(updates).toHaveLength(afterFirstRound);
+    expect(updates[updates.length - 1]).toEqual({
+      status: 'RUNNING', round: 1, content: '已完成配置检查。', tools: [],
+    });
+  });
+
   it('keeps tool results matched when results arrive out of order', async () => {
     const updates: string[][] = [];
     const listener = new FeishuCardProgressListener({ update: async (_status, _round, _content, tools) => { updates.push(tools); } });
@@ -183,9 +202,8 @@ describe('FeishuCardProgressListener', () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(updates[0]).toEqual({ round: 1, content: '正在思考…', tools: [] });
     expect(updates[1]).toEqual({ round: 1, content: '请先登录：https://ecp.example.com/auth/abc', tools: [] });
-    // 第 2、3 轮都是纯工具轮，正文沿用最近一条（轮首思考态与收尾各刷一次）。
+    // 第 2、3 轮都是纯工具轮，正文沿用最近一条；轮首不再重刷思考态，进展由工具开始/收尾推进。
     expect(updates.filter((u) => u.round === 2)).toEqual([
-      { round: 2, content: '请先登录：https://ecp.example.com/auth/abc', tools: [] },
       { round: 2, content: '请先登录：https://ecp.example.com/auth/abc', tools: ['shell：`pmo login --status`（执行中）'] },
       { round: 2, content: '请先登录：https://ecp.example.com/auth/abc', tools: ['shell：执行 pmo login --status'] },
     ]);
