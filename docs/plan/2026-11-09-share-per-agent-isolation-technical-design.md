@@ -71,6 +71,7 @@
 顶层只保留 `README.md` / `agent-experience/` / `agents/`；原 `scripts/`、`settings*.xml` 迁移后删除（phase3）。
 
 > 未来新增 Agent：平台首用自动建 `agents/{A}/` 空目录；`settings.xml` / `scripts` 等投放品需按需手动投放（**不复用其它 Agent 目录的文件**，避免隐式共享）。
+> 现状备注（2026-11-09 复核）：share 根下另有一个**空目录 `repos/`**（2026-11-09 11:54 创建，无内容、无引用，疑似其他会话误建）；不影响本迁移，phase3 前确认归属，无用途则一并清理。
 
 ### 3.2 挂载清单变化（唯一的安全边界）
 
@@ -336,7 +337,7 @@ WHERE source_path = '/opt/mao-data/workspace/feishu-chat/3/oc_67837a63395d608df8
 ### 7.5 phase3 明细（清理，观察后执行）
 
 前置：① 代码已部署 ② `verify --pre-phase3` FAIL=0（残留 WARN 仅剩根目录三项）③ 观察 ≥1 天（无"旧路径不存在"类异常）。
-动作：先打包 `$BK/phase3-residual.tgz`（scripts、settings.xml、settings_t.xml）→ `rm -rf share/scripts`、`rm -f share/settings.xml share/settings_t.xml`；顶层复核仅剩 `README.md / agent-experience / agents`。之后 `verify --post-phase3` 必须 FAIL=0。
+动作：先打包 `$BK/phase3-residual.tgz`（scripts、settings.xml、settings_t.xml）→ `rm -rf share/scripts`、`rm -f share/settings.xml share/settings_t.xml`（若确认 `repos/` 等无用途空目录，亦在此步一并清理）；顶层复核仅剩 `README.md / agent-experience / agents`。之后 `verify --post-phase3` 必须 FAIL=0。
 
 ### 7.6 verify（校验）
 
