@@ -1,3 +1,11 @@
+## 0.0.489 (2026-11-09)
+
+### 后端
+- **公司 SSO 宿主 Origin 支持 HTTP、localhost 与 IP**：宿主 Origin 白名单的精确项由「仅 HTTPS」放宽为 HTTP/HTTPS 均可，支持 localhost、IPv4/IPv6 与非默认端口（如 `http://localhost:2222`）；换票 CORS 预检与 POST 校验共用同一规则同步放行。子域模式仍仅限 `https://*.example.com`，校验域名白名单、checkUrl 与换票入口 HTTPS（`requireHttps`）要求不变。
+
+### 管理后台
+- **公司 SSO 宿主 Origin 表单支持 HTTP、localhost 与 IP**：校验与后端保持一致，输入提示补充 `http://localhost:2222`、`http://127.0.0.1:8080` 等示例与默认端口说明；子域模式仍仅 HTTPS，HTTP 来源仅建议本地开发或内网联调使用。
+
 ## 0.0.488 (2026-11-09)
 
 ### 后端

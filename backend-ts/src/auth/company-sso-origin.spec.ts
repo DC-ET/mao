@@ -4,7 +4,7 @@ import { matchesCompanySsoOrigin, validateCompanySsoConfig, type CompanySsoConfi
 const config: CompanySsoConfig = { enabled: true, allowedDomains: ['example.com'], allowedOrigins: [], accessTtlSeconds: 1800, timeoutMs: 3000, requireHttps: true };
 
 const invalidOriginPatterns = [
-  '**', 'https://*', 'http://*.example.com', 'https://foo*.example.com', 'https://**.example.com',
+  '**', 'https://*', 'http://*.example.com', 'http://*.example.com:8443', 'https://foo*.example.com', 'https://**.example.com',
   'https://*.*.example.com', 'https://*.example.*', 'https://*.example.com/', 'https://*.example.com/path',
   'https://*.example.com?x', 'https://*.example.com#', 'https://user@*.example.com', 'https://*.example.com@evil.test',
   'https://*.example.com\\evil.test', 'https://*.example.com\n', ' https://*.example.com',
@@ -14,10 +14,13 @@ const invalidOriginPatterns = [
   'https://*.example.com:', 'https://*.example.com:0', 'https://*.example.com:65536',
   'https://*.EXAMPLE.COM', 'https://*.example.com:443',
   'https://*.example.com:08443', 'https://*.example.com:abc',
+  'ftp://example.com', 'http://host.example.com/path', 'http://host.example.com/', 'http://host.example.com:80',
+  'http://user@host.example.com', 'HTTP://host.example.com',
 ];
 
 describe('company SSO Origin patterns', () => {
-  it.each(['*', 'https://*.example.com', 'https://*.example.com:8443', 'https://host.example.com'])('accepts %s', (pattern) => {
+  it.each(['*', 'https://*.example.com', 'https://*.example.com:8443', 'https://host.example.com',
+    'http://host.example.com', 'http://localhost:2222', 'http://127.0.0.1:8080', 'http://[::1]:3000'])('accepts %s', (pattern) => {
     expect(validateCompanySsoConfig({ ...config, allowedOrigins: [pattern] }).allowedOrigins).toEqual([pattern]);
   });
 
@@ -46,6 +49,27 @@ describe('company SSO Origin patterns', () => {
       expect(matchesCompanySsoOrigin(`${exact}:8443`, validated.allowedOrigins)).toBe(false);
       expect(matchesCompanySsoOrigin('https://example.com', validated.allowedOrigins)).toBe(false);
     }
+  });
+
+  it.each(['http://host.example.test', 'http://localhost:2222', 'http://127.0.0.1:8080', 'http://[::1]:3000'])('matches exact HTTP origin %s only against itself', (origin) => {
+    const validated = validateCompanySsoConfig({ ...config, allowedOrigins: [origin] });
+    expect(matchesCompanySsoOrigin(origin, validated.allowedOrigins)).toBe(true);
+    expect(matchesCompanySsoOrigin(origin.replace('http://', 'https://'), validated.allowedOrigins)).toBe(false);
+  });
+
+  it('requires scheme, host and port to match exactly for HTTP origins', () => {
+    const patterns = ['http://localhost:2222', 'http://127.0.0.1:8080'];
+    expect(matchesCompanySsoOrigin('http://localhost:2222', patterns)).toBe(true);
+    expect(matchesCompanySsoOrigin('http://127.0.0.1:8080', patterns)).toBe(true);
+    for (const origin of ['http://localhost:2223', 'https://localhost:2222', 'http://localhost',
+      'http://127.0.0.1:8081', 'https://127.0.0.1:8080', 'http://[::1]:8080', 'null']) {
+      expect(matchesCompanySsoOrigin(origin, patterns)).toBe(false);
+    }
+  });
+
+  it('never matches HTTP origins against HTTPS wildcard or exact HTTPS patterns', () => {
+    expect(matchesCompanySsoOrigin('http://a.example.com', ['https://*.example.com'])).toBe(false);
+    expect(matchesCompanySsoOrigin('http://example.com', ['https://example.com'])).toBe(false);
   });
 
   it('strictly matches non-default ports and preserves exact origins', () => {

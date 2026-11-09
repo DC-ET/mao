@@ -99,7 +99,7 @@ ECP 换票响应的 `data.user` 含可选 `avatar`：合法头像地址（http(s
 | 后台字段 | 默认 | 说明 |
 |------|------|------|
 | 启用公司 SSO | 关闭 | 开启前必须配置以下两类白名单 |
-| 宿主 Origin 白名单 | 空 | 支持精确 HTTPS Origin、`https://*.example.com` 子域模式或 `*` 全来源；不填路径或尾斜杠 |
+| 宿主 Origin 白名单 | 空 | 支持精确 HTTP/HTTPS Origin（含 localhost、IP，可指定非默认端口）、`https://*.example.com` 子域模式（仅 HTTPS）或 `*` 全来源；不填路径或尾斜杠 |
 | 校验域名白名单 | 空 | 如 `example.com,sso.example.com`；每项允许自身及其所有子域名，不填协议、路径、端口或通配符 |
 | Access 有效期（秒） | 1800 | 60～3600 秒；实际不超过官方返回的 SSO 剩余有效期，不限制连续使用时长 |
 | 校验超时（毫秒） | 3000 | 单次官方校验超时，1～30000 毫秒 |
@@ -107,10 +107,11 @@ ECP 换票响应的 `data.user` 含可选 `avatar`：合法头像地址（http(s
 宿主 Origin 可混合填写以下规则（逗号或换行分隔）：
 
 - `https://admin.example.com`：精确匹配该 Origin。
+- `http://localhost:2222`：精确 Origin 支持 HTTP 与 HTTPS，含 localhost、IPv4/IPv6 与非默认端口；默认端口请省略（HTTP 80、HTTPS 443），端口须匹配。HTTP 来源仅建议本地开发或内网联调使用。
 - `https://*.example.com`：匹配 `https://a.example.com`、`https://a.b.example.com` 等任意层级子域，不包含根域 `https://example.com`，根域需单独登记。仅匹配 HTTPS 默认端口；需要非默认端口时填写 `https://*.example.com:8443`，端口严格匹配。
 - `*`：不限制网页来源，包括 HTTP 页面和 `null` Origin；换票 CORS 允许所有来源，但不允许 Cookie 凭据模式。仍须有效 SSO Token，Mao 换票接口和校验 URL 仍要求 HTTPS，校验域名白名单保持独立生效。
 
-子域模式不匹配 `evilexample.com`、`example.com.evil.com`，不允许部分星号、多重星号、路径、查询、片段或用户名密码。配置 `*` 表示配置人员明确放开网页来源限制。
+子域模式不匹配 `evilexample.com`、`example.com.evil.com`，不允许部分星号、多重星号、路径、查询、片段或用户名密码；HTTP 仅可用于精确 Origin，不支持 `http://*.example.com`。配置 `*` 表示配置人员明确放开网页来源限制。
 
 保存需 `settings:write` 权限；完整配置一次保存，非法值不会部分写入。升级需执行 V107 系统设置迁移；旧环境配置不导入，请在后台重新填写。关闭 SSO 后新换票被拒绝，不立即撤销已有 access，也不取消已受理任务。已开始换票请求使用其读取的配置快照。
 

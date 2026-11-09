@@ -70,7 +70,7 @@ describe('company SSO settings validation', () => {
     JSON.stringify({ ...enabled, requireHttps: true }), JSON.stringify({ ...enabled, enabled: 'true' }),
     JSON.stringify({ ...enabled, allowedDomains: 'example.com' }), JSON.stringify({ ...enabled, allowedDomains: [1] }),
     JSON.stringify({ ...enabled, allowedOrigins: [1] }), JSON.stringify({ ...enabled, allowedOrigins: [] }),
-    JSON.stringify({ ...enabled, allowedDomains: [] }), JSON.stringify({ ...enabled, allowedOrigins: ['http://portal.example.test'] }),
+    JSON.stringify({ ...enabled, allowedDomains: [] }), JSON.stringify({ ...enabled, allowedOrigins: ['http://portal.example.test/path'] }),
     ...['https://*.EXAMPLE.COM', 'https://*.example.com:443', 'https://foo*.example.com', 'https://*.*.example.com', 'https://*.127.0.0.1', 'https://*.example.com/path', 'https://user@*.example.com', 'https://*.example.com:65536']
       .map((pattern) => JSON.stringify({ ...enabled, allowedOrigins: ['*', pattern] })),
     ...[59, 3601, 60.5, '1800', null].map((accessTtlSeconds) => JSON.stringify({ ...enabled, accessTtlSeconds })),
@@ -121,6 +121,31 @@ describe('company SSO runtime updates through settings HTTP routes', () => {
           expect(response.headers['access-control-allow-credentials']).toBeUndefined();
         }
         if (allowed) expect(preflight.statusCode).toBe(204);
+      }
+    } finally { await f.app.close(); }
+  });
+
+  it('serves exact HTTP localhost and IP origins for preflight and POST while staying strict', async () => {
+    const allowedOrigins = ['http://localhost:2222', 'http://127.0.0.1:8080'];
+    const f = await application(JSON.stringify({ ...enabled, allowedOrigins }));
+    try {
+      for (const origin of allowedOrigins) {
+        const preflight = await f.app.inject({ method: 'OPTIONS', url: path, headers: {
+          origin, 'access-control-request-method': 'POST', 'access-control-request-headers': 'Authorization, Content-Type',
+        } });
+        expect(preflight.statusCode).toBe(204);
+        expect(preflight.headers['access-control-allow-origin']).toBe(origin);
+        expect(preflight.headers['access-control-allow-credentials']).toBeUndefined();
+        const post = await f.exchange(checkUrl, origin);
+        expect(post.statusCode).toBe(200);
+        expect(post.headers['access-control-allow-origin']).toBe(origin);
+      }
+      for (const origin of ['http://localhost:2223', 'https://localhost:2222', 'http://127.0.0.1:8081', 'http://localhost', 'null']) {
+        const preflight = await f.app.inject({ method: 'OPTIONS', url: path, headers: { origin, 'access-control-request-method': 'POST' } });
+        const post = await f.exchange(checkUrl, origin);
+        expect(post.statusCode).toBe(403);
+        expect(post.headers['access-control-allow-origin']).toBeUndefined();
+        expect(preflight.headers['access-control-allow-origin']).toBeUndefined();
       }
     } finally { await f.app.close(); }
   });

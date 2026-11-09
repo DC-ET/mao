@@ -332,7 +332,7 @@ export class SystemSettingService {
         || Object.keys(parsed).length !== keys.length || !keys.every((key) => Object.hasOwn(parsed, key))) throw new Error();
       return validateCompanySsoConfig({ ...parsed, requireHttps: true } as CompanySsoConfig);
     } catch {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, '公司 SSO 配置必须是完整有效的 JSON：enabled、allowedDomains、allowedOrigins、accessTtlSeconds（60-3600）、timeoutMs（1-30000），Origin 支持精确 HTTPS、https://*.example.com（可带端口）或全来源 *');
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '公司 SSO 配置必须是完整有效的 JSON：enabled、allowedDomains、allowedOrigins、accessTtlSeconds（60-3600）、timeoutMs（1-30000），Origin 支持精确 HTTP/HTTPS（含 localhost、IP 与非默认端口）、https://*.example.com（仅 HTTPS，可带端口）或全来源 *');
     }
   }
 

@@ -56,7 +56,9 @@ function validateAllowedOrigin(origin: unknown): void {
     return;
   }
   const url = new URL(origin);
-  if (url.origin !== origin || url.username || url.password || url.protocol !== 'https:') {
+  // Exact origins may be HTTP or HTTPS (localhost/IP for local development); wildcards stay HTTPS-only.
+  if (url.origin !== origin || url.username || url.password
+    || (url.protocol !== 'https:' && url.protocol !== 'http:')) {
     throw new Error('Invalid SSO allowed origin');
   }
 }
@@ -67,8 +69,11 @@ export function matchesCompanySsoOrigin(origin: string, allowedOrigins: readonly
   try {
     const url = new URL(origin);
     // Do not let URL normalization turn paths, userinfo or malformed origins into trusted origins.
-    if (url.origin !== origin || url.protocol !== 'https:' || url.username || url.password) return false;
+    if (url.origin !== origin || url.username || url.password) return false;
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
     if (allowedOrigins.includes(origin)) return true;
+    // Subdomain patterns are HTTPS-only, so an HTTP origin can never match one.
+    if (url.protocol !== 'https:') return false;
     return allowedOrigins.some((pattern) => {
       if (!pattern.includes('*')) return false;
       const root = parseWildcardOrigin(pattern);

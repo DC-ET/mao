@@ -51,8 +51,9 @@ function validateOrigins(value: unknown): string[] {
     if (wildcard && url.port === '0') {
       throw new Error('allowedOrigins 子域模式端口必须为 1–65535，默认 HTTPS 端口请省略')
     }
-    if (url.protocol !== 'https:' || url.origin !== origin || url.hostname.includes('*')) {
-      throw new Error(`allowedOrigins 必须是精确 HTTPS Origin、https://*.example.com 形式的子域模式或 *：${item}；须为规范 Origin，不含路径、尾部斜杠、查询、凭据或片段，子域通配符仅限最左侧 *.`)
+    const protocolOk = wildcard ? url.protocol === 'https:' : url.protocol === 'http:' || url.protocol === 'https:'
+    if (!protocolOk || url.origin !== origin || url.hostname.includes('*')) {
+      throw new Error(`allowedOrigins 必须是精确 HTTP/HTTPS Origin、https://*.example.com 形式的子域模式（仅 HTTPS）或 *：${item}；须为规范 Origin，不含路径、尾部斜杠、查询、凭据或片段，默认端口（HTTP 80、HTTPS 443）请省略；精确 Origin 支持 localhost、IP 和非默认端口；子域通配符仅限最左侧 *.`)
     }
     return item
   }))]

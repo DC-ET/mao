@@ -18,10 +18,15 @@ describe('company SSO configuration', () => {
 
   it.each([
     { allowedOrigins: [] }, { allowedOrigins: ['null'] }, { allowedOrigins: ['https://foo*.example.test'] },
-    { allowedOrigins: ['https://host.example.test/path'] }, { allowedOrigins: ['http://host.example.test'] },
+    { allowedOrigins: ['https://host.example.test/path'] }, { allowedOrigins: ['http://host.example.test/path'] },
+    { allowedOrigins: ['ftp://host.example.test'] }, { allowedOrigins: ['http://*.example.test'] },
     { accessTtlSeconds: 59 }, { accessTtlSeconds: 3601 }, { timeoutMs: 0 }, { allowedDomains: [] },
   ])('rejects unsafe config %j', (override) => {
     expect(() => validateCompanySsoConfig({ ...config, ...override })).toThrow();
+  });
+
+  it.each(['http://host.example.test', 'http://localhost:2222', 'http://127.0.0.1:8080', 'http://[::1]:3000'])('accepts exact HTTP origin %s', (origin) => {
+    expect(validateCompanySsoConfig({ ...config, allowedOrigins: [origin] }).allowedOrigins).toEqual([origin]);
   });
 
   it.each(['', 'https://example.com', '*.example.com', 'example.com/path', 'example.com:443', 'example.com.',
