@@ -428,7 +428,7 @@ describe('ToolDispatcher', () => {
     const raw = await asyncDispatcher.dispatch(
       'shell', '{"command":"sleep 1","async":true}', 'LOCAL', 7, 'workspace', 'FULL', null,
     );
-    expect(JSON.parse(raw).error).toContain('Local client is not connected');
+    expect(JSON.parse(raw).error).toContain('本地执行端未连接，请确保桌面客户端正在运行');
     expect(JSON.parse(raw).async).toBeUndefined();
     expect(localToolExecutor.execute).not.toHaveBeenCalled();
     expect(await backgroundTasks.consumeCompletedResults(7)).toEqual({});

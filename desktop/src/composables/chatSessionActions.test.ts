@@ -7,7 +7,8 @@ const el = vi.hoisted(() => ({
 }))
 
 const ws = vi.hoisted(() => {
-  const callbacks = new Map<string, (sessionId: string) => void>()
+  // 与 useStreamWS 的 MessageSavedCallback 同签名：(sessionId, messageId, saved)
+  const callbacks = new Map<string, (sessionId: string, messageId: string | null, saved: boolean) => void>()
   let seq = 0
   return {
     callbacks,
@@ -15,7 +16,7 @@ const ws = vi.hoisted(() => {
       callbacks.clear()
       seq = 0
     },
-    onMessageSaved: vi.fn((callback: (sessionId: string) => void) => {
+    onMessageSaved: vi.fn((callback: (sessionId: string, messageId: string | null, saved: boolean) => void) => {
       const id = `cb-${++seq}`
       callbacks.set(id, callback)
       return id
@@ -49,7 +50,7 @@ import {
 import { useChatQueue } from './useChatQueue'
 
 /** 取出当前注册的 user_message_saved 回调（每次只发一条） */
-function savedCallback(): (sessionId: string) => void {
+function savedCallback(): (sessionId: string, messageId: string | null, saved: boolean) => void {
   const cb = [...ws.callbacks.values()][0]
   expect(cb, '未注册 user_message_saved 监听').toBeTypeOf('function')
   return cb!
@@ -136,16 +137,37 @@ describe('waitForMessageSaved（发送后等待落库确认）', () => {
 
   it('收到本会话确认后返回 true，并解绑监听', async () => {
     const pending = waitForMessageSaved('12')
-    savedCallback()('12')
+    savedCallback()('12', '55', true)
     await expect(pending).resolves.toBe(true)
     expect(ws.offMessageSaved).toHaveBeenCalledWith('cb-1')
     expect(ws.callbacks.size).toBe(0)
   })
 
+  it('服务端落库前拒绝（saved=false）立即返回 false，不等超时', async () => {
+    const pending = waitForMessageSaved('12', { timeoutMs: 60_000 })
+    // 本地执行端未连接等拒绝只回 error 帧：useStreamWS.failMessageSaved 以 saved=false 结算
+    savedCallback()('12', null, false)
+    await expect(pending).resolves.toBe(false)
+    expect(ws.callbacks.size).toBe(0)
+  })
+
+  it('别的会话的拒绝不算数：不提前结算，仍走超时', async () => {
+    vi.useFakeTimers()
+    const pending = waitForMessageSaved('12', { timeoutMs: 100 })
+    // failMessageSaved 会调用全部回调，匹配判定在回调内：别的会话不得提前失败
+    savedCallback()('99', null, false)
+    let settled = false
+    void pending.then(() => { settled = true })
+    await vi.advanceTimersByTimeAsync(50)
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(50)
+    await expect(pending).resolves.toBe(false)
+  })
+
   it('别的会话的确认不算数', async () => {
     vi.useFakeTimers()
     const pending = waitForMessageSaved('12', { timeoutMs: 100 })
-    savedCallback()('99')
+    savedCallback()('99', '77', true)
     await vi.advanceTimersByTimeAsync(100)
     await expect(pending).resolves.toBe(false)
   })
@@ -154,7 +176,7 @@ describe('waitForMessageSaved（发送后等待落库确认）', () => {
     let expected: string | null = null
     const pending = waitForMessageSaved(() => expected)
     expected = '31'
-    savedCallback()('31')
+    savedCallback()('31', '88', true)
     await expect(pending).resolves.toBe(true)
   })
 
@@ -173,7 +195,7 @@ describe('waitForMessageSaved（发送后等待落库确认）', () => {
     await expect(pending).resolves.toBe(false)
     expect(ws.callbacks.size).toBe(0)
     // 解绑后再收到确认不应重复 resolve
-    cb('12')
+    cb('12', '55', true)
     expect(ws.callbacks.size).toBe(0)
   })
 })

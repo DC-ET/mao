@@ -1555,3 +1555,56 @@ describe('session store「展开更多」loadedCount 复核护栏的精确性', 
     expect(store.getGroupMeta('CLOUD:临时工作区')).toBeUndefined()
   })
 })
+
+// LOCAL 执行端上下线实时化（技术方案 2026-11-05 §4.1-7）：applyDeviceStatus 按
+// deviceId 刷新绑定会话的 targetDeviceOnline 快照，替代「只有刷新才纠正」。
+describe('session store applyDeviceStatus（执行端在线态实时同步）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    mockGet.mockReset()
+  })
+
+  const seed = () => {
+    const store = useSessionStore()
+    store.updateSession('1', makeSession('1', {
+      executionMode: 'LOCAL', targetDeviceId: 'dev-1', targetDeviceName: 'MyMac', targetDeviceOnline: true,
+    }))
+    store.updateSession('2', makeSession('2', {
+      executionMode: 'LOCAL', targetDeviceId: 'dev-1', targetDeviceName: 'MyMac', targetDeviceOnline: true,
+    }))
+    store.updateSession('3', makeSession('3', {
+      executionMode: 'LOCAL', targetDeviceId: 'dev-2', targetDeviceName: 'Other', targetDeviceOnline: true,
+    }))
+    // CLOUD 会话没有执行端概念，快照恒为空
+    store.updateSession('4', makeSession('4'))
+    return store
+  }
+
+  it('按 deviceId 翻动绑定会话的在线态，返回变化条数', () => {
+    const store = seed()
+    expect(store.applyDeviceStatus('dev-1', false)).toBe(2)
+    expect(store.getSessionEntity('1')?.targetDeviceOnline).toBe(false)
+    expect(store.getSessionEntity('2')?.targetDeviceOnline).toBe(false)
+    // 别的设备与会话形态不受影响
+    expect(store.getSessionEntity('3')?.targetDeviceOnline).toBe(true)
+    expect(store.getSessionEntity('4')?.targetDeviceOnline).toBeUndefined()
+  })
+
+  it('重复应用同一状态是 no-op（变化条数 0），设备名缺省不覆盖已有值', () => {
+    const store = seed()
+    expect(store.applyDeviceStatus('dev-1', false)).toBe(2)
+    expect(store.applyDeviceStatus('dev-1', false)).toBe(0)
+    expect(store.applyDeviceStatus('dev-2', true)).toBe(0)
+    expect(store.getSessionEntity('3')?.targetDeviceName).toBe('Other')
+    // 上线带回设备名时补全快照
+    expect(store.applyDeviceStatus('dev-1', true, 'MyMac.local')).toBe(2)
+    expect(store.getSessionEntity('1')?.targetDeviceName).toBe('MyMac.local')
+  })
+
+  it('未绑定设备 / 空 deviceId 不动任何会话', () => {
+    const store = seed()
+    expect(store.applyDeviceStatus('', false)).toBe(0)
+    expect(store.applyDeviceStatus('dev-unknown', false)).toBe(0)
+    expect(store.getSessionEntity('1')?.targetDeviceOnline).toBe(true)
+  })
+})

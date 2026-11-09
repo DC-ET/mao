@@ -816,3 +816,137 @@ describe('useStreamWS 多端审批（技术方案 2026-11-06）', () => {
     expect(item.description).toContain('已截断')
   })
 })
+
+// LOCAL 执行端上下线实时化（技术方案 2026-11-05 §4.1-7）：targetDeviceOnline 原本只是
+// 会话详情的请求时快照，桌面端退出后其他端横幅停在绿色在线态直到刷新；现在由服务端
+// device_status 广播驱动，前端按 deviceId 刷新绑定会话快照并派发 window 事件。
+describe('useStreamWS device_status（执行端上下线实时化）', () => {
+  /** 造一条绑定 dev-1 的 LOCAL 会话实体（在线快照 true），另造无关会话各一 */
+  const seedSessions = () => {
+    const store = useSessionStore()
+    store.updateSession('11', {
+      executionMode: 'LOCAL', targetDeviceId: 'dev-1', targetDeviceName: 'MyMac', targetDeviceOnline: true,
+    } as never)
+    store.updateSession('12', {
+      executionMode: 'LOCAL', targetDeviceId: 'dev-2', targetDeviceName: 'Other', targetDeviceOnline: true,
+    } as never)
+    store.updateSession('13', { executionMode: 'CLOUD' } as never)
+    return store
+  }
+
+  it('offline 帧把绑定设备的 LOCAL 会话翻为不在线，并派发 window 事件', async () => {
+    const { connect } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    const store = seedSessions()
+    const events: CustomEvent[] = []
+    const listener = (e: Event) => events.push(e as CustomEvent)
+    window.addEventListener('device_status', listener)
+
+    sockets[0].message({
+      type: 'device_status', sessionId: null,
+      data: { deviceId: 'dev-1', deviceName: 'MyMac', online: false },
+    })
+    window.removeEventListener('device_status', listener)
+
+    expect(store.getSessionEntity('11')?.targetDeviceOnline).toBe(false)
+    // 无关设备 / CLOUD 会话不受影响
+    expect(store.getSessionEntity('12')?.targetDeviceOnline).toBe(true)
+    expect(store.getSessionEntity('13')?.targetDeviceOnline).toBeUndefined()
+    expect(events).toHaveLength(1)
+    expect(events[0].detail).toEqual({ deviceId: 'dev-1', deviceName: 'MyMac', online: false })
+  })
+
+  it('online 帧把绑定设备的 LOCAL 会话翻回在线', async () => {
+    const { connect } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    const store = seedSessions()
+
+    sockets[0].message({
+      type: 'device_status', sessionId: null,
+      data: { deviceId: 'dev-1', deviceName: 'MyMac', online: true },
+    })
+
+    expect(store.getSessionEntity('11')?.targetDeviceOnline).toBe(true)
+  })
+
+  it('未知 deviceId / 非布尔 online 的帧被忽略', async () => {
+    const { connect } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    const store = seedSessions()
+
+    sockets[0].message({ type: 'device_status', sessionId: null, data: { deviceId: 'dev-9', online: false } })
+    sockets[0].message({ type: 'device_status', sessionId: null, data: { deviceId: 'dev-1', online: 'no' } })
+
+    expect(store.getSessionEntity('11')?.targetDeviceOnline).toBe(true)
+  })
+})
+
+// 落库前拒绝（本地执行端未连接 / 会话被占用 / 预算 BLOCK）只回 error 帧、不发
+// user_message_saved：等待保存确认的发送必须立即失败，而不是卡「正在保存…」60s。
+describe('useStreamWS error / 拒绝帧结算保存等待', () => {
+  const openSocket = async () => {
+    const { connect } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+  }
+
+  it('本地执行端未连接的 error 帧以 saved=false 结算本会话保存等待', async () => {
+    await openSocket()
+    const { onMessageSaved } = useStreamWS()
+    const seen: Array<{ sid: string; messageId: string | null; saved: boolean }> = []
+    onMessageSaved((sid, messageId, saved) => seen.push({ sid, messageId, saved }))
+
+    sockets[0].message({
+      type: 'error', sessionId: 11,
+      data: { message: '本地执行端未连接，请确保桌面客户端正在运行' },
+    })
+
+    expect(seen).toEqual([{ sid: '11', messageId: null, saved: false }])
+  })
+
+  it('error 帧调用全部已注册回调并带上出错会话 id（匹配由回调自行判定）', async () => {
+    await openSocket()
+    const { onMessageSaved } = useStreamWS()
+    const calls: Array<{ sid: string; saved: boolean }> = []
+    onMessageSaved((sid, _mid, saved) => calls.push({ sid, saved }))
+
+    sockets[0].message({ type: 'error', sessionId: 99, data: { message: 'boom' } })
+
+    expect(calls).toEqual([{ sid: '99', saved: false }])
+  })
+
+  it('side_session_rejected 不结算保存等待（父会话 id 会被边路面板自行中止）', async () => {
+    await openSocket()
+    const { onMessageSaved } = useStreamWS()
+    const seen: Array<{ sid: string; saved: boolean }> = []
+    onMessageSaved((sid, _mid, saved) => seen.push({ sid, saved }))
+
+    sockets[0].message({
+      type: 'error', sessionId: 11,
+      data: { message: '本地执行端未连接', code: 'side_session_rejected' },
+    })
+
+    expect(seen).toEqual([])
+  })
+
+  it('session_already_running 同样以 saved=false 结算保存等待', async () => {
+    await openSocket()
+    const { onMessageSaved } = useStreamWS()
+    const seen: Array<{ sid: string; saved: boolean }> = []
+    onMessageSaved((sid, _mid, saved) => seen.push({ sid, saved }))
+
+    sockets[0].message({
+      type: 'session_already_running', sessionId: 11,
+      data: { message: '该任务仍在运行', executionId: 'other-exec' },
+    })
+
+    expect(seen).toEqual([{ sid: '11', saved: false }])
+  })
+})

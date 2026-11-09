@@ -59,7 +59,8 @@ export async function guardUploadsBeforeSend(params: {
 
 /**
  * 等待 `user_message_saved`：只在服务端确认落库后返回 true。
- * 超时 / 主动取消返回 false（调用方据此决定是否清空输入框）。
+ * 超时 / 主动取消 / 服务端落库前拒绝（error 帧，如本地执行端未连接）返回 false
+ * ——拒绝是立即结算，不必等满超时（调用方据此解锁输入框并回滚乐观消息）。
  *
  * sessionId 支持传 getter：边路首发尚未拿到真实会话 id，需要等
  * `side_session_created` 回填后再匹配。
@@ -85,9 +86,11 @@ export function waitForMessageSaved(
       resolve(ok)
     }
 
-    callbackId = onMessageSaved((callbackSessionId: string) => {
+    callbackId = onMessageSaved((callbackSessionId: string, _messageId: string | null, saved: boolean) => {
       const expected = typeof sessionId === 'function' ? sessionId() : sessionId
-      if (expected != null && callbackSessionId === String(expected)) finish(true)
+      // saved=false：服务端落库前明确拒绝（本地执行端未连接等），与超时同径返回 false，
+      // 调用方解锁输入框并回滚乐观消息，但无需再等满超时。
+      if (expected != null && callbackSessionId === String(expected)) finish(saved)
     })
 
     if (signal?.aborted) {

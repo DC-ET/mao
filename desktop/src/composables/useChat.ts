@@ -650,6 +650,13 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     }
 
     if (!saved) {
+      // 服务端未确认落库（落库前拒绝：本地执行端未连接 / 会话被占用 / 预算 BLOCK 等；
+      // 或 60s 超时）：回滚乐观插入的用户消息与 assistant 占位，避免「没发出去却上屏」
+      // 的幽灵气泡。输入框文字由调用方（ChatPanel !saved 分支）保留，便于重试。
+      // removeLastUserMessage 只删 msg_/side_user_ 临时 id——若迟到的 user_message_saved
+      // 已把 id 换成服务端真实值（超时竞态），两个移除都是 no-op，不会误删已落库消息。
+      sessionStore.removeTrailingEmptyAssistant(sid)
+      sessionStore.removeLastUserMessage(sid)
       return false
     }
 

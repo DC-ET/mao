@@ -4,6 +4,12 @@ import { wsEvent } from '../deps.js';
 import { harnessLog } from '../log.js';
 import type { ApprovalHint } from '../approval/approval-hint.js';
 
+/**
+ * 本地执行端未连接时工具请求的失败回执（JSON error 字段）。该文案进入工具结果、
+ * 经 tool-result-summarizer 汇总后展示在工具卡片上，多端用户可见，须中文。
+ */
+export const LOCAL_CLIENT_OFFLINE_TOOL_ERROR = '本地执行端未连接，请确保桌面客户端正在运行';
+
 export interface PendingLocalToolRequest {
   requestId: string | null;
   future: Promise<string>;
@@ -165,7 +171,7 @@ export class LocalToolSessionRegistry {
     if (target == null || !reachable) {
       return {
         requestId: null,
-        future: Promise.resolve(JSON.stringify({ error: 'Local client is not connected' })),
+        future: Promise.resolve(JSON.stringify({ error: LOCAL_CLIENT_OFFLINE_TOOL_ERROR })),
         resolve: () => {},
       };
     }

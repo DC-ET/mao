@@ -635,7 +635,7 @@ describe('StreamingWsHandler', () => {
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'send_message', sessionId: 12, data: { content: 'hello again' } }));
     const notConnected = {
       type: 'error', sessionId: 12,
-      data: expect.objectContaining({ message: 'Local client is not connected. Please ensure the desktop app is running.' }),
+      data: expect.objectContaining({ message: '本地执行端未连接，请确保桌面客户端正在运行' }),
     };
     expect(registry.send).toHaveBeenCalledTimes(2);
     expect(registry.send).toHaveBeenNthCalledWith(1, 7, notConnected);
@@ -940,12 +940,86 @@ describe('StreamingWsHandler', () => {
     registry.getUserId.mockReturnValueOnce(null).mockReturnValue(7);
     jwtService.getAccessTokenMetadata.mockReturnValue(authMetadata);
     const connected: WsSocket = { id: 'ws-embed', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
-    // 旧版 SDK 不发送该字段、或发送非布尔值：一律按开启处理，行为与现状一致
+    // 旧版 SDK 不发送该字段、或发送非布尔值：一律按开启处理，行为与现状相同
     await handler.handleTextMessage(connected, JSON.stringify({
       type: 'auth', token: 'valid.jwt.token', client: 'embed', pageEnabled: 'false',
     }));
     expect(registry.register).toHaveBeenCalledWith(connected, 7, 'embed', authMetadata, true, null);
   });
+
+  // LOCAL 执行端上下线广播（技术方案 2026-11-05 §4.1-7 实时化）：targetDeviceOnline
+  // 原本只是会话详情的请求时快照，其他端（安卓/浏览器）只能靠刷新纠正；现在由设备
+  // 执行连接的「无→有 / 有→无」跃迁驱动，用户级广播、sessionId=null。
+  it('broadcasts device_status offline when the last executor connection of a device closes', () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    registry.getDeviceId.mockReturnValue('dev-1');
+    registry.getDeviceInfo.mockReturnValue({ id: 'dev-1', name: 'MyMac', platform: 'darwin' });
+    registry.hasDeviceConnection.mockReturnValue(false);
+    registry.hasLocalClientConnection.mockReturnValue(true);
+    handler.afterConnectionClosed(ws);
+    expect(registry.send).toHaveBeenCalledWith(7, {
+      type: 'device_status', sessionId: null,
+      data: { deviceId: 'dev-1', deviceName: 'MyMac', online: false },
+    });
+    expect(localToolSessionRegistry.failAllForDevice).toHaveBeenCalledWith(7, 'dev-1');
+  });
+
+  it('does not broadcast device_status while the device still has a fallback connection', () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    registry.getDeviceId.mockReturnValue('dev-1');
+    registry.getDeviceInfo.mockReturnValue({ id: 'dev-1', name: 'MyMac', platform: 'darwin' });
+    // 同设备还有另一条存活连接（releaseDevice 已回退）：设备并未离线，零噪音
+    registry.hasDeviceConnection.mockReturnValue(true);
+    registry.hasLocalClientConnection.mockReturnValue(true);
+    handler.afterConnectionClosed(ws);
+    expect(registry.send).not.toHaveBeenCalledWith(7, expect.objectContaining({ type: 'device_status' }));
+    expect(localToolSessionRegistry.failAllForDevice).not.toHaveBeenCalled();
+  });
+
+  it('broadcasts device_status online when a device executor connection registers', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValueOnce(null).mockReturnValue(7);
+    jwtService.getAccessTokenMetadata.mockReturnValue(authMetadata);
+    // 注册前不在线、注册后在线：唯一一次「无→有」跃迁
+    registry.hasDeviceConnection.mockReturnValueOnce(false).mockReturnValue(true);
+    const connected: WsSocket = { id: 'ws-1', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
+    await handler.handleTextMessage(connected, JSON.stringify({
+      type: 'auth', token: 'valid.jwt.token', client: 'electron',
+      device: { id: 'dev-1', name: 'MyMac', platform: 'darwin' },
+    }));
+    expect(registry.send).toHaveBeenCalledWith(7, {
+      type: 'device_status', sessionId: null,
+      data: { deviceId: 'dev-1', deviceName: 'MyMac', online: true },
+    });
+  });
+
+  it('does not broadcast device_status for re-registering or non-executor clients', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValueOnce(null).mockReturnValue(7);
+    jwtService.getAccessTokenMetadata.mockReturnValue(authMetadata);
+    // 设备此前已在线（同设备重连/多窗口覆盖）：无状态变化，不广播
+    registry.hasDeviceConnection.mockReturnValue(true);
+    const connected: WsSocket = { id: 'ws-2', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
+    await handler.handleTextMessage(connected, JSON.stringify({
+      type: 'auth', token: 'valid.jwt.token', client: 'electron',
+      device: { id: 'dev-1', name: 'MyMac', platform: 'darwin' },
+    }));
+    expect(registry.send).not.toHaveBeenCalledWith(7, expect.objectContaining({ type: 'device_status' }));
+
+    // 浏览器自报设备不构成执行连接（register 不为非本地能力客户端建 deviceExecutor）
+    registry.send.mockClear();
+    registry.getUserId.mockReturnValueOnce(null).mockReturnValue(7);
+    registry.hasDeviceConnection.mockReturnValue(false);
+    const browser: WsSocket = { id: 'ws-3', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
+    await handler.handleTextMessage(browser, JSON.stringify({
+      type: 'auth', token: 'valid.jwt.token', client: 'browser',
+      device: { id: 'dev-1', name: 'MyMac', platform: 'darwin' },
+    }));
+    expect(registry.send).not.toHaveBeenCalledWith(7, expect.objectContaining({ type: 'device_status' }));
+  });
+
 
   it('subscribeRePushesPendingAskUserQuestionsOnReconnect', async () => {
     vi.clearAllMocks();

@@ -23,7 +23,7 @@ describe('dump_user_messages result summary', () => {
   it('partial failure does not count the failed entries as success', () => {
     const result = JSON.stringify({
       files: [
-        { messageId: 11, error: 'Local client is not connected.' },
+        { messageId: 11, error: '本地执行端未连接，请确保桌面客户端正在运行。' },
         { messageId: 12, path: '/home/u/.mao/attachments/host/9/user-message-12.txt', bytes: 5 },
       ],
       count: 2,

@@ -83,6 +83,10 @@ const CRITICAL_EVENT_TYPES = new Set([
   // 后台子代理完成通知：丢失后客户端只能等下次 REST 重拉（刷新/切会话）才补上卡片，
   // 用户盯屏期间完全看不到通知。事件量与 inbox_updated 同量级。
   'assistant_message_saved',
+  // LOCAL 执行端上下线（技术方案 2026-11-05 §4.1-7 的实时化）：丢失后其他端的
+  // 「在 xxx 上执行」横幅 / 发送前拦截会停在陈旧在线态，直到下次刷新才纠正。
+  // 设备连接变更低频，不挤占关键通道。
+  'device_status',
 ]);
 
 function isCriticalItem(item: OutboundItem): boolean {

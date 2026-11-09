@@ -312,6 +312,30 @@ const hasRealSession = computed(() => realSessionId.value > 0)
 const sideSessionDevice = ref<{ id: string | null; name: string | null; online: boolean | null } | null>(null)
 
 /**
+ * 执行端上下线实时同步（服务端 device_status 广播，技术方案 2026-11-05 §4.1-7）：
+ * 边路会话与占位期来源会话的设备态都是本地快照（不在 session store 实体里），
+ * store 的 applyDeviceStatus 覆盖不到，需自行订阅 window 事件；
+ * 父/主会话实体已由 store 统一更新，无需在此处理。
+ */
+function handleDeviceStatus(event: Event) {
+  const detail = (event as CustomEvent<{ deviceId?: string; deviceName?: string | null; online?: boolean }>).detail
+  if (!detail?.deviceId || typeof detail.online !== 'boolean') return
+  const device = sideSessionDevice.value
+  if (device && device.id === detail.deviceId) {
+    sideSessionDevice.value = {
+      ...device,
+      online: detail.online,
+      name: detail.deviceName ?? device.name,
+    }
+  }
+  const meta = sourceSessionMeta.value
+  if (meta && (meta.targetDeviceId ?? '') === detail.deviceId) {
+    sourceSessionMeta.value = { ...meta, targetDeviceOnline: detail.online }
+  }
+}
+window.addEventListener('device_status', handleDeviceStatus)
+
+/**
  * 边路任务目标设备（技术方案 2026-11-05 §4.1-4）：边路会话继承父/来源会话绑定。
  * 真实会话读会话详情；占位期（会话尚未创建）用来源会话、回退主会话预展示，
  * 避免输入区把已绑定设备的本地边路任务误显示为「未登记执行端」。
@@ -803,6 +827,8 @@ onActivated(() => {
 onUnmounted(() => {
   pendingSendCleanup?.()
   pendingSendCleanup = null
+
+  window.removeEventListener('device_status', handleDeviceStatus)
 
   const el = messagesContainer.value
   el?.removeEventListener('scroll', handleScroll)

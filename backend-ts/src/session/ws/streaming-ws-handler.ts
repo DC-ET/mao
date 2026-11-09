@@ -72,6 +72,12 @@ import type { McpConnectionError } from '../../harness/mcp/entity/mcp-server.js'
 import type { ApprovalHint } from '../../harness/approval/approval-hint.js';
 import type { ApprovalRequestPayload } from '../../harness/approval/approval-registry.js';
 
+/**
+ * LOCAL 会话执行端未连接的拒绝文案。经 WS error 帧送达前端并原样展示给用户（弹窗 / 错误横幅），
+ * 必须中文：多端（桌面 / Web / 安卓）用户可见，与同文件其它中文拒绝文案保持同一口径。
+ */
+const LOCAL_CLIENT_OFFLINE_MESSAGE = '本地执行端未连接，请确保桌面客户端正在运行';
+
 export interface WsHandlerDeps {
   registry: StreamingWsRegistry;
   titleService: {
@@ -453,6 +459,7 @@ export class StreamingWsHandler {
     const userId = this.deps.registry.getUserId(session);
     // 设备身份必须在 unregister 前取：unregister 会清理 connectionDevice / deviceExecutors
     const deviceId = this.deps.registry.getDeviceId(session);
+    const deviceInfo = this.deps.registry.getDeviceInfo(session);
     // 只失败实际下发到本连接的 pending 工具请求（按「请求 → 下发连接」精确失败）：
     // 执行连接可能已交接给同设备新连接，那些连接上在途的请求仍会正常返回，不能被误杀；
     // 本连接上的请求（含接管前已下发的）自身断开后不可能被接手，必须立即失败。
@@ -466,6 +473,10 @@ export class StreamingWsHandler {
       // 设备已无任何可用连接：兜底失败该设备绑定会话的 pending（覆盖广播下发等无法归属连接的请求）；
       // 绑定本身保留，设备闪断重连后可继续使用。
       this.deps.localToolSessionRegistry.failAllForDevice(userId, deviceId);
+      // 向该用户的其它连接广播执行端离线（技术方案 2026-11-05 §4.1-7 实时化）：
+      // targetDeviceOnline 原本只是会话详情的请求时快照，不推送的话其他端（安卓/浏览器）
+      // 的横幅会一直停在绿色在线态，只有刷新才纠正。
+      this.broadcastDeviceStatus(userId, deviceId, deviceInfo?.name ?? null, false);
     }
     if (userId != null && !this.deps.registry.hasLocalClientConnection(userId)) {
       this.deps.localToolSessionRegistry.failAllForUser(userId);
@@ -474,6 +485,16 @@ export class StreamingWsHandler {
 
   handleTransportError(session: WsSocket): void {
     this.afterConnectionClosed(session);
+  }
+
+  /**
+   * 广播 LOCAL 执行端上下线（sessionId=null 的用户级事件）。客户端据此实时刷新
+   * 「该任务在 xxx 上执行」横幅与发送前拦截，无需等刷新时的会话详情快照。
+   * 只在设备执行连接发生「无 → 有 / 有 → 无」的真实跃迁时调用：同设备多连接
+   * 覆盖 / 回退不产生状态变化，不广播（零噪音）。
+   */
+  private broadcastDeviceStatus(userId: number, deviceId: string, deviceName: string | null, online: boolean): void {
+    this.deps.registry.send(userId, wsEvent('device_status', null, { deviceId, deviceName, online }));
   }
 
   async handleTextMessage(session: WsSocket, payload: string): Promise<void> {
@@ -539,6 +560,9 @@ export class StreamingWsHandler {
       // 页面操作能力声明：缺省/非布尔按 true（旧版 SDK 不发送该字段，行为与现状一致）。
       const pageEnabled = typeof root.pageEnabled === 'boolean' ? root.pageEnabled : true;
       const device = this.parseDevice(root);
+      // 注册前判定设备此前是否已有执行连接：只有「无 → 有」的跃迁才广播上线，
+      // 同设备重连/多窗口覆盖（register 内 releaseDevice 回退）不产生状态变化，不广播。
+      const deviceWasOnline = device != null && this.deps.registry.hasDeviceConnection(metadata.userId, device.id);
       this.deps.registry.register(session, metadata.userId, clientType, metadata, pageEnabled, device);
       // 能力协商（技术方案 2026-11-06 §4.1）：声明本服务端支持审批广播 + 回声放行。
       // 旧后端不带该字段，新客户端按 false 处理（投票后立即本地放行）；每次连接重新判定，不跨重连粘滞。
@@ -546,6 +570,11 @@ export class StreamingWsHandler {
         session,
         wsEvent('connected', null, { userId: metadata.userId, approvalRelay: true }),
       );
+      // 执行端上线广播：桌面端/mao-agent 连上后，其他端（安卓/浏览器）的横幅由
+      // 「不在线」实时转回在线态；非本地能力客户端自报设备不构成执行连接，不广播。
+      if (device != null && !deviceWasOnline && this.deps.registry.hasDeviceConnection(metadata.userId, device.id)) {
+        this.broadcastDeviceStatus(metadata.userId, device.id, device.name, true);
+      }
       return;
     }
     if (type === 'auth_refresh') {
@@ -787,7 +816,7 @@ export class StreamingWsHandler {
         // session_already_running 拒绝，只能重启后端恢复。
         if (claimAlreadyHeld) await requeueIfClaimed();
         else this.executionClaims.delete(sessionId);
-        this.deps.registry.send(userId, wsEvent('error', sessionId, { message: 'Local client is not connected. Please ensure the desktop app is running.' }));
+        this.deps.registry.send(userId, wsEvent('error', sessionId, { message: LOCAL_CLIENT_OFFLINE_MESSAGE }));
         return;
       }
       this.deps.localSkillRegistry.report(sessionId, this.parseLocalSkills(data.localSkills));
@@ -1002,7 +1031,7 @@ export class StreamingWsHandler {
       // 会话也能定向）；null 不会覆盖已有绑定。认领本身只发生在 WS 入站。
       await this.prepareLocalTarget(undefined, session, userId);
       if (!(await this.deps.localToolSessionRegistry.isConnected(sessionId))) {
-        throw new Error('Local client is not connected. Please ensure the desktop app is running.');
+        throw new Error(LOCAL_CLIENT_OFFLINE_MESSAGE);
       }
     }
     // 来源绑定必须在任何早退之前登记：takePendingCancel 命中时收件箱来源也要正确；
@@ -1111,7 +1140,7 @@ export class StreamingWsHandler {
       }
       if (!(await this.deps.localToolSessionRegistry.isConnected(sessionId))) {
         this.executionClaims.delete(sessionId);
-        this.deps.registry.send(userId, wsEvent('error', sessionId, { message: 'Local client is not connected. Please ensure the desktop app is running.' }));
+        this.deps.registry.send(userId, wsEvent('error', sessionId, { message: LOCAL_CLIENT_OFFLINE_MESSAGE }));
         return;
       }
       this.deps.localSkillRegistry.report(sessionId, this.parseLocalSkills(root.localSkills));
@@ -1317,7 +1346,7 @@ export class StreamingWsHandler {
         ? this.deps.registry.hasDeviceConnection(userId, localTarget.deviceId)
         : this.deps.registry.hasLocalClientConnection(userId);
       if (!reachable) {
-        this.deps.registry.send(userId, wsEvent('error', parentSessionId, sideRejection('Local client is not connected. Please ensure the desktop app is running.')));
+        this.deps.registry.send(userId, wsEvent('error', parentSessionId, sideRejection(LOCAL_CLIENT_OFFLINE_MESSAGE)));
         return;
       }
       sideTarget = localTarget;
@@ -1564,7 +1593,7 @@ export class StreamingWsHandler {
           this.executionClaims.delete(sessionId);
           await this.rollbackSubagentRetry(session, retryTaskId);
           this.deps.registry.send(userId, wsEvent('error', sessionId, {
-            message: 'Local client is not connected. Please ensure the desktop app is running.',
+            message: LOCAL_CLIENT_OFFLINE_MESSAGE,
           }));
           return;
         }

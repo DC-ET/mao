@@ -19,7 +19,8 @@ describe('LocalToolExecutor', () => {
   it('returnsErrorWhenLocalClientIsDisconnected', async () => {
     const registry = { isConnected: vi.fn().mockResolvedValue(false) } as unknown as LocalToolSessionRegistry;
     const result = await executor(registry, 900).execute(7, 'shell', '{}', 'workspace', false, null);
-    expect(result).toContain('Local client is not connected');
+    // 该文案经工具结果/摘要展示给用户，须中文（与 WS error 帧同一口径）
+    expect(result).toContain('本地执行端未连接，请确保桌面客户端正在运行');
   });
 
   it('returnsToolResultWhenRegistryFutureCompletes', async () => {

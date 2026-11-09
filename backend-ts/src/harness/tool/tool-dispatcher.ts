@@ -5,6 +5,7 @@ import { wsEvent } from '../deps.js';
 import { isFeishuChannelSession } from './feishu-channel-tool.js';
 import type { LocalToolExecutor } from '../local/local-tool-executor.js';
 import type { LocalToolSessionRegistry } from '../local/local-tool-session-registry.js';
+import { LOCAL_CLIENT_OFFLINE_TOOL_ERROR } from '../local/local-tool-session-registry.js';
 import type { SessionTreeSignalPublisher } from '../approval/session-tree-signal-publisher.js';
 import type { AskUserQuestionsRegistry } from './ask-user-questions-registry.js';
 import { normalizeAskUserQuestionsArgs } from './ask-user-questions-normalize.js';
@@ -705,7 +706,7 @@ export class ToolDispatcher {
   ): Promise<string> {
     if (!(await this.localToolSessionRegistry.isConnected(sessionId))) {
       return JSON.stringify({
-        error: 'Local client is not connected. Please ensure the desktop app is running and connected.',
+        error: LOCAL_CLIENT_OFFLINE_TOOL_ERROR,
       });
     }
     const startResult = await this.localToolExecutor.execute(

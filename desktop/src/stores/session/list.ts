@@ -644,6 +644,27 @@ export function createSessionListModule(ctx: {
   }
 
   /**
+   * LOCAL 执行端上下线的实时同步（服务端 device_status 广播，技术方案 2026-11-05 §4.1-7）。
+   * targetDeviceOnline 原本只是会话详情的请求时快照：桌面端退出后不推送的话，
+   * 其他端（安卓/浏览器）的「在 xxx 上执行」横幅会一直停在旧态直到刷新。
+   * 只改绑定该设备的 LOCAL 会话；未绑定/未登记会话本就是 null（不展示在线态），不动。
+   * @returns 实际发生变化的会话数（测试/日志用）
+   */
+  function applyDeviceStatus(deviceId: string, online: boolean, deviceName?: string | null): number {
+    if (!deviceId) return 0
+    let changed = 0
+    for (const entity of [...sessionEntities.value.values()]) {
+      if (entity.executionMode !== 'LOCAL') continue
+      if ((entity.targetDeviceId ?? '') !== deviceId) continue
+      const nextName = deviceName != null && deviceName !== '' ? deviceName : entity.targetDeviceName
+      if (entity.targetDeviceOnline === online && entity.targetDeviceName === nextName) continue
+      upsertSessionEntity({ ...entity, targetDeviceOnline: online, targetDeviceName: nextName })
+      changed++
+    }
+    return changed
+  }
+
+  /**
    * 合并请求期间可能已被 WS 更新的会话快照，避免迟到的 REST 响应覆盖实时 phase。
    * @returns 合并后实体上的最终 phase（实时 phase 优先）。调用方若有自己的 phase 镜像
    *          （如 TaskView.currentPhase 驱动的「执行中」徽标）必须采用该返回值，
@@ -863,6 +884,7 @@ export function createSessionListModule(ctx: {
     forgetLastSession,
     updateSession,
     updateSessionPhase,
+    applyDeviceStatus,
     updateSessionFromSnapshot,
     applySnapshotPhase,
     getSessionPhase,

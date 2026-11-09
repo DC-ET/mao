@@ -72,7 +72,7 @@ describe('LocalToolSessionRegistry', () => {
       sendToLocalClients: vi.fn(),
     } as unknown as StreamingWsRegistry;
     const registry = new LocalToolSessionRegistry(wsRegistry, { selectById: vi.fn() } as unknown as SessionMapper);
-    expect(await (await registry.sendToolRequest(1, 'tool', '{}', null, false, null)).future).toContain('not connected');
+    expect(await (await registry.sendToolRequest(1, 'tool', '{}', null, false, null)).future).toContain('本地执行端未连接');
 
     registry.setTargetForSession(1, 7);
     const pending = await registry.sendToolRequest(1, 'tool', '{}', null, false, null);
@@ -130,7 +130,7 @@ describe('LocalToolSessionRegistry', () => {
     wsRegistry.hasDeviceConnection.mockReturnValue(false);
     expect(await registry.isConnected(10)).toBe(false);
     const offline = await registry.sendToolRequest(10, 'shell', '{}', null, false, null);
-    expect(await offline.future).toContain('not connected');
+    expect(await offline.future).toContain('本地执行端未连接');
   });
 
   it('keepsExistingDeviceBindingWhenTargetIsRefreshedWithNull', async () => {

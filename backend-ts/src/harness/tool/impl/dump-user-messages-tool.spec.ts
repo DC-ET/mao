@@ -173,14 +173,14 @@ describe('DumpUserMessagesTool LOCAL 委托', () => {
         { id: 12, role: 'USER', content: 'second' },
       ],
       localResults: [
-        JSON.stringify({ error: 'Local client is not connected. Please ensure the desktop app is running and connected.' }),
+        JSON.stringify({ error: '本地执行端未连接，请确保桌面客户端正在运行' }),
         JSON.stringify({ success: true, path: '/home/u/.mao/attachments/host/9/user-message-12.txt' }),
       ],
     });
     const json = JSON.parse(await run(tool, { recentCount: 2 }));
 
     expect(json.count).toBe(2);
-    expect(json.files[0]).toMatchObject({ messageId: 11, error: expect.stringContaining('not connected') });
+    expect(json.files[0]).toMatchObject({ messageId: 11, error: expect.stringContaining('本地执行端未连接') });
     expect(json.files[1]).toMatchObject({ messageId: 12, path: '/home/u/.mao/attachments/host/9/user-message-12.txt' });
     expect(json.message).toContain('其中 1 条写入失败');
   });

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useChat } from './useChat'
@@ -78,5 +78,43 @@ describe('BUG-S4 发送失败回滚打到了当前会话，而不是消息实际
     expect.soft(store.getMessages('B').map(m => m.content)).toEqual(['B user'])
     // 会话 A 的乐观消息应被回滚（不留幽灵气泡）
     expect.soft(store.getMessages('A').map(m => m.content)).toEqual([])
+  })
+})
+
+/**
+ * 回归用例（本地执行端未连接的发送）：服务端落库前拒绝只回 error 帧、永不发
+ * user_message_saved，等待方（waitForMessageSaved）曾只能干等 60s 超时——
+ * 输入框卡「正在保存…」、乐观消息挂在列表里像已发出。
+ * 现在 error 帧经 useStreamWS.failMessageSaved 以 saved=false 立即结算；
+ * 超时是同一条径（返回 false），一并覆盖。
+ */
+describe('保存确认超时/拒绝后回滚乐观消息', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    ws.connect.mockResolvedValue(undefined)
+    vi.mocked(api.get).mockResolvedValue({ data: [] } as never)
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('服务端未确认落库：回滚乐观用户消息与 assistant 占位，返回 false', async () => {
+    const store = useSessionStore()
+    store.setMessages('A', [])
+    store.setActiveSession('A')
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    chat.sessionId.value = 'A'
+    // WS 发送本身成功：消息卡在「等服务端落库确认」这一步（拒绝与超时同径 false）
+    ws.sendMessage.mockResolvedValue(true)
+
+    const pending = chat.sendMessageAndWaitForSave('hello from A')
+    await vi.advanceTimersByTimeAsync(60_000)
+    await expect(pending).resolves.toBe(false)
+
+    // 输入框文字由 ChatPanel（!saved 分支）保留以便重试；消息列表不留
+    // 「没发出去却上屏」的幽灵气泡（乐观 user + 空 assistant 占位都回滚）
+    expect(store.getMessages('A')).toEqual([])
   })
 })
