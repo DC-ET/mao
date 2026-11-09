@@ -35,6 +35,8 @@ export class FeishuCardProgressListener implements AgentEventListener {
   private carriedContent = '';
   /** 首个轮次的「正在思考…」占位是否已推送：仅首次思考推送，后续轮次不重刷（避免进度重置感）。 */
   private initialThinkingPushed = false;
+  /** 首次思考的起表时刻：占位「正在思考…」显示期间用于耗时刷新；思考结束（首段内容/工具/轮收尾）置 null。 */
+  private thinkingStartedAtMs: number | null = null;
   private readonly tools = new Map<string, ToolProgress>();
   private pending: Promise<void> = Promise.resolve();
   /** 在途工具耗时的周期刷新定时器；仅在有工具在跑期间存在（见 ensureTicker/stopTicker）。 */
@@ -61,19 +63,27 @@ export class FeishuCardProgressListener implements AgentEventListener {
   onRoundStart(round: number): void {
     this.round = this.displayRound(round);
     // 仅首个轮次推送「正在思考…」占位：把首卡的「任务已接收，正在准备执行。」推进到思考态，
-    // 首次调用常要几十秒才产出内容，卡片不动会让用户以为任务卡住。
+    // 首次调用常要几十秒才产出内容，卡片不动会让用户以为任务卡住；
+    // 占位带耗时后缀并挂周期刷新（与在途工具耗时同一间隔），等待期间用户能看到时间在走。
     // 后续轮次保持卡片现状（已展示的进展与轮次）不再重刷——每轮开始都重刷成「正在思考…」
     // 会抹掉已完成的轮次记录（如第 36 轮时正文只剩「正在思考…」），让人误以为进度重置。
     if (this.initialThinkingPushed) return;
     this.initialThinkingPushed = true;
-    const content = this.displayContent();
-    this.queue('RUNNING', content.trim() === '' ? THINKING_TEXT : content, this.toolsList(this.now()), this.round);
+    this.thinkingStartedAtMs = this.now();
+    this.queue('RUNNING', this.displayContent(), this.toolsList(this.now()), this.round);
+    this.ensureTicker();
   }
 
   onContentDelta(delta: string): void {
     // 换行、空行经常单独成为一个 delta。累积时不能 trim，否则段末换行被吃掉，
     // 下一段会粘在上一句后面。询问态卡片会停在这份正文上，标题和列表就挤成一段。
     if (delta === '' || this.content.length >= CARD_TEXT_MAX) return;
+    // 首个非空白增量到达：模型已开始输出（首 token），首次思考结束、停耗时刷新；
+    // 纯空白 delta（换行等）不算产出，思考计时继续。
+    if (this.thinkingStartedAtMs != null && delta.trim() !== '') {
+      this.thinkingStartedAtMs = null;
+      if (!this.hasRunningTool()) this.stopTicker();
+    }
     const next = this.content + delta;
     this.content = next.length <= CARD_TEXT_MAX ? next : next.slice(0, CARD_TEXT_MAX);
   }
@@ -89,6 +99,8 @@ export class FeishuCardProgressListener implements AgentEventListener {
       summary: previous?.summary ?? null,
       startedAtMs: previous?.startedAtMs ?? this.now(),
     });
+    // 工具已开始：思考占位让位给工具行（思考耗时停止累加）。
+    this.thinkingStartedAtMs = null;
     // 工具触发即推送一次进度，长耗时工具执行期间用户可见"执行中"状态，而不是等结果返回。
     this.queue('RUNNING', this.displayContent(), this.toolValues(this.now()), this.round);
     // 首个在途工具出现即挂周期刷新；后续 tick 每 tickMs 重推一次带耗时的卡。
@@ -123,6 +135,7 @@ export class FeishuCardProgressListener implements AgentEventListener {
 
   onRoundEnd(round: number): void {
     this.round = this.displayRound(round);
+    this.thinkingStartedAtMs = null;
     this.stopTicker();
     this.queue('RUNNING', this.displayContent(), this.toolsList(this.now()), this.round);
     // 本轮正文留给下一轮兜底（如登录链接），随后清空本轮累积。
@@ -168,13 +181,24 @@ export class FeishuCardProgressListener implements AgentEventListener {
   }
 
   /**
-   * 卡片正文：本轮有 assistant content 用本轮的，否则回退到上一轮最近一条。
+   * 卡片正文：本轮有 assistant content 用本轮的，否则回退到上一轮最近一条；
+   * 都没有且仍在首次思考时，用带耗时的「正在思考…」占位顶上。
    * 空串视为没有正文（只有换行的 delta 不兜底），保证纯工具轮仍显示上轮的链接/说明。
    * 渠道卡片不渲染来源区，[^n^] 标记在此统一剥掉（与最终文本出口同口径）。
    */
   private displayContent(): string {
     const raw = this.content.trim() === '' ? this.carriedContent : this.content;
-    return stripCitationMarkers(raw);
+    const text = stripCitationMarkers(raw);
+    if (text.trim() !== '') return text;
+    return this.thinkingText() ?? '';
+  }
+
+  /** 首次思考占位文案：起表后满 1s 附耗时（`正在思考…（3 秒）`，与工具耗时同口径）；未在思考返回 null。 */
+  private thinkingText(): string | null {
+    if (this.thinkingStartedAtMs == null) return null;
+    const elapsedMs = this.now() - this.thinkingStartedAtMs;
+    if (elapsedMs < MIN_ELAPSED_DISPLAY_MS) return THINKING_TEXT;
+    return `${THINKING_TEXT}（${formatFeishuDuration(elapsedMs)}）`;
   }
 
   private async safeUpdate(status: 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED', round: number, content: string, tools: string[], terminalMessageId?: number): Promise<boolean> {
@@ -225,7 +249,9 @@ export class FeishuCardProgressListener implements AgentEventListener {
   }
 
   private tick(): void {
-    if (this.finished || !this.hasRunningTool()) return;
+    if (this.finished) return;
+    // 有在途工具或仍在首次思考：按 tickMs 重推带耗时的卡；两态都没有则无内容可刷新。
+    if (!this.hasRunningTool() && this.thinkingStartedAtMs == null) return;
     this.queue('RUNNING', this.displayContent(), this.toolValues(this.now()), this.round);
   }
 
@@ -241,7 +267,7 @@ export class FeishuCardProgressListener implements AgentEventListener {
 
 const CARD_TEXT_MAX = 6000;
 
-/** 轮次开始（LLM 请求已发起）但没有任何正文时的占位文案：区别于首卡「正在准备执行」，明确 agent 已进入思考阶段。 */
+/** 首次思考占位文案：区别于首卡「正在准备执行」，明确 agent 已进入思考；满 1s 后附耗时后缀（如 `正在思考…（1 分 30 秒）`）。 */
 const THINKING_TEXT = '正在思考…';
 
 /** 只去掉整段首尾空白。内部换行必须保留，发出卡片时再调用。 */

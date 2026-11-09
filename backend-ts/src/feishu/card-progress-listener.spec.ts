@@ -407,14 +407,14 @@ describe('FeishuCardProgressListener 在途工具耗时', () => {
     expect(updates.length).toBe(count + 1);
   });
 
-  it('无工具运行时不挂定时器，推进时间无额外推送', async () => {
+  it('首段内容到达后停思考耗时刷新，无在途工具时推进时间无额外推送', async () => {
     const { listener, updates } = makeListener(20);
     vi.useFakeTimers();
     listener.onRoundStart(1);
     listener.onContentDelta('思考中');
     await vi.advanceTimersByTimeAsync(200);
     expect(updates).toHaveLength(1);
-    expect(updates[0].tools).toEqual([]);
+    expect(updates[0]).toMatchObject({ content: '正在思考…', tools: [] });
   });
 
   it('结果先于开始到达的乱序兜底不产生推送，也不让 ticker 复活', async () => {
@@ -454,6 +454,45 @@ describe('FeishuCardProgressListener 在途工具耗时', () => {
     await vi.advanceTimersByTimeAsync(80); // 4 拍
     // 轮首 1 + 工具开始 1 + tick 多次：失败不断链
     expect(calls).toBeGreaterThanOrEqual(5);
+  });
+
+  it('首次思考占位按 tick 刷新耗时，首段内容到达即停止', async () => {
+    const { listener, updates, advanceClock } = makeListener(20);
+    vi.useFakeTimers();
+    listener.onRoundStart(1);
+    await vi.advanceTimersByTimeAsync(0);
+    // 起始：思考占位不带耗时（< 1s，与工具耗时同口径）
+    expect(updates[updates.length - 1].content).toBe('正在思考…');
+    advanceClock(3000);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(updates[updates.length - 1].content).toBe('正在思考…（3 秒）');
+    advanceClock(3000);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(updates[updates.length - 1].content).toBe('正在思考…（6 秒）');
+    // 首段实际内容到达（首个 token）：思考结束，之后时间推进不再有耗时刷新
+    listener.onContentDelta('开始输出');
+    const settled = updates.length;
+    advanceClock(30_000);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(updates.length).toBe(settled);
+  });
+
+  it('工具开始后思考占位让位给工具行与工具耗时', async () => {
+    const { listener, updates, advanceClock } = makeListener(20);
+    vi.useFakeTimers();
+    listener.onRoundStart(1);
+    advanceClock(3000);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(updates[updates.length - 1].content).toBe('正在思考…（3 秒）');
+    listener.onToolCallStart({ id: 'sh', function: { name: 'shell', arguments: '{"command":"pwd"}' } });
+    await vi.advanceTimersByTimeAsync(0);
+    const last = updates[updates.length - 1];
+    // 思考占位撤下（正文为空），工具行接管卡片；工具耗时从工具起表另算
+    expect(last.content).toBe('');
+    expect(last.tools).toEqual(['shell：`pwd`（执行中）']);
+    advanceClock(3000);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(updates[updates.length - 1].tools).toEqual(['shell：`pwd`（执行中 · 3 秒）']);
   });
 });
 
