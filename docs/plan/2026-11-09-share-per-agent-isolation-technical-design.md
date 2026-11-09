@@ -1,6 +1,6 @@
 # share 按 Agent 隔离（形态 C）技术方案
 
-> 状态：**评审完成（2026-11-09）：无 P0；5 项 P1 已修复；投放归属/观察期/公告决策已落入文档（v4）**。按用户要求先完善文档，**暂不进入开发与迁移执行**（apply 需用户放行）。
+> 状态：**已实施（2026-11-09 晚）**：评审修复 → phase1/phase2 数据迁移 → 代码改造部署（backend 0.0.492，蓝绿切换 9080→9081）→ 部署后校验通过；**观察期 1 天**后执行 phase3 清理。执行记录见 §15。
 > 评审报告：[2026-11-09-share-isolation-design-review-01.md](../code-review/2026-11-09-share-isolation-design-review-01.md)（含逐条修复记录）。
 > 覆盖端：**backend-ts**（挂载/沙箱/启动兜底）+ 运维迁移脚本与文档。admin / desktop / android / agent-cli / shared-contracts **不改**。
 > 上游调研：[2026-11-09-share-per-agent-isolation.md](../research/2026-11-09-share-per-agent-isolation.md)（v2，含泄露面核查与模式无缝性核验）。
@@ -485,7 +485,7 @@ docker inspect mao-user-36-agent-5 --format '{{range .Mounts}}{{.Source}} -> {{.
 4. **节奏**：先完善文档，**暂不进入开发与迁移执行**（apply 需用户放行）。
 5. **历史方案文档抬头（2026-11-09 补充确认）**：`2026-10-21`、`2026-11-07` 两份历史文档已加"（部分）已被取代"抬头，正文不改。
 
-**待确认**：无（文档定稿；待用户确认实施清单后进入开发与迁移）。
+**待确认**：无（实施已于 2026-11-09 晚执行，见 §15；仅剩 phase3 待 1 天观察期后执行）。
 
 ---
 
@@ -583,6 +583,25 @@ docker inspect mao-user-36-agent-5 --format '{{range .Mounts}}{{.Source}} -> {{.
 ### D. 迁移脚本
 
 `scripts/migrate-share-per-agent.sh`（本次交付，569 行）：`plan`（默认只读）/ `apply --phase=1|2|3` / `verify [--post-phase3]`；选项 `--yes`、`--share-dir`、`--backend-env`、`--allow-missing`、`--no-db`。阶段与动作见 §7；评审修复记录见 `docs/code-review/2026-11-09-share-isolation-design-review-01.md`。
+
+---
+
+## 15. 执行记录（2026-11-09 晚，实际落地）
+
+| 时间 | 动作 | 结果 |
+|---|---|---|
+| 20:51 | `apply --phase=1`：全量备份 → 建 `agents/{1,3,4,5,6}` → 分发 settings.xml(1/3/4/5)、settings_t.xml(6)、scripts(5 份，含 push_fast 自引用修正) → README → 删试验副本 | 完成；备份 `backup/share-migrate-20261109-205123/share-full.tgz` |
+| 20:52 | **当日新增 agent 7（服务商助手，18:13 创建）后补**：建 `agents/7/scripts`（含自引用修正）；脚本 `AGENTS` 更新为 `1 3 4 5 6 7`；`db_apply_updates` 增 `94:7` | 完成（agent 2 未启用：无经验库/会话，按懒建处理） |
+| 20:52 | `apply --phase=2`：DB 前像 `db-before.sql` → #66/#74/#75/#76、#96/#97（历史行）、删 5 行旧快照 → 14 条文件规则（23 处） | 完成；校验后补录 #94 前像（共 12 行） |
+| 20:53 | 后补 `agent_experiences #94`（agent 7 共享文案 → `agents/7/`）；修正 agent 1 当日新写经验文档 2 处 `settings.xml` 旧路径 | 完成 |
+| 20:53 | `verify --pre-phase3` | OK=39 / FAIL=0 / WARN=1（仅根目录待删残留） |
+| 20:55-21:02 | 代码改造 + 单测：`container-mount-planner` / `container-tool-executor` / `runtime-agent` / `create-app`（+app-config/.env.example 注释）+ 4 个 spec 反向改写 | `tsc` 通过；容器 4 spec 91 项、backend 全量 5794 项通过（15 skipped） |
+| 21:02 | 提交 `977eab84`（0.0.492，含 CHANGELOG / skills 文档 / DEPLOY.md）并推送（变基至远端 0.0.491 之后） | 完成 |
+| 21:03-21:05 | `cd /data && bash deploy-mao.sh --backend-only`：拉取 → 构建（runtime-build `df940c30…`）→ 蓝绿切换 9080→9081，健康检查 HTTP 302 | 完成 |
+| 21:05-21:10 | 部署后校验：`verify --pre-phase3` PASS；user5/agent1（21:05）、user58/agent5（21:08）容器已自动重建为新挂载（仅两条 share 子路径）；容器内跨 Agent 访问 ENOENT、私有区可写、`agents/5/settings.xml` 可读、脚本冒烟（`bash -n` 全过、push_flow 用法输出）通过；后端日志无 share 相关错误 | 完成 |
+| — | **观察期开始（1 天）** → 之后 `apply --phase=3`（删根下 `scripts/`、`settings.xml`、`settings_t.xml`）→ `verify --post-phase3`（要求 FAIL=0） | 待执行 |
+
+> 备注：① 旧容器（尚未使用过的）将在下次使用时按指纹漂移自动重建为新挂载，属预期一次性收敛；② `share/repos` 空目录按用户决定忽略（不清理）；③ 观察期关注「旧路径不存在」类反馈与 `[container] recreating` 日志。
 
 
 
