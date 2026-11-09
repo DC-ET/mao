@@ -237,7 +237,13 @@ export function normalizeSearchListParams(input: {
  */
 export const ACTIVITY_RANGE_ALL = 'ALL';
 export const ACTIVITY_RANGE_DEFAULT = '7D';
-export const ACTIVITY_RANGE_PRESET_DAYS: Readonly<Record<string, number>> = { '7D': 7, '30D': 30, '90D': 90 };
+export const ACTIVITY_RANGE_PRESET_DAYS: Readonly<Record<string, number>> = {
+  '1D': 1,
+  '3D': 3,
+  '7D': 7,
+  '30D': 30,
+  '90D': 90
+};
 
 export interface ActivityWindow {
   /** 起始（含），'YYYY-MM-DD HH:MM:SS'；null = 不设下界 */
@@ -271,7 +277,7 @@ export function shiftCalendarDay(ymd: string, days: number): string {
  * 解析「活跃时间」窗口：
  * - `range=ALL` → null（不限时间，管理端显式放宽，慢查询由调用方自行承担）；
  * - 传了 dateFrom/dateTo → 用显式区间（可单边）；
- * - 传了 range 预设（7D/30D/90D）→ 最近 N 天（含今天）；
+ * - 传了 range 预设（1D/3D/7D/30D/90D）→ 最近 N 天（含今天）；
  * - 都没传 → 默认最近 7 天，避免任何客户端直连 API 打到全表消息扫描。
  */
 export function resolveActivityWindow(input: {

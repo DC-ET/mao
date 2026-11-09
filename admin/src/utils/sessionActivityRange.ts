@@ -5,11 +5,13 @@
  * 后端在缺省参数时同样兜底 7 天（见 backend-ts session/message-search.ts resolveActivityWindow）。
  * 预设档位只把档位名发给后端，由后端按 Asia/Shanghai 日历计算窗口，避免浏览器时区造成边界漂移。
  */
-export type ActivityRangeValue = '7D' | '30D' | '90D' | 'CUSTOM' | 'ALL'
+export type ActivityRangeValue = '1D' | '3D' | '7D' | '30D' | '90D' | 'CUSTOM' | 'ALL'
 
 export const ACTIVITY_RANGE_DEFAULT: ActivityRangeValue = '7D'
 
 export const ACTIVITY_RANGE_OPTIONS: Array<{ value: ActivityRangeValue; label: string }> = [
+  { value: '1D', label: '最近 1 天' },
+  { value: '3D', label: '最近 3 天' },
   { value: '7D', label: '最近 7 天' },
   { value: '30D', label: '最近 30 天' },
   { value: '90D', label: '最近 90 天' },
@@ -53,7 +55,7 @@ export function defaultCustomRange(now: Date = new Date()): [string, string] {
 
 /**
  * 把筛选状态翻译成请求参数：
- * - 预设档位 → `range=7D|30D|90D`（窗口由后端计算）；
+ * - 预设档位 → `range=1D|3D|7D|30D|90D`（窗口由后端计算）；
  * - 全部时间 → `range=ALL`（后端不做时间过滤）；
  * - 自定义 → `dateFrom` / `dateTo`（都为空时不发，交后端默认兜底）。
  */

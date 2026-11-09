@@ -419,7 +419,7 @@ function applyRouteQuery() {
   filters.keyword = typeof q.keyword === 'string' ? q.keyword : ''
   // 非法值回落到默认口径，避免地址栏拼错就查不到东西
   filters.messageScope = q.messageScope === 'ALL' ? 'ALL' : 'CONVERSATION'
-  // 活跃时间：range=7D/30D/90D/ALL；自定义档读 dateFrom/dateTo，缺失时回落默认档
+  // 活跃时间：range=1D/3D/7D/30D/90D/ALL；自定义档读 dateFrom/dateTo，缺失时回落默认档
   const range = typeof q.range === 'string' ? q.range.toUpperCase() : ''
   filters.activityRange = isActivityRangeValue(range) ? range : ACTIVITY_RANGE_DEFAULT
   const dateFrom = typeof q.dateFrom === 'string' ? q.dateFrom : ''

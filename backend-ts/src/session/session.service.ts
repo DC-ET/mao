@@ -73,7 +73,7 @@ const RUNTIME_WORKSPACE_PREFIX = 'mao-runtime-';
 
 /** 管理端会话列表的「活跃时间」窗口选项，语义见 resolveActivityWindow。 */
 export interface AdminSessionListOptions {
-  /** 'ALL' = 不限时间；'7D' / '30D' / '90D' = 最近 N 天（含今天）；缺省 = 最近 7 天 */
+  /** 'ALL' = 不限时间；'1D' / '3D' / '7D' / '30D' / '90D' = 最近 N 天（含今天）；缺省 = 最近 7 天 */
   range?: string | null;
   /** 显式起始日（含），YYYY-MM-DD，Asia/Shanghai 日历；优先级高于 range 预设 */
   dateFrom?: string | null;

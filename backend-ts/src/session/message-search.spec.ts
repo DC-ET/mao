@@ -74,8 +74,10 @@ describe('activity window', () => {
     });
   });
 
-  it('supports 7D / 30D / 90D presets', () => {
+  it('supports 1D / 3D / 7D / 30D / 90D presets', () => {
     expect(resolveActivityWindow({ range: '7D', now })).toEqual({ from: '2026-10-31 00:00:00', toExclusive: '2026-11-07 00:00:00' });
+    expect(resolveActivityWindow({ range: '1D', now })).toEqual({ from: '2026-11-06 00:00:00', toExclusive: '2026-11-07 00:00:00' });
+    expect(resolveActivityWindow({ range: '3D', now })).toEqual({ from: '2026-11-04 00:00:00', toExclusive: '2026-11-07 00:00:00' });
     expect(resolveActivityWindow({ range: '30D', now })!.from).toBe('2026-10-08 00:00:00');
     expect(resolveActivityWindow({ range: '90d', now })!.from).toBe('2026-08-09 00:00:00');
   });

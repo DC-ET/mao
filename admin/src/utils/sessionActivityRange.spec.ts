@@ -11,10 +11,14 @@ import {
 describe('session activity range', () => {
   it('defaults to the 7-day preset', () => {
     expect(ACTIVITY_RANGE_DEFAULT).toBe('7D')
+    expect(activityRangeParams('1D', null)).toEqual({ range: '1D' })
+    expect(activityRangeParams('3D', null)).toEqual({ range: '3D' })
     expect(activityRangeParams('7D', null)).toEqual({ range: '7D' })
     expect(activityRangeParams('30D', null)).toEqual({ range: '30D' })
     // 非法档位回落默认，避免地址栏拼错就把时间窗关掉
     expect(activityRangeParams('5Y', null)).toEqual({ range: '7D' })
+    expect(isActivityRangeValue('1D')).toBe(true)
+    expect(isActivityRangeValue('3D')).toBe(true)
     expect(isActivityRangeValue('90D')).toBe(true)
     expect(isActivityRangeValue('all')).toBe(false)
   })
