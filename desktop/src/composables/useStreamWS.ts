@@ -703,6 +703,22 @@ export function useStreamWS() {
     }
   }
 
+  /**
+   * 同一会话换了 executionId 重新开跑（崩溃恢复 / 蓝绿续跑 / 重试 / 插队执行）。
+   *
+   * 重绑前必须把旧执行留下的 tracked 气泡就地终结：那里面可能有永远等不到结果的
+   * running 工具调用（断线期间结果帧丢失），而新执行的 tool_call_start 会另起一条
+   * 气泡，同一次调用于是以两份形态并存在界面上，旧那份转圈到任务结束或刷新页面才消失。
+   * 已在跑的会话（重连后 snapshot 带回同一 executionId）不触发，正常流式不受影响。
+   */
+  function rebindActiveExecution(sessionId: string, executionId: string) {
+    const previous = activeExecutionIds.get(sessionId)
+    if (previous && previous !== executionId) {
+      sessionStore.discardStaleStreamingBubble(sessionId)
+    }
+    setActiveExecution(sessionId, executionId)
+  }
+
   function routeEvent(msg: any) {
     const { type, sessionId: rawSid, data } = msg
     const sessionId = rawSid != null ? String(rawSid) : null
@@ -839,7 +855,7 @@ export function useStreamWS() {
           const terminalPhases = ['COMPLETED', 'FAILED', 'CANCELLED', 'IDLE']
 
           if (phase === 'RUNNING' && data.executionId) {
-            setActiveExecution(sessionId, data.executionId)
+            rebindActiveExecution(sessionId, data.executionId)
           }
           const startedAt = phase === 'RUNNING' ? new Date().toISOString() : undefined
 
@@ -1103,7 +1119,7 @@ export function useStreamWS() {
       case 'session_snapshot':
         // Subscribe also reconciles a terminal state missed while the socket was disconnected.
         if (sessionId && data?.phase) {
-          if (data.executionId) setActiveExecution(sessionId, data.executionId)
+          if (data.executionId) rebindActiveExecution(sessionId, data.executionId)
           const phase = data.phase as TaskPhase
           const startedAt = phase === 'RUNNING' ? new Date().toISOString() : undefined
           sessionStore.updateSessionPhase(sessionId, phase, startedAt)

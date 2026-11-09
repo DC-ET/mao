@@ -576,6 +576,39 @@ export function createMessageRuntimeModule(ctx: {
     }
   }
 
+  /**
+   * 同一会话换了 executionId 重新开跑（崩溃恢复 / 蓝绿续跑 / 重试）。
+   *
+   * 断线期间旧执行的 tracked 气泡仍挂在尾部，且其中可能留有永远等不到结果的
+   * running 工具调用：新执行的 tool_call_start 会让 ensureStreamingAssistantMessage
+   * 新建一条气泡，于是同一次工具调用在界面上一式两份——旧的那份转圈到天荒地老，
+   * 直到任务结束或刷新页面（REST 覆盖）才消失。
+   *
+   * 这里在新 executionId 登记时就地把旧气泡里未终结的调用标记为中断：已终结的
+   * 工具轮次与已流出文本原样保留（那是旧执行真实产出过的内容），只是不再有转圈。
+   * 气泡同时打上 interrupted 标记，终态 REST 重拉时按既有规则保留为唯一副本。
+   */
+  function discardStaleStreamingBubble(sessionId: string, reason = '执行中断，已重新开始') {
+    const sid = String(sessionId)
+    const liveId = streamingAssistantMessageIds.get(sid)
+    if (!liveId) return
+    const list = sessionMessages.value.get(sid) ?? []
+    const msg = list.find(m => String(m.id) === liveId)
+    if (msg) {
+      for (const call of msg.toolCalls ?? []) {
+        if (call.status === 'running' || call.status === 'pending') {
+          call.status = 'error'
+          call.argsStreaming = false
+          call.summary = call.summary || reason
+          call.result = call.result || reason
+        }
+      }
+      msg.interrupted = true
+      sessionMessages.value.set(sid, [...list])
+    }
+    streamingAssistantMessageIds.delete(sid)
+  }
+
   function finishInterruptedStreamingMessage(sessionId: string, reason = '已被新的纠偏中断') {
     const sid = String(sessionId)
     const liveId = streamingAssistantMessageIds.get(sid)
@@ -1069,6 +1102,7 @@ export function createMessageRuntimeModule(ctx: {
     appendToolCallStart,
     updateToolCallArgs,
     updateToolCallResult,
+    discardStaleStreamingBubble,
     finishInterruptedStreamingMessage,
     markMessageComplete,
     clearMessages,
