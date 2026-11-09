@@ -468,6 +468,7 @@ export class StreamingWsHandler {
     for (const boundSessionId of this.deps.registry.getEmbedSessionsForConnection(session)) {
       this.deps.embedPageToolRegistry.failSession(boundSessionId, '页面连接已断开，页面操作已取消', 'embed_client_not_connected');
     }
+    const closingClientType = this.executorClientTypeOf(session);
     this.deps.registry.unregister(session);
     if (userId != null && deviceId != null && !this.deps.registry.hasDeviceConnection(userId, deviceId)) {
       // 设备已无任何可用连接：兜底失败该设备绑定会话的 pending（覆盖广播下发等无法归属连接的请求）；
@@ -477,6 +478,13 @@ export class StreamingWsHandler {
       // targetDeviceOnline 原本只是会话详情的请求时快照，不推送的话其他端（安卓/浏览器）
       // 的横幅会一直停在绿色在线态，只有刷新才纠正。
       this.broadcastDeviceStatus(userId, deviceId, deviceInfo?.name ?? null, false);
+    } else if (userId != null && deviceId != null && this.deps.registry.hasDeviceConnection(userId, deviceId)) {
+      // 设备仍在线，但执行连接回坐到了另一条：类型变了才再广播一帧，让横幅从
+      // 「桌面客户端在执行」换成「mao-agent 在执行」（或反过来）。同类型互顶不发。
+      const nextType = this.currentExecutorClientType(userId, deviceId);
+      if (closingClientType && nextType && closingClientType !== nextType) {
+        this.broadcastDeviceStatus(userId, deviceId, deviceInfo?.name ?? null, true, nextType);
+      }
     }
     if (userId != null && !this.deps.registry.hasLocalClientConnection(userId)) {
       this.deps.localToolSessionRegistry.failAllForUser(userId);
@@ -490,11 +498,32 @@ export class StreamingWsHandler {
   /**
    * 广播 LOCAL 执行端上下线（sessionId=null 的用户级事件）。客户端据此实时刷新
    * 「该任务在 xxx 上执行」横幅与发送前拦截，无需等刷新时的会话详情快照。
-   * 只在设备执行连接发生「无 → 有 / 有 → 无」的真实跃迁时调用：同设备多连接
-   * 覆盖 / 回退不产生状态变化，不广播（零噪音）。
+   * 在线态跃迁（无 → 有 / 有 → 无）必发。设备仍在线、只是执行连接换了类型
+   * （electron ↔ cli）时也发一帧 online=true，横幅才能从桌面客户端换成 mao-agent。
+   * 同类型互顶不发。clientType 只可能是 electron / cli，离线帧不带。
    */
-  private broadcastDeviceStatus(userId: number, deviceId: string, deviceName: string | null, online: boolean): void {
-    this.deps.registry.send(userId, wsEvent('device_status', null, { deviceId, deviceName, online }));
+  private broadcastDeviceStatus(
+    userId: number,
+    deviceId: string,
+    deviceName: string | null,
+    online: boolean,
+    clientType?: 'electron' | 'cli' | null,
+  ): void {
+    const data: Record<string, unknown> = { deviceId, deviceName, online };
+    if (clientType === 'electron' || clientType === 'cli') data.clientType = clientType;
+    this.deps.registry.send(userId, wsEvent('device_status', null, data));
+  }
+
+  /** 当前执行连接的 clientType；没有执行连接或不是 electron/cli 时为 null。 */
+  private currentExecutorClientType(userId: number, deviceId: string): 'electron' | 'cli' | null {
+    const socket = this.deps.registry.getDeviceExecutorSocket(userId, deviceId);
+    return this.executorClientTypeOf(socket);
+  }
+
+  private executorClientTypeOf(socket: { id: string } | null | undefined): 'electron' | 'cli' | null {
+    if (!socket) return null;
+    const raw = this.deps.registry.getClientType?.(socket as never);
+    return raw === 'electron' || raw === 'cli' ? raw : null;
   }
 
   async handleTextMessage(session: WsSocket, payload: string): Promise<void> {
@@ -560,6 +589,9 @@ export class StreamingWsHandler {
       // 页面操作能力声明：缺省/非布尔按 true（旧版 SDK 不发送该字段，行为与现状一致）。
       const pageEnabled = typeof root.pageEnabled === 'boolean' ? root.pageEnabled : true;
       const device = this.parseDevice(root);
+      // 注册前记下当前执行连接的类型：覆盖后若类型变了（桌面 ↔ mao-agent），
+      // 在线态没变也要再广播一帧，横幅才能换文案。同类型互顶不发。
+      const previousType = device != null ? this.currentExecutorClientType(metadata.userId, device.id) : null;
       // 注册前判定设备此前是否已有执行连接：只有「无 → 有」的跃迁才广播上线，
       // 同设备重连/多窗口覆盖（register 内 releaseDevice 回退）不产生状态变化，不广播。
       const deviceWasOnline = device != null && this.deps.registry.hasDeviceConnection(metadata.userId, device.id);
@@ -573,7 +605,15 @@ export class StreamingWsHandler {
       // 执行端上线广播：桌面端/mao-agent 连上后，其他端（安卓/浏览器）的横幅由
       // 「不在线」实时转回在线态；非本地能力客户端自报设备不构成执行连接，不广播。
       if (device != null && !deviceWasOnline && this.deps.registry.hasDeviceConnection(metadata.userId, device.id)) {
-        this.broadcastDeviceStatus(metadata.userId, device.id, device.name, true);
+        this.broadcastDeviceStatus(
+          metadata.userId, device.id, device.name, true,
+          this.currentExecutorClientType(metadata.userId, device.id),
+        );
+      } else if (device != null && deviceWasOnline && this.deps.registry.hasDeviceConnection(metadata.userId, device.id)) {
+        const nextType = this.currentExecutorClientType(metadata.userId, device.id);
+        if (previousType && nextType && previousType !== nextType) {
+          this.broadcastDeviceStatus(metadata.userId, device.id, device.name, true, nextType);
+        }
       }
       return;
     }
@@ -2468,7 +2508,12 @@ export class StreamingWsHandler {
       const done = new Promise<void>((resolve, reject) => {
         this.pendingMcpSyncs.set(sessionId, { syncId, resolve, reject });
       });
-      const mcpSyncEvent = wsEvent('mcp_sync_required', sessionId, payload);
+      const mcpSyncEvent = wsEvent('mcp_sync_required', sessionId, {
+        ...payload,
+        // 与技能同步同口径：带上会话工作区。信任根外的 daemon 只在看见这个字段时保持静默，
+        // 缺省会被当成信任根内并回包，失败回包会按 syncId 抢先判负整轮。
+        workspace: _session.workspace ?? '',
+      });
       const targetDeviceId = (await this.deps.localToolSessionRegistry.resolveTarget(sessionId))?.deviceId
         ?? _session.targetDeviceId ?? null;
       // 与技能同步同口径：同 deviceId 的存活连接全部纳入（桌面端 / mao-agent 虽共用

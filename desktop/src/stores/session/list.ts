@@ -650,15 +650,31 @@ export function createSessionListModule(ctx: {
    * 只改绑定该设备的 LOCAL 会话；未绑定/未登记会话本就是 null（不展示在线态），不动。
    * @returns 实际发生变化的会话数（测试/日志用）
    */
-  function applyDeviceStatus(deviceId: string, online: boolean, deviceName?: string | null): number {
+  function applyDeviceStatus(
+    deviceId: string,
+    online: boolean,
+    deviceName?: string | null,
+    clientType?: string | null,
+  ): number {
     if (!deviceId) return 0
+    const explicitType = clientType === 'electron' || clientType === 'cli' ? clientType : undefined
     let changed = 0
     for (const entity of [...sessionEntities.value.values()]) {
       if (entity.executionMode !== 'LOCAL') continue
       if ((entity.targetDeviceId ?? '') !== deviceId) continue
       const nextName = deviceName != null && deviceName !== '' ? deviceName : entity.targetDeviceName
-      if (entity.targetDeviceOnline === online && entity.targetDeviceName === nextName) continue
-      upsertSessionEntity({ ...entity, targetDeviceOnline: online, targetDeviceName: nextName })
+      const nextType = explicitType ?? entity.executorClientType
+      if (
+        entity.targetDeviceOnline === online
+        && entity.targetDeviceName === nextName
+        && entity.executorClientType === nextType
+      ) continue
+      upsertSessionEntity({
+        ...entity,
+        targetDeviceOnline: online,
+        targetDeviceName: nextName,
+        executorClientType: nextType,
+      })
       changed++
     }
     return changed

@@ -86,6 +86,9 @@ export class WsClient {
   private readonly subscribed = new Set<number>();
   private readonly handlers: WsHandler[] = [];
   private onReconnectCb?: () => void;
+  private onDisconnectCb?: () => void;
+  /** 同一条连接的 close 与 error 只通知一次；下次 open 后重新武装。 */
+  private disconnectNotified = false;
   private readonly heartbeatIntervalMs: number;
   private readonly silenceTimeoutMs: number;
   private readonly reconnectInitialMs: number;
@@ -108,6 +111,24 @@ export class WsClient {
 
   setOnReconnect(fn: () => void): void {
     this.onReconnectCb = fn;
+  }
+
+  /**
+   * 已建立的连接断开或传输错误时通知一次。
+   * 用于远端审批等待：错过的 `tool_approval_resolved` 不会在重连后重放，不能干等到超时。
+   */
+  setOnDisconnect(fn: () => void): void {
+    this.onDisconnectCb = fn;
+  }
+
+  private notifyDisconnect(): void {
+    if (this.disconnectNotified) return;
+    this.disconnectNotified = true;
+    try {
+      this.onDisconnectCb?.();
+    } catch (e) {
+      this.opts.debug?.('ws disconnect handler error', e);
+    }
   }
 
   on(handler: WsHandler): () => void {
@@ -212,6 +233,7 @@ export class WsClient {
       let settled = false;
 
       ws.on('open', () => {
+        this.disconnectNotified = false;
         this.reconnectDelay = this.reconnectInitialMs;
         this.consecutiveFailures = 0;
         this.lastServerMessageAt = Date.now();
@@ -258,6 +280,7 @@ export class WsClient {
           reject(new Error(`WebSocket connection failed (${code})`));
           return;
         }
+        this.notifyDisconnect();
         if (!this.intentionalClose) this.scheduleReconnect();
       });
 
@@ -266,7 +289,9 @@ export class WsClient {
         if (!settled) {
           settled = true;
           reject(err instanceof Error ? err : new Error(String(err)));
+          return;
         }
+        this.notifyDisconnect();
       });
     });
   }

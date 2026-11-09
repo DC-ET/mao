@@ -746,11 +746,17 @@ export function useStreamWS() {
         const deviceId = typeof data?.deviceId === 'string' ? data.deviceId : ''
         if (deviceId && typeof data?.online === 'boolean') {
           const deviceName = typeof data?.deviceName === 'string' ? data.deviceName : null
-          sessionStore.applyDeviceStatus(deviceId, data.online, deviceName)
-          // 持有本地快照的组件（边路面板的来源/边路会话设备态）按需订阅
-          window.dispatchEvent(new CustomEvent('device_status', {
-            detail: { deviceId, deviceName, online: data.online },
-          }))
+          const clientType = data?.clientType === 'electron' || data?.clientType === 'cli'
+            ? data.clientType
+            : undefined
+          sessionStore.applyDeviceStatus(deviceId, data.online, deviceName, clientType)
+          // 持有本地快照的组件（边路面板的来源/边路会话设备态）按需订阅。
+          // clientType 缺省时不放进 detail，旧帧与离线帧的形状保持不变。
+          const detail: { deviceId: string; deviceName: string | null; online: boolean; clientType?: 'electron' | 'cli' } = {
+            deviceId, deviceName, online: data.online,
+          }
+          if (clientType) detail.clientType = clientType
+          window.dispatchEvent(new CustomEvent('device_status', { detail }))
         }
         break
       }

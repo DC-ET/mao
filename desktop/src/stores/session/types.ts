@@ -59,6 +59,8 @@ export interface Session {
   targetDeviceName?: string | null
   /** 请求时快照：绑定的执行端是否在线（未绑定 / 未注入判定时为 null） */
   targetDeviceOnline?: boolean | null
+  /** 当前执行连接类型：electron=桌面客户端，cli=mao-agent；缺省时横幅用旧文案 */
+  executorClientType?: string | null
   contextTokens?: number
   /** 最近一次请求的构成快照，刷新后随会话详情带回 */
   contextManifest?: import('../../types/chat').ContextManifest | null

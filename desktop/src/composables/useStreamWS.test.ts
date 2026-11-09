@@ -873,6 +873,26 @@ describe('useStreamWS device_status（执行端上下线实时化）', () => {
     expect(store.getSessionEntity('11')?.targetDeviceOnline).toBe(true)
   })
 
+  it('只改 clientType 时仍写入会话，并带进 window 事件', async () => {
+    const { connect } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    const store = seedSessions()
+    const events: CustomEvent[] = []
+    const listener = (e: Event) => events.push(e as CustomEvent)
+    window.addEventListener('device_status', listener)
+    sockets[0].message({
+      type: 'device_status', sessionId: null,
+      data: { deviceId: 'dev-1', deviceName: 'MyMac', online: true, clientType: 'cli' },
+    })
+    window.removeEventListener('device_status', listener)
+    expect(store.getSessionEntity('11')?.targetDeviceOnline).toBe(true)
+    expect(store.getSessionEntity('11')?.executorClientType).toBe('cli')
+    expect(store.getSessionEntity('12')?.executorClientType).toBeUndefined()
+    expect(events[0].detail).toEqual({ deviceId: 'dev-1', deviceName: 'MyMac', online: true, clientType: 'cli' })
+  })
+
   it('未知 deviceId / 非布尔 online 的帧被忽略', async () => {
     const { connect } = useStreamWS()
     const pending = connect()

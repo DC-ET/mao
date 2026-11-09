@@ -11,6 +11,7 @@
         :target-device-id="sideTargetDeviceId"
         :target-device-name="sideTargetDeviceName"
         :target-device-online="sideTargetDeviceOnline"
+        :executor-client-type="sideExecutorClientType"
         :current-device-id="currentDeviceId"
       />
       <div v-if="sideHistoryAnchored" class="history-anchor-bar">
@@ -255,6 +256,7 @@ const sourceSessionMeta = ref<{
   targetDeviceId?: string | null
   targetDeviceName?: string | null
   targetDeviceOnline?: boolean | null
+  executorClientType?: string | null
 } | null>(null)
 const fetchedSourceMetaId = ref<number | null>(null)
 
@@ -272,6 +274,7 @@ async function fetchSourceSessionMeta(sourceId: number) {
         targetDeviceId: data.targetDeviceId ?? null,
         targetDeviceName: data.targetDeviceName ?? null,
         targetDeviceOnline: data.targetDeviceOnline ?? null,
+        executorClientType: data.executorClientType ?? null,
       }
     }
   } catch {
@@ -309,7 +312,12 @@ const realSessionId = ref(props.sideSessionId > 0 ? props.sideSessionId : 0)
 const hasRealSession = computed(() => realSessionId.value > 0)
 
 /** 真实边路会话的设备绑定（loadSideSessionMeta 从会话详情回填） */
-const sideSessionDevice = ref<{ id: string | null; name: string | null; online: boolean | null } | null>(null)
+const sideSessionDevice = ref<{
+  id: string | null
+  name: string | null
+  online: boolean | null
+  executorClientType: string | null
+} | null>(null)
 
 /**
  * 执行端上下线实时同步（服务端 device_status 广播，技术方案 2026-11-05 §4.1-7）：
@@ -318,19 +326,30 @@ const sideSessionDevice = ref<{ id: string | null; name: string | null; online: 
  * 父/主会话实体已由 store 统一更新，无需在此处理。
  */
 function handleDeviceStatus(event: Event) {
-  const detail = (event as CustomEvent<{ deviceId?: string; deviceName?: string | null; online?: boolean }>).detail
+  const detail = (event as CustomEvent<{
+    deviceId?: string
+    deviceName?: string | null
+    online?: boolean
+    clientType?: string | null
+  }>).detail
   if (!detail?.deviceId || typeof detail.online !== 'boolean') return
+  const nextType = detail.clientType === 'electron' || detail.clientType === 'cli' ? detail.clientType : undefined
   const device = sideSessionDevice.value
   if (device && device.id === detail.deviceId) {
     sideSessionDevice.value = {
       ...device,
       online: detail.online,
       name: detail.deviceName ?? device.name,
+      executorClientType: nextType ?? device.executorClientType,
     }
   }
   const meta = sourceSessionMeta.value
   if (meta && (meta.targetDeviceId ?? '') === detail.deviceId) {
-    sourceSessionMeta.value = { ...meta, targetDeviceOnline: detail.online }
+    sourceSessionMeta.value = {
+      ...meta,
+      targetDeviceOnline: detail.online,
+      executorClientType: nextType ?? meta.executorClientType,
+    }
   }
 }
 window.addEventListener('device_status', handleDeviceStatus)
@@ -351,6 +370,10 @@ const sideTargetDeviceName = computed<string | null>(() => {
 const sideTargetDeviceOnline = computed<boolean | null>(() => {
   if (hasRealSession.value) return sideSessionDevice.value?.online ?? null
   return sourceSessionMeta.value?.targetDeviceOnline ?? parentSession.value?.targetDeviceOnline ?? null
+})
+const sideExecutorClientType = computed<string | null>(() => {
+  if (hasRealSession.value) return sideSessionDevice.value?.executorClientType ?? null
+  return sourceSessionMeta.value?.executorClientType ?? parentSession.value?.executorClientType ?? null
 })
 
 /** 当前 Electron 设备 id（浏览器为 null）：LOCAL 边路会话执行端提示条据此在「本机即执行端」时隐藏 */
@@ -669,6 +692,7 @@ async function loadSideSessionMeta() {
       id: data?.targetDeviceId ?? null,
       name: data?.targetDeviceName ?? null,
       online: data?.targetDeviceOnline ?? null,
+      executorClientType: data?.executorClientType ?? null,
     }
     if (data?.modelId != null) {
       sideModelId.value = sideModelId.value ?? data.modelId

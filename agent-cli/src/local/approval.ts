@@ -1,7 +1,10 @@
 import { checkToolDeny } from './deny-list';
 import * as trust from './trust';
 
-export type OnApproval = 'ask' | 'fail';
+export type OnApproval = 'ask' | 'fail' | 'remote';
+
+/** 远端审批默认等待。必须小于服务端工具超时 900s，给升级外推留出反应时间。 */
+export const DEFAULT_REMOTE_APPROVAL_TIMEOUT_MS = 300_000;
 
 export interface ApprovalRequest {
   toolName: string;
@@ -31,12 +34,15 @@ export interface ApprovalPolicy {
   /** 缺省时按真实 stdin 判定：stdin 是管道/已关闭时不能交互提问。 */
   stdinIsTty?: boolean;
   alwaysAllow?: AlwaysAllowEntry[];
+  /** `--on-approval=remote` 的等待上限；缺省 300s。 */
+  remoteApprovalTimeoutMs?: number;
 }
 
 export type ApprovalDecision =
   | { action: 'allow'; reason: string }
   | { action: 'deny'; reason: string; exitApproval: boolean }
-  | { action: 'ask'; reason: string };
+  | { action: 'ask'; reason: string }
+  | { action: 'await-remote'; timeoutMs: number; reason: string };
 
 /** `*` / `?` 不得跨越 shell 元字符，避免 `shell:ls *` 匹配到 `ls ; rm -rf ~/x`。 */
 const WILDCARD_STOP = ';&|<>$`()\n\r';
@@ -161,6 +167,13 @@ export function evaluateApproval(req: ApprovalRequest, policy: ApprovalPolicy): 
 
   if (policy.yolo || policy.force) {
     return { action: 'allow', reason: '--yolo/--force 自动放行' };
+  }
+
+  // 不看 TTY：daemon 把 TTY 位钉死，这里再写「不可交互」会让人误以为挂上终端就改走 ask。
+  if (policy.onApproval === 'remote') {
+    const configured = policy.remoteApprovalTimeoutMs;
+    const timeoutMs = configured != null && configured > 0 ? configured : DEFAULT_REMOTE_APPROVAL_TIMEOUT_MS;
+    return { action: 'await-remote', timeoutMs, reason: req.dangerReason || '等待远端审批' };
   }
 
   if (policy.onApproval === 'fail' || !canPrompt(policy)) {

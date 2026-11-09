@@ -254,6 +254,8 @@ export interface RouteDeps {
   failedSessionRecovery?: FailedSessionRecoveryService;
   /** LOCAL 设备在线判定（技术方案 2026-11-05 §4.1-7）：会话 VO 的 targetDeviceOnline 快照用。 */
   hasDeviceConnection?: (userId: number, deviceId: string) => boolean;
+  /** 当前执行连接的 clientType（electron / cli）；会话 VO 的 executorClientType 快照用。 */
+  getExecutorClientType?: (userId: number, deviceId: string) => string | null;
   treeSignalPublisher: SessionTreeSignalPublisher;
   workspaceBrowse: WorkspaceBrowseService;
   terminalManager: TerminalManager;
@@ -503,6 +505,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       treeSignalPublisher,
       existsSessionUnderWorkspace: (userId: number, path: string) => sessionRepo.existsSessionUnderWorkspace(userId, path),
       hasDeviceConnection: deps.hasDeviceConnection,
+      getExecutorClientType: deps.getExecutorClientType,
     });
     const sessionShareService = new SessionShareService(
       new MysqlSessionShareRepository(db),

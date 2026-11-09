@@ -34,6 +34,8 @@ export interface SessionVO {
   targetDeviceId?: string | null;
   targetDeviceName?: string | null;
   targetDeviceOnline?: boolean | null;
+  /** 当前执行连接的客户端类型（electron / cli）；无执行连接时缺省。不入库。 */
+  executorClientType?: string | null;
   isGit?: boolean | null;
   platform?: string | null;
   shell?: string | null;

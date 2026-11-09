@@ -867,6 +867,8 @@ function createLocalShellRuntime(options = {}) {
         default: return { error: '未知动作：' + action }
       }
     } catch (e) {
+      // 审批已经自行回了 tool_error（远端超时 / 拒绝 / 断连）。再包成结果会多发一条 tool_result。
+      if (e && e.name === 'ToolOutcomeSent') throw e
       console.error('[shell] execution failed:', e)
       return { error: '错误：' + e.message }
     }

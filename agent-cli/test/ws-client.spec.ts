@@ -107,6 +107,24 @@ describe('WsClient', () => {
     client.close();
   });
 
+  it('notifies onDisconnect once when an open socket drops', async () => {
+    server = await startMockWsServer();
+    let notified = 0;
+    const client = new WsClient({
+      baseUrl: server.httpBase,
+      getToken: async () => 'tok',
+      heartbeatIntervalMs: 10_000,
+      silenceTimeoutMs: 10_000,
+      reconnectInitialMs: 5_000,
+    });
+    client.setOnDisconnect(() => { notified += 1; });
+    await client.connect();
+    server.drop();
+    await new Promise((r) => setTimeout(r, 40));
+    expect(notified).toBe(1);
+    client.close();
+  });
+
   it('does not reconnect after close()', async () => {
     server = await startMockWsServer();
     const client = new WsClient({

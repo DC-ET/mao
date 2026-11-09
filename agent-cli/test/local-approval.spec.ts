@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { canPrompt, globToRegExp, validateApproveRule, type ApprovalPolicy } from '../src/local/approval';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { canPrompt, evaluateApproval, globToRegExp, validateApproveRule, type ApprovalPolicy, type ApprovalRequest } from '../src/local/approval';
+import * as trust from '../src/local/trust';
 
 const policy = (over: Partial<ApprovalPolicy> = {}): ApprovalPolicy => ({
   yolo: false,
@@ -64,6 +65,42 @@ describe('validateApproveRule', () => {
     for (const bad of ['*', '*:*', 'shell', 'shell:', ':ls', '', '   ']) {
       expect(validateApproveRule(bad)).not.toBeNull();
     }
+  });
+});
+
+describe('evaluateApproval remote', () => {
+  beforeEach(() => {
+    vi.spyOn(trust, 'isWorkspaceTrusted').mockReturnValue(true);
+  });
+
+  const req = (over: Partial<ApprovalRequest> = {}): ApprovalRequest => ({
+    toolName: 'shell',
+    args: { command: 'echo hi' },
+    workspace: '/tmp',
+    needApproval: true,
+    description: 'echo hi',
+    ...over,
+  });
+
+  it('waits for a remote vote even when the terminal is a TTY', () => {
+    const decision = evaluateApproval(req(), policy({ onApproval: 'remote', stdoutIsTty: true, stdinIsTty: true }));
+    expect(decision.action).toBe('await-remote');
+    if (decision.action === 'await-remote') expect(decision.timeoutMs).toBe(300_000);
+  });
+
+  it('keeps denylist, strict-danger, approve-rule, always-allow and yolo ahead of remote', () => {
+    expect(evaluateApproval(req({ args: { command: 'rm -rf /' }, description: 'rm -rf /' }), policy({ onApproval: 'remote', yolo: true })).action).toBe('deny');
+    expect(evaluateApproval(
+      req({ dangerReason: '危险' }),
+      policy({ onApproval: 'remote', strictDangerCheck: true, yolo: true, stdoutIsTty: false, stdinIsTty: false }),
+    ).action).toBe('deny');
+    expect(evaluateApproval(req(), policy({ onApproval: 'remote', approveRules: ['shell:echo hi'] })).action).toBe('allow');
+    expect(evaluateApproval(req(), policy({
+      onApproval: 'remote',
+      alwaysAllow: [{ toolName: 'shell', description: 'echo hi' }],
+    })).action).toBe('allow');
+    expect(evaluateApproval(req(), policy({ onApproval: 'remote', yolo: true })).action).toBe('allow');
+    expect(evaluateApproval(req(), policy({ onApproval: 'remote', force: true })).action).toBe('allow');
   });
 });
 

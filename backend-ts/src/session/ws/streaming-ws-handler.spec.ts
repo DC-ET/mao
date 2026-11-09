@@ -1020,6 +1020,91 @@ describe('StreamingWsHandler', () => {
     expect(registry.send).not.toHaveBeenCalledWith(7, expect.objectContaining({ type: 'device_status' }));
   });
 
+  it('includes the executor clientType when a device comes online', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValueOnce(null).mockReturnValue(7);
+    jwtService.getAccessTokenMetadata.mockReturnValue(authMetadata);
+    registry.hasDeviceConnection.mockReturnValueOnce(false).mockReturnValue(true);
+    const connected: WsSocket = { id: 'ws-cli', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
+    registry.getDeviceExecutorSocket.mockReturnValue(connected);
+    registry.getClientType.mockReturnValue('cli');
+    await handler.handleTextMessage(connected, JSON.stringify({
+      type: 'auth', token: 'valid.jwt.token', client: 'cli',
+      device: { id: 'dev-1', name: 'MyMac', platform: 'darwin' },
+    }));
+    expect(registry.send).toHaveBeenCalledWith(7, {
+      type: 'device_status', sessionId: null,
+      data: { deviceId: 'dev-1', deviceName: 'MyMac', online: true, clientType: 'cli' },
+    });
+    registry.getClientType.mockReset();
+    registry.getClientType.mockImplementation(() => 'browser');
+    registry.getDeviceExecutorSocket.mockReset();
+    registry.getDeviceExecutorSocket.mockImplementation(() => null);
+  });
+
+  it('rebroadcasts device_status when a later connection takes over with a different clientType', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValueOnce(null).mockReturnValue(7);
+    jwtService.getAccessTokenMetadata.mockReturnValue(authMetadata);
+    registry.hasDeviceConnection.mockReturnValue(true);
+    const previous: WsSocket = { id: 'ws-old', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
+    const connected: WsSocket = { id: 'ws-new', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
+    registry.getDeviceExecutorSocket.mockReturnValueOnce(previous).mockReturnValue(connected);
+    registry.getClientType.mockImplementation((socket: WsSocket) => (socket?.id === 'ws-old' ? 'electron' : 'cli'));
+    await handler.handleTextMessage(connected, JSON.stringify({
+      type: 'auth', token: 'valid.jwt.token', client: 'cli',
+      device: { id: 'dev-1', name: 'MyMac', platform: 'darwin' },
+    }));
+    expect(registry.send).toHaveBeenCalledWith(7, {
+      type: 'device_status', sessionId: null,
+      data: { deviceId: 'dev-1', deviceName: 'MyMac', online: true, clientType: 'cli' },
+    });
+    registry.getClientType.mockReset();
+    registry.getClientType.mockImplementation(() => 'browser');
+    registry.getDeviceExecutorSocket.mockReset();
+    registry.getDeviceExecutorSocket.mockImplementation(() => null);
+  });
+
+  it('does not rebroadcast when two connections of the same clientType replace each other', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValueOnce(null).mockReturnValue(7);
+    jwtService.getAccessTokenMetadata.mockReturnValue(authMetadata);
+    registry.hasDeviceConnection.mockReturnValue(true);
+    const same: WsSocket = { id: 'ws-same', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
+    registry.getDeviceExecutorSocket.mockReturnValue(same);
+    registry.getClientType.mockReturnValue('electron');
+    await handler.handleTextMessage(same, JSON.stringify({
+      type: 'auth', token: 'valid.jwt.token', client: 'electron',
+      device: { id: 'dev-1', name: 'MyMac', platform: 'darwin' },
+    }));
+    expect(registry.send).not.toHaveBeenCalledWith(7, expect.objectContaining({ type: 'device_status' }));
+    registry.getClientType.mockReset();
+    registry.getClientType.mockImplementation(() => 'browser');
+    registry.getDeviceExecutorSocket.mockReset();
+    registry.getDeviceExecutorSocket.mockImplementation(() => null);
+  });
+
+  it('rebroadcasts the fallback clientType when the executor disconnects but the device stays online', () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    registry.getDeviceId.mockReturnValue('dev-1');
+    registry.getDeviceInfo.mockReturnValue({ id: 'dev-1', name: 'MyMac', platform: 'darwin' });
+    registry.hasDeviceConnection.mockReturnValue(true);
+    registry.hasLocalClientConnection.mockReturnValue(true);
+    const fallback: WsSocket = { id: 'ws-electron', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
+    registry.getDeviceExecutorSocket.mockReturnValue(fallback);
+    registry.getClientType.mockImplementation((socket: WsSocket) => (socket?.id === 'ws-1' ? 'cli' : 'electron'));
+    handler.afterConnectionClosed(ws);
+    expect(registry.send).toHaveBeenCalledWith(7, {
+      type: 'device_status', sessionId: null,
+      data: { deviceId: 'dev-1', deviceName: 'MyMac', online: true, clientType: 'electron' },
+    });
+    expect(localToolSessionRegistry.failAllForDevice).not.toHaveBeenCalled();
+    registry.getClientType.mockReset();
+    registry.getClientType.mockImplementation(() => 'browser');
+    registry.getDeviceExecutorSocket.mockReset();
+    registry.getDeviceExecutorSocket.mockImplementation(() => null);
+  });
 
   it('subscribeRePushesPendingAskUserQuestionsOnReconnect', async () => {
     vi.clearAllMocks();
@@ -1489,6 +1574,61 @@ describe('StreamingWsHandler', () => {
     localToolSessionRegistry.isConnected.mockReset();
     localToolSessionRegistry.resolveTarget.mockReset();
     localToolSessionRegistry.resolveTarget.mockResolvedValue(null);
+  });
+
+  it('mcpSyncRequiredCarriesSessionWorkspaceSoDaemonCanStaySilentOutsideTrustRoot', async () => {
+    // 信任根外的 MCP 同步必须能看出工作区：daemon 只在事件带了 workspace 且落在根外时保持静默。
+    // 技能同步帧已经带 workspace；MCP 帧若缺这个字段，daemon 会把缺省当成信任根内并回包。
+    vi.clearAllMocks();
+    executor.tasks.length = 0;
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue({ ...session('LOCAL', 'IDLE'), workspace: '/outside/proj' });
+    sessionService.saveMessage.mockResolvedValue(message(132, 'USER'));
+    harnessService.prepareMessage.mockResolvedValue('local-mcp-workspace');
+    localToolSessionRegistry.isConnected.mockResolvedValue(true);
+    registry.hasLocalClientConnection.mockReturnValue(true);
+    localToolSessionRegistry.resolveTarget.mockResolvedValue({ userId: 7, deviceId: 'shared-device' });
+    registry.hasDeviceConnection.mockReturnValue(false);
+    mcpSyncService.loadAgentServers.mockResolvedValue([{ id: 9, name: 'fs', serverType: 'STDIO' }]);
+    mcpSyncService.buildSyncPayload.mockReturnValue({
+      servers: [{ name: 'fs', type: 'STDIO', command: 'npx' }],
+    });
+    let mcpEvent: { type?: string; data?: Record<string, unknown> } | undefined;
+    registry.sendToDeviceFamily.mockImplementation((_userId: number, _deviceId: string, event: { type?: string; data?: { syncId?: string } }) => {
+      if (event?.type === 'skill_sync_required') {
+        void handler.handleTextMessage(ws, JSON.stringify({
+          type: 'skill_sync_done', sessionId: 11, success: true, syncId: event.data?.syncId,
+        }));
+      }
+      if (event?.type === 'mcp_sync_required') {
+        mcpEvent = event;
+        void handler.handleTextMessage(ws, JSON.stringify({
+          type: 'mcp_tools_report', sessionId: 11, syncId: event.data?.syncId, servers: [],
+        }));
+      }
+      return { targetCount: 1, successCount: 1, failureCount: 0 };
+    });
+    harnessService.executeFromEvent.mockImplementation(async () => undefined);
+
+    try {
+      await handler.handleTextMessage(ws, JSON.stringify({
+        type: 'send_message', sessionId: 11, data: { content: '看下我电脑的硬盘情况' },
+      }));
+      await executor.runAll();
+
+      expect(mcpEvent?.type).toBe('mcp_sync_required');
+      expect(mcpEvent?.data?.workspace).toBe('/outside/proj');
+    } finally {
+      registry.hasLocalClientConnection.mockReset();
+      localToolSessionRegistry.isConnected.mockReset();
+      localToolSessionRegistry.resolveTarget.mockReset();
+      localToolSessionRegistry.resolveTarget.mockResolvedValue(null);
+      registry.sendToDeviceFamily.mockReset();
+      mcpSyncService.loadAgentServers.mockReset();
+      mcpSyncService.loadAgentServers.mockImplementation(async () => []);
+      mcpSyncService.buildSyncPayload.mockReset();
+      mcpSyncService.buildSyncPayload.mockImplementation(() => ({}));
+    }
   });
 
   it('localSessionSkillSyncFailsFastInsteadOfWaiting60sWhenNoLocalClientCanBeDelivered', async () => {

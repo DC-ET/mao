@@ -71,6 +71,11 @@ export interface SessionRouteDeps {
    * 注入回调而非 WS registry，HTTP 层不依赖 WS 细节；缺省视为未知（不展示在线态）。
    */
   hasDeviceConnection?: (userId: number, deviceId: string) => boolean;
+  /**
+   * 当前执行连接的 clientType（electron / cli）。与 hasDeviceConnection 一样用回调注入，
+   * 不把 WS registry 塞进 HTTP 层；缺省为 null。
+   */
+  getExecutorClientType?: (userId: number, deviceId: string) => string | null;
 }
 
 interface CreateSessionRequest {
@@ -181,6 +186,13 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
         vo.targetDeviceOnline = null;
       } else {
         vo.targetDeviceOnline = hasDeviceConnection(ownerId, deviceId);
+      }
+      const readExecutor = deps.getExecutorClientType;
+      if (readExecutor == null || deviceId == null || deviceId === '' || ownerId == null) {
+        vo.executorClientType = null;
+      } else {
+        const type = readExecutor(ownerId, deviceId);
+        vo.executorClientType = type === 'electron' || type === 'cli' ? type : null;
       }
     });
     const mainIds = sessions.map((s) => s.id!).filter((id) => id != null);

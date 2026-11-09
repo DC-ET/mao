@@ -22,7 +22,7 @@ npm link            # 本地安装 mao-agent 命令
 | 目录 | 职责 |
 |------|------|
 | `src/args.ts` | 声明式参数解析，`FLAG_SPECS` 是选项唯一定义处（解析与 `--help` 同源） |
-| `src/commands/` | 子命令入口：chat / login / logout / ls / status / update |
+| `src/commands/` | 子命令入口：chat / local / login / logout / ls / status / update |
 | `src/session/` | `SessionRunner`：一轮任务的生命周期、忙碌重试、退出码 |
 | `src/ws/` | WebSocket 客户端、事件类型与过滤 |
 | `src/rest/` | REST 客户端（401 静默续期、幂等方法重试） |
@@ -30,6 +30,7 @@ npm link            # 本地安装 mao-agent 命令
 | `src/render/` | 非交互输出：text / json / stream-json |
 | `src/repl/` | 斜杠命令分发（`handleSlash`） |
 | `src/local/` | LOCAL 工具执行、路径沙箱、审批、拒绝清单、MCP 代理 |
+| `src/commands/local.ts` | `mao-agent local --serve`：不附着会话的常驻执行端 |
 | `src/config/` | 用户/项目配置、站点地址设置（首次登录交互输入）、输入历史 |
 
 交互层的两条硬约束：Ink 在「非 static 树高度 ≥ 终端行数」时会整屏重绘并清掉 scrollback，所以活动区高度必须先由 `layout.ts` 裁剪；Ink 3 的 `useInput` 把一次 data chunk 当成单键，所以按键必须走自研 `keydecode.ts`。改动这两处前先看 `test/ink-renderer.spec.ts` 与 `test/keydecode.spec.ts`。

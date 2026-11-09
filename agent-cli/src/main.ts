@@ -12,6 +12,7 @@ import { cmdLogout } from './commands/logout';
 import { cmdStatus } from './commands/status';
 import { cmdLs } from './commands/ls';
 import { cmdChat } from './commands/chat';
+import { cmdLocal } from './commands/local';
 import { cmdUpdate } from './commands/update';
 
 async function readStdin(): Promise<string> {
@@ -157,6 +158,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       case 'resume':
       case 'chat':
         return await cmdChat(ctx);
+      case 'local':
+        return await cmdLocal(ctx);
       default:
         process.stderr.write(formatHelp());
         return 1;

@@ -78,6 +78,7 @@
           :target-device-id="currentSession?.targetDeviceId ?? null"
           :target-device-name="currentSession?.targetDeviceName ?? null"
           :target-device-online="currentSession?.targetDeviceOnline ?? null"
+          :executor-client-type="currentSession?.executorClientType ?? null"
           :current-device-id="currentDeviceId"
         />
         <div v-if="historyLoading" class="history-loading"

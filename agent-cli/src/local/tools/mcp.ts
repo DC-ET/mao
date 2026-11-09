@@ -324,6 +324,12 @@ export class McpManager {
       }
     }
   }
+
+  /** 关掉全部会话的 MCP。daemon 退出时没有单个 sessionId 可传。 */
+  async closeAll(): Promise<void> {
+    const ids = [...this.sessions.keys()];
+    await Promise.all(ids.map((id) => this.close(id)));
+  }
 }
 
 /** MCP 工具报错必须抛出，否则错误内容会被当成正常结果喂给模型。 */

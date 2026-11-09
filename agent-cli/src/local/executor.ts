@@ -49,6 +49,29 @@ export interface LocalExecutorOptions {
 
 class ArgumentsParseError extends Error {}
 
+/** 工具结果已经用 tool_error 送出，调用方不要再补一帧 tool_result。 */
+class ToolOutcomeSent extends Error {
+  constructor() {
+    super('tool outcome already sent');
+    this.name = 'ToolOutcomeSent';
+  }
+}
+
+type RemoteWaitResult =
+  | { kind: 'choice'; choice: ApprovalChoice }
+  | { kind: 'timeout' }
+  | { kind: 'disconnected' };
+
+interface RemoteWaiter {
+  resolve: (result: RemoteWaitResult) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+/** stdio MCP 拉起没有服务端 requestId，用同步 id + 服务器名登记远端等待。 */
+export function mcpSpawnApprovalId(sessionId: number, syncId: string | null, serverName: string): string {
+  return `mcp-spawn:${sessionId}:${syncId ?? ''}:${serverName}`;
+}
+
 function parseArgs(raw: unknown): Record<string, unknown> {
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>;
   if (typeof raw === 'string') {
@@ -108,8 +131,39 @@ export class LocalExecutor {
   private readonly approvalDecided = new Set<string>();
   /** 回声先到、本地还没走到 ask() 时暂存，ask() 时取用。 */
   private readonly approvalRemoteChoices = new Map<string, ApprovalChoice>();
+  /** `--on-approval=remote`：还没投票、只等别人的 tool_approval_resolved。 */
+  private readonly remoteWaiters = new Map<string, RemoteWaiter>();
 
   constructor(private readonly opts: LocalExecutorOptions) {}
+
+  /**
+   * 连接已断开。等待远端审批的请求立刻失败，不等满超时。
+   * 服务端会对这条连接上的 pending 做自己的失败收敛；这里是为了清掉本地定时器，
+   * 避免迟到回声在服务端已经放弃之后又把工具跑起来。
+   */
+  onWsClosed(): void {
+    this.failRemoteWaits();
+  }
+
+  failRemoteWaits(): void {
+    for (const waiter of this.remoteWaiters.values()) {
+      clearTimeout(waiter.timer);
+      waiter.resolve({ kind: 'disconnected' });
+    }
+    this.remoteWaiters.clear();
+  }
+
+  /** 关掉 shell 与全部会话的 MCP。不改变 close(sessionId) 的附着形态语义。 */
+  async shutdown(): Promise<void> {
+    this.closed = true;
+    this.failRemoteWaits();
+    try {
+      this.shell?.closeAll();
+    } catch {
+      // ignore
+    }
+    await this.mcp.closeAll();
+  }
 
   /** 服务端能力位（connected 帧）同步：false = 旧后端 / 未连接。 */
   setApprovalRelaySupported(supported: boolean): void {
@@ -127,8 +181,10 @@ export class LocalExecutor {
       if (evt.type === 'tool_execute') {
         await this.onToolExecute(sessionId, d);
       } else if (evt.type === 'skill_sync_required') {
+        if (this.isOutsideTrust(d.workspace)) return;
         await this.onSkillSync(sessionId, d);
       } else if (evt.type === 'mcp_sync_required') {
+        if (this.isOutsideTrust(d.workspace)) return;
         await this.onMcpSync(sessionId, d);
       } else if (evt.type === 'tool_approval_resolved') {
         this.onRemoteApprovalResolved(d);
@@ -168,6 +224,15 @@ export class LocalExecutor {
     if (typeof raw !== 'string' || raw.trim() === '') return local;
     if (isWorkspaceWithin(raw, local)) return raw;
     throw new Error(`拒绝服务端下发的工作区 ${raw}：不在本地工作区 ${local} 内`);
+  }
+
+  /**
+   * 信任根外的技能 / MCP 同步不回包。失败回包会让服务端把整轮判负，
+   * 同机桌面端后到的成功就被丢掉。缺省 workspace 视为本地信任根，照常处理。
+   */
+  private isOutsideTrust(raw: unknown): boolean {
+    if (typeof raw !== 'string' || raw.trim() === '') return false;
+    return !isWorkspaceWithin(raw, this.opts.workspace);
   }
 
   private async onToolExecute(sessionId: number, d: Record<string, unknown>): Promise<void> {
@@ -219,15 +284,24 @@ export class LocalExecutor {
           this.opts.onApprovalDenied?.();
           return;
         }
+      } else if (decision.action === 'await-remote' && !shellPrompts) {
+        // 不发不带 approved 的 tool_approval：服务端会把那一帧当成「无人决策」并直接执行。
+        const waited = await this.awaitRemoteApproval(sessionId, requestId, decision.timeoutMs);
+        if (!waited.allowed) return;
       } else if ((needApproval || decision.action === 'ask') && !shellPrompts) {
         await this.opts.ws.sendReliable({ type: 'tool_approval', sessionId, requestId });
       }
 
-      const result = await this.runTool(toolName, args, sessionId, workspace, req, requestId);
-      const payload = persistToolResult(sessionId, requestId, result);
-      const sent = await this.opts.ws.sendReliable({ type: 'tool_result', sessionId, requestId, result: payload });
-      if (!sent) {
-        console.error(`Failed to send tool result session=${sessionId} requestId=${requestId}`);
+      try {
+        const result = await this.runTool(toolName, args, sessionId, workspace, req, requestId);
+        const payload = persistToolResult(sessionId, requestId, result);
+        const sent = await this.opts.ws.sendReliable({ type: 'tool_result', sessionId, requestId, result: payload });
+        if (!sent) {
+          console.error(`Failed to send tool result session=${sessionId} requestId=${requestId}`);
+        }
+      } catch (e) {
+        if (e instanceof ToolOutcomeSent) return;
+        throw e;
       }
     } finally {
       this.approvalSessions.delete(requestId);
@@ -319,6 +393,16 @@ export class LocalExecutor {
     const choice: ApprovalChoice | null = approved == null
       ? null
       : (approved ? (d.alwaysAllow === true ? 'always' : 'allow') : 'deny');
+    const remoteWaiter = this.remoteWaiters.get(requestId);
+    if (remoteWaiter) {
+      // null 是超时/中止收尾，不是远端投票，继续等真正的布尔结果或本地超时。
+      if (choice == null) return;
+      clearTimeout(remoteWaiter.timer);
+      this.remoteWaiters.delete(requestId);
+      this.markApprovalDecided(requestId);
+      remoteWaiter.resolve({ kind: 'choice', choice });
+      return;
+    }
     const waiter = this.approvalEchoWaiters.get(requestId);
     if (waiter) {
       this.clearApprovalResend(requestId);
@@ -481,6 +565,11 @@ export class LocalExecutor {
       await this.opts.ws.sendReliable({ type: 'tool_approval', sessionId, requestId });
       return false;
     }
+    if (decision.action === 'await-remote') {
+      const waited = await this.awaitRemoteApproval(sessionId, requestId, decision.timeoutMs);
+      if (!waited.allowed) throw new ToolOutcomeSent();
+      return true;
+    }
     const choice = await this.ask(stepReq, decision.reason);
     const finalChoice = await this.finalizeApproval(sessionId, requestId, choice);
     if (finalChoice === 'always') recordAlwaysAllow(this.opts.policy, stepReq);
@@ -521,18 +610,12 @@ export class LocalExecutor {
     let workspace: string;
     try {
       workspace = this.resolveWorkspace(d.workspace);
-    } catch (e) {
-      const reason = e instanceof Error ? e.message : String(e);
-      await this.opts.ws.sendReliable({
-        type: 'mcp_tools_report',
-        sessionId,
-        syncId,
-        servers: servers.map((s) => ({ name: s.name, connected: false, tools: [], error: reason })),
-      });
+    } catch {
+      // 信任根外不回包（handleEvent 已提前返回；这里再挡一层，避免以后调用点漏判）。
       return;
     }
     const reports = await this.mcp.sync(sessionId, servers, {
-      approveSpawn: (server) => this.approveMcpSpawn(server, workspace),
+      approveSpawn: (server) => this.approveMcpSpawn(server, workspace, sessionId, syncId),
     });
     await this.opts.ws.sendReliable({
       type: 'mcp_tools_report',
@@ -543,7 +626,12 @@ export class LocalExecutor {
   }
 
   /** stdio MCP 会执行服务端指定的可执行文件，按变更类操作走同一套审批策略。 */
-  private async approveMcpSpawn(server: McpServerSpec, workspace: string): Promise<{ allowed: boolean; reason: string }> {
+  private async approveMcpSpawn(
+    server: McpServerSpec,
+    workspace: string,
+    sessionId: number,
+    syncId: string | null,
+  ): Promise<{ allowed: boolean; reason: string }> {
     const commandLine = [server.command ?? '', ...(Array.isArray(server.args) ? server.args.map(String) : [])].join(' ').trim();
     const req: ApprovalRequest = {
       toolName: `mcp__${server.name}`,
@@ -558,6 +646,17 @@ export class LocalExecutor {
     if (decision.action === 'deny') {
       if (decision.exitApproval) this.opts.onApprovalDenied?.();
       return { allowed: false, reason: decision.reason };
+    }
+    if (decision.action === 'await-remote') {
+      const requestId = mcpSpawnApprovalId(sessionId, syncId, server.name);
+      this.approvalSessions.set(requestId, sessionId);
+      try {
+        // 同步没有服务端 pending，不能补发 tool_approval（没有可认领的审批，补发也变不成投票卡）。
+        const waited = await this.awaitRemoteApproval(sessionId, requestId, decision.timeoutMs, false);
+        return { allowed: waited.allowed, reason: waited.reason };
+      } finally {
+        this.approvalSessions.delete(requestId);
+      }
     }
     if (!this.opts.askApproval && !canPrompt(this.opts.policy)) {
       return { allowed: false, reason: '需要审批但当前无法交互提问，已拒绝启动 MCP 进程' };
@@ -574,4 +673,57 @@ export class LocalExecutor {
   private async failTool(sessionId: number, requestId: string, error: string): Promise<void> {
     await this.opts.ws.sendReliable({ type: 'tool_error', sessionId, requestId, error });
   }
+
+  /**
+   * 等一条 approved 为布尔的回声。`approved: null` 不当作决策。
+   * 「总是允许」只放行这一次，不写入进程级 alwaysAllow（daemon 上那张表跨会话）。
+   */
+  private async awaitRemoteApproval(
+    sessionId: number,
+    requestId: string,
+    timeoutMs: number,
+    reportToolError = true,
+  ): Promise<{ allowed: boolean; reason: string }> {
+    const result = await this.waitForRemoteDecision(requestId, timeoutMs);
+    if (result.kind === 'choice' && result.choice !== 'deny') {
+      return { allowed: true, reason: result.choice === 'always' ? '远端选择总是允许（仅本次）' : '远端已批准' };
+    }
+    const reason = result.kind === 'timeout'
+      ? formatRemoteTimeout(timeoutMs)
+      : result.kind === 'disconnected'
+        ? '等待远端审批时连接已断开'
+        : '用户拒绝执行该工具';
+    if (reportToolError) {
+      await this.failTool(sessionId, requestId, reason);
+      if (!this.closed) this.opts.onApprovalDenied?.();
+    }
+    return { allowed: false, reason };
+  }
+
+  private waitForRemoteDecision(requestId: string, timeoutMs: number): Promise<RemoteWaitResult> {
+    const early = this.takeRemoteChoice(requestId);
+    if (early != null) {
+      this.markApprovalDecided(requestId);
+      return Promise.resolve({ kind: 'choice', choice: early });
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        if (!this.remoteWaiters.has(requestId)) return;
+        this.remoteWaiters.delete(requestId);
+        resolve({ kind: 'timeout' });
+      }, timeoutMs);
+      timer.unref?.();
+      this.remoteWaiters.set(requestId, { resolve, timer });
+    });
+  }
+}
+
+function formatRemoteTimeout(timeoutMs: number): string {
+  if (timeoutMs >= 1000 && timeoutMs % 1000 === 0) {
+    return `等待远端审批超时（${timeoutMs / 1000} 秒内无人投票）`;
+  }
+  if (timeoutMs >= 1000) {
+    return `等待远端审批超时（${Math.round(timeoutMs / 1000)} 秒内无人投票）`;
+  }
+  return `等待远端审批超时（${timeoutMs} 毫秒内无人投票）`;
 }

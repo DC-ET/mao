@@ -982,6 +982,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     notifPref,
     wsHandler, terminalWsHandler,
     hasDeviceConnection: (userId: number, deviceId: string) => wsRegistry.hasDeviceConnection(userId, deviceId),
+    getExecutorClientType: (userId: number, deviceId: string) => {
+      const socket = wsRegistry.getDeviceExecutorSocket(userId, deviceId);
+      if (!socket) return null;
+      const type = wsRegistry.getClientType(socket);
+      return type === 'electron' || type === 'cli' ? type : null;
+    },
   });
 
   const { closeApp } = assembleLifecycle({

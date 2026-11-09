@@ -50,7 +50,44 @@ mao-agent --local -p "列出当前目录" --yolo --output-format json
 mao-agent ls
 mao-agent resume                   # 最近更新会话（按 updatedAt）
 mao-agent status
+mao-agent local --serve --workspace ~/proj
 ```
+
+## 常驻本地执行端
+
+桌面客户端不在线、但仍要在本机跑 LOCAL 任务时，用一个常驻进程替本机全部已绑定该设备的 LOCAL 会话执行工具。多个本地任务也共用这一个进程，不必一个会话开一个终端。
+
+```bash
+# 先在交互终端信任工作区（或把路径写入 trustedWorkspaces）
+mao-agent --local
+# 然后常驻。默认等桌面 / 安卓 / Web 投票；无人值守加 --yolo
+mao-agent local --serve --workspace ~/proj
+mao-agent local --serve --workspace ~/proj --yolo
+```
+
+| 参数 | 说明 |
+|------|------|
+| `--workspace <dir>` | 信任根，默认当前目录。服务端下发的工作区必须等于它或在它里面。相对路径按启动时的 cwd 解析 |
+| `--on-approval remote\|fail` | 默认 `remote`：需审批时不弹窗，等其他已连接端投票。`fail` 立即拒绝。不允许 `ask`（没有审批界面） |
+| `--approval-timeout-ms <ms>` | remote 的等待上限，默认 300000。超时后拒绝，进程不退出 |
+| `--yolo` / `--force` | 自动放行服务端要求的审批。不豁免工作区信任和默认拒绝清单 |
+
+信任根必须已经信任。常驻进程不会自己问「是否信任」，未信任直接退出。先在交互终端对同一目录运行 `mao-agent --local` 并输入 y，或把绝对路径写入 `~/.mao/agent-cli/config.json` 的 `trustedWorkspaces`。多个互不包含的仓库，把信任根指到它们的共同父目录。
+
+和桌面客户端的关系：同一台机器谁最后连上，谁执行。daemon 后启动会接管桌面端正在执行的 LOCAL 工具；桌面端再打开会夺回；关掉桌面端后，还在跑的 daemon 自动接回。一个设备只留一个常驻进程。被顶掉的那个进程仍在，但收不到工具请求。执行机自己的桌面窗口看不到「谁在执行」的横幅，到安卓或浏览器上看。
+
+审批：remote 模式下普通工具、shell 的每一步、stdio MCP 拉起都会等其他端投票。投票选「总是允许」只放行这一次，不会让别的会话跳过审批。连接在等待中断开会立刻失败，不会干等满超时。无人值守时没有人投票，最长挂到超时；收件箱和约 3 分钟的外推提醒仍会走，但更稳妥的是 `--yolo` 或把会话权限设为 `FULL`。
+
+信任根外的目录：工具请求会以「不在本地工作区内」失败。技能同步和 MCP 同步不回包，避免一份失败回包把同机桌面端的成功结果判负。若当时只有 daemon 在线，技能同步大约 60 秒后失败，MCP 同步超时后这一轮 MCP 工具不可用，会话里的其他工具仍会因工作区越界失败。
+
+安全：常驻进程等于把自己账号的远端会话接到本机 shell。只在自己的机器上跑，不要用 root，也不要放进登录项。示例（自行安装，仓库不提供安装命令）：
+
+```bash
+# 前台确认可用后，再放到后台
+nohup mao-agent local --serve --workspace "$HOME/proj" >>"$HOME/.mao/agent-cli/daemon.log" 2>&1 &
+```
+
+macOS launchd / Linux systemd 由使用者自己写单元，工作目录和 `--workspace` 用绝对路径，并保证先 `mao-agent login`。
 
 CI 示例（建议 CLOUD）：
 
@@ -200,9 +237,11 @@ emoji / CJK 按整字符删除；粘贴多行文本原样进入草稿。
 |------|------|
 | `--yolo` / `-f, --force` | 自动放行服务端要求的审批（不豁免工作区信任与默认拒绝清单） |
 | `--approve-rule <tool:pattern>` | 放行匹配的工具，可重复。例：`--approve-rule 'shell:ls *'`。必须写成 `tool:pattern`；`*` / `**` / `?` 不跨越分号、管道、重定向、`$`、反引号等 shell 元字符，区分大小写；`*`、`*:*`、只写工具名、空 pattern 会被拒绝（退出码 4） |
-| `--on-approval <ask\|fail>` | 需审批时：TTY 默认 ask，打印/非 TTY 默认 fail。ask 要求 stdin 与 stdout 都是 TTY，管道输入时按 fail 处理 |
+| `--on-approval <ask\|fail\|remote>` | 需审批时：TTY 默认 ask，打印/非 TTY 默认 fail。`local --serve` 默认 remote。ask 要求 stdin 与 stdout 都是 TTY；remote 不看 TTY，等其他端投票 |
 | `--strict-danger-check` | dangerReason 非空时即使 `--yolo` 也必须人工确认 |
 | `--i-know-what-im-doing` | 豁免默认拒绝清单（`rm -rf /`、fork bomb、写 `~/.ssh` 等） |
+| `--serve` | 仅 `mao-agent local --serve`：常驻执行端，不加入会话 |
+| `--approval-timeout-ms <ms>` | 远端审批等待上限，默认 300000。`local --serve` 与 `--local --on-approval=remote` 都生效 |
 
 ## 本地文件
 
@@ -246,7 +285,7 @@ emoji / CJK 按整字符删除；粘贴多行文本原样进入草稿。
 
 CLOUD 无工具审批；只读排障请用工具集受限的 Agent。
 
-LOCAL 审批链：工作区信任（含 `read_file` / `glob_search` / `grep_search`）→ 默认拒绝清单 → `--approve-rule` → 本次会话选过「总是允许」的**精确**工具+命令 → `--yolo`/`--force` → TTY 确认。`--yolo` 不能豁免工作区信任与默认拒绝（如 `rm -rf /`）。shell 的每次 exec / `write_stdin`、以及每个 MCP stdio 进程启动都各自过一遍这条链——复用已有 shell 会话不会沿用首次批准。`action:'await_async'` 只领取该会话已缓冲的输出、不向 bash 交付新文本，因此不触发审批。ask 需要 stdin 与 stdout 同为 TTY，否则按 `--on-approval=fail` 处理（退出码 4）。
+LOCAL 审批链：工作区信任（含 `read_file` / `glob_search` / `grep_search`）→ 默认拒绝清单 → `--approve-rule` → 本次会话选过「总是允许」的**精确**工具+命令 → `--yolo`/`--force` → TTY 确认。`--yolo` 不能豁免工作区信任与默认拒绝（如 `rm -rf /`）。shell 的每次 exec / `write_stdin`、以及每个 MCP stdio 进程启动都各自过一遍这条链——复用已有 shell 会话不会沿用首次批准。`action:'await_async'` 只领取该会话已缓冲的输出、不向 bash 交付新文本，因此不触发审批。ask 需要 stdin 与 stdout 同为 TTY，否则按 `--on-approval=fail` 处理（退出码 4）。`remote` 不看 TTY，等其他端投票；常驻执行端默认就是这条，超时后拒绝且进程不退出。远端「总是允许」只放行这一次。
 
 多端审批（0.0.459 起）：LOCAL 审批弹窗由服务端同步给同一用户的其它在线端（桌面 / Web / 其它终端），任意一端先处理都会生效。本终端按 y / n / a 只是投票（弹窗显示「已提交，等待服务端确认…」），服务端先到先得认领后广播结果：其它端先处理时本终端弹窗自动撤下并按该结果继续（不再重新提问）；本终端胜出则照常执行。5 秒未收到确认自动重发（最多 2 次），断线重连立即补发；旧版服务端不支持中转时本终端决定立即生效。
 

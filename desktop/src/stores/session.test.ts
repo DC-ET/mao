@@ -1601,6 +1601,18 @@ describe('session store applyDeviceStatus（执行端在线态实时同步）', 
     expect(store.getSessionEntity('1')?.targetDeviceName).toBe('MyMac.local')
   })
 
+  it('在线态没变、只有 clientType 变了时仍然写入', () => {
+    const store = seed()
+    expect(store.applyDeviceStatus('dev-1', true, 'MyMac', 'cli')).toBe(2)
+    expect(store.getSessionEntity('1')?.executorClientType).toBe('cli')
+    expect(store.getSessionEntity('2')?.executorClientType).toBe('cli')
+    expect(store.getSessionEntity('3')?.executorClientType).toBeUndefined()
+    expect(store.applyDeviceStatus('dev-1', true, 'MyMac', 'cli')).toBe(0)
+    expect(store.applyDeviceStatus('dev-1', true, 'MyMac', 'electron')).toBe(2)
+    expect(store.getSessionEntity('1')?.executorClientType).toBe('electron')
+    expect(store.getSessionEntity('1')?.targetDeviceOnline).toBe(true)
+  })
+
   it('未绑定设备 / 空 deviceId 不动任何会话', () => {
     const store = seed()
     expect(store.applyDeviceStatus('', false)).toBe(0)

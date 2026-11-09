@@ -18,7 +18,7 @@ import type { Logger } from '../util/logger';
 import path from 'node:path';
 import readline from 'node:readline';
 import { LocalExecutor } from '../local/executor';
-import { addTrustedWorkspace, isWorkspaceTrusted, workspaceExists } from '../local/trust';
+import { ensureWorkspaceTrusted } from '../local/trust';
 import { collectLocalUnsyncedSkills, readAgentsMd } from '../local/local-skills';
 import { buildOsVersion, detectShell, isGitWorkspace } from '../local/paths';
 import { resolveDeviceIdentity } from '../local/device-identity';
@@ -137,6 +137,7 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
       iKnowWhatImDoing: cfg.iKnowWhatImDoing,
       stdoutIsTty: cfg.stdoutIsTty,
       stdinIsTty: cfg.stdinIsTty,
+      remoteApprovalTimeoutMs: cfg.approvalTimeoutMs,
     };
     localExecutor = new LocalExecutor({
       ws,
@@ -495,35 +496,6 @@ export async function resolveSessionTarget(
     return { kind: 'new', draft, request };
   }
   return { kind: 'existing', session: await rest.createSession(request) };
-}
-
-async function ensureWorkspaceTrusted(workspace: string, canPrompt: boolean): Promise<void> {
-  if (!workspaceExists(workspace)) {
-    throw new CliError(`LOCAL 工作区不存在或不是目录: ${workspace}`);
-  }
-  if (isWorkspaceTrusted(workspace)) return;
-  if (!canPrompt) {
-    throw new CliError(
-      `已拦截：工作区未信任\n  目录: ${workspace}\n  下一步: 先在交互终端运行 mao-agent --local 并输入 y，或把该路径写入 ~/.mao/agent-cli/config.json 的 trustedWorkspaces。`,
-      EXIT.APPROVAL,
-    );
-  }
-  const rl = readline.createInterface({ input: process.stdin, output: process.stderr, terminal: true });
-  try {
-    const answer = await new Promise<string>((resolve) => {
-      rl.question(
-        `此工作区尚未信任:\n  ${workspace}\n允许本机 Agent 在该目录执行命令与写文件？[y/N] `,
-        resolve,
-      );
-    });
-    if (!/^\s*y(es)?\s*$/i.test(answer)) {
-      throw new CliError('已拒绝信任该工作区', EXIT.APPROVAL);
-    }
-    addTrustedWorkspace(workspace);
-    process.stderr.write(`✔ 已信任 ${workspace}\n`);
-  } finally {
-    rl.close();
-  }
 }
 
 async function loadHistory(rest: RestClient, sessionId: number, full: boolean): Promise<string[]> {

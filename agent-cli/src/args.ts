@@ -3,7 +3,7 @@ import { CliError } from './util/exit-codes';
 export type OutputFormat = 'text' | 'json' | 'stream-json';
 export type IfRunning = 'wait' | 'cancel' | 'fail';
 export type OnQuestion = 'ask' | 'fail';
-export type OnApproval = 'ask' | 'fail';
+export type OnApproval = 'ask' | 'fail' | 'remote';
 export type PermissionLevel = 'READ_ONLY' | 'READ_WRITE' | 'SMART' | 'PROXY' | 'FULL';
 export type CommandName =
   | 'login'
@@ -12,13 +12,14 @@ export type CommandName =
   | 'ls'
   | 'resume'
   | 'chat'
+  | 'local'
   | 'update'
   | 'help'
   | 'version';
 
 export const DEFAULT_TIMEOUT_MS = 30000;
 
-const SUBCOMMANDS: readonly CommandName[] = ['login', 'logout', 'status', 'ls', 'resume', 'update', 'help'];
+const SUBCOMMANDS: readonly CommandName[] = ['login', 'logout', 'status', 'ls', 'resume', 'update', 'help', 'local'];
 
 /**
  * 选项是否吃掉下一个 token：
@@ -79,10 +80,12 @@ export const FLAG_SPECS: readonly FlagSpec[] = [
   { name: 'token', kind: 'value', arg: '<jwt>', group: '输出与诊断', desc: '一次性覆盖本地 token（更推荐环境变量 MAO_TOKEN）' },
   { name: 'timeout-ms', kind: 'value', arg: '<n>', group: '输出与诊断', desc: `单次 REST 请求超时，默认 ${DEFAULT_TIMEOUT_MS}` },
 
+  { name: 'serve', kind: 'boolean', group: 'LOCAL 模式', common: true, desc: '常驻执行端：mao-agent local --serve，不加入会话' },
   { name: 'yolo', kind: 'boolean', group: 'LOCAL 模式', common: true, desc: '自动放行服务端要求的审批（不豁免工作区信任与默认拒绝清单）' },
   { name: 'force', alias: 'f', kind: 'boolean', group: 'LOCAL 模式', desc: '同 --yolo' },
   { name: 'approve-rule', kind: 'repeat', arg: '<tool:pattern>', group: 'LOCAL 模式', desc: "放行匹配的工具，可重复。例: --approve-rule 'shell:ls *'" },
-  { name: 'on-approval', kind: 'value', arg: '<ask|fail>', group: 'LOCAL 模式', desc: '需审批时：TTY 默认 ask，打印/非 TTY 默认 fail' },
+  { name: 'on-approval', kind: 'value', arg: '<ask|fail|remote>', group: 'LOCAL 模式', desc: '需审批时：TTY 默认 ask，打印/非 TTY 默认 fail；local --serve 默认 remote' },
+  { name: 'approval-timeout-ms', kind: 'value', arg: '<ms>', group: 'LOCAL 模式', desc: '远端审批等待上限，默认 300000（仅 remote）' },
   { name: 'strict-danger-check', kind: 'boolean', group: 'LOCAL 模式', desc: 'dangerReason 非空时即使 --yolo 也必须人工确认' },
   { name: 'i-know-what-im-doing', kind: 'boolean', group: 'LOCAL 模式', desc: '豁免默认拒绝清单（rm -rf /、fork bomb、写 ~/.ssh 等）' },
 
@@ -146,11 +149,15 @@ export interface CliConfig {
   asciiOnly?: boolean;
   queuedInput?: boolean;
   local: boolean;
+  /** `mao-agent local --serve`：不附着会话的常驻执行端。 */
+  serve: boolean;
   yolo: boolean;
   force: boolean;
   approveRules: string[];
   onApproval: OnApproval;
   onApprovalExplicit: boolean;
+  /** 仅 remote 使用；未设置时由策略默认 300s。 */
+  approvalTimeoutMs?: number;
   strictDangerCheck: boolean;
   iKnowWhatImDoing: boolean;
   username?: string;
@@ -340,7 +347,11 @@ export function parseCliConfig(
 ): CliConfig {
   const { positionals, flags, repeated } = parseRawArgs(argv);
 
-  const local = hasFlag(flags, 'local');
+  if (hasFlag(flags, 'serve') && positionals[0] !== 'local') {
+    throw new CliError('常驻本地执行端请使用：mao-agent local --serve');
+  }
+
+  const local = hasFlag(flags, 'local') || positionals[0] === 'local';
   if (!local) {
     for (const name of LOCAL_ONLY_FLAGS) {
       if (flags[name] !== undefined || repeated[name] !== undefined) {
@@ -413,14 +424,25 @@ export function parseCliConfig(
   if (!onQuestionRaw && (print || !stdoutIsTty)) onQuestion = 'fail';
 
   const onApprovalRaw = optionalText(flags, 'on-approval');
-  let onApproval = parseEnum('on-approval', onApprovalRaw, ['ask', 'fail'] as const, 'ask', lower);
+  let onApproval = parseEnum('on-approval', onApprovalRaw, ['ask', 'fail', 'remote'] as const, 'ask', lower);
   if (!onApprovalRaw && (print || !stdoutIsTty)) onApproval = 'fail';
+  const serve = hasFlag(flags, 'serve');
+  if (command === 'local' && serve && !onApprovalRaw) onApproval = 'remote';
 
   if (onQuestion === 'ask' && print && !stdoutIsTty) {
     throw new CliError('打印模式在非 TTY 下不允许 --on-question=ask，请改用 --on-question=fail 或在交互终端中使用');
   }
   if (local && onApproval === 'ask' && print && !stdoutIsTty) {
     throw new CliError('LOCAL 打印模式在非 TTY 下不允许 --on-approval=ask，请改用 --on-approval=fail、--yolo，或在交互终端中使用');
+  }
+  if (command === 'local' && !help && !version && !serve) {
+    throw new CliError('常驻本地执行端请使用：mao-agent local --serve');
+  }
+  if (command === 'local' && rest.length > 0 && !help && !version) {
+    throw new CliError(`local 子命令不接受位置参数：${rest.join(' ')}`);
+  }
+  if (serve && onApproval === 'ask') {
+    throw new CliError('mao-agent local --serve 没有交互式审批，不允许 --on-approval=ask。请改用默认的 remote、--on-approval=fail 或 --yolo');
   }
   if (local && (optionalString(flags, 'git-clone') || optionalString(flags, 'cloud-project'))) {
     throw new CliError('LOCAL 模式不能使用 --git-clone / --cloud-project（那些是 CLOUD 服务端工作区选项）');
@@ -462,11 +484,13 @@ export function parseCliConfig(
     asciiOnly: hasFlag(flags, 'ascii') ? true : undefined,
     queuedInput: hasFlag(flags, 'no-queue') ? false : undefined,
     local,
+    serve,
     yolo: hasFlag(flags, 'yolo'),
     force: hasFlag(flags, 'force'),
     approveRules: repeated['approve-rule'] ?? [],
     onApproval,
     onApprovalExplicit: Boolean(onApprovalRaw),
+    approvalTimeoutMs: positiveInt(flags, 'approval-timeout-ms'),
     strictDangerCheck: hasFlag(flags, 'strict-danger-check'),
     iKnowWhatImDoing: hasFlag(flags, 'i-know-what-im-doing'),
     username: optionalString(flags, 'username'),
@@ -487,6 +511,7 @@ export function parseCliConfig(
 const USAGE = `用法:
   mao-agent [prompt]                 无参数进入交互式 REPL；带 prompt 则先发首条消息
   mao-agent --local [prompt]         LOCAL 模式：工具在本机工作区执行
+  mao-agent local --serve            常驻本地执行端：不加入会话，替本机 LOCAL 会话执行工具
   mao-agent -p "prompt"              打印模式：发一条消息，等任务终态后退出
   mao-agent resume [sessionId]       恢复会话；省略 id 则恢复最近更新的一个
   mao-agent ls                       列出可恢复的会话
@@ -510,6 +535,8 @@ const REFERENCE = `环境变量:
 互斥与默认:
   --local 与 --git-clone / --cloud-project 互斥
   -p 且非 TTY 时显式 --on-approval=ask 会报错（无处弹审批）
+  mao-agent local --serve 默认 --on-approval=remote，显式 ask 会报错
+  谁最后连接谁执行：桌面端后启动夺回执行连接，关闭后 releaseDevice 回坐到 daemon
   --permission-level 缺省 READ_WRITE，会写入会话并覆盖服务端默认（服务端默认 READ_ONLY）
 
 stdin: chat（裸调用 / -p / 带 prompt）在非 TTY 下读取管道提示词，读到 EOF 即结算，2s 内无输入则跳过；子命令不读 stdin。

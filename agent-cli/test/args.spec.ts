@@ -172,6 +172,7 @@ describe('consumesPipedPrompt', () => {
     expect(consumesPipedPrompt('update')).toBe(false);
     expect(consumesPipedPrompt('ls')).toBe(false);
     expect(consumesPipedPrompt('resume')).toBe(false);
+    expect(consumesPipedPrompt('local')).toBe(false);
   });
 
   it('config reflects it: chat true (timeout-guarded), subcommands false', () => {
@@ -179,5 +180,35 @@ describe('consumesPipedPrompt', () => {
     expect(parseCliConfig(['-p', 'hi'], tty).consumesPipedPrompt).toBe(true);
     expect(parseCliConfig(['status'], tty).consumesPipedPrompt).toBe(false);
     expect(parseCliConfig(['update'], tty).consumesPipedPrompt).toBe(false);
+    expect(parseCliConfig(['local', '--serve'], tty).consumesPipedPrompt).toBe(false);
+  });
+});
+
+describe('local --serve', () => {
+  const notty = { stdoutIsTty: false, stdinIsTty: false };
+
+  it('defaults --on-approval to remote even when stdout is not a TTY', () => {
+    const cfg = parseCliConfig(['local', '--serve'], notty);
+    expect(cfg.command).toBe('local');
+    expect(cfg.serve).toBe(true);
+    expect(cfg.onApproval).toBe('remote');
+    expect(cfg.local).toBe(true);
+  });
+
+  it('rejects --on-approval=ask and a bare local subcommand', () => {
+    expect(() => parseCliConfig(['local', '--serve', '--on-approval', 'ask'], tty)).toThrow(/不允许 --on-approval=ask/);
+    expect(() => parseCliConfig(['local'], tty)).toThrow(/mao-agent local --serve/);
+    expect(() => parseCliConfig(['--serve'], tty)).toThrow(/mao-agent local --serve/);
+  });
+
+  it('accepts remote and an explicit fail, and keeps --workspace as given', () => {
+    const remote = parseCliConfig(['--local', '--on-approval', 'remote'], tty);
+    expect(remote.onApproval).toBe('remote');
+    const fail = parseCliConfig(['local', '--serve', '--on-approval', 'fail'], tty);
+    expect(fail.onApproval).toBe('fail');
+    const cfg = parseCliConfig(['local', '--serve', '--workspace', 'proj', '--approval-timeout-ms', '1500', '--yolo'], tty);
+    expect(cfg.workspace).toBe('proj');
+    expect(cfg.approvalTimeoutMs).toBe(1500);
+    expect(cfg.yolo).toBe(true);
   });
 });

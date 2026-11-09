@@ -397,7 +397,7 @@ describe('LocalExecutor', () => {
     expect(report.servers[0].error).toMatch(/on-approval=fail|无法交互/);
   });
 
-  it('rejects a server-supplied workspace for mcp sync as well', async () => {
+  it('does not reply when mcp sync workspace is outside the trust root', async () => {
     vi.spyOn(trust, 'isWorkspaceTrusted').mockReturnValue(true);
     const local = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-ws-'));
     const sent: object[] = [];
@@ -416,8 +416,8 @@ describe('LocalExecutor', () => {
     const report = sent.find((m) => (m as { type: string }).type === 'mcp_tools_report') as {
       servers: Array<{ connected: boolean; error: string }>;
     };
-    expect(report.servers[0].connected).toBe(false);
-    expect(report.servers[0].error).toMatch(/拒绝服务端下发的工作区/);
+    expect(report).toBeUndefined();
+    expect(sent).toEqual([]);
     fs.rmSync(local, { recursive: true, force: true });
   });
 
