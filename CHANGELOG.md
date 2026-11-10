@@ -7,7 +7,7 @@
 - **「恢复失败会话」改为勾选后执行**：会话管理页入口不再只扫 402/403。弹窗列出失败会话（可按标题、用户、错误筛选），管理员勾选后发起恢复，单批仍最多 20 个；不再默认全选。本地执行、定时任务待重试、正在执行的行不可勾选。
 
 ### 终端 CLI（mao-cli）
-- `reference/admin-session.md` 同步上述接口口径（仍无独立子命令）。
+- **`mao admin-session recover-failed`**：`preview [--window-hours]` 列出时间窗内失败主会话；`run --session-ids 431,473` 按 ID 发起恢复（单批最多 20，需 `session:write`）。重复 ID 会合并，`--window-hours` 只接受 1–168。
 
 ## 0.0.499 (2026-11-10)
 

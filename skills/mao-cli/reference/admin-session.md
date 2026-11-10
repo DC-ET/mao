@@ -2,7 +2,7 @@
 
 ## 用途
 
-跨用户检索会话、查看详情与消息，以及筛选项（用户/Agent 下拉数据）。列表、详情和消息需要 `session:read`；归档和删除需要 `session:write`。用户下拉同时接受 `session:read`、`scheduled-task:read`、`llm-call:read`、`audit:read`；Agent 下拉同时接受前三个。定时任务、调用流水和审计复用这两个下拉，不因此打开会话列表。
+跨用户检索会话、查看详情与消息，以及筛选项（用户/Agent 下拉数据）。列表、详情和消息需要 `session:read`；归档、删除和失败会话恢复需要 `session:write`。用户下拉同时接受 `session:read`、`scheduled-task:read`、`llm-call:read`、`audit:read`；Agent 下拉同时接受前三个。定时任务、调用流水和审计复用这两个下拉，不因此打开会话列表。
 
 ## 命令选择
 
@@ -15,6 +15,7 @@
 | Agent 筛选项 | `admin-session options-agents` |
 | 清理失败会话 | `admin-session delete`（运行中会话被拒绝） |
 | 归档会话 | `admin-session archive` |
+| 列出失败会话并按 ID 恢复 | `admin-session recover-failed preview`，再 `recover-failed run` |
 
 ## 命令：admin-session list
 
@@ -124,12 +125,32 @@ mao admin-session delete --id 100
 mao admin-session archive --id 100
 ```
 
-## 批量恢复失败会话（管理后台页面功能，无 CLI 子命令）
+## 命令：admin-session recover-failed
 
-管理后台「会话管理」页右上角「恢复失败会话」按钮（需 `session:write`）：扫描最近 24 小时 / 3 天 / 7 天内活跃且 `phase=FAILED` 的 NORMAL 主会话，**不限失败原因**（402/403、其它模型错误、工具失败、超时等都会列出）。弹窗列出清单，管理员勾选后发起后台异步续跑（不插入新消息）。对应接口：
+列出时间窗内失败的主会话，再按会话 ID 发起恢复。与管理后台「恢复失败会话」同一接口。两条都需要 `session:write`。
 
-- `GET /admin/sessions/recover-failed/preview?windowHours=24`：候选清单（`windowHours` 1–168，默认 24）。每项带 `willRecover`/`skipReason`/`errorSummary`/`lastUserMessage`/`scheduledTask`/`hasProgressCard`。错误摘要优先取会话终态 `executionError`，没有则回落到最后一次失败的 `scene='agent'` LLM 调用。最多 200 条，`truncated=true` 表示窗口内还有更早的失败会话未列出。历史查询参数 `scope`（`QUOTA` / `ALL_402_403`）已忽略。
-- `POST /admin/sessions/recover-failed/run`：`{ sessionIds: number[] }`，立即返回 `{ accepted, skipped }`（单批上限 20）。请求体里的 `scope` 已忽略。恢复复用崩溃恢复内核，原飞书/钉钉进度卡片原地复活并持续更新；无卡片映射的会话完成后推送最终回复。LOCAL 模式、子代理/边路、有待重试定时任务 run 的会话会被跳过。
+```bash
+mao admin-session recover-failed preview --window-hours 24
+mao admin-session recover-failed run --session-ids 431,473
+```
+
+### preview
+
+| 参数 | 必填 | 类型 | 默认 | 含义 | 后端字段 |
+|------|------|------|------|------|----------|
+| `--window-hours` | 否 | 整数 | 24 | 最近多少小时内有活动。只接受 1–168 | `windowHours` |
+
+`GET /admin/sessions/recover-failed/preview`
+
+扫描 `phase=FAILED` 的 NORMAL 主会话，**不限失败原因**（402/403、其它模型错误、工具失败、超时等都会列出）。每项带 `willRecover` / `skipReason` / `errorSummary` / `lastUserMessage` / `scheduledTask` / `hasProgressCard`。`willRecover=false` 的行不要传给 `run`（LOCAL、定时任务待重试、执行中）。错误摘要优先取会话终态 `executionError`。最多 200 条，`truncated=true` 表示窗口内还有更早的失败会话未列出。
+
+### run
+
+| 参数 | 必填 | 类型 | 含义 | 后端字段 |
+|------|------|------|------|----------|
+| `--session-ids` | 是 | 逗号分隔正整数 | 要恢复的会话 ID，取自 preview 的 `sessionId`。重复 ID 会合并。单批最多 20 个 | `sessionIds` |
+
+`POST /admin/sessions/recover-failed/run`，立即返回 `{ accepted, skipped }`，恢复在后台异步续跑（不插入新消息）。原飞书/钉钉进度卡片原地复活并持续更新；无卡片映射的会话完成后推送最终回复。LOCAL 模式、子代理/边路、有待重试定时任务 run 的会话会被跳过。
 
 ## 成功失败判断
 

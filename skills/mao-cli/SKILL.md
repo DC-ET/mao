@@ -104,7 +104,7 @@ mao auth login --username <用户名> --password <密码>
 
 1. 401 → 云端/微信先查 `MAO_TOKEN`；本地终端再 `auth login` / `auth refresh`
 2. 按模块读 `reference/*.md` 查参数
-3. 用户会话 → `session`；全站检索 → `admin-session`
+3. 用户会话 → `session`；全站检索 → `admin-session`；批量恢复失败会话 → `admin-session recover-failed preview` 看清单，再 `recover-failed run --session-ids`
 4. 个人技能 → `skill`；全局技能 → `skill-docs`；把技能发给指定用户（个人技能，不进全局库）→ `skill-docs assign`
 5. 先 `agent list` + `model list-active`，再 `session create`
 6. `mao-admin session` / `skill` 自动映射到 `admin-session` / `skill-docs`
