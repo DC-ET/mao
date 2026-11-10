@@ -23,6 +23,58 @@ describe('LocalToolExecutor', () => {
     expect(result).toContain('本地执行端未连接，请确保桌面客户端正在运行');
   });
 
+  // 线上事故回归（2026-11-10 会话 2316）：帧投进了「半死连接」（readyState=OPEN 但执行端
+  // 不处理该会话），既无 tool_approval 也无 tool_result。此前要干等满 timeoutSeconds（900s）
+  // 才返回，用户观感就是会话卡死。现在 ack 窗口（远小于总超时）内无任何回应即快速失败。
+  it('failsFastWhenNoExecutorAckArrivesInsteadOfWaitingFullTimeout', async () => {
+    vi.clearAllMocks();
+    const registry = {
+      isConnected: vi.fn().mockResolvedValue(true),
+      // 永不 resolve：模拟黑洞连接
+      sendToolRequest: vi.fn().mockResolvedValue({ requestId: 'req-blackhole', future: new Promise(() => {}) }),
+      completeToolRequestError: vi.fn(),
+      failAllForSession: vi.fn(),
+    } as unknown as LocalToolSessionRegistry;
+    // 第 6 参 ackTimeoutSeconds=1s，总超时 900s：若仍走总超时，下面会挂住
+    const exec = new LocalToolExecutor(registry, approvalRegistry, treeSignalPublisher, 900, null, 1);
+    const started = Date.now();
+    const result = await exec.execute(7, 'shell', '{}', 'workspace', false, null);
+    expect(Date.now() - started).toBeLessThan(5000);
+    const parsed = JSON.parse(result) as { error: string };
+    expect(parsed.error).toContain('本地执行端未响应');
+    // 必须收敛服务端 pending，否则桌面端迟到的结果会写进已放弃的请求
+    expect(registry.completeToolRequestError).toHaveBeenCalledWith(7, 'req-blackhole', expect.stringContaining('本地执行端未响应'));
+  });
+
+  it('doesNotStartAckTimerForApprovalRequests', async () => {
+    vi.clearAllMocks();
+    const registry = {
+      isConnected: vi.fn().mockResolvedValue(true),
+      sendToolRequest: vi.fn().mockResolvedValue({ requestId: 'req-ap', future: Promise.resolve('{"ok":true}') }),
+      completeToolRequestError: vi.fn(),
+    } as unknown as LocalToolSessionRegistry;
+    // 需审批的调用由审批链路兜底（卡片超时 / 升级通知），ack 窗口不应介入
+    const exec = new LocalToolExecutor(registry, approvalRegistry, treeSignalPublisher, 900, null, 1);
+    await expect(exec.execute(7, 'shell', '{}', 'workspace', true, 'reason')).resolves.toBe('{"ok":true}');
+    expect(registry.completeToolRequestError).not.toHaveBeenCalled();
+  });
+
+  it('ackTimeoutStillReturnsResultWhenItArrivesInTime', async () => {
+    vi.clearAllMocks();
+    const registry = {
+      isConnected: vi.fn().mockResolvedValue(true),
+      // 200ms 后回结果，晚于投递但早于 2s ack 窗口
+      sendToolRequest: vi.fn().mockResolvedValue({
+        requestId: 'req-slow',
+        future: new Promise<string>((r) => setTimeout(() => r('{"ok":true}'), 200)),
+      }),
+      completeToolRequestError: vi.fn(),
+    } as unknown as LocalToolSessionRegistry;
+    const exec = new LocalToolExecutor(registry, approvalRegistry, treeSignalPublisher, 900, null, 2);
+    await expect(exec.execute(7, 'shell', '{}', 'workspace', false, null)).resolves.toBe('{"ok":true}');
+    expect(registry.completeToolRequestError).not.toHaveBeenCalled();
+  });
+
   it('returnsToolResultWhenRegistryFutureCompletes', async () => {
     const registry = {
       isConnected: vi.fn().mockResolvedValue(true),
@@ -100,9 +152,26 @@ describe('LocalToolExecutor', () => {
       completeToolRequestError: vi.fn(),
       failAllForSession: vi.fn(),
     } as unknown as LocalToolSessionRegistry;
+    // timeoutSeconds=1 且未传 ackTimeoutSeconds：ack 窗口按 min(60, 1)=1s 收敛，
+    // 于是 1s 内无任何回应即失败（不再干等到默认 900s）。
     const result = await executor(registry, 1).execute(7, 'shell', '{}', 'workspace', false, null);
+    expect(result).toContain('本地执行端未响应');
+    expect(registry.completeToolRequestError).toHaveBeenCalledWith(7, 'req-timeout', expect.stringContaining('本地执行端未响应'));
+    expect(registry.failAllForSession).not.toHaveBeenCalled();
+  });
+
+  it('approvalRequestsStillFailWithTheFullTimeoutWording', async () => {
+    vi.clearAllMocks();
+    const registry = {
+      isConnected: vi.fn().mockResolvedValue(true),
+      sendToolRequest: vi.fn().mockResolvedValue({ requestId: 'req-ap-timeout', future: new Promise(() => {}) }),
+      completeToolRequestError: vi.fn(),
+      failAllForSession: vi.fn(),
+    } as unknown as LocalToolSessionRegistry;
+    // 需审批：ack 窗口不得介入，1s 后仍按总超时口径失败（审批链路由卡片超时兜底）
+    const result = await executor(registry, 1).execute(7, 'shell', '{}', 'workspace', true, null);
     expect(result).toContain('timed out');
-    expect(registry.completeToolRequestError).toHaveBeenCalledWith(7, 'req-timeout', 'Local tool execution timed out after 1 seconds');
+    expect(registry.completeToolRequestError).toHaveBeenCalledWith(7, 'req-ap-timeout', 'Local tool execution timed out after 1 seconds');
     expect(registry.failAllForSession).not.toHaveBeenCalled();
   });
 

@@ -6,6 +6,8 @@
 
 后端前置：`LOCAL_CAPABLE_CLIENTS = { electron, cli }`（`streaming-ws-registry.ts`）。0.0.483 起后端在该场景回中文「本地执行端未连接，请确保桌面客户端正在运行」；更早的后端回英文 `Local client is not connected`。
 
+0.0.505 起后端对「连接在线但没人接手」不再干等：定向投递零成功立即回上述文案；无审批请求下发后 60 秒内既无 `tool_approval` 空表态也无结果，即判通道半死并快速失败（提示确认客户端在运行、未被后台挂起）。附着形态的 `acceptEvent` 只处理自己那个会话的帧，抢到执行连接后收不到别的会话的 `tool_execute`——这正是此前会话卡住的成因，因此附着形态别与常驻形态 / 桌面端同时连同一账号。
+
 ## 常驻形态与附着形态
 
 `mao-agent --local` 是附着形态：一个进程服务一个会话，事件先过 `acceptEvent`，再交给随会话创建的 `LocalExecutor`。`mao-agent local --serve` 是常驻形态：不创建 `SessionRunner`、不 subscribe、不过 `acceptEvent`，唯一的 `LocalExecutor` 接收本设备全部 LOCAL 会话的 `tool_execute` / `skill_sync_required` / `mcp_sync_required` / `tool_approval_resolved`。

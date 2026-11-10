@@ -203,10 +203,24 @@ export class LocalToolSessionRegistry {
     // 「总是允许」hint（V135）：仅增量字段，旧壳忽略未知字段不受影响
     if (approvalHint != null) payload.approvalHint = approvalHint;
     const event = wsEvent('tool_execute', sessionId, payload);
+    let delivered = true;
     if (deviceId != null) {
-      this.streamingWsRegistry.sendToDevice(userId, deviceId, event);
+      const dispatch = this.streamingWsRegistry.sendToDevice(userId, deviceId, event);
+      // 定向投递零成功 = 该设备当前没有任何可写的执行连接（最后一条已半死）。
+      // 以往这里静默放行，调用方只看到 isConnected=true 就开等，最终白等到 900s 超时。
+      // 立即回错，让模型当轮就看到「本地执行端未连接」并自行重试/说明。
+      delivered = dispatch.successCount > 0;
     } else {
       this.streamingWsRegistry.sendToLocalClients(userId, event);
+    }
+    if (!delivered) {
+      if (sessionId != null) this.pendingRequests.get(sessionId)?.delete(requestId);
+      harnessLog('warn', `Local tool dispatch delivered to nobody: session=${sessionId}, device=${deviceId}`);
+      return {
+        requestId: null,
+        future: Promise.resolve(JSON.stringify({ error: LOCAL_CLIENT_OFFLINE_TOOL_ERROR })),
+        resolve: () => {},
+      };
     }
     return { requestId, future, resolve };
   }

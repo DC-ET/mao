@@ -453,12 +453,30 @@ export class StreamingWsRegistry {
     if (userId == null || !deviceId) return result;
     const socket = this.deviceExecutors.get(userId)?.get(deviceId);
     if (!socket) return result;
-    if (socket.readyState !== WS_OPEN || !this.isConnectionAuthorized(socket)) return result;
     let json: string;
     try {
       json = JSON.stringify(event);
     } catch {
       return { targetCount: 1, successCount: 0, failureCount: 1 };
+    }
+    if (socket.readyState !== WS_OPEN || !this.isConnectionAuthorized(socket)) {
+      // 主执行连接已不可写：同设备多窗口 / 多实例时回退到另一条存活连接，
+      // 避免整个设备被误判离线（与 releaseDevice 的 fallback 同口径）。
+      const fallback = [...(this.userSessions.get(userId) ?? [])].find((candidate) =>
+        candidate !== socket
+        && this.connectionDevice.get(candidate.id)?.id === deviceId
+        && candidate.readyState === WS_OPEN
+        && this.isConnectionAuthorized(candidate),
+      );
+      if (fallback == null) return result;
+      result.targetCount = 1;
+      try {
+        fallback.send(json);
+        result.successCount = 1;
+      } catch {
+        result.failureCount = 1;
+      }
+      return result;
     }
     result.targetCount = 1;
     try {
