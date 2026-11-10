@@ -80,6 +80,13 @@
       :pending-files="pendingFiles"
       :disabled="disabled"
       :remove-file="removeFile"
+      @annotate="startAnnotate"
+    />
+    <ImageAnnotatorDialog
+      v-if="annotatingEntry && annotatingFile"
+      :file="annotatingFile"
+      @confirm="handleAnnotateConfirm"
+      @update:visible="closeAnnotator"
     />
 
     <!-- Bottom toolbar -->
@@ -184,7 +191,10 @@ import { cloudWorkspaceIndicator, extractGitRepoSlug, isChannelWorkspacePath, is
 import { getUploadConfig } from '../../utils/storageMode'
 import { generateUUID } from '../../utils/uuid'
 import type { LocalPendingFile } from '../../utils/chatLocalAttach'
-import { MAX_PENDING_ATTACHMENTS, createPastedTextFile, nextPastedTextSeq, planPastedText } from './pasted-text-file'
+import { MAX_PENDING_ATTACHMENTS, PASTE_TEXT_FILE_THRESHOLD, createPastedTextFile, nextPastedTextSeq, planPastedText } from './pasted-text-file'
+import { insertPlainParagraphs } from './paste-insert'
+import { convertHtmlToMarkdown, ensureHtmlConverter, shouldConvertHtmlPaste } from '../../utils/html-to-markdown'
+import ImageAnnotatorDialog from './ImageAnnotatorDialog.vue'
 import { fileEntriesOf, hasWorkspaceDragPayload, parseWorkspaceDrag } from '../../utils/workspaceDrag'
 
 const props = withDefaults(defineProps<{
@@ -276,6 +286,10 @@ if (typeof window !== 'undefined') {
   window.addEventListener('resize', syncMobileViewport, { passive: true })
 }
 
+// HTML→Markdown converter 预热（fire-and-forget）：handlePaste 是同步钩子，粘贴时未就绪
+// 会回落现状纯文本兜底——setup 即预热让首贴几乎必然就绪
+void ensureHtmlConverter()
+
 // Register with parent for file tree context menu "add to chat"
 const registerChatInput = inject<(key: string, handle: {
   insertFileReference: (filePath: string) => void
@@ -286,7 +300,7 @@ const unregisterChatInput = inject<(key: string) => void>('unregisterChatInput',
 
 // ===== State =====
 const draftStore = useDraftStore()
-const pendingFiles = ref<{ file: File; previewUrl: string; localPath?: string }[]>([])
+const pendingFiles = ref<{ file: File; previewUrl: string; localPath?: string; originalFile?: File }[]>([])
 const replyQuotes = ref<ReplyQuote[]>([])
 const draggingFile = ref(false)
 const editorContent = ref('')
@@ -623,12 +637,7 @@ const editor = useEditor({
           const pastedText = event.clipboardData?.getData('text/plain')
           const view = editor.value?.view
           if (pastedText && view) {
-            const { state } = view
-            const paragraphs = pastedText
-              .split(/\r?\n/)
-              .map(line => state.schema.nodes.paragraph.create(null, line ? state.schema.text(line) : undefined))
-            const tr = state.tr.replaceSelection(new Slice(Fragment.fromArray(paragraphs), 1, 1))
-            view.dispatch(tr.scrollIntoView())
+            insertPlainParagraphs(view, pastedText)
           }
           return true
         }
@@ -692,6 +701,22 @@ const editor = useEditor({
           view.dispatch(tr.scrollIntoView())
         }
         return true
+      }
+      // 富文本粘贴（Word / 网页 / 飞书文档 / Excel）：text/html 是最富来源，转等义 Markdown
+      // 源文本按段落插入。只接管「普通文本」——text/plain 为空或低于文件化阈值（≥ 阈值保持
+      // 既有文件通道，保序见 §4.3-4；含 marker 的文本已被上方分支拦截）；converter 未就绪 /
+      // 超限 / 转换空 → 回落到兜底，行为与现状完全一致（无损降级）。
+      const html = event.clipboardData?.getData('text/html') ?? ''
+      if (shouldConvertHtmlPaste(text, html, PASTE_TEXT_FILE_THRESHOLD)) {
+        const md = convertHtmlToMarkdown(html)
+        if (md) {
+          event.preventDefault()
+          const view = editor.value?.view
+          if (view) {
+            insertPlainParagraphs(view, md)
+            return true
+          }
+        }
       }
       // Let TipTap handle text paste (strips formatting by default)
       return false
@@ -1034,7 +1059,7 @@ function addPendingImage(file: File) {
     return
   }
   // 同步入队占位，避免循环内长度检查被异步校验绕过
-  const entry = { file, previewUrl: URL.createObjectURL(file) }
+  const entry = { file, previewUrl: URL.createObjectURL(file), originalFile: file }
   pendingFiles.value.push(entry)
   checkFileSize(file).then(({ ok, limitMb }) => {
     if (!ok) {
@@ -1056,7 +1081,7 @@ async function addPendingFile(file: File) {
     return
   }
   const isLocalMode = props.executionMode === 'LOCAL' && isElectronClient
-  const entry = { file, previewUrl: '', localPath: isLocalMode ? resolveLocalFilePath(file) : '' }
+  const entry = { file, previewUrl: '', localPath: isLocalMode ? resolveLocalFilePath(file) : '', originalFile: file }
   pendingFiles.value.push(entry)
   const removeEntry = () => {
     const idx = pendingFiles.value.indexOf(entry)
@@ -1097,6 +1122,41 @@ function resolveLocalFilePath(file: File): string {
     }
   }
   return ''
+}
+
+// ===== 图片轻标注（技术方案 docs/plan/2026-11-10-rich-paste-annotate-technical-design.md §4.5） =====
+// 持条目对象引用而非下标：对话框打开期间条目可能被移除/增删，confirm 时按身份回查当前位置
+const annotatingEntry = ref<{ file: File; previewUrl: string; localPath?: string; originalFile?: File } | null>(null)
+const annotatingFile = computed(() => {
+  const entry = annotatingEntry.value
+  if (!entry) return null
+  // 重标基于原图（originalFile），不在标注产物上叠加
+  return entry.originalFile ?? entry.file
+})
+
+function startAnnotate(index: number) {
+  if (annotatingEntry.value) return
+  const entry = pendingFiles.value[index]
+  if (entry && entry.file.type.startsWith('image/')) annotatingEntry.value = entry
+}
+
+function closeAnnotator() {
+  annotatingEntry.value = null
+}
+
+function handleAnnotateConfirm(file: File) {
+  const entry = annotatingEntry.value
+  annotatingEntry.value = null
+  if (!entry) return
+  const idx = pendingFiles.value.indexOf(entry)
+  if (idx < 0) return
+  if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl)
+  pendingFiles.value[idx] = { ...entry, file, previewUrl: URL.createObjectURL(file) }
+  // 标注产物不再走 addPendingImage 的校验-移除路径（撤掉会毁掉用户刚画的标注）：
+  // 原图已过校验，产物超限只警示，服务端上传层有最终兜底
+  void checkFileSize(file).then(({ ok, limitMb }) => {
+    if (!ok) ElMessage.warning(`标注产物超过 ${limitMb}MB 限制，发送时可能被服务端拒绝`)
+  })
 }
 
 /** 移除指定下标的待发条目（图片或文件）。 */

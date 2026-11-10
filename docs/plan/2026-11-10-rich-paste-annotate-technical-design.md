@@ -7,7 +7,7 @@
 聊天输入框的粘贴链路（`ChatInput.vue:593-698`，TipTap `editorProps.handlePaste`）当前按以下顺序分流：
 
 1. **文件/图片分支**（:595-634）：clipboard items 含 image/ 或 kind==='file' 时入待发列表；图文混排（网页/Office「文字+截图」）时 `text/plain` 手动按行插入段落，返回 true。
-2. **超长文本文件化**（:636-654）：`planPastedText`（阈值 2000 字符，`pasted-text-file.ts`）命中的纯文本静默转 `.txt` 待发附件。
+2. **超长文本文件化**（:636-654）：`planPastedText`（阈值 2000 字符，`components/chat/pasted-text-file.ts`）命中的纯文本静默转 `.txt` 待发附件。
 3. **快捷命令标记**（:655-695）：`@{…}@` / `${…}$` / `#{…}#` 转编辑器节点。
 4. **兜底**（:696-697）：返回 false 交给 TipTap 默认粘贴——注释明说「strips formatting by default」。
 
@@ -33,7 +33,7 @@
 | 图片元素处理 | 转换前剥离全部 `<img>`（以及 `<script>`/`<style>`） | 剪贴板里的位图图片走 items 文件分支（:600-618）已是既有正确路径；HTML 里的 img src 多为 blob:/cid: 死链 |
 | 尺寸护栏 | `text/html` 长度 > 512KB 不转换，回落纯文本 | 防病态粘贴卡死主线程（turndown 同步转换） |
 | 标注器实现 | 独立新组件 `ImageAnnotatorDialog.vue`：双层 canvas（底层原图、顶层标注层），操作栈重放实现撤销，导出时合并两层为 PNG；马赛克 = 笔刷方块对底图 `getImageData` 取均值填充 | 不引入第三方绘图库；双层结构让撤销/重画零原图损伤；粘贴图片来自本地 File 的 objectURL，canvas 不会被污染（taint），`getImageData` 合法 |
-| 附件替换口径 | 替换 `pendingFiles` 条目的 `file` 为标注产物 PNG，重建 `previewUrl`（旧 objectURL 先 revoke）；条目新增可选 `originalFile?: File` 保存原图供再次标注 | 与 `addPendingImage`（:1031-1046）的既有条目形状最小兼容；上传链路、附件上限零改动 |
+| 附件替换口径 | 替换 `pendingFiles` 条目的 `file` 为标注产物 PNG，重建 `previewUrl`（旧 objectURL 先 revoke）；条目新增可选 `originalFile?: File` 保存原图供再次标注 | 与既有条目形状（`{ file, previewUrl, localPath? }`，`ChatInput.vue:289`；`addPendingImage` :1031-1046）最小兼容；上传链路、附件上限零改动 |
 
 ## 4. 实现步骤
 
@@ -43,6 +43,8 @@
 cd desktop && npm i turndown turndown-plugin-gfm
 npm i -D @types/turndown @types/turndown-plugin-gfm
 ```
+
+> 类型包核对：`@types/turndown` 在 DefinitelyTyped 存在；`@types/turndown-plugin-gfm` 安装时验证，缺失则以仓库内一个 `.d.ts` 兜底（turndown-plugin-gfm 导出 `{ gfm, tables, strikethrough, taskListItems }`，本方案只用 `gfm`——含 tables 规则，Excel 表格转 MD 依赖它）。加运行时依赖有先例（jszip / katex / dompurify / mammoth 均在 dependencies）。
 
 ### 4.2 新增 `src/utils/html-to-markdown.ts`
 
@@ -66,7 +68,7 @@ npm i -D @types/turndown @types/turndown-plugin-gfm
 
 ### 4.4 新增 `src/components/chat/ImageAnnotatorDialog.vue`
 
-- 接口：props `{ file: File }`；emits `confirm(file: File)`、`update:visible`。el-dialog 全屏（`fullscreen`），参照 `ScriptPathPickerDialog.vue` 的对话框与 aria 约定（工具按钮全部带 aria-label/title）。
+- 接口：props `{ file: File }`；emits `confirm(file: File)`、`update:visible`。el-dialog `fullscreen`（desktop 首个全屏对话框；基础对话框形态可参照 `ScriptPathPickerDialog.vue`，注意其为定宽 520px 且全文件无 aria-label，**不作为 aria 参照**）；工具按钮一律 aria-label + title 双写，先例 `ChatInput.vue:68`（移除引用按钮）。
 - 画布：初始化把图片按原始尺寸绘入底层 canvas（视口超出时容器内滚动 + 顶层画布同尺寸覆盖）；顶层记录操作栈 `ops: Array<{tool, points/rect/text/seed…, style}>`，undo = 栈弹出后清空顶层重放。
 - 六工具：画笔/矩形/箭头（线段+三角头）/文字（点击弹行内 input，Enter 落笔）/马赛克（笔刷半径方块，`getImageData` 均值）/撤销。颜色固定红 `#e5484d`，线宽 3，不做样式面板（首版只管「说清重点」）。
 - 确认：合并两层导出 `image/png` → `new File([blob], 原名去扩展名 + '-annotated.png')` → emit confirm。
@@ -74,14 +76,14 @@ npm i -D @types/turndown @types/turndown-plugin-gfm
 
 ### 4.5 接线 `ChatPendingFileList.vue` + `ChatInput.vue`
 
-- 条目类型三处同步（`ChatInput.vue:1037/:1059` 创建、`ChatPendingFileList.vue:17` props）：加可选 `originalFile?: File`。
-- 缩略卡：`item.file.type.startsWith('image/')` 且非 LOCAL-浏览器模式时渲染「标注」按钮（aria-label="标注图片"，与 :8 移除按钮同款交互守卫 `disabled`）；emits 加 `annotate(index)`。
+- 条目类型四处同步（`ChatInput.vue:289` 类型声明、`:1037/:1059` 两处条目创建、`ChatPendingFileList.vue:17` props）：加可选 `originalFile?: File`。
+- 缩略卡：`item.file.type.startsWith('image/')` 时渲染「标注」按钮（aria-label="标注图片"，交互守卫用组件既有 `disabled` prop，与 :8 移除按钮同款）；emits 加 `annotate(index)`。**不设 LOCAL-浏览器排除**（评审修正，见 §8-6）：图片附件在全部执行模式统一走上传通道（`useChat.ts` 图片 `uploadChatImages` 无模式分支、`addPendingImage` :1031-1046 无模式拦截），标注只是发送前的本地 file 替换，对 LOCAL-浏览器与安卓壳无额外平台要求；原稿的排除条件无技术依据，且造成「能贴图不能标注」的功能残缺。
 - ChatInput：`annotatingIndex` ref 控制对话框；confirm 回调里 revoke 旧 `previewUrl`、写入 `{ file: 新 PNG, previewUrl: 新 objectURL, originalFile: 原条目 originalFile ?? 原 file }`。
 - 发送链路（:253 emit `send`）零改动——替换发生在 file 字段层面，CLOUD 上传 / LOCAL 拷贝自然拿到新 PNG。
 
 ### 4.6 chunk 门禁
 
-`scripts/check-main-chunk.mjs` 的 `FORBIDDEN`（:23-34）新增 turndown 库内部独有字面量一条：取 `node_modules/turndown/dist/turndown.js` 中仓源码不可能出现的错误消息串（实现时 grep 该 dist 选定，如其内部异常文案），与既有 jszip 条目的「逐字符对齐库产物」注释同款写法。
+`desktop/scripts/check-main-chunk.mjs` 的 `FORBIDDEN`（:23-32）新增 turndown 库内部独有字面量一条：取 `node_modules/turndown/dist/turndown.js` 中仓源码不可能出现的错误消息串（实现时 grep 该 dist 选定，如其内部异常文案），与既有 jszip 条目的「逐字符对齐库产物」注释同款写法。
 
 ## 5. 落地清单
 
@@ -94,25 +96,27 @@ npm i -D @types/turndown @types/turndown-plugin-gfm
 | 新增 | src/utils/html-to-markdown.test.ts / image-annotate.test.ts | 单测 |
 | 修改 | src/components/chat/ChatInput.vue | 抽 insertPlainParagraphs、setup 预热、粘贴新分支、标注接线（条目 originalFile） |
 | 修改 | src/components/chat/ChatPendingFileList.vue | 图片项「标注」按钮 + annotate emit + 条目类型 |
-| 修改 | scripts/check-main-chunk.mjs | FORBIDDEN 加 turndown 字面量 |
+| 新增 | src/components/chat/ChatPendingFileList.test.ts | 标注按钮渲染/守卫用例（该组件无既有测试） |
+| 修改 | desktop/scripts/check-main-chunk.mjs | FORBIDDEN（:23-32）加 turndown 字面量 |
 | CHANGELOG | 根 CHANGELOG.md | 前端（桌面/Web）小节，版本随发版批次 |
 
 ## 6. 风险与对策
 
 | 风险 | 对策 |
 |---|---|
-| 粘贴是最高频路径，分流改坏现有行为 | 三条既有 return 路径逐字节不动，仅在其后追加分支；`ChatInput` 既有粘贴用例全量保留为回归门 |
+| 粘贴是最高频路径，分流改坏现有行为 | 三条既有 return 路径逐字节不动，仅在其后追加分支；粘贴回归用例纳入本次工作——现状组件级粘贴用例不存在（仅纯函数内核 `pasted-text-file.test.ts` 覆盖计划分流，标记分支零测试），需新增（见 §7） |
 | converter 未就绪首贴降级 | 预热在 setup 即发起（网络态无影响——同 chunk 本地加载）；降级路径 = 现状行为，无损 |
 | turndown 产物含意外 HTML 片段 | turndown 输出即纯文本；转换结果再过一遍「含 `<` 的裸 HTML 标签」检测？**不做**——turndown 对白名单外标签本就降级为文本，不二次清洗 |
 | canvas getImageData 抛 SecurityError | 图片全部来自本地 File objectURL（同源），不存在跨域污染；防御性 try/catch 降级为「该区域画灰色方块」并在控制台警告 |
 | 大图性能 | 标注画布按图片原始尺寸，> 4096px 边等比缩放到 4096 导出（与常见上传上限一致）；操作重放节流到 pointermove 的 rAF |
+| 仓库无 canvas 测试先例（jsdom `getContext('2d')` 返回 null，vitest 默认 node 环境，仅文件头 pragma 开 jsdom） | `image-annotate` 单测用「记录调用的 2D context stub」断言 drawOp 方法序列与参数；马赛克均值用 stub `getImageData` 返回构造像素数据（1×1 采样图精确断言）；真实渲染手测兜底 |
 
 ## 7. 测试要点
 
 - `html-to-markdown.test.ts`：标题/列表/粗斜体/链接/行内代码/代码块七类结构；`<table>` 规整（colspan=3、rowspan、混合）→ 行单元格数一致且左上值重复；`<img>/<script>` 剥离；512KB 超限 null；converter 未就绪 null；输出空白收敛。
-- `image-annotate.test.ts`：drawOp 各工具的画布调用参数；马赛克均值采样（1×1 采样图可精确断言）；undo 栈重放等价。
-- 组件：ChatPendingFileList 图片项出现标注按钮、非图片项不出现；ChatInput confirm 后条目 file 名与 previewUrl 更新、originalFile 保留。
-- 粘贴回归：既有粘贴用例（计划分流、标记节点）全绿；新增「text/html 存在且普通文本」→ 编辑器内容为 Markdown 源文本。
+- `image-annotate.test.ts`（ctx stub 模式）：drawOp 各工具的方法序列与参数；马赛克均值采样（stub getImageData 返回构造像素，含 alpha 过滤与 SecurityError 降级）；undo 清层重放与全新重放的绘制序列逐条一致；fitImageSize 缩放边界。
+- 组件：`ChatPendingFileList.test.ts`（**新增**，该组件无既有测试）——图片项出现标注按钮、非图片项不出现、disabled 守卫不触发回调。
+- 粘贴回归：`pasted-text-file.test.ts` 既有用例保持全绿；ChatInput 组件级挂载用例落地策略（实施调整）：ChatInput 体量大（1500 行 + TipTap 挂载），改为三层更聚焦的用例——`paste-insert.test.ts`（真实 TipTap 编辑器验证共享插入函数的段落/空行/纯源文本语义）、`shouldConvertHtmlPaste` 分流守卫纯函数用例（含 ≥ 阈值不接管、纯 html 剪贴板接管）、`html-to-markdown.test.ts` 全结构用例（含「converter 未就绪/加载失败 → null」：fresh module + mock 失败的 turndown 导入，vi.resetModules 时序隔离）；分流顺序由「三条既有 return 路径不动 + 新分支插在 marker 之后」的代码结构保证，组件级端到端由手测兜底。
 - 构建：`npm run build` 绿 + `check-main-chunk` 含新字面量后仍通过。
 
 ## 8. 决策记录
@@ -122,6 +126,7 @@ npm i -D @types/turndown @types/turndown-plugin-gfm
 3. 标注工具固定单色单线宽，无样式面板；马赛克是不可逆操作（只有撤销栈，无「去马赛克」）。
 4. 合并单元格策略 = 左上值重复展开（保行对齐），不丢失语义列。
 5. `originalFile` 仅驻内存（pendingFiles 条目），不进持久化——刷新后原图即附件本体，标注产物同样重新可标（对 PNG 再标注=在产物上叠加）。
+6. 标注按钮在全部执行模式渲染（评审修正）：图片发送通道（`uploadChatImages`）对 LOCAL / CLOUD / LOCAL-浏览器无分支，`addPendingImage` 也无模式拦截，标注（发送前本地替换 file）不引入新平台依赖；原稿「非 LOCAL-浏览器才渲染」无依据且与「能贴图能发图」的现状矛盾。
 
 ## 9. 明确不做的（汇总）
 
