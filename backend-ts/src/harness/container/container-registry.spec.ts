@@ -115,6 +115,7 @@ describe('container registry', () => {
     expect(runArgs).toContain(`-e MAO_WORKSPACE_ROOT=${join(base, 'workspace')}`);
     expect(runArgs).toContain(`-e MAO_RUNTIME_DIR=${join(base, 'runtime')}`);
     expect(runArgs).toContain(`-e MAO_USER_HOME_DIR=${join(base, 'users')}`);
+    expect(runArgs).toContain(`-e MAO_DEPS_DIR=${join(base, 'deps')}`);
     // HOME 对齐用户数据目录：容器内 HOME 与宿主机模式一致，用户级 .npmrc/.m2/.gitconfig 生效
     expect(runArgs).toContain(`-e HOME=${join(base, 'users', '7')}`);
     expect(runArgs).toContain(`-e MAO_USER_SKILLS_DIR=${join(base, 'userskills')}`);
@@ -306,6 +307,9 @@ describe('container registry', () => {
     await registry.reapExpired();
     expect(log.some((line) => line.startsWith('stop -t 10 mao-user-7'))).toBe(false);
     // 容器内状态归零后 idle 推进 → stop（不 rm）
+    registry.reportRuntimeStatus(7, 5, { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0, scriptProbes: 1 });
+    await registry.reapExpired();
+    expect(log.some((line) => line.startsWith('stop -t 10 mao-user-7'))).toBe(false);
     registry.reportRuntimeStatus(7, 5, { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 });
     await registry.reapExpired();
     expect(log.some((line) => line.startsWith('stop -t 10 mao-user-7'))).toBe(true);
@@ -1048,6 +1052,10 @@ describe('container registry', () => {
     // 忙碌：不打断在跑任务，零 docker 操作
     expect(dockerOps(log)).toEqual([]);
     expect(log.some((line) => line.startsWith('start mao-user-7'))).toBe(false);
+    // 脚本探针进行中同样不打断
+    registry.reportRuntimeStatus(7, 5, { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0, scriptProbes: 1 });
+    await registry.ensureRunning(7, 5);
+    expect(dockerOps(log)).toEqual([]);
     // 解除忙碌 → 下一次调用收敛
     registry.reportRuntimeStatus(7, 5, { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 });
     await registry.ensureRunning(7, 5);

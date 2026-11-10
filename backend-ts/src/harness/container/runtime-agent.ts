@@ -10,6 +10,7 @@ import { ContainerToolExecutor, type ContainerRoots } from './container-tool-exe
 import { ContainerMcpBridge } from './container-mcp-bridge.js';
 import { PtyHub, type ContainerPtyFactory } from './pty-hub.js';
 import { loadRuntimeBuildId } from './runtime-build.js';
+import { dispatchScriptProbe } from './script-probe-dispatch.js';
 
 /**
  * 容器内常驻 runtime agent（技术方案 §5.5）。
@@ -73,6 +74,8 @@ export class RuntimeAgent {
   private closedByShutdown = false;
   private reconnectAttempt = 0;
   private statusTimer: NodeJS.Timeout | null = null;
+  /** 进行中的脚本探针。计入 runtime_status，挡住 idle 回收和代码漂移重启。 */
+  private scriptProbes = 0;
 
   constructor(
     private readonly socketPath: string,
@@ -125,6 +128,7 @@ export class RuntimeAgent {
       shellSessions: this.executor.activeShellSessions,
       pendingTasks: this.executor.unfinishedBackgroundTasks,
       attachedTerminals: this.ptyHub.activeCount,
+      scriptProbes: this.scriptProbes,
     });
   }
 
@@ -262,8 +266,34 @@ export class RuntimeAgent {
       case 'pty_close':
         this.ptyHub.close(frame.ptyId);
         break;
+      case 'script_probe':
+        void this.handleScriptProbe(frame);
+        break;
       default:
         console.warn(`[runtime-agent] unexpected frame type: ${(frame as { type: string }).type}`);
+    }
+  }
+
+  private async handleScriptProbe(frame: Extract<RuntimeRequestFrame, { type: 'script_probe' }>): Promise<void> {
+    this.scriptProbes += 1;
+    this.reportStatus();
+    try {
+      const result = await dispatchScriptProbe({
+        scriptPath: frame.scriptPath,
+        timeoutSeconds: frame.timeoutSeconds,
+        env: frame.env,
+        deps: frame.deps,
+      });
+      this.send({ v: 1, type: 'script_probe_result', id: frame.id, ...result });
+    } catch (e) {
+      this.send({
+        v: 1, type: 'script_probe_result', id: frame.id,
+        failureClass: 'infrastructure', ok: false, exitCode: null, stdoutBase64: null,
+        error: (e as Error).message, durationMs: 0,
+      });
+    } finally {
+      this.scriptProbes = Math.max(0, this.scriptProbes - 1);
+      this.reportStatus();
     }
   }
 

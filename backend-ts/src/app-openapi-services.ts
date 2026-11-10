@@ -31,6 +31,7 @@ import { MysqlSignalWatcherRepository, MysqlSignalCheckRepository } from './sign
 import { WatcherService } from './signal/watcher.service.js';
 import { createWatcherCredentialResolver } from './signal/watcher-credential-resolver.js';
 import type { RuntimeDataResolver } from './harness/runtime/runtime-data-resolver.js';
+import type { ContainerScriptProbe } from './harness/container/container-script-probe.js';
 import { WatcherScheduler } from './signal/watcher-scheduler.js';
 import { SignalCheckCleanup } from './signal/signal-check-cleanup.js';
 import { DigestRepository } from './digest/repository.js';
@@ -63,6 +64,8 @@ export interface OpenApiServicesDeps {
   jwt: JwtService;
   userRepo: MysqlUserRepository;
   ecpSessionRepo: MysqlEcpSessionRepository;
+  /** Docker 模式脚本探针桥。host 模式由桥内部短路，哨兵服务不再自行判断运行模式。 */
+  containerScriptProbe: ContainerScriptProbe;
 }
 
 export interface OpenApiServicesResult {
@@ -79,7 +82,7 @@ export interface OpenApiServicesResult {
 }
 
 export function assembleOpenApiServices(deps: OpenApiServicesDeps): OpenApiServicesResult {
-  const { db, cfg, sessionService, messageQueueService, taskTerminal, agentRepo, wsHandler, budgetService, apiTokenService, inboxService, settingService, openApiRateLimiter, notifCipher, outboundSubscriptionService, holder, agentExecutor, openCallLogHolder, openTriggerSettle, openCallSettle, jwt, userRepo, ecpSessionRepo, runtimeDataResolver } = deps;
+  const { db, cfg, sessionService, messageQueueService, taskTerminal, agentRepo, wsHandler, budgetService, apiTokenService, inboxService, settingService, openApiRateLimiter, notifCipher, outboundSubscriptionService, holder, agentExecutor, openCallLogHolder, openTriggerSettle, openCallSettle, jwt, userRepo, ecpSessionRepo, runtimeDataResolver, containerScriptProbe } = deps;
 
   const openRunService = new OpenRunService({
     sessionService: sessionService as unknown as OpenRunDeps['sessionService'],
@@ -147,6 +150,7 @@ export function assembleOpenApiServices(deps: OpenApiServicesDeps): OpenApiServi
     // 脚本探针（V189）：存储根 = {workspaceRoot}/{userId}/projects，HOME = 属主运行时目录
     scriptProjectsRoot: (userId) => resolve(cfg.app.harness.workspaceRoot, String(userId), 'projects'),
     scriptUserHome: (userId) => runtimeDataResolver.resolveUserHomeDir(userId),
+    containerScriptProbe,
     // 复用指针有效性预检（技术方案 2026-10-27 §3.2.3）
     getSession: (id) => sessionService.getSession(id),
     disableNotifier: {

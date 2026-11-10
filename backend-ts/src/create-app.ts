@@ -189,6 +189,7 @@ import { HttpToolHeaderCipher } from './http-tool/http-tool-cipher.js';
 import { MysqlSignalCheckRepository, MysqlSignalWatcherRepository } from './signal/signal.repository.js';
 import { RuntimeModeResolver, RUNTIME_MODE_SETTING_KEY, validateRuntimeModeSave } from './harness/container/runtime-mode.js';
 import { SessionEnvelopeBuilder, buildDepsEnv } from './harness/container/session-envelope-builder.js';
+import { ContainerScriptProbe } from './harness/container/container-script-probe.js';
 import {
   resolveFeishuChatWorkspace,
   sanitizeFeishuFileName,
@@ -903,6 +904,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     openTriggerSettle, openCallSettle,
   });
 
+  const containerScriptProbe = new ContainerScriptProbe({
+    enabledFor: (userId) => dockerRouter.enabledFor(userId),
+    ensureRunning: (userId, agentId) => containerRegistry.ensureRunning(userId, agentId),
+    scriptProbeRuntimeReady: (entry) => containerRegistry.scriptProbeRuntimeReady(entry),
+    getConnection: (userId, agentId) => channelServer.getConnection(userId, agentId),
+    depsEnvOf: (userId) => buildDepsEnv(cloudRuntimeCfg.container.depsDir, userId),
+  });
   const openApiServices = assembleOpenApiServices({
     db, cfg, sessionService, messageQueueService, taskTerminal, agentRepo, wsHandler,
     budgetService, apiTokenService, inboxService, settingService, openApiRateLimiter,
@@ -912,6 +920,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     jwt, userRepo, ecpSessionRepo,
     // 脚本探针 HOME 解析（V189）：runtimeResolver 即 RuntimeDataResolver
     runtimeDataResolver: runtimeResolver,
+    containerScriptProbe,
   });
   const { openRunService, callLogService, callLogCleanup, webhookTriggerService, watcherService, watcherScheduler, signalCheckCleanup, digestService, digestScheduler, signalWatcherRepo } = openApiServices;
   // 晚绑定回填：openapi 装配完成后信号哨兵工具即可用（工具仅在会话运行期调用，时序无碍）

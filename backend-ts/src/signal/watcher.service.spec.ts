@@ -10,6 +10,7 @@ import type { MysqlSignalCheckRepository, MysqlSignalWatcherRepository } from '.
 import { SignalSecretCipher } from './signal-cipher.js';
 import type { ProbeResult } from './probe-client.js';
 import type { ScriptProbeResult } from './script-probe.js';
+import { ScriptProbeInfrastructureError } from '../harness/container/container-script-probe.js';
 import type { WatcherCredentialResolver } from './watcher-credential-resolver.js';
 import {
   WATCHER_DISABLE_AFTER_FAILURES,
@@ -101,6 +102,11 @@ function harness(options: {
   getSession?: (id: number) => Promise<WatcherSessionLookup | null>;
   /** 凭据占位符 resolver（缺省不传 = 未装配路径）。 */
   credentialResolver?: WatcherCredentialResolver | null;
+  /** Docker 模式脚本探针桥。缺省不装配，脚本走宿主执行器。 */
+  containerScriptProbe?: {
+    enabledFor(userId: number): Promise<boolean>;
+    execute(input: { userId: number; agentId: number; scriptPath: string; timeoutSeconds: number; env: Record<string, string> }): Promise<ScriptProbeResult>;
+  };
 } = {}): Harness {
   const watchers = new Map<number, SignalWatcher>();
   const initial = options.watcher ?? watcher();
@@ -173,6 +179,12 @@ function harness(options: {
     listDue: vi.fn(async () => [...watchers.values()].filter((w) => w.status === 'ACTIVE')),
     markChecked,
     recordFailure,
+    touchChecked: vi.fn(async (id: number) => {
+      const row = watchers.get(id);
+      if (row == null || row.status !== 'ACTIVE') return false;
+      row.lastCheckedAt = '2026-11-10 13:00:00';
+      return true;
+    }),
     delete: vi.fn(async (id: number) => { watchers.delete(id); return true; }),
   };
 
@@ -239,6 +251,7 @@ function harness(options: {
     disableNotifier: { notifyWatcherDisabled: notify } satisfies WatcherDisableNotifier,
     getSession,
     credentialResolver: options.credentialResolver,
+    containerScriptProbe: options.containerScriptProbe as never,
   });
 
   return { service, watchers, sessions, checks, probeExecute, scriptProbeExecute, scriptProjectsRoot: options.scriptProjectsRoot ?? null, openRun, notify, markChecked, recordFailure, getSession, nextCheckId };
@@ -1769,5 +1782,84 @@ describe('SCRIPT 哨兵（V189）', () => {
     const result = await h.service.test(7, 1);
     expect(result.sample).toHaveLength(500);
     expect(result.sample).toBe('x'.repeat(500));
+  });
+
+  it('runCheck：Docker 模式走容器桥，不在宿主执行', async () => {
+    const execute = vi.fn(async () => scriptProbeResult());
+    const h = harness({
+      watcher: scriptWatcher(),
+      scriptProbe: scriptProbeResult,
+      scriptProjectsRoot: projectsRoot,
+      containerScriptProbe: { enabledFor: async () => true, execute },
+    });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'echo \'{"free": 100}\'\n');
+    await h.service.runCheck(1);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ userId: 7, agentId: 3 }));
+    expect(h.scriptProbeExecute).not.toHaveBeenCalled();
+    expect(h.watchers.get(1)!.lastValueHash).toBe(sha256('100'));
+  });
+
+  it('runCheck：容器桥关闭时仍在宿主执行', async () => {
+    const execute = vi.fn(async () => scriptProbeResult());
+    const h = harness({
+      watcher: scriptWatcher(),
+      scriptProbe: scriptProbeResult,
+      scriptProjectsRoot: projectsRoot,
+      containerScriptProbe: { enabledFor: async () => false, execute },
+    });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'echo \'{"free": 100}\'\n');
+    await h.service.runCheck(1);
+    expect(execute).not.toHaveBeenCalled();
+    expect(h.scriptProbeExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it('runCheck：容器基础设施失败不计入连败、不回退宿主', async () => {
+    const execute = vi.fn(async () => { throw new ScriptProbeInfrastructureError('容器未就绪：docker down'); });
+    const h = harness({
+      watcher: scriptWatcher({ consecutiveFailures: 4 }),
+      scriptProbe: scriptProbeResult,
+      scriptProjectsRoot: projectsRoot,
+      containerScriptProbe: { enabledFor: async () => true, execute },
+    });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'echo ok\n');
+    for (let i = 0; i < 5; i += 1) await h.service.runCheck(1);
+    expect(h.scriptProbeExecute).not.toHaveBeenCalled();
+    expect(h.recordFailure).not.toHaveBeenCalled();
+    expect(h.notify).not.toHaveBeenCalled();
+    expect(h.watchers.get(1)!.status).toBe('ACTIVE');
+    expect(h.watchers.get(1)!.consecutiveFailures).toBe(4);
+    expect(h.watchers.get(1)!.lastCheckedAt).toBe('2026-11-10 13:00:00');
+    expect(h.checks).toHaveLength(5);
+    expect(h.checks[0]!.error).toContain('容器未就绪');
+    expect(h.checks[0]!.exitCode).toBeNull();
+  });
+
+  it('runCheck：脚本文件不存在时不拉起容器', async () => {
+    const execute = vi.fn(async () => scriptProbeResult());
+    const h = harness({
+      watcher: scriptWatcher(),
+      scriptProjectsRoot: projectsRoot,
+      containerScriptProbe: { enabledFor: async () => true, execute },
+    });
+    await h.service.runCheck(1);
+    expect(execute).not.toHaveBeenCalled();
+    expect(h.checks[0]!.error).toContain('脚本文件不存在');
+  });
+
+  it('test：容器基础设施失败只出现在返回值，不写库', async () => {
+    const h = harness({
+      watcher: scriptWatcher(),
+      scriptProjectsRoot: projectsRoot,
+      containerScriptProbe: {
+        enabledFor: async () => true,
+        execute: async () => { throw new ScriptProbeInfrastructureError('容器运行时版本待升级，本轮跳过'); },
+      },
+    });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'echo ok\n');
+    const result = await h.service.test(7, 1);
+    expect(result.error).toContain('版本待升级');
+    expect(h.checks).toHaveLength(0);
+    expect(h.watchers.get(1)!.lastCheckedAt).toBeNull();
   });
 });

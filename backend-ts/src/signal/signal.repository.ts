@@ -223,6 +223,19 @@ export class MysqlSignalWatcherRepository {
    * 已把 consecutive_failures 加成新值，因此这里直接与阈值比即可。
    * 若写成 `consecutive_failures + 1 >= ?`，等于多算一次，实际第 4 次失败就停用（BUG-I）。
    */
+  /**
+   * 基础设施失败（容器未就绪 / 版本待升级 / 通道超时）推进下一次检查时刻。
+   * 不改 consecutive_failures、哈希和状态：这类失败不是脚本本身的问题，不计连败、不停用。
+   * 写成当前时刻后，到期条件至少再隔一个 interval_minutes，避免 30 秒扫描打满 Docker。
+   */
+  async touchChecked(id: number): Promise<boolean> {
+    const result = await this.db.execute(
+      `UPDATE signal_watcher SET last_checked_at = ? WHERE id = ? AND status = 'ACTIVE'`,
+      [ts(Date.now()), id],
+    );
+    return result.affectedRows === 1;
+  }
+
   async recordFailure(id: number, backoffMinutes: number, threshold: number): Promise<SignalWatcher | null> {
     const backoffUntil = ts(Date.now() + backoffMinutes * 60_000);
     const result = await this.db.execute(

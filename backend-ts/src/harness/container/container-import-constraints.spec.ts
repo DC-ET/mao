@@ -15,6 +15,7 @@ const CONTAINER_MODULES = [
   'container-mcp-bridge.ts',
   'pty-hub.ts',
   'runtime-channel-protocol.ts',
+  'script-probe-dispatch.ts',
 ];
 
 const FORBIDDEN_PATTERNS: Array<{ pattern: RegExp; why: string }> = [

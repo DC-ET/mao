@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { encodeFrame, FrameDecoder, PendingRegistry, MAX_FRAME_BYTES } from './runtime-channel-protocol.js';
+import { encodeFrame, FrameDecoder, PendingRegistry, MAX_FRAME_BYTES, type RuntimeFrame } from './runtime-channel-protocol.js';
 
 describe('runtime channel protocol', () => {
   it('encodesAndDecodesFramesAcrossChunkBoundaries', () => {
-    const frames = [
+    const frames: RuntimeFrame[] = [
       { v: 1, type: 'ping', id: 'a' },
       { v: 1, type: 'tool_result', id: 'b', ok: true, result: '{"x":1}', durationMs: 5 },
       { v: 1, type: 'pong', id: 'c' },

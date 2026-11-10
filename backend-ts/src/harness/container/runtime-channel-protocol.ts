@@ -50,6 +50,22 @@ export interface PtyOpenOptions {
   env: Record<string, string>;
 }
 
+/** 脚本探针帧的白名单环境变量。容器丢弃此外的键，不继承 runtime-agent 进程 env。 */
+export interface ScriptProbeFrameEnv {
+  HOME?: string;
+  TZ?: string;
+  MAO_WATCHER_ID: string;
+  MAO_WATCHER_NAME: string;
+}
+
+/** 与 Shell 工具同源的依赖前缀（buildDepsEnv）。路径由容器按本人 deps 根再验。 */
+export interface ScriptProbeFrameDeps {
+  NPM_CONFIG_PREFIX: string;
+  PIP_TARGET: string;
+  PIP_BREAK_SYSTEM_PACKAGES: string;
+  MAO_DEPS_BIN: string;
+}
+
 /** 宿主机 → 容器请求帧统一载荷（按 type 取相应字段）。 */
 export type RuntimeRequestFrame =
   | { v: number; type: 'tool_call'; id: string; tool: string; args: string; envelope: RuntimeEnvelope }
@@ -62,7 +78,16 @@ export type RuntimeRequestFrame =
   | { v: number; type: 'pty_resize'; ptyId: string; cols: number; rows: number }
   | { v: number; type: 'pty_close'; ptyId: string }
   | { v: number; type: 'ping'; id: string }
-  | { v: number; type: 'shutdown'; id: string };
+  | { v: number; type: 'shutdown'; id: string }
+  | {
+    v: number;
+    type: 'script_probe';
+    id: string;
+    scriptPath: string;
+    timeoutSeconds: number;
+    env: ScriptProbeFrameEnv;
+    deps: ScriptProbeFrameDeps | null;
+  };
 
 /** 容器 → 宿主机帧。result 类帧与请求帧按 id 配对。 */
 export type RuntimeResponseFrame =
@@ -75,7 +100,18 @@ export type RuntimeResponseFrame =
   | { v: number; type: 'pty_data'; ptyId: string; data: string }
   | { v: number; type: 'pty_exit'; ptyId: string; exitCode: number }
   | { v: number; type: 'pong'; id: string }
-  | { v: number; type: 'runtime_status'; shellSessions: number; pendingTasks: number; attachedTerminals: number }
+  | { v: number; type: 'runtime_status'; shellSessions: number; pendingTasks: number; attachedTerminals: number; /** 进行中的脚本探针。旧 agent 缺省，宿主按 0。 */ scriptProbes?: number }
+  | {
+    v: number;
+    type: 'script_probe_result';
+    id: string;
+    failureClass: 'script' | 'infrastructure';
+    ok: boolean;
+    exitCode: number | null;
+    stdoutBase64: string | null;
+    error: string | null;
+    durationMs: number;
+  }
   | { v: number; type: 'shutdown_ack'; id: string }
   | { v: number; type: 'error'; message: string };
 

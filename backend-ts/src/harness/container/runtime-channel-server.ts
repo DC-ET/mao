@@ -19,6 +19,8 @@ export interface RuntimeStatus {
   shellSessions: number;
   pendingTasks: number;
   attachedTerminals: number;
+  /** 进行中的脚本探针。旧 agent 不上报时按 0，不挡住 idle 回收。 */
+  scriptProbes?: number;
 }
 
 export interface ChannelConnection {
@@ -327,6 +329,7 @@ class ConnectionImpl implements ChannelConnection {
       case 'mcp_result':
       case 'pty_open_result':
       case 'shutdown_ack':
+      case 'script_probe_result':
         this.pending.resolve(frame.id, frame);
         break;
       case 'pty_data':
@@ -340,6 +343,7 @@ class ConnectionImpl implements ChannelConnection {
           shellSessions: frame.shellSessions,
           pendingTasks: frame.pendingTasks,
           attachedTerminals: frame.attachedTerminals,
+          scriptProbes: frame.scriptProbes ?? 0,
         });
         break;
       case 'error':

@@ -14,7 +14,7 @@ import { useTmpDir, useTmpDirOutsideRepo } from '../../testing/tmp-dir.js';
  * 用真实 RuntimeChannelServer + 真实 RuntimeAgent 打通 Unix socket，
  * 断言连接稳定性、pty_open ack、mcp_connect envelope 透传。
  */
-const ROOT_ENV_KEYS = ['MAO_WORKSPACE_ROOT', 'MAO_RUNTIME_DIR', 'MAO_USER_HOME_DIR', 'MAO_USER_SKILLS_DIR', 'MAO_SKILL_VIEWS_DIR', 'MAO_SHARE_DIR'];
+const ROOT_ENV_KEYS = ['MAO_WORKSPACE_ROOT', 'MAO_RUNTIME_DIR', 'MAO_USER_HOME_DIR', 'MAO_USER_SKILLS_DIR', 'MAO_SKILL_VIEWS_DIR', 'MAO_SHARE_DIR', 'MAO_CONTAINER_USER_ID', 'MAO_DEPS_DIR'];
 
 function envelopeOf(workspace: string): RuntimeEnvelope {
   return {
@@ -109,7 +109,33 @@ describe('runtime agent channel behavior', () => {
 
     // 就绪后立即补报一次 runtime_status（idle 忙等保护不等下一个 10s 周期）
     expect(statuses.length).toBeGreaterThanOrEqual(1);
-    expect(statuses[0]).toEqual({ shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 });
+    expect(statuses[0]).toEqual({ shellSessions: 0, pendingTasks: 0, attachedTerminals: 0, scriptProbes: 0 });
+  });
+
+  it('runsScriptProbeAndReportsBusyWhileItRuns', async () => {
+    const base = useTmpDir('mao-agent-probe-');
+    const scriptDir = join(base, 'workspace', '7', 'projects');
+    mkdirSync(scriptDir, { recursive: true });
+    const scriptPath = join(scriptDir, 'check.sh');
+    writeFileSync(scriptPath, 'printf "ok:%s" "$MAO_WATCHER_ID"\n');
+    process.env.MAO_CONTAINER_USER_ID = '7';
+    const statuses: RuntimeStatus[] = [];
+    const conn = await startAgent(base, statuses);
+    const response = await conn.request({
+      v: 1, type: 'script_probe', id: 'probe-1',
+      scriptPath,
+      timeoutSeconds: 10,
+      env: { MAO_WATCHER_ID: '42', MAO_WATCHER_NAME: '磁盘' },
+      deps: null,
+    }, 10_000);
+    expect(response.type).toBe('script_probe_result');
+    if (response.type !== 'script_probe_result') return;
+    expect(response.failureClass).toBe('script');
+    expect(response.ok).toBe(true);
+    expect(response.exitCode).toBe(0);
+    expect(Buffer.from(response.stdoutBase64 ?? '', 'base64').toString('utf8')).toBe('ok:42');
+    expect(statuses.some((status) => (status.scriptProbes ?? 0) >= 1)).toBe(true);
+    expect(statuses[statuses.length - 1]?.scriptProbes).toBe(0);
   });
 
   it('reportsRuntimeBuildIdInHello', async () => {

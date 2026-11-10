@@ -122,11 +122,12 @@ export interface ContainerOps {
   recycleUser(userId: number, opts?: { force?: boolean; agentId?: number }): Promise<ContainerRecycleResult>;
 }
 
-/** 容器是否处于忙碌状态（有活跃 shell / 在途任务 / 已连接终端）。 */
+/** 容器是否处于忙碌状态（有活跃 shell / 在途任务 / 已连接终端 / 脚本探针）。 */
 function isBusy(entry: ContainerEntry): boolean {
   return entry.inContainer.shellSessions > 0
     || entry.inContainer.pendingTasks > 0
-    || entry.inContainer.attachedTerminals > 0;
+    || entry.inContainer.attachedTerminals > 0
+    || (entry.inContainer.scriptProbes ?? 0) > 0;
 }
 
 export interface DockerCli {
@@ -738,7 +739,21 @@ export class ContainerRegistry {
   }
 
   private isBusy(entry: ContainerEntry): boolean {
-    return entry.inContainer.shellSessions > 0 || entry.inContainer.pendingTasks > 0 || entry.inContainer.attachedTerminals > 0;
+    return entry.inContainer.shellSessions > 0
+      || entry.inContainer.pendingTasks > 0
+      || entry.inContainer.attachedTerminals > 0
+      || (entry.inContainer.scriptProbes ?? 0) > 0;
+  }
+
+  /**
+   * 脚本探针能否向这只容器发帧：两边闭包版本都非空且一致。
+   * 旧 agent 不认识 script_probe，发了只会干等满超时；不一致时调用方记基础设施失败，不回退宿主。
+   */
+  scriptProbeRuntimeReady(entry: ContainerEntry): boolean {
+    return this.hostRuntimeBuild != null
+      && entry.runtimeBuild != null
+      && entry.runtimeBuild !== ''
+      && entry.runtimeBuild === this.hostRuntimeBuild;
   }
 
   /**
@@ -801,6 +816,8 @@ export class ContainerRegistry {
       '-e', `MAO_WORKSPACE_ROOT=${this.opts.workspaceRoot}`,
       '-e', `MAO_RUNTIME_DIR=${this.opts.runtimeDir}`,
       '-e', `MAO_USER_HOME_DIR=${this.opts.userHomeDir}`,
+      // 脚本探针在容器内复核 deps 前缀时用；与挂载清单同一路径（hostPath = containerPath）
+      '-e', `MAO_DEPS_DIR=${c.depsDir}`,
       // HOME 对齐用户数据目录（与宿主机模式一致）：npm/.npmrc、pip 缓存、git/.m2 等用户级
       // 配置直接读持久挂载；Java 的 user.home 由 runtime-agent 启动时同步 /etc/passwd 兜住
       '-e', `HOME=${userHomeMount?.containerPath ?? path.posix.join(this.opts.userHomeDir, String(userId))}`,
@@ -828,7 +845,7 @@ export class ContainerRegistry {
       state: 'creating',
       startedAtMs: 0,
       lastUsedAtMs: 0,
-      inContainer: { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 },
+      inContainer: { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0, scriptProbes: 0 },
       connectionDead: false,
       mountedPaths: new Set<string>(),
       sessionWorkspaces: [],
@@ -877,7 +894,7 @@ export class ContainerRegistry {
     entry.hostsFingerprint = containerHostsFingerprint(hostsInjection.entries);
     // 新容器（含原地重建）内没有任何 shell/pty/在途任务：忙计数清零，避免旧容器的
     // 陈旧 runtime_status 把 idle 回收挡在门外（新 agent 握手后会补报真实状态）
-    entry.inContainer = { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 };
+    entry.inContainer = { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0, scriptProbes: 0 };
     entry.generation += 1;
     // 接住创建过程中（条目登记前）到达的首个 hello：否则新容器首调会被误判 unknown 漂移多重启一次
     entry.runtimeBuild = this.lastAgentBuild.get(containerKey(userId, agentId)) ?? undefined;
@@ -949,7 +966,7 @@ export class ContainerRegistry {
     entry.lastUsedAtMs = Date.now();
     // 停止期间容器内的 shell/pty/任务已全部消亡：忙计数清零，避免陈旧 runtime_status
     // 把 idle 回收永久挡在门外（新 agent 握手后会补报真实状态）
-    entry.inContainer = { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 };
+    entry.inContainer = { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0, scriptProbes: 0 };
     try {
       await this.opts.waitSocketReady(entry.userId, entry.agentId, c.startTimeoutMs);
     } catch (e) {

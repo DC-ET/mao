@@ -11,6 +11,7 @@ import type { SignalSecretCipher } from './signal-cipher.js';
 import { assertProbeHeaders, assertProbeUrl, isSensitiveProbeHeader, maskProbeHeaders, SECRET_MASK } from './probe-validate.js';
 import { executeProbe, type ProbeResult } from './probe-client.js';
 import { executeScriptProbe, type ScriptProbeResult } from './script-probe.js';
+import { ContainerScriptProbe, ScriptProbeInfrastructureError } from '../harness/container/container-script-probe.js';
 import { resolveProbeHeaders, type WatcherCredentialResolver } from './watcher-credential-resolver.js';
 import { isUnder } from '../harness/safety/path-sandbox.js';
 import { harnessLog } from '../harness/log.js';
@@ -87,8 +88,14 @@ export interface WatcherServiceDeps {
   probe?: { execute: typeof executeProbe };
   /**
    * 脚本探针执行器（测试可注入假实现）。生产缺省走 executeScriptProbe。
+   * host 模式，以及未装配容器桥时，走这条。
    */
   scriptProbe?: { execute: typeof executeScriptProbe };
+  /**
+   * Docker 模式脚本探针桥。enabledFor 为真时在属主容器内执行，失败不回退宿主。
+   * 未装配（单测、无容器运行时）时始终走 scriptProbe。
+   */
+  containerScriptProbe?: ContainerScriptProbe;
   /**
    * 脚本存储根（V189）：`{workspaceRoot}/{userId}/projects`。装配层传
    * `(userId) => resolve(cfg.app.harness.workspaceRoot, String(userId), 'projects')`。
@@ -424,11 +431,15 @@ export class WatcherService {
     if (watcher.probeType === 'SCRIPT') {
       // 路径校验失败（文件被删等）以 BusinessException 上抛 → 路由层 400，测试弹窗直接可读
       const absolute = await this.resolveScriptForExecution(watcher.userId, watcher.scriptPath);
-      const scriptResult = await (this.deps.scriptProbe ?? { execute: executeScriptProbe }).execute({
-        scriptPath: absolute,
-        timeoutSeconds: watcher.scriptTimeoutSeconds ?? SCRIPT_PROBE_DEFAULT_TIMEOUT_SECONDS,
-        env: this.scriptProbeEnv(watcher),
-      });
+      let scriptResult: ScriptProbeResult;
+      try {
+        scriptResult = await this.executeOwnedScript(watcher, absolute);
+      } catch (e) {
+        if (e instanceof ScriptProbeInfrastructureError) {
+          return { httpStatus: null, exitCode: null, durationMs: 0, valueHash: null, parseOk: false, sample: '', error: e.message };
+        }
+        throw e;
+      }
       exitCode = scriptResult.exitCode;
       result = scriptProbeResultToProbeResult(scriptResult);
       if (!result.ok) {
@@ -508,14 +519,14 @@ export class WatcherService {
       try {
         // 路径校验失败（文件被删等）记一次失败走既有退避，不上抛
         const absolute = await this.resolveScriptForExecution(watcher.userId, watcher.scriptPath);
-        const scriptResult = await (this.deps.scriptProbe ?? { execute: executeScriptProbe }).execute({
-          scriptPath: absolute,
-          timeoutSeconds: watcher.scriptTimeoutSeconds ?? SCRIPT_PROBE_DEFAULT_TIMEOUT_SECONDS,
-          env: this.scriptProbeEnv(watcher),
-        });
+        const scriptResult = await this.executeOwnedScript(watcher, absolute);
         exitCode = scriptResult.exitCode;
         result = scriptProbeResultToProbeResult(scriptResult);
       } catch (e) {
+        if (e instanceof ScriptProbeInfrastructureError) {
+          await this.recordInfrastructure(watcher, e);
+          return;
+        }
         await this.recordFailure(watcher, e, null, null, null, null);
         return;
       }
@@ -727,6 +738,55 @@ export class WatcherService {
   }
 
   // ── 内部 ─────────────────────────────────────────────────────────────────
+
+  /**
+   * 按属主运行模式执行脚本。Docker 模式进容器；host 模式或未装配容器桥时在后端宿主执行。
+   * 容器侧基础设施失败抛 ScriptProbeInfrastructureError，调用方不得改走宿主。
+   */
+  private async executeOwnedScript(watcher: SignalWatcher, absolute: string): Promise<ScriptProbeResult> {
+    const request = {
+      scriptPath: absolute,
+      timeoutSeconds: watcher.scriptTimeoutSeconds ?? SCRIPT_PROBE_DEFAULT_TIMEOUT_SECONDS,
+      env: this.scriptProbeEnv(watcher),
+    };
+    const bridge = this.deps.containerScriptProbe;
+    if (bridge != null) {
+      let docker = false;
+      try {
+        docker = await bridge.enabledFor(watcher.userId);
+      } catch (e) {
+        throw new ScriptProbeInfrastructureError(`运行模式判定失败：${errorMessage(e)}`);
+      }
+      if (docker) {
+        return bridge.execute({ userId: watcher.userId, agentId: watcher.agentId, ...request });
+      }
+    }
+    return (this.deps.scriptProbe ?? { execute: executeScriptProbe }).execute(request);
+  }
+
+  /**
+   * 容器基础设施失败：写轮询记录并推进 last_checked_at，不增加连败、不停用。
+   */
+  private async recordInfrastructure(watcher: SignalWatcher, error: unknown): Promise<void> {
+    if (watcher.id == null) return;
+    const checkId = await this.deps.checkRepo.insert({
+      watcherId: watcher.id,
+      httpStatus: null,
+      exitCode: null,
+      valueHash: null,
+      oldValueSnippet: null,
+      newValueSnippet: null,
+      changed: 0,
+      triggeredSessionId: null,
+      error: errorMessage(error).slice(0, 500),
+      durationMs: null,
+      warning: null,
+    });
+    const touched = await this.deps.watcherRepo.touchChecked(watcher.id);
+    if (!touched) {
+      await this.deps.checkRepo.remove(checkId).catch(() => undefined);
+    }
+  }
 
   /**
    * 记录一次失败：写 check 行（若尚无）+ 累加失败计数与退避 + 达阈值自动停用并通知。
