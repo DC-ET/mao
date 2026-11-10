@@ -11,6 +11,13 @@
 
 ## 0.0.498 (2026-11-10)
 
+### 终端 CLI（mao-cli）
+- **信号哨兵 CLI 支持 Shell 脚本探针**：`mao signal-watcher` 此前只有 HTTP 探针参数（`--url` 为硬编码必填），脚本哨兵只能走桌面端表单或 REST 创建。现新增 `--probe-type HTTP|SCRIPT`、`--script-path`、`--timeout-seconds`：
+  - 必填项按类型分流：HTTP 必填 `--url`，SCRIPT 必填 `--script-path`（缺哪个报哪个，不再一律报缺 `--url`）。
+  - 两侧字段互斥：显式传 `--probe-type` 时非生效侧字段（SCRIPT 下的 `--url`/`--method`/`--headers`/`--body`/`--json-path`，HTTP 下的 `--script-path`/`--timeout-seconds`）在本地丢弃并打 stderr 提示，不静默；未传 `--probe-type` 时全部下发，由后端按库内类型忽略。
+  - 本地校验与后端同口径：`--script-path` 非空、非绝对路径、不含 `..` 段；`--interval` 对 SCRIPT 下限 5 分钟；`--compare-mode STATUS_CODE` 对 SCRIPT 拒绝；`--timeout-seconds` 5~300 整数。脚本文件的存在性 / ≤256KB / 属主边界仍由服务端校验。
+  - `update` 可用 `--probe-type` + 对侧字段把已有哨兵切成脚本探针（会重置判定基线）；HELP 与 `reference/signal-watcher.md` 同步补充两种 create 形态与脚本侧报错清单。
+
 ### 前端（桌面 / Web）
 - **哨兵探针类型说明换到选项下方**：新建/编辑哨兵时，探针类型旁的说明不再跟在单选后面挤成一行，改为显示在选项下方。
 - **哨兵「选择脚本」按钮与路径输入框齐高**：脚本路径行右侧按钮此前用对话框 24px 按钮，比 32px 输入框矮一截，现与输入框同高、同圆角。

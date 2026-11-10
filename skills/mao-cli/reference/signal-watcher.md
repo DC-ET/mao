@@ -63,14 +63,26 @@
 | `mao signal-watcher test --id <id>` | POST `/v1/signal-watchers/:id/test` |
 | `mao signal-watcher admin-list [--page N] [--size N] [--status ...] [--user-id N] [--compare-mode ...]` | GET `/v1/admin/signal-watchers` |
 
-create 必填 `--name` / `--agent-id` / `--url` / `--prompt-template`；可选 `--method`（默认 GET）、`--headers`（JSON 对象或 `[{key,value}]` 数组）、`--body` / `--body-file`、`--interval`（默认 30）、`--compare-mode`（默认 HASH）、`--json-path`、`--trigger-mode`（默认 NEW_SESSION）、`--copy-from`。
+`--probe-type` 选 HTTP（默认，请求接口）或 SCRIPT（执行项目工作区里的 Shell 脚本）。HTTP 必填 `--url`，SCRIPT 必填 `--script-path`；两侧字段互斥，显式传了 `--probe-type` 时非生效侧的字段在本地丢弃并打提示（不静默）。未传 `--probe-type` 时全部下发，由后端按库内类型忽略非生效侧字段。
+
+HTTP 侧可选 `--method`（默认 GET）、`--headers`（JSON 对象或 `[{key,value}]` 数组）、`--body` / `--body-file`；SCRIPT 侧可选 `--timeout-seconds`（默认 60）。共用可选 `--interval`（HTTP 1~1440 / SCRIPT 5~1440，默认 30）、`--compare-mode`（默认 HASH；SCRIPT 仅 HASH / JSON_FIELD）、`--json-path`、`--trigger-mode`（默认 NEW_SESSION）、`--copy-from`。
 
 ```bash
-# 新建：每 15 分钟探测库存接口，按 JSON 字段判定，变化时新建会话交给 Agent
+# 新建 HTTP 哨兵：每 15 分钟探测库存接口，按 JSON 字段判定，变化时新建会话交给 Agent
 mao signal-watcher create --name '库存监控' --agent-id 3 \
   --url 'https://api.example.com/stock' \
   --compare-mode JSON_FIELD --json-path 'data.list.0.price' \
   --interval 15 --prompt-template '库存价格变化：{diff}'
+
+# 新建脚本哨兵：每 15 分钟执行项目工作区里的探针脚本，stdout 作为判定值
+# 脚本需先存在于 <项目slug>/<子路径>（如 work/ops/sentinels/check.sh），保存时校验存在且 ≤256KB
+mao signal-watcher create --name '磁盘水位告警' --agent-id 3 \
+  --probe-type SCRIPT --script-path 'work/ops/sentinels/disk.sh' \
+  --timeout-seconds 120 --interval 15 \
+  --prompt-template '磁盘水位异常：{diff}'
+
+# 把已有哨兵从 HTTP 改成脚本探针（会重置判定基线，下次轮询只建基线不触发）
+mao signal-watcher update --id 12 --probe-type SCRIPT --script-path 'work/ops/sentinels/disk.sh'
 
 # 复制已有哨兵：敏感请求头与请求体由后端从源行解密继承，CLI 不接触明文
 mao signal-watcher create --name '库存监控 副本' --agent-id 3 \
@@ -84,7 +96,9 @@ mao signal-watcher checks --id 12 --page 1 --size 20
 mao signal-watcher test --id 12
 ```
 
-update 为部分更新：未传的字段保持原值；`--headers '{}'`、`--body ''`、`--json-path ''` 是显式清空。回显中掩码为 `******` 的敏感请求头可原样回传，后端只对本次下发的键用库内原值替换，不会把掩码当凭据落库。create 时 GET 带 `--body`、POST 缺请求体、间隔越界、JSON_FIELD 缺 `--json-path`、禁改请求头（host 等）、URL 非 http/https 或内嵌凭据，均在本地直接报错，请求不会发出。
+update 为部分更新：未传的字段保持原值；`--headers '{}'`、`--body ''`、`--json-path ''` 是显式清空。回显中掩码为 `******` 的敏感请求头可原样回传，后端只对本次下发的键用库内原值替换，不会把掩码当凭据落库。create 时 GET 带 `--body`、POST 缺请求体、间隔越界、JSON_FIELD 缺 `--json-path`、禁改请求头（host 等）、URL 非 http/https 或内嵌凭据，均在本地直接报错，请求不会发出。脚本哨兵对应的本地拦截：`--probe-type SCRIPT` 缺 `--script-path`、`--script-path` 为空 / 绝对路径 / 含 `..` 段、`--interval` 小于 5、`--compare-mode STATUS_CODE`、`--timeout-seconds` 越界（5~300）。
+
+脚本路径的**存在性、≤256KB、属主边界**由服务端校验（保存与执行前各一次），本地只做格式校验——所以 `--script-path` 写了不存在的文件时会拿到后端的 `脚本文件不存在：...（请先在工作区上传或让 Agent 编写）`。
 
 ## 复用会话与复制（0.0.361）
 
