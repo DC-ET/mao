@@ -16,7 +16,8 @@ const HELP = `用法:
   mao open token list
   mao open token create --name <名称> [--scope open:run]        # scope 逗号分隔，首期仅 open:run
   mao open token reveal --id <id>                               # 再次打印明文 Token（加密留存，随时可取）
-  mao open token delete --id <id>
+  mao open token delete --id <id>                                # 吊销：立即失效，记录保留
+  mao open token purge --id <id>                                 # 永久删除：行移除，调用流水保留
   mao open token log-full-body --id <id> --enabled true|false
   mao open token re-enable --id <id>
   mao open calls list [--token-id <id>] [--trigger-id <id>] [--page <n>] [--size <n>]
@@ -83,6 +84,11 @@ async function tokenGroup(ctx) {
     case 'delete': {
       const id = requireNumber(flags, 'id', '令牌 ID');
       outputResult(await request({ ...common, method: 'DELETE', path: `/open/tokens/${id}` }), globals);
+      return;
+    }
+    case 'purge': {
+      const id = requireNumber(flags, 'id', '令牌 ID');
+      outputResult(await request({ ...common, method: 'DELETE', path: `/open/tokens/${id}/permanent` }), globals);
       return;
     }
     case 'reveal': {

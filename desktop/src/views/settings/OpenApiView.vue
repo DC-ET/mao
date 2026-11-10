@@ -64,10 +64,16 @@
                 v-if="!token.revokedAt"
                 class="action-btn action-btn-danger"
                 :title="confirmingRevokeId === token.id ? '确认吊销' : '吊销'"
+                :aria-label="confirmingRevokeId === token.id ? '确认吊销' : '吊销'"
                 @click="confirmRevoke(token)"
               >
-                <el-icon :size="14"><Delete /></el-icon>
+                <el-icon :size="14"><CircleClose /></el-icon>
               </button>
+              <el-tooltip content="删除" :show-after="300">
+                <button class="action-btn action-btn-danger" title="删除" aria-label="删除" @click="removeToken(token)">
+                  <el-icon :size="14"><Delete /></el-icon>
+                </button>
+              </el-tooltip>
             </div>
           </div>
           <div v-if="token.autoDisabledAt" class="item-row">
@@ -364,12 +370,12 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Plus, Delete, Edit, RefreshRight, VideoPause, VideoPlay, Clock, CopyDocument, Tickets, Reading, Download, Promotion } from '@element-plus/icons-vue'
+import { Plus, Delete, CircleClose, Edit, RefreshRight, VideoPause, VideoPlay, Clock, CopyDocument, Tickets, Reading, Download, Promotion } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import {
   api, searchSessions,
-  listApiTokens, issueApiToken, revealApiToken, revokeApiToken, setTokenLogFullBody, reEnableToken,
+  listApiTokens, issueApiToken, revealApiToken, revokeApiToken, deleteApiToken, setTokenLogFullBody, reEnableToken,
   listWebhookTriggers, createWebhookTrigger, updateWebhookTrigger, deleteWebhookTrigger, rotateWebhookTriggerSecret,
   listOutboundSubscriptions, createOutboundSubscription, setOutboundSubscriptionEnabled, deleteOutboundSubscription,
   listOutboundDeliveries, listOpenApiCalls, testOutboundSubscription,
@@ -558,6 +564,25 @@ async function submitToken(): Promise<void> {
     // handled by interceptor
   } finally {
     submitting.value = false
+  }
+}
+
+async function removeToken(token: ApiTokenView): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      '删除后无法恢复。尚未吊销的 Token 会立即失效。历史调用记录仍保留。',
+      '删除 API Token',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await deleteApiToken(token.id)
+    ElMessage.success('Token 已删除')
+    await fetchTokens()
+  } catch {
+    // handled by interceptor
   }
 }
 

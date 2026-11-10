@@ -718,6 +718,11 @@ export async function revokeApiToken(id: number): Promise<void> {
   await api.delete(`/open/tokens/${id}`)
 }
 
+/** 永久删除。有效 Token 立即失效；调用流水保留。 */
+export async function deleteApiToken(id: number): Promise<void> {
+  await api.delete(`/open/tokens/${id}/permanent`)
+}
+
 export async function setTokenLogFullBody(id: number, enabled: boolean): Promise<void> {
   await api.put(`/open/tokens/${id}/log-full-body`, { enabled })
 }

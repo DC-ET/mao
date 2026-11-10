@@ -108,7 +108,7 @@
           <el-radio-group v-model="form.probeType" @change="handleProbeTypeChange">
             <el-radio v-for="(label, value) in PROBE_TYPE_LABELS" :key="value" :value="value">{{ label }}</el-radio>
           </el-radio-group>
-          <span class="field-hint">
+          <span class="field-hint field-hint-below">
             {{ form.probeType === 'SCRIPT' ? '定期执行项目工作区里的 Shell 脚本，stdout 作为判定值，非零退出计一次失败。' : '定期请求一个 HTTP 接口，响应体作为判定值。' }}
           </span>
         </el-form-item>
@@ -1046,8 +1046,13 @@ onMounted(() => {
   min-width: 0;
 }
 
-.script-pick-btn {
+/* 跟在输入框右侧：高度、圆角与 el-input 默认尺寸对齐，不用对话框 24px 按钮 */
+.dialog-btn.script-pick-btn {
   flex-shrink: 0;
+  height: var(--el-component-size, 32px);
+  padding: 0 15px;
+  border-radius: var(--el-border-radius-base);
+  font-size: var(--el-font-size-base);
 }
 
 .header-hint {
@@ -1061,6 +1066,15 @@ onMounted(() => {
   font-size: 12px;
   color: var(--aw-ink-muted);
   margin-left: 8px;
+}
+
+/* 探针类型说明：表单项内容是横排 flex，独占一行落到单选下方 */
+.field-hint-below {
+  flex: 1 0 100%;
+  min-width: 0;
+  margin-left: 0;
+  margin-top: 2px;
+  line-height: 1.5;
 }
 
 .dialog-btn {

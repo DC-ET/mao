@@ -24,6 +24,12 @@ function makeRepo() {
       row.revokedAt = '2026-01-01 00:00:00';
       return true;
     }),
+    deleteByOwner: vi.fn(async (id: number, userId: number) => {
+      const row = rows.get(id);
+      if (row == null || row.userId !== userId) return false;
+      rows.delete(id);
+      return true;
+    }),
     touchLastUsed: vi.fn(async () => undefined),
     rows,
   };
@@ -110,6 +116,23 @@ describe('ApiTokenService（P1）', () => {
     await service.revoke(7, issued.id);
     await expect(service.resolveByToken(issued.plainToken)).resolves.toMatchObject({ ok: false, reason: 'revoked', tokenId: issued.id, userId: 7 });
     await expect(service.revoke(7, issued.id)).rejects.toMatchObject({ code: 2001 });
+  });
+
+  it('删除后行消失，鉴权变为查无；他人与不存在的 Token 拒绝；已吊销的也能删', async () => {
+    const repo = makeRepo();
+    const service = new ApiTokenService(repo);
+    const active = await service.issue(7, 'CI', ['open:run']);
+    const revoked = await service.issue(7, 'old', ['open:run']);
+    await service.revoke(7, revoked.id);
+    await expect(service.remove(8, active.id)).rejects.toMatchObject({ code: 2001 });
+    expect(repo.rows.has(active.id)).toBe(true);
+    await service.remove(7, active.id);
+    expect(repo.rows.has(active.id)).toBe(false);
+    await expect(service.resolveByToken(active.plainToken)).resolves.toMatchObject({ ok: false, reason: 'not_found' });
+    await service.remove(7, revoked.id);
+    expect(repo.rows.has(revoked.id)).toBe(false);
+    await expect(service.remove(7, active.id)).rejects.toMatchObject({ code: 2001 });
+    await expect(service.list(7)).resolves.toEqual([]);
   });
 
   it('过期 token 失效', async () => {

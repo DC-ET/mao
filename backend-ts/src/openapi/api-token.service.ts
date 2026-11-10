@@ -83,7 +83,7 @@ export class ApiTokenService {
     }
     const active = await this.repo.countActive(userId);
     if (active >= MAX_TOKENS_PER_USER) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, `每用户最多 ${MAX_TOKENS_PER_USER} 个未吊销 Token，请先吊销不用的 Token`);
+      throw new BusinessException(ErrorCode.PARAM_INVALID, `每用户最多 ${MAX_TOKENS_PER_USER} 个未吊销 Token，请先吊销或删除不用的 Token`);
     }
     const plainToken = `${API_TOKEN_PREFIX}${randomBase62(TOKEN_RANDOM_LENGTH)}`;
     const expiresAt = formatDateTime(new Date(Date.now() + DEFAULT_TOKEN_TTL_DAYS * 24 * 3600 * 1000));
@@ -185,6 +185,17 @@ export class ApiTokenService {
     const revoked = await this.repo.revoke(id, userId);
     if (!revoked) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, 'Token 不存在或已吊销');
+    }
+  }
+
+  /**
+   * 永久删除属主的 Token 行。有效 Token 删除后哈希消失，鉴权变为查无；
+   * 已吊销的也能删，用来清掉列表里的残留。调用流水不删。
+   */
+  async remove(userId: number, id: number): Promise<void> {
+    const removed = await this.repo.deleteByOwner(id, userId);
+    if (!removed) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, 'Token 不存在');
     }
   }
 

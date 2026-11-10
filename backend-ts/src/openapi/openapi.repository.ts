@@ -58,6 +58,12 @@ export class MysqlApiTokenRepository {
     return result.affectedRows === 1;
   }
 
+  /** 属主永久删除。调用流水不级联，token_id 悬空后列表 JOIN 只是没有名称。 */
+  async deleteByOwner(id: number, userId: number): Promise<boolean> {
+    const result = await this.db.execute('DELETE FROM api_token WHERE id = ? AND user_id = ?', [id, userId]);
+    return result.affectedRows === 1;
+  }
+
   /** 命中即刷 last_used_at：fire-and-forget，不阻塞请求、失败不影响鉴权。 */
   async touchLastUsed(id: number): Promise<void> {
     try {

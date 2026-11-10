@@ -173,6 +173,14 @@ export function registerOpenApiRoutes(app: FastifyInstance, deps: OpenApiRouteDe
     sendJson(reply, 200, ok(null));
   });
 
+  // 永久删除：与上面的吊销分开，避免把既有 DELETE（吊销）语义改掉
+  app.delete('/v1/open/tokens/:id/permanent', async (req, reply) => {
+    const userId = requireJwtIdentity(req);
+    const id = requirePositiveId((req.params as { id: string }).id);
+    await deps.apiTokenService.remove(userId, id);
+    sendJson(reply, 200, ok(null));
+  });
+
   app.put('/v1/open/tokens/:id/log-full-body', async (req, reply) => {
     const userId = requireJwtIdentity(req);
     const id = requirePositiveId((req.params as { id: string }).id);

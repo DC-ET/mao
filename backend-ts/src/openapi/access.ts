@@ -22,7 +22,7 @@ export function requireTokenScope(request: FastifyRequest, scope: OpenApiScope):
 }
 
 /**
- * 管理接口身份隔离（决策 12）：token 签发/吊销/列表、触发器/订阅 CRUD 仅限 JWT
+ * 管理接口身份隔离（决策 12）：token 签发/吊销/删除/列表、触发器/订阅 CRUD 仅限 JWT
  * 会话身份——防止泄露的 mao_ token 自我续期/自我克隆。
  */
 export function requireJwtIdentity(request: FastifyRequest): number {

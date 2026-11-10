@@ -400,7 +400,8 @@ export class OpenApiCallLogService {
     if (row.userId == null || row.agentId == null) throw new BusinessException(ErrorCode.PARAM_INVALID, '这条流水缺少用户或 Agent，无法重发');
     if (row.tokenId == null) throw new BusinessException(ErrorCode.PARAM_INVALID, '无效 Token 的调用无法重发');
     const token = await this.deps.tokens?.findById(row.tokenId);
-    if (token == null || token.revokedAt != null) throw new BusinessException(ErrorCode.FORBIDDEN, 'Token 已吊销，无法重发');
+    if (token == null) throw new BusinessException(ErrorCode.FORBIDDEN, 'Token 已删除，无法重发');
+    if (token.revokedAt != null) throw new BusinessException(ErrorCode.FORBIDDEN, 'Token 已吊销，无法重发');
     if (token.expiresAt != null && token.expiresAt <= formatDateTime(this.now())) {
       throw new BusinessException(ErrorCode.FORBIDDEN, 'Token 已过期，无法重发');
     }
