@@ -799,3 +799,68 @@ describe('ToolCallCard 执行中耗时', () => {
     }
   })
 })
+
+describe('ToolCallCard 审批与截断图标', () => {
+  let mounted: ReturnType<typeof mountCard> | null = null
+  afterEach(() => { mounted?.destroy() })
+
+  function tip(selector: string): { badge: HTMLElement; content: string | null } {
+    const badge = document.querySelector(selector)
+    if (!(badge instanceof HTMLElement)) throw new Error(`missing ${selector}`)
+    return {
+      badge,
+      content: badge.closest('el-tooltip')?.getAttribute('content') ?? null,
+    }
+  }
+
+  it('四种审批各用图标，悬停带状态名和理由', async () => {
+    const cases = [
+      { mark: { mode: 'llm' as const, approved: true, reason: '只读命令' }, cls: 'approved', label: 'AI 已批准', tip: 'AI 已批准：只读命令' },
+      { mark: { mode: 'llm' as const, approved: false, reason: '会删除目录' }, cls: 'denied', label: 'AI 已拒绝', tip: 'AI 已拒绝：会删除目录' },
+      { mark: { mode: 'jev' as const, approved: true, reason: '低风险' }, cls: 'jev', label: '低风险放行', tip: '低风险放行：低风险' },
+      { mark: { mode: 'rule' as const, approved: true, reason: '命中规则', ruleId: 3 }, cls: 'rule', label: '规则放行', tip: '规则放行：命中规则' },
+    ]
+    for (const c of cases) {
+      mounted?.destroy()
+      mounted = mountCard(makeShellCall({ approvalMark: c.mark, isExpanded: false }))
+      await nextTick()
+      const { badge, content } = tip('.approval-badge')
+      expect(badge.classList.contains(c.cls)).toBe(true)
+      expect(badge.getAttribute('aria-label')).toBe(c.label)
+      expect(badge.textContent?.trim()).toBe('')
+      expect(content).toBe(c.tip)
+    }
+  })
+
+  it('没有理由时悬停只留状态名', async () => {
+    mounted = mountCard(makeShellCall({
+      approvalMark: { mode: 'llm', approved: true, reason: '  ' },
+      isExpanded: false,
+    }))
+    await nextTick()
+    expect(tip('.approval-badge').content).toBe('AI 已批准')
+  })
+
+  it('输出截断用图标，悬停说明截断原因', async () => {
+    mounted = mountCard(makeShellCall({ resultTruncated: true, isExpanded: false }))
+    await nextTick()
+    const { badge, content } = tip('.truncated-badge')
+    expect(badge.getAttribute('aria-label')).toBe('输出已截断')
+    expect(badge.textContent?.trim()).toBe('')
+    expect(content).toBe('输出已截断：超出工具自身的输出上限，此处展示的是截断后的内容')
+    expect(document.querySelector('.approval-badge')).toBeNull()
+  })
+
+  it('点图标不展开卡片', async () => {
+    mounted = mountCard(makeShellCall({
+      approvalMark: { mode: 'jev', approved: true, reason: '低风险' },
+      resultTruncated: true,
+      isExpanded: false,
+    }))
+    await nextTick()
+    document.querySelector('.approval-badge')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    document.querySelector('.truncated-badge')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await nextTick()
+    expect(document.querySelector('.tool-body')).toBeNull()
+  })
+})

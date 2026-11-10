@@ -5,6 +5,7 @@
 - 需求来源：调研文档 `docs/research/2026-11-10-shell-script-signal-watcher-research.md`（含全部代码证据）；调研 §9 四个待拍板项已定案，见本文 §8
 - 规模：后端约 600 行（迁移 4 列 + `script-probe.ts` 执行器约 150 行 + service 分流/校验 + 2 个内置工具）+ desktop 约 250 行（表单分流 + 路径选择对话框）+ admin 约 30 行 + 契约/测试；**一次数据库迁移（V189）、零新依赖**
 - 关联：`backend-ts/src/signal/`、`shared/contracts/src/signal.ts`、`desktop/src/views/settings/SignalWatchersView.vue`、`desktop/src/views/settings/signal-watcher-form.ts`、`admin/src/views/signal/SignalWatcherListView.vue`、`harness/tool/{tool-registry,impl}/`、`USER_GUIDE.md`、`skills/mao-cli/reference/desktop.md`
+- 勘误（2026-11-10）：§2.2 第 2 条与 §8 第 1 条「不做 docker 运行模式的容器内执行」已作废，由 [脚本探针容器内执行技术方案](2026-11-10-script-probe-container-isolation-technical-design.md) 取代。本文其余条款仍有效。
 
 ## 1. 需求背景
 
