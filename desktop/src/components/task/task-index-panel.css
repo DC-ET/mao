@@ -681,33 +681,13 @@
   }
 }
 
-/* Scrollbar — hidden by default, visible on hover */
+/* 与对话区一致：列表仍可滚动，滚动条不占位、不显示 */
 .task-index-panel .panel-content {
-  scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
-  transition: scrollbar-color 0.3s;
-}
-
-.task-index-panel .panel-content:hover {
-  scrollbar-color: var(--aw-hairline) transparent;
+  scrollbar-width: none;
 }
 
 .task-index-panel .panel-content::-webkit-scrollbar {
-  width: 4px;
-}
-
-.task-index-panel .panel-content::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.task-index-panel .panel-content::-webkit-scrollbar-thumb {
-  background: transparent;
-  border-radius: 2px;
-  transition: background 0.3s;
-}
-
-.task-index-panel .panel-content:hover::-webkit-scrollbar-thumb {
-  background: var(--aw-hairline);
+  display: none;
 }
 
 /* Dark mode */

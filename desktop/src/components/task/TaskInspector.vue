@@ -1102,6 +1102,7 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   flex: 1;
   overflow-y: auto;
   padding: 16px;
+  scrollbar-width: none;
 }
 
 .inspector-tab-content.file-tree-tab,
@@ -1675,16 +1676,18 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 }
 
 .inspector-tab-content::-webkit-scrollbar {
-  width: 4px;
+  display: none;
 }
 
-.inspector-tab-content::-webkit-scrollbar-track {
-  background: transparent;
+/* 文件树、Git 变更列表在子组件里滚动，同样不显示滚动条 */
+.file-tree-tab :deep(.file-tree-content),
+.git-tab :deep(.git-tree) {
+  scrollbar-width: none;
 }
 
-.inspector-tab-content::-webkit-scrollbar-thumb {
-  background: var(--aw-hairline);
-  border-radius: 2px;
+.file-tree-tab :deep(.file-tree-content::-webkit-scrollbar),
+.git-tab :deep(.git-tree::-webkit-scrollbar) {
+  display: none;
 }
 
 [data-theme="dark"] .task-inspector {

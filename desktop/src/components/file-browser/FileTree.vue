@@ -826,6 +826,7 @@ onUnmounted(() => {
   flex: 1;
   overflow: auto;
   min-height: 0;
+  scrollbar-width: none;
 }
 
 .file-tree-inner {
@@ -880,17 +881,7 @@ onUnmounted(() => {
 }
 
 .file-tree-content::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
-}
-
-.file-tree-content::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.file-tree-content::-webkit-scrollbar-thumb {
-  background: var(--aw-hairline);
-  border-radius: 2px;
+  display: none;
 }
 
 [data-theme="dark"] .toolbar-refresh:hover:not(:disabled) {
