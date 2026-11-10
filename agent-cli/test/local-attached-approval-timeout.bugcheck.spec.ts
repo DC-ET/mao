@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseCliConfig } from '../src/args';
 import { cmdChat, type ChatContext } from '../src/commands/chat';
 import type { ApprovalPolicy } from '../src/local/approval';
@@ -33,8 +33,11 @@ vi.mock('../src/config/config-store', async () => {
 const tty = { stdoutIsTty: true, stdinIsTty: true };
 
 describe('attached local remote approval timeout', () => {
-  it('passes approval-timeout-ms into the executor policy', async () => {
+  beforeEach(() => {
     captured.policy = undefined;
+  });
+
+  it('passes approval-timeout-ms into the executor policy', async () => {
     const cfg = parseCliConfig(
       ['--local', '-p', 'hi', '--on-approval', 'remote', '--approval-timeout-ms', '1500'],
       tty,
