@@ -119,7 +119,11 @@ describe('ChatStore', () => {
     expect(tc.toolCallId).toBe('t1');
     expect(tc.argsText).toBe('{"q":"mao"}');
     expect(tc.status).toBe('done');
-    expect(tc.resultText).toBe('ok');
+    // result（富视图数据源）与 summary（行头摘要）分字段保存，不再 summary 覆盖 result
+    expect(tc.resultText).toBe('raw');
+    expect(tc.summary).toBe('ok');
+    // 起表时刻已按收包时刻登记（elapsed_ms 缺省即当前时刻），供执行中耗时显示
+    expect(tc.startedAtMs).toBeGreaterThan(0);
   });
 
   it('attaches screenshot preview from tool_call_result and local capture', () => {

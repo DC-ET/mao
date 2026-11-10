@@ -52,6 +52,17 @@ function genId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/**
+ * 把服务端「已耗时」换算成客户端起表基座（epoch ms）：订阅重放的在途 tool_call_start 带
+ * elapsed_ms（服务端口径），重连后计时接得上真正的开始时刻；缺失（实时事件）即当前时刻。
+ * 用相对耗时传递，两端时钟偏差不影响结果（对齐 desktop elapsedBaseMs）。
+ */
+function elapsedBaseMs(elapsedMs?: unknown): number {
+  return typeof elapsedMs === 'number' && Number.isFinite(elapsedMs) && elapsedMs >= 0
+    ? Date.now() - elapsedMs
+    : Date.now();
+}
+
 /** 取消息的服务端 id：历史 `h_<id>`、落库确认后的 `s_<id>`；纯客户端消息返回 null */
 function serverKey(id: string): string | null {
   const m = /^[hs]_(.+)$/.exec(id);
@@ -359,6 +370,7 @@ export class ChatStore {
           argsText,
           status: 'running',
           resultText: '',
+          startedAtMs: elapsedBaseMs(data.elapsed_ms),
           imagePreview: undefined,
         });
         this.appendTool(msg0, tc);
@@ -374,11 +386,15 @@ export class ChatStore {
         break;
       }
       case 'tool_call_result': {
-        // 后端字段：{tool_call_id, result, status:'success'|'error', summary?}
+        // 后端字段：{tool_call_id, result, status:'success'|'error', summary?}。
+        // result（富视图/输出块数据源）与 summary（行头一句话摘要）分开存：以前
+        // resultText = summary ?? result 的合并在 summary 存在时丢掉原始结果，
+        // 富视图解析不到 JSON 只能回退纯文本（对齐 desktop 分字段保存）。
         const tc = this.findToolCall(data);
         if (tc) {
           tc.status = data.status === 'error' ? 'error' : 'done';
-          tc.resultText = String(data.summary ?? data.result ?? '');
+          tc.resultText = String(data.result ?? '');
+          if (data.summary != null) tc.summary = String(data.summary);
           const preview = extractImagePreview(data.preview) ?? extractImagePreview(data);
           if (preview) tc.imagePreview = preview;
           break;
@@ -393,7 +409,8 @@ export class ChatStore {
             displayName: toolName,
             argsText: '',
             status: data.status === 'error' ? 'error' : 'done',
-            resultText: String(data.summary ?? data.result ?? ''),
+            resultText: String(data.result ?? ''),
+            ...(data.summary != null ? { summary: String(data.summary) } : {}),
             imagePreview: extractImagePreview(data.preview) ?? extractImagePreview(data),
           }) as ToolCallItem,
         );
@@ -416,6 +433,7 @@ export class ChatStore {
             this.finishInterrupted(phase === 'CANCELLED' ? '执行已被中止' : '执行失败中断');
           }
           if (phase !== 'IDLE') this.clearActiveExecution();
+          this.stampRoundEnd();
           this.llmRetryText.value = null;
           this.pendingQuestion.value = null;
         }
@@ -440,6 +458,7 @@ export class ChatStore {
             this.closeStreamingBubble();
           }
           if (phase !== 'IDLE') this.clearActiveExecution();
+          this.stampRoundEnd();
           this.llmRetryText.value = null;
           this.pendingQuestion.value = null;
         }
@@ -497,6 +516,8 @@ export class ChatStore {
       segments: [],
       toolCalls: [],
       quotedSelection: quote,
+      // 任务耗时起点：折叠条按「用户消息发出 → 本轮结束」计时（对齐 desktop buildRound）
+      createdAt: new Date().toISOString(),
       ...(images && images.length > 0 ? { images } : {}),
     });
     this.ensureStreamingAssistant();
@@ -553,6 +574,7 @@ export class ChatStore {
       error: false,
       segments: [],
       toolCalls: [],
+      createdAt: new Date().toISOString(),
     });
   }
 
@@ -570,6 +592,16 @@ export class ChatStore {
   private closeStreamingBubble() {
     const m = this.lastAssistant();
     if (m?.streaming) m.streaming = false;
+  }
+
+  /**
+   * 终态时刻盖章在本轮最后一条 assistant 消息上：执行过程折叠条算「任务耗时」的终点
+   * （起点是用户消息 createdAt）。历史回放的消息自带 REST 时间戳，只有本地流式气泡缺，
+   * 已有值不覆盖（重连后 REST 对账的消息以服务端 updatedAt 为准）。
+   */
+  private stampRoundEnd() {
+    const m = this.lastAssistant();
+    if (m && !m.updatedAt) m.updatedAt = new Date().toISOString();
   }
 
   /**

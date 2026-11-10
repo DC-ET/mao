@@ -1,94 +1,89 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, ref } from 'vue';
 import type { ToolCallItem } from '../types';
+import MaoIcon from './MaoIcon.vue';
+import ToolCallElapsed from './ToolCallElapsed.vue';
+import ToolCallRow from './ToolCallRow.vue';
+import { ICON_ARROW_DOWN, getToolIconDef } from './icons';
+import { getToolDisplayName } from './toolDisplay';
 
+/**
+ * 工具调用组（对齐 desktop ToolCallGroup）：
+ * 单调用直接渲染卡片行（行头即组壳，一次点击即展开）；多调用先给组头——
+ * 「图标 + N次中文名汇总」+ 组内执行耗时与转圈，展开后逐张卡片行。
+ */
 const props = defineProps<{ toolCalls: ToolCallItem[] }>();
-const expanded = ref(false);
-const lightboxSrc = ref<string | null>(null);
-const teleportTo = ref<HTMLElement | null>(null);
-const rootEl = ref<HTMLElement | null>(null);
-const running = computed(() => props.toolCalls.filter((tc) => tc.status === 'running').length);
-const failed = computed(() => props.toolCalls.filter((tc) => tc.status === 'error').length);
-const unknown = computed(() => props.toolCalls.filter((tc) => tc.status === 'unknown').length);
-const summary = computed(() => [
-  `${props.toolCalls.length} 个工具调用`,
-  running.value ? `${running.value} 个执行中` : unknown.value ? '' : '执行结束',
-  unknown.value ? `${unknown.value} 个结果未记录` : '',
-  failed.value ? `${failed.value} 个失败` : '',
-].filter(Boolean).join(' · '));
 
-onMounted(() => {
-  const rootNode = rootEl.value?.getRootNode();
-  const root = rootNode instanceof ShadowRoot || rootNode instanceof Document
-    ? rootNode.querySelector('.mao-root')
-    : null;
-  teleportTo.value = root instanceof HTMLElement ? root : null;
-  document.addEventListener('keydown', onKeydown, true);
+const isExpanded = ref(false);
+
+const hasRunning = computed(() =>
+  props.toolCalls.some((tc) => tc.status === 'running'));
+
+/**
+ * 组头耗时：取组内仍在执行、最早开始的那个调用（已结束的不参与——它们的耗时到
+ * 结果事件即停，不该继续撑住组头）。无 running 调用或无起表时刻时为 null。
+ */
+const runningStartedAtMs = computed(() => {
+  let earliest: number | null = null;
+  for (const tc of props.toolCalls) {
+    if (tc.status !== 'running') continue;
+    if (tc.startedAtMs == null) continue;
+    if (earliest == null || tc.startedAtMs < earliest) earliest = tc.startedAtMs;
+  }
+  return earliest;
 });
-onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown, true));
 
-function onKeydown(e: KeyboardEvent) {
-  if (e.key !== 'Escape' || !lightboxSrc.value) return;
-  e.preventDefault();
-  e.stopPropagation();
-  lightboxSrc.value = null;
-}
+const groupIcon = computed(() => getToolIconDef(props.toolCalls[0]?.toolName ?? ''));
 
-function openLightbox(src: string) {
-  lightboxSrc.value = src;
-}
+const groupSummary = computed(() => {
+  const tools = props.toolCalls;
+  if (tools.length === 0) return '';
+  if (tools.length === 1 && tools[0].summary) return tools[0].summary;
 
-function closeLightbox() {
-  lightboxSrc.value = null;
+  const toolCounts = new Map<string, number>();
+  for (const tc of tools) {
+    const name = tc.toolName;
+    toolCounts.set(name, (toolCounts.get(name) || 0) + 1);
+  }
+
+  const parts: string[] = [];
+  for (const [name, count] of toolCounts) {
+    const displayName = getToolDisplayName(name);
+    parts.push(count > 1 ? `${count}次${displayName}` : displayName);
+  }
+
+  return parts.join('、');
+});
+
+function toggleExpand() {
+  isExpanded.value = !isExpanded.value;
 }
 </script>
 
 <template>
-  <div ref="rootEl" class="mao-toolgroup">
-    <button
-      type="button"
-      class="mao-thinking__summary mao-toolgroup__summary"
-      :aria-expanded="expanded"
-      @click="expanded = !expanded"
-    >
-      <span class="mao-thinking__caret" :class="{ 'mao-thinking__caret--open': expanded }" aria-hidden="true" />
-      <span>{{ summary }}</span>
-    </button>
-    <div v-if="expanded" class="mao-toolgroup__body">
-      <div v-for="tc in toolCalls" :key="tc.toolCallId" class="mao-toolcard">
-        <div class="mao-toolcard__head">
-          <span class="mao-toolcard__name">{{ tc.displayName || tc.toolName }}</span>
-          <span class="mao-toolcard__status" :class="`mao-toolcard__status--${tc.status}`">
-            {{ tc.status === 'running' ? '执行中' : tc.status === 'done' ? '完成' : tc.status === 'error' ? '失败' : '结果未记录' }}
-          </span>
-        </div>
-        <div v-if="tc.argsText" class="mao-toolcard__args">{{ tc.argsText }}</div>
-        <button
-          v-if="tc.imagePreview"
-          type="button"
-          class="mao-toolcard__thumb"
-          title="查看大图"
-          @click="openLightbox(tc.imagePreview)"
-        >
-          <img class="mao-toolcard__image" :src="tc.imagePreview" alt="页面截图" />
-        </button>
-        <div v-if="tc.resultText" class="mao-toolcard__result">{{ tc.resultText }}</div>
+  <div class="mao-toolgroup">
+    <!-- 单调用：卡片行头充当组壳（与多调用组头同口径的点击热区/悬停反馈/图标） -->
+    <ToolCallRow v-if="toolCalls.length === 1" :tool-call="toolCalls[0]" standalone />
+    <template v-else>
+      <button type="button" class="mao-toolgroup__header" :aria-expanded="isExpanded" @click="toggleExpand">
+        <span class="mao-toolgroup__info">
+          <MaoIcon :icon="groupIcon" :size="14" class="mao-toolgroup__icon" />
+          <span class="mao-toolgroup__summary">{{ groupSummary }}</span>
+        </span>
+        <span class="mao-toolgroup__status">
+          <ToolCallElapsed v-if="runningStartedAtMs != null" :started-at-ms="runningStartedAtMs" />
+          <span v-if="hasRunning" class="mao-spinner" aria-hidden="true" />
+          <MaoIcon
+            :icon="ICON_ARROW_DOWN"
+            :size="12"
+            class="mao-chevron"
+            :class="{ 'mao-chevron--open': isExpanded }"
+          />
+        </span>
+      </button>
+      <div v-if="isExpanded" class="mao-toolgroup__body">
+        <ToolCallRow v-for="tc in toolCalls" :key="tc.toolCallId" :tool-call="tc" />
       </div>
-    </div>
-    <Teleport :to="teleportTo ?? 'body'" :disabled="!teleportTo">
-      <div
-        v-if="lightboxSrc"
-        class="mao-lightbox"
-        role="dialog"
-        aria-modal="true"
-        aria-label="查看大图"
-        @click="closeLightbox"
-      >
-        <img class="mao-lightbox__img" :src="lightboxSrc" alt="" @click.stop />
-        <button type="button" class="mao-lightbox__close" title="关闭" aria-label="关闭" @click="closeLightbox">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-        </button>
-      </div>
-    </Teleport>
+    </template>
   </div>
 </template>
