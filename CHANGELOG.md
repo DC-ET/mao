@@ -1,3 +1,9 @@
+## 0.0.506 (2026-11-10)
+
+### 后端
+- **修复钉钉进度卡/排队卡始终投放不出去**：钉钉 `createAndDeliverCard` 接口要求场域模型（`imRobotOpenSpaceModel` / `imGroupOpenSpaceModel`）与投放模型（`imRobotOpenDeliverModel` / `imGroupOpenDeliverModel`）**成对**传入，只传前者报 `param.openDeliverModelError`、只传后者在 HTTP 200 里回 `spaces of card is empty`，两者齐备才会真正进入场域投放。此前只传了前者，导致卡片从未创建成功，用户看不到进度卡，只能等 Agent 执行完收到一条纯文本回复。群聊投放此前还缺 `imGroupOpenDeliverModel.robotCode`（钉钉据此定位机器人，缺失报 `chatbot not exist`），现已从机器人配置带入。另外该接口 HTTP 200 不代表投放成功，场域级失败只体现在 `deliverResults` 里，现已解析该字段并抛错，避免"接口通了但用户什么都没收到"被静默放过。
+
+
 ## 0.0.505 (2026-11-10)
 
 ### 后端
