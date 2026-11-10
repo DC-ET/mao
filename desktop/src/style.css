@@ -299,8 +299,8 @@ html.android-capacitor .terminal-keybar-btn {
 
 /* ============================================
    Dark Mode
-   底色接近原来的炭黑，不往纯黑压。次要文字只抬到能读（卡片上约 7:1 / 4.6:1），
-   边框停在看得见的深灰，避免浅灰线发亮。主文字 #f5f5f7 维持不动。
+   底色接近原来的炭黑，不往纯黑压。长文主文字用 #c8c8cd（卡片上约 9:1），
+   不再用近白 #f5f5f7。次要文字再低一档，边框停在深灰。
    ============================================ */
 
 [data-theme="dark"] {
@@ -313,14 +313,14 @@ html.android-capacitor .terminal-keybar-btn {
   --aw-surface-black: #1c1c1e;
   --aw-surface-code: #1a1a1e;
   --aw-surface-code-header: #2c2c32;
-  --aw-text-code: #d4d4d8;
+  --aw-text-code: #d0d0d4;
 
-  --aw-ink: #f5f5f7;
-  --aw-body: #f5f5f7;
-  --aw-body-on-dark: #f5f5f7;
+  --aw-ink: #c8c8cd;
+  --aw-body: #c8c8cd;
+  --aw-body-on-dark: #c8c8cd;
   --aw-body-muted: #b0b0b5;
   --aw-ink-muted: #b0b0b5;
-  --aw-ink-muted-80: #d0d0d4;
+  --aw-ink-muted-80: #b6b6bb;
   --aw-ink-muted-64: #a6a6ab;
   --aw-ink-muted-60: #9c9ca2;
   --aw-ink-muted-48: #94949a;
@@ -344,7 +344,7 @@ html.android-capacitor .terminal-keybar-btn {
   --aw-accent-bg: rgba(var(--aw-accent-rgb), 0.12);
 
   --aw-nav-bg: #1c1c1e;
-  --aw-nav-text: #f5f5f7;
+  --aw-nav-text: #c8c8cd;
   --aw-nav-text-muted: #b0b0b5;
 
   /* Colors — Tag chips (editor/file reference) */

@@ -114,7 +114,8 @@ describe('style.css 源码守卫（等值改写与预设块的精确计数）', 
     }
     const surface = token('--aw-surface')
     const canvas = token('--aw-canvas')
-    expect(contrast(token('--aw-ink'), surface)).toBeGreaterThanOrEqual(12)
+    expect(contrast(token('--aw-ink'), surface)).toBeGreaterThanOrEqual(8.5)
+    expect(contrast(token('--aw-ink'), surface)).toBeLessThan(11)
     expect(contrast(token('--aw-ink-muted'), surface)).toBeGreaterThanOrEqual(6.5)
     expect(contrast(token('--aw-ink-muted-48'), surface)).toBeGreaterThanOrEqual(4.5)
     expect(contrast(token('--aw-ink-muted-40'), surface)).toBeGreaterThanOrEqual(4.5)
