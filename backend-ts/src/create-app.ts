@@ -5,8 +5,7 @@ import swaggerUi from '@fastify/swagger-ui';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { fastifyLoggerOptions, redactCredentialQuery } from './common/structured-logger.js';
-import { sendJson, sendOk, handleError } from './common/http-error.js';
+import { fastifyLoggerOptions } from './common/structured-logger.js';
 import { loadConfig, type AppConfig } from './config/app-config.js';
 import { corsForRequest } from './config/cors-policy.js';
 import { loadTrustedProxyAddresses } from './config/trusted-proxy.js';
@@ -42,7 +41,7 @@ import { MysqlAgentExperienceRepository, MysqlAgentRepository, MysqlAgentSuggest
 import { AgentExperienceService } from './agent/agent-experience.service.js';
 import { AgentSuggestedQuestionService } from './agent/agent-suggested-question.service.js';
 import { AgentService } from './agent/agent.service.js';
-import { McpServerValidatorImpl, MysqlMcpServerLookup } from './agent/mcp-validator.js';
+import { MysqlMcpServerLookup } from './agent/mcp-validator.js';
 import { MysqlLlmModelRepository, MysqlSessionModelRepository } from './model/model.repository.js';
 import { OpenAiChatClient } from './model/llm-chat.client.js';
 import { AnthropicChatClient } from './model/anthropic-chat.client.js';
@@ -84,7 +83,7 @@ import { ApprovalRuleRepository } from './approval-rule/approval-rule.repository
 import { ApprovalRuleService } from './approval-rule/approval-rule.service.js';
 import { InboxRepository } from './inbox/inbox.repository.js';
 import { InboxService } from './inbox/inbox.service.js';
-import { InboxCleanupScheduler, type InboxCleanupStore } from './inbox/inbox.cleanup.js';
+import type { InboxCleanupStore } from './inbox/inbox.cleanup.js';
 import { EnvironmentInfoProvider } from './harness/core/environment-info-provider.js';
 import { FileEntityRepository, FileService } from './file/file.service.js';
 import { WorkspaceBrowseService } from './file/workspace-browse.service.js';
@@ -99,14 +98,9 @@ import { SkillSyncService } from './harness/skill/skill-sync-service.js';
 import { SkillViewService } from './harness/skill/skill-view.service.js';
 import { SkillLoader } from './harness/skill/skill-loader.js';
 import { ScheduledTaskDbStore } from './schedule/scheduled-task.store.js';
-import { AnalyticsDbStore, AnalyticsService } from './analytics/analytics.service.js';
-import { StatisticsDbStore, StatisticsService } from './statistics/statistics.service.js';
-import { FEISHU_DISLIKE_SOURCE, FeedbackRepository } from './feedback/feedback.repository.js';
+import { FeedbackRepository } from './feedback/feedback.repository.js';
 import { FeedbackDbLookup, FeedbackService } from './feedback/feedback.service.js';
-import { AdminAnalyticsDbStore, AdminAnalyticsService } from './admin/admin-analytics.service.js';
-import { McpServerMapper, UserMcpPreferenceMapper } from './harness/mcp/mapper/mcp-server.mapper.js';
 import { McpSyncService } from './harness/mcp/local/mcp-sync-service.js';
-import { LlmAdapterFacade } from './harness/llm/llm-adapter-facade.js';
 import { HttpApiExecutor } from './harness/tool/impl/http-api-executor.js';
 import { DangerAssessor } from './harness/tool/danger-assessor.js';
 import { ProxyApprover } from './harness/tool/proxy-approver.js';
@@ -124,7 +118,6 @@ import { ExperienceIndexService, EXPERIENCE_ROOT_SUBDIR } from './harness/experi
 import { ExperienceMountService } from './harness/experience/experience-mount.service.js';
 import { CompactionSignalBus } from './harness/core/compaction-signal-bus.js';
 import { BackgroundTaskManager } from './harness/core/background-task-manager.js';
-import { readActiveBackendPort, readDeployLock } from './harness/core/deploy-lock.js';
 import { createAgentExecutor } from './harness/core/agent-executor.js';
 import { LocalAgentsMdRegistry } from './harness/core/local-agents-md-registry.js';
 import { RuntimeDataResolver } from './harness/runtime/runtime-data-resolver.js';
@@ -143,11 +136,7 @@ import { StreamingWsRegistry } from './session/ws/streaming-ws-registry.js';
 import { EmbedPageToolRegistry, resolveEmbedPageToolTimeoutMs } from './harness/embed-page-tool-registry.js';
 import { TerminalManager } from './harness/terminal/terminal-manager.js';
 import { TerminalWsHandler } from './harness/terminal/terminal-ws-handler.js';
-import { DEFAULT_WEIXIN_BOT_CONFIG, type WeixinBotConfig } from './weixin/types.js';
-import { PreferenceDbStore, DeliveryDbStore } from './notification/task/stores.js';
 import { WebhookSecretCipher } from './notification/task/webhook-secret-cipher.js';
-import { WebhookDeliveryScheduler, DeliverySchedulerDbStore } from './notification/task/delivery.scheduler.js';
-import { WebhookSenderRegistry, DingTalkWebhookSender, FeishuWebhookSender } from './notification/task/webhook-sender.js';
 import { LlmUsageRepository, LlmUsageService } from './usage/llm-usage.service.js';
 import { LlmCallRepository } from './usage/llm-call.repository.js';
 import { LlmCallService } from './usage/llm-call.service.js';
@@ -156,47 +145,27 @@ import { MysqlFeishuBindingRepository } from './feishu/binding.repository.js';
 import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
 import { MysqlFeishuPendingBindingRepository } from './feishu/pending-binding.repository.js';
 import { replayFeishuPendingMessage } from './feishu/pending-replay.js';
-import {
-  completeFeishuPendingAfterEcp,
-  FEISHU_ECP_IDENTITY_MISMATCH_TEXT,
-} from './feishu/ecp-inbound-gate.js';
-import { feishuSendTargetOf, sendFeishuFile, sendFeishuImage } from './feishu/media-sender.js';
+import { completeFeishuPendingAfterEcp } from './feishu/ecp-inbound-gate.js';
 import type { DingtalkMediaSendSupport } from './harness/tool/impl/dingtalk-tools.js';
-import { buildFeishuProgressCard, feishuSessionDetailUrl } from './feishu/progress-card.js';
 import { FeishuAskFormStore } from './feishu/ask-form-store.js';
 import { FeishuActiveProgressRegistry } from './feishu/active-progress.js';
 import { createFeishuAskMount } from './feishu/ask-mount.js';
-import { chatFilesDirOf, resolveChatFileTarget } from './feishu/chat-files.js';
-import { createFeishuMediaHelper, IMAGE_EXT_BY_CONTENT_TYPE, createResolveMessageTextHelper } from './feishu-media.js';
-import { createFeishuQueueCardHelper, createPatchedProgressHelper, createFeishuProgressCardHelper, createFeishuRecoveryProgressHelper, createSendUnauthorizedCardHelper, createUnauthorizedTextHelper } from './feishu-cards.js';
-import { createFeishuSessionUrlHelper, createFeishuUserIdHelper, createResolveUserIdHelper, createAuthorizeSenderHelper, createResolveQuotedMessageHelper, createThreadSessionHelper } from './feishu-session.js';
-import { createPersistCancelledHelper, createQueuePositionHelper, createPlatformQueueRelay, registerUploadStatic, createContainerPtyFactory, createTerminalAudit } from './app-utils.js';
+import { createPlatformQueueRelay, registerUploadStatic, createTerminalAudit } from './app-utils.js';
 import type { FeishuNormalizedMessage } from './feishu/types.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
 import { ApiTokenService } from './openapi/api-token.service.js';
 import { ApiTokenCipher } from './openapi/api-token-cipher.js';
 import { FixedWindowRateLimiter } from './openapi/rate-limiter.js';
-import { OpenRunService, type OpenRunDeps } from './openapi/open-run.service.js';
-import { WebhookTriggerService, type WebhookTriggerDeps } from './openapi/webhook-trigger.service.js';
 import { OutboundSubscriptionService } from './openapi/outbound-subscription.service.js';
 import { GenericHttpWebhookSender } from './openapi/generic-webhook-sender.js';
-import { OPEN_HOOKS_PATH_PREFIX, registerOpenApiRoutes, type RawBodyRequest } from './openapi/open.routes.js';
 import { OpenApiCallLogService } from './openapi/open-api-call-log.service.js';
 import { MysqlHttpToolRepository } from './http-tool/http-tool.repository.js';
 import { HttpToolService } from './http-tool/http-tool.service.js';
 import { HttpToolValidatorImpl, MysqlHttpToolLookup } from './http-tool/http-tool-validator.js';
 import { HttpToolHeaderCipher } from './http-tool/http-tool-cipher.js';
-import { MysqlSignalCheckRepository, MysqlSignalWatcherRepository } from './signal/signal.repository.js';
-import { RuntimeModeResolver, RUNTIME_MODE_SETTING_KEY, validateRuntimeModeSave } from './harness/container/runtime-mode.js';
-import { SessionEnvelopeBuilder, buildDepsEnv } from './harness/container/session-envelope-builder.js';
+import { buildDepsEnv } from './harness/container/session-envelope-builder.js';
 import { ContainerScriptProbe } from './harness/container/container-script-probe.js';
-import {
-  resolveFeishuChatWorkspace,
-  sanitizeFeishuFileName,
-  downloadFeishuMediaBuffer,
-  dataUriOf,
-} from './feishu-media.js';
-import { expandHome, parseSqlTimeMs, resolveShareDir, runtimeSessionCleanup } from './app-utils.js';
+import { expandHome, resolveShareDir, runtimeSessionCleanup } from './app-utils.js';
 import { registerAllRoutes } from './app-routes.js';
 import { registerAppHooks } from './app-hooks.js';
 import { assembleContainerRuntime } from './app-container-runtime.js';
