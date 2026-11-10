@@ -75,9 +75,10 @@
         <el-table-column label="最后登录" width="170" class-name="hide-on-mobile">
           <template #default="{ row }">{{ formatDateTime(row.lastLoginAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="100" class-name="hide-on-mobile">
+        <el-table-column label="操作" width="150" class-name="hide-on-mobile">
           <template #default="{ row }">
             <button class="linkish" type="button" @click="go(`/llm-calls?userId=${row.userId}`)">调用流水</button>
+            <button class="linkish" type="button" @click="go(`/users?detail=${row.userId}&tab=usage`)">用量详情</button>
           </template>
         </el-table-column>
       </el-table>

@@ -1,5 +1,16 @@
 # 技能分发包调整说明
 
+## 0.0.511 (2026-11-11)
+
+### 后端
+- **管理后台新增「用户用量」视图接口**（方案 docs/plan/2026-11-10-admin-user-usage-product-design.md）：新增 `GET /v1/admin/users/:id/usage/summary`（周期总账 + 按模型 / 场景 / Agent 分布）与 `GET /v1/admin/users/:id/usage/trends`（按天 / 小时分桶、后端补零），复用桌面端「我的用量」同一套服务方法（`summaryForUser` / `trendsForUser`），零新表零迁移、聚合走既有 `idx_llm_call_user_created` 索引。权限 `analytics:read`（与用量分析同语义，方案 D1）；目标用户不存在 / 参数非法返回业务码 `USER_NOT_FOUND` / `PARAM_INVALID`（HTTP 200 Result 口径），自定义区间跨度上限 365 天（对齐桌面回溯口径，方案 D4）。连通性自检行（`connectivity_test`）`user_id` 恒为 NULL，单用户聚合结构上天然不含——与桌面 me/* 口径天然一致，无需排除参数（方案 §6.3）。周期与自定义区间解析沿用 me/* 语义（非法回落 last30、起止倒置交换），`summary/trends` 响应新增解析后的 `window`（起止日历日）供前端深链调用流水直接取用。用量契约（周期枚举 / 聚合行 / 响应壳）下沉 `@mao/contracts`（usage.ts），后端 re-export 保持既有 import 路径。
+
+### admin
+- **用户详情抽屉新增「用量」Tab**（方案 §5）：位于「会话」之后，权限 `analytics:read` 门控（无权限整 Tab 不渲染）；周期下拉（今日 / 昨日 / 本周 / 上周 / 本月 / 上月 / 近 7 天 / 近 30 天 / 自定义，默认近 30 天）+ 四张统计卡（总 Token / 总成本 / 调用次数与成功率 / 平均解码速度）+ 趋势双轴图（Token 左轴、调用次数右轴）+ 按模型 / 场景 / Agent 三块分布表；Tab 懒加载（首次激活才请求，不加重抽屉首开）。深链出口按钮按目标页权限二次门控：「查看调用流水」（`llm-call:read`，带周期日期直达）与「查看会话」（`session:read`）。用量分析页用户明细行新增「用量详情」反链（`/users?detail=&tab=usage`），用户列表解析深链打开抽屉并定位用量 Tab；场景名复用 `llmCallLabels` 汉化表。
+
+### 前端（桌面 / Web）
+- **用量类型契约收口**：桌面端手写的用量聚合类型（`UsageTotals` / `UsageModelRow` / `UsageSceneRow` / `UsageAgentRow` / `UsageTrendBucket` / `MyUsageSummary` / `MyUsageTrends` / 周期枚举等，api/index.ts 879-976 行）删除，改从 `@mao/contracts` 消费（`UsageTrendBucket` → `LlmCallTrendRow`、`UsageAgentRow` → `LlmCallAgentAggRow` 改名由编译期兜底）；字段零变化、行为零变化。
+
 ## 0.0.510 (2026-11-10)
 
 ### 后端

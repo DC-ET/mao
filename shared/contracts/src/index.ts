@@ -22,6 +22,7 @@ export type {
 } from './inbox';
 export type { QuickCommandItem, QuickCommandsVO } from './command';
 export type { LlmCallScene } from './usage';
+export type { UsageRange, UsageDateRange, UsageWindow, TrendGranularity, LlmCallSummaryRow, LlmCallModelAggRow, LlmCallSceneAggRow, LlmCallAgentAggRow, LlmCallTrendRow, MyUsageSummary, MyUsageTrends } from './usage';
 export type { SignalCompareMode, SignalWatcherStatus, SignalTriggerMode, SignalWatcherWarning, SignalWhenChangeInput, SignalCheckDetailInput, SignalProbeType } from './signal';
 export { SIGNAL_SNIPPET_MAX_CHARS, truncateSignalSnippet, formatSignalChangeValue, formatSignalCheckDetail } from './signal';
 export type { PageReadToolName, PageWriteToolName } from './page';

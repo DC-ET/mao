@@ -875,105 +875,19 @@ export async function revokeSessionShare(sessionId: string): Promise<void> {
 }
 
 // ─── 我的用量（顶栏抽屉：总览 / 趋势 / 明细） ───
+//
+// 用量类型（周期枚举 / 聚合行 / 总览与趋势响应）契约下沉 @mao/contracts
+// （2026-11-10 用户用量方案），此处只 import type；admin 用户详情抽屉的
+// "用量" Tab 消费同一份契约。
 
-export interface UsageTotals {
-  callCount: number
-  successCount: number
-  failCount: number
-  /** 取消数（用户点停止）：不计入 failCount，也不进成功率分母 */
-  cancelledCount: number
-  promptTokens: number
-  completionTokens: number
-  cachedTokens: number
-  totalTokens: number
-  /** 成本合计（成本单位 = 模型价格填写口径）；未配价的调用不计入，展示时按「—」处理 */
-  cost: number
-  /** 可解码行的输出 token 合计（平均速度的分子；后端 /summary 补零，非空） */
-  decodeTokens: number
-  /** 可解码行的解码耗时合计（ms，= Σ(durationMs − firstTokenMs)；平均速度的分母 */
-  decodeMs: number
-}
+import type {
+  MyUsageSummary,
+  MyUsageTrends,
+  UsageDateRange,
+  UsageRange,
+} from '@mao/contracts'
 
-export interface UsageModelRow {
-  modelId: number | null
-  modelName: string | null
-  callCount: number
-  failCount: number
-  cancelledCount: number
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-  cost: number
-}
-
-export interface UsageSceneRow {
-  scene: string
-  callCount: number
-  failCount: number
-  cancelledCount: number
-  totalTokens: number
-}
-
-export interface UsageAgentRow {
-  /** agentId 为 null = 无归属调用（压缩/标题等系统场景）；agentName 查不到时也为 null */
-  agentId: number | null
-  agentName: string | null
-  callCount: number
-  failCount: number
-  cancelledCount: number
-  totalTokens: number
-  cost: number
-}
-
-/** 统计周期：日历周期在前，滚动窗口在后，自定义区间收尾（今日/昨日时趋势图自动按小时分桶）。 */
-export type UsageRange =
-  | 'today'
-  | 'yesterday'
-  | 'week'
-  | 'lastWeek'
-  | 'month'
-  | 'lastMonth'
-  | 'last7'
-  | 'last30'
-  | 'custom'
-
-/** 自定义周期（range=custom）的起止日期，闭区间日历日 YYYY-MM-DD，两端都由用户选定。 */
-export interface UsageDateRange {
-  startDate: string
-  endDate: string
-}
-
-export interface MyUsageSummary {
-  range: UsageRange
-  totals: UsageTotals
-  byModel: UsageModelRow[]
-  byScene: UsageSceneRow[]
-  byAgent: UsageAgentRow[]
-}
-
-export interface UsageTrendBucket {
-  /** day 粒度为 YYYY-MM-DD，hour 粒度为 YYYY-MM-DD HH:00 */
-  bucket: string
-  callCount: number
-  failCount: number
-  /** 取消数（用户点停止）：不计入失败，tooltip 单列一档 */
-  cancelledCount: number
-  /** 入 Token / 其中命中缓存的 Token，供缓存命中率趋势按桶计算 */
-  promptTokens: number
-  cachedTokens: number
-  totalTokens: number
-  cost: number
-  /** 桶内可解码行的输出 token 合计（输出速度趋势的分子；无流式调用的桶为 0） */
-  decodeTokens: number
-  /** 桶内可解码行的解码耗时合计（ms，输出速度趋势的分母；无流式调用的桶为 0） */
-  decodeMs: number
-}
-
-export interface MyUsageTrends {
-  range: UsageRange
-  granularity: 'day' | 'hour'
-  buckets: UsageTrendBucket[]
-}
+export type { MyUsageSummary, MyUsageTrends, UsageDateRange, UsageRange } from '@mao/contracts'
 
 export interface MyLlmCallRecord {
   id: number

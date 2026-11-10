@@ -1,5 +1,13 @@
 import type { Db } from '../db/db.js';
 import { CANCELLED_SQL, NOT_CANCELLED_SQL } from '../common/llm-cancel.js';
+import type {
+  LlmCallAgentAggRow,
+  LlmCallModelAggRow,
+  LlmCallSceneAggRow,
+  LlmCallSummaryRow,
+  LlmCallTrendRow,
+  TrendGranularity,
+} from '@mao/contracts';
 
 /**
  * 轻列清单：除 system_prompt / tools_json（V172 请求构成采集，单行最坏 ~256K 字符）外的
@@ -71,72 +79,18 @@ export interface LlmCallAggFilter {
   endAtExclusive?: string | null;
 }
 
-/** 趋势横轴：day 为日历日，hour 为整点（口径同管理后台 admin-analytics）。 */
-export type TrendGranularity = 'day' | 'hour';
-
-export interface LlmCallSummaryRow {
-  callCount: number;
-  successCount: number;
-  failCount: number;
-  /** 窗口内取消数（用户点停止，error_message 含取消标记）；不计入 failCount，也不进成功率分母 */
-  cancelledCount: number;
-  promptTokens: number;
-  completionTokens: number;
-  cachedTokens: number;
-  totalTokens: number;
-  /** 窗口内成本合计（成本单位 = 模型价格填写口径；未配价行 cost_micros 为 NULL，SUM 自动忽略）。 */
-  cost: number;
-  /** 可解码行的输出 token 合计（吞吐均值的分子；技术方案 2026-10-27-llm-output-speed §5.1）。 */
-  decodeTokens: number;
-  /** 可解码行的解码耗时合计（ms，= Σ(duration_ms − first_token_ms)；吞吐均值的分母）。 */
-  decodeMs: number;
-}
-
-export interface LlmCallModelAggRow {
-  modelId: number | null;
-  modelName: string | null;
-  callCount: number;
-  failCount: number;
-  cancelledCount: number;
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  cost: number;
-}
-
-export interface LlmCallSceneAggRow {
-  scene: string;
-  callCount: number;
-  failCount: number;
-  cancelledCount: number;
-  totalTokens: number;
-}
-
-/** 按 Agent 汇总（agent_id 为 NULL 的调用——压缩/标题等无归属场景——保留为 id=null 一组）。 */
-export interface LlmCallAgentAggRow {
-  agentId: number | null;
-  agentName: string | null;
-  callCount: number;
-  failCount: number;
-  cancelledCount: number;
-  totalTokens: number;
-  cost: number;
-}
-
-export interface LlmCallTrendRow {
-  bucket: string;
-  callCount: number;
-  failCount: number;
-  cancelledCount: number;
-  promptTokens: number;
-  cachedTokens: number;
-  totalTokens: number;
-  cost: number;
-  /** 桶内可解码行的输出 token 合计（吞吐量趋势的分子；无流式调用的桶为 0）。 */
-  decodeTokens: number;
-  /** 桶内可解码行的解码耗时合计（ms，吞吐量趋势的分母；无流式调用的桶为 0）。 */
-  decodeMs: number;
-}
+/**
+ * 聚合行 / 趋势横轴类型：契约下沉 @mao/contracts（2026-11-10 用户用量方案），
+ * 这里 re-export 保持既有 import 路径不变；事实源见 shared/contracts/src/usage.ts。
+ */
+export type {
+  TrendGranularity,
+  LlmCallSummaryRow,
+  LlmCallModelAggRow,
+  LlmCallSceneAggRow,
+  LlmCallAgentAggRow,
+  LlmCallTrendRow,
+} from '@mao/contracts';
 
 function toNumber(value: unknown): number {
   if (typeof value === 'number') return value;

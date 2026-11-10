@@ -142,6 +142,23 @@ describe('LlmCallRepository 用户维度聚合', () => {
     expect(hourSql).toContain("DATE_FORMAT(created_at, '%Y-%m-%d %H:00')");
   });
 
+  it('连通性回归锁：单用户聚合全部用 user_id = ? 等值绑定——connectivity_test 等 user_id NULL 行天然不进任何用户聚合', async () => {
+    // 写入侧契约：connectivity_test / voice_synthesis 等系统级调用 user_id 恒为 NULL
+    // （model.service / voice-synthesis 写入时显式置空）。等值绑定是这条隐式契约的读取侧兜底，
+    // 一旦有人把 WHERE 改成 IS NULL 兼容或去掉 user_id 过滤，此用例即红。
+    const { repo, query, queryOne } = build([], null);
+    await repo.aggregateSummary(7, WINDOW);
+    expect((queryOne.mock.calls[0] as [string])[0]).toContain('user_id = ?');
+    await repo.aggregateTrend(7, WINDOW, 'day');
+    expect((query.mock.calls[0] as [string])[0]).toContain('user_id = ?');
+    await repo.aggregateByModel(7, WINDOW);
+    expect((query.mock.calls[1] as [string])[0]).toContain('user_id = ?');
+    await repo.aggregateByScene(7, WINDOW);
+    expect((query.mock.calls[2] as [string])[0]).toContain('user_id = ?');
+    await repo.aggregateByAgent(7, WINDOW);
+    expect((query.mock.calls[3] as [string])[0]).toContain('user_id = ?');
+  });
+
   it('聚合窗口缺省时 WHERE 退化为 1=1，不拼出悬空 AND', async () => {
     const { repo, queryOne } = build();
     await repo.aggregateSummary(7, {});

@@ -86,7 +86,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { ArrowDown, Calendar } from '@element-plus/icons-vue'
-import type { UsageDateRange, UsageRange } from '../../api'
+import type { UsageDateRange, UsageRange } from '@mao/contracts'
 import {
   MAX_CUSTOM_DAYS,
   PERIOD_GROUPS,

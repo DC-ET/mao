@@ -34,7 +34,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useTheme } from '../../utils/theme'
 import { type ChartOption } from '../../utils/echarts'
-import { fetchMyUsageTrends, type UsageRange, type UsageDateRange, type UsageTrendBucket } from '../../api'
+import { fetchMyUsageTrends } from '../../api'
+import type { LlmCallTrendRow, UsageDateRange, UsageRange } from '@mao/contracts'
 import { formatCost, formatNumber, formatToken, formatTokenWithUnit } from '../../utils/usageFormat'
 import { buildTrendSeries } from './trend-series'
 import { buildTrendLineOption, TREND_COLORS } from './trend-options'
@@ -49,7 +50,7 @@ const props = defineProps<{
 }>()
 
 const { isDark } = useTheme()
-const buckets = ref<UsageTrendBucket[]>([])
+const buckets = ref<LlmCallTrendRow[]>([])
 const loading = ref(false)
 
 /** 单日周期（今日/昨日）按小时分桶，多日周期按天；后端据此补零。 */

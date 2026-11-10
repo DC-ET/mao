@@ -127,6 +127,7 @@ import { registerReadinessRoutes } from './settings/readiness.routes.js';
 import { registerToolRoutes } from './tool/tool.routes.js';
 import { registerAuditLogRoutes } from './audit/audit.routes.js';
 import { registerLlmCallRoutes } from './usage/llm-call.routes.js';
+import { registerLlmUsageAdminRoutes } from './usage/llm-usage-admin.routes.js';
 import { registerUploadRoutes } from './config/upload.routes.js';
 import { registerSessionRoutes } from './session/session.routes.js';
 import { registerSessionShareRoutes } from './session/session-share.routes.js';
@@ -479,6 +480,10 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     registerToolRoutes(api, { toolService: restToolService });
     registerAuditLogRoutes(api, { auditLogService: auditService, permissionService });
     registerLlmCallRoutes(api, { llmCallService, permissionService });
+    registerLlmUsageAdminRoutes(api, {
+      llmCallService, permissionService,
+      userLookup: { findById: (id: number) => userRepo.findById(id) },
+    });
     registerUploadRoutes(api, () => settingService.getUploadConfig());
     registerSessionRoutes(api, {
       sessionService, activityService, messageQueueService,

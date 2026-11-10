@@ -1,4 +1,4 @@
-import type { UsageTrendBucket } from '../../api'
+import type { LlmCallTrendRow } from '@mao/contracts'
 import { pickTokenUnit, type TokenUnit } from '../../utils/usageFormat'
 import { avgThroughput } from '../../utils/throughput'
 
@@ -34,7 +34,7 @@ export function trendBucketLabel(bucket: string, granularity: 'day' | 'hour' = '
 }
 
 /** 趋势桶序列 → 图表数据与窗口合计（后端已补零，序列连续无缺口）。 */
-export function buildTrendSeries(buckets: UsageTrendBucket[], granularity: 'day' | 'hour' = 'day'): TrendSeries {
+export function buildTrendSeries(buckets: LlmCallTrendRow[], granularity: 'day' | 'hour' = 'day'): TrendSeries {
   const series: TrendSeries = {
     labels: [],
     tokens: [],
@@ -75,12 +75,12 @@ export function buildTrendSeries(buckets: UsageTrendBucket[], granularity: 'day'
 }
 
 /** 桶内缓存命中率（保留 1 位小数）：无入 Token 的桶返回 null，折线断开。 */
-function hitRate(b: UsageTrendBucket): number | null {
+function hitRate(b: LlmCallTrendRow): number | null {
   if (b.promptTokens <= 0) return null
   return Math.round((b.cachedTokens / b.promptTokens) * 1000) / 10
 }
 
 /** 桶内输出速度（tok/s）：无可解码行（decodeMs 为 0，如全非流式）时 null，折线断开。 */
-function bucketTps(b: UsageTrendBucket): number | null {
+function bucketTps(b: LlmCallTrendRow): number | null {
   return avgThroughput({ decodeTokens: b.decodeTokens, decodeMs: b.decodeMs })
 }

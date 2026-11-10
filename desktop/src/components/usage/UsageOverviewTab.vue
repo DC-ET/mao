@@ -33,7 +33,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { MyUsageSummary } from '../../api'
+import type { MyUsageSummary } from '@mao/contracts'
 import { formatCost, formatNumber, formatPercent, formatToken } from '../../utils/usageFormat'
 import { formatAvgThroughput } from '../../utils/throughput'
 import { llmCallSceneLabel } from '../../utils/llmCallLabels'

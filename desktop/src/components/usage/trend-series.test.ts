@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { UsageTrendBucket } from '../../api'
+import type { LlmCallTrendRow } from '@mao/contracts'
 import { buildTrendSeries, trendBucketLabel } from './trend-series'
 
-function bucket(partial: Partial<UsageTrendBucket>): UsageTrendBucket {
+function bucket(partial: Partial<LlmCallTrendRow>): LlmCallTrendRow {
   return { bucket: '2026-10-10', callCount: 0, failCount: 0, cancelledCount: 0, promptTokens: 0, cachedTokens: 0, totalTokens: 0, cost: 0, decodeTokens: 0, decodeMs: 0, ...partial }
 }
 
