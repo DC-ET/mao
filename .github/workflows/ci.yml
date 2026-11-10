@@ -120,6 +120,26 @@ jobs:
         working-directory: sdk/embed
         run: npm run build
 
+      # 产物入 git：desktop build 与部署只消费已提交产物，不再重复构建。
+      # 此处重新构建并比对 sha256，拦住「改了 SDK 源码却漏提交产物」。
+      # 只校验当前版本对应的两个副本；历史版本副本是归档，不参与比对。
+      - name: Check committed bundle is up to date
+        working-directory: sdk/embed
+        run: |
+          built=$(sha256sum dist/mao-chat.js | cut -d' ' -f1)
+          version=$(node -p "require('./package.json').version")
+          for f in ../../desktop/public/embed/mao-chat.js ../../desktop/public/embed/mao-chat.v${version}.js; do
+            if [ ! -e "$f" ]; then
+              echo "::error file=$f::产物缺失，请在 sdk/embed 跑 npm run build 并提交 desktop/public/embed/*.js"
+              exit 1
+            fi
+            committed=$(sha256sum "$f" | cut -d' ' -f1)
+            if [ "$committed" != "$built" ]; then
+              echo "::error file=$f::产物与当前 SDK 源码不一致，请在 sdk/embed 跑 npm run build 并提交产物"
+              exit 1
+            fi
+          done
+
       - name: Test embed SDK
         working-directory: sdk/embed
         run: npm test
