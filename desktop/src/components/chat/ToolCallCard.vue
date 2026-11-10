@@ -164,6 +164,22 @@
       </div>
       <div v-if="(toolCall.result || imagePreviewUrl) && !richView" class="tool-result">
         <div class="result-label">输出</div>
+        <div v-if="tableView" class="result-view-switch" role="group" aria-label="结果视图切换">
+          <button
+            type="button"
+            class="view-switch-btn"
+            :class="{ active: resultView === 'table' }"
+            :aria-pressed="resultView === 'table'"
+            @click="setResultView('table')"
+          >表格</button>
+          <button
+            type="button"
+            class="view-switch-btn"
+            :class="{ active: resultView === 'text' }"
+            :aria-pressed="resultView === 'text'"
+            @click="setResultView('text')"
+          >原文</button>
+        </div>
         <el-image
           v-if="imagePreviewUrl"
           :src="imagePreviewUrl"
@@ -174,13 +190,25 @@
           :preview-teleported="true"
           @click.stop
         />
-        <div v-if="displayResultText" class="code-block-wrapper">
+        <!-- 图片卡保持「图片预览 + 原始输出」并存（tableView 因 imagePreviewUrl 守卫恒 null，切换行不出现） -->
+        <div v-if="resultView === 'table' && tableView" class="tool-result-table">
+          <div class="tool-result-table-toolbar">
+            <span class="tool-result-table-hint">{{ tableView.length - 1 }} 行 × {{ tableView[0]?.length ?? 0 }} 列</span>
+            <button class="copy-btn" title="复制为 CSV" aria-label="复制为 CSV" @click="copyResultCsv">
+              <el-icon :size="14"><CopyDocument /></el-icon>
+            </button>
+          </div>
+          <div class="tool-result-table-body">
+            <TableGrid :rows="tableView" />
+          </div>
+        </div>
+        <div v-if="displayResultText" v-show="!(resultView === 'table' && tableView)" class="code-block-wrapper">
           <pre class="result-content"><code>{{ displayResultText }}</code></pre>
           <button class="copy-btn" title="复制完整输出" @click="copyText(fullResultText)">
             <el-icon :size="14"><CopyDocument /></el-icon>
           </button>
         </div>
-        <div v-if="isResultTruncated" class="result-expand-row">
+        <div v-if="isResultTruncated" v-show="!(resultView === 'table' && tableView)" class="result-expand-row">
           <button class="expand-result-btn" @click="showFullResult = !showFullResult">
             {{ showFullResult ? '收起完整输出' : '展开完整输出' }}
           </button>
@@ -212,7 +240,9 @@ import ToolWebPageView from './ToolWebPageView.vue'
 import ToolImageGenView from './ToolImageGenView.vue'
 import ToolAskUserView from './ToolAskUserView.vue'
 import ToolSubagentProgressView from './ToolSubagentProgressView.vue'
+import TableGrid from '../center/TableGrid.vue'
 import { parseAskUserPairs, parseImageGenItems, parseSubagentProgressRows } from '../../utils/toolRichView'
+import { getToolResultView, setToolResultView, toCsv, tryParseTable, type ToolResultViewMode } from '../../utils/tool-result-table'
 
 /** 工具结果 JSON 的安全解析：非 JSON / 非对象返回 null，富视图据此回退原始展示。 */
 function parseResultNode(result?: string): Record<string, unknown> | null {
@@ -655,6 +685,30 @@ const richSummary = computed(() =>
   ?? imageGenSummary.value ?? askUserSummary.value ?? subagentSummary.value ?? '')
 const richBadge = computed(() => shellView.value?.badge ?? null)
 
+/** 列表形 JSON 结果 → 表格行（首行表头）；专用视图 / 图片分支 / 形态外 / 超限一律 null（保持原文）。
+ *  解析输入是 result 全文（4000 字截断只影响原文态显示，见 displayResultText），computed 随结果缓存。 */
+const tableView = computed<string[][] | null>(() => {
+  if (richView.value) return null
+  if (imagePreviewUrl.value) return null
+  return tryParseTable(props.toolCall.result || '')
+})
+
+const resultView = ref<ToolResultViewMode>(getToolResultView(props.toolCall.name))
+// 卡片复用换工具（同实例不同调用）：偏好按工具名重读
+watch(() => props.toolCall.name, (name) => {
+  resultView.value = getToolResultView(name)
+})
+
+function setResultView(view: ToolResultViewMode) {
+  resultView.value = view
+  setToolResultView(props.toolCall.name, view)
+}
+
+function copyResultCsv() {
+  if (!tableView.value) return
+  void copyText(toCsv(tableView.value))
+}
+
 /** 图片视图底栏摘要：N 张图 · model · size（缺项跳过）。视图为 null 返回 null，让 ?? 链能跳过。 */
 const imageGenSummary = computed<string | null>(() => {
   const view = imageGenView.value
@@ -1040,5 +1094,73 @@ function toggleExpand() {
   max-width: 120px;
   max-height: 90px;
   object-fit: contain;
+}
+
+/* —— 结果表格化视图（表格/原文切换 + TableGrid 容器） —— */
+
+.result-view-switch {
+  display: inline-flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.view-switch-btn {
+  border: 1px solid var(--aw-hairline);
+  background: var(--aw-canvas-parchment);
+  color: var(--aw-ink-muted-48);
+  font-size: var(--aw-text-fine);
+  padding: 2px 10px;
+  border-radius: var(--aw-radius-sm);
+  cursor: pointer;
+}
+
+.view-switch-btn:hover {
+  color: var(--aw-ink);
+}
+
+.view-switch-btn.active {
+  border-color: var(--aw-primary);
+  color: var(--aw-primary);
+}
+
+.tool-result-table {
+  /* 上限约束而非固定高度：小表自适应收缩不留大块空白，大表封顶后由 TableGrid 内部虚拟滚动接管 */
+  max-height: 280px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--aw-divider-soft);
+  border-radius: var(--aw-radius-sm);
+  background: var(--aw-surface-code);
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.tool-result-table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--aw-divider-soft);
+  background: var(--aw-canvas-parchment);
+  flex: none;
+}
+
+.tool-result-table-hint {
+  font-size: var(--aw-text-fine);
+  color: var(--aw-ink-muted-48);
+}
+
+/* 复用 .copy-btn 图标样式；该类默认绝对定位于 code-block-wrapper 内，表格工具条里回归常规流内常显 */
+.tool-result-table-toolbar .copy-btn {
+  position: static;
+  opacity: 1;
+}
+
+/* TableGrid 根即滚动容器（flex:1 依赖有界高度）：body 给 flex 上下文，滚动由其内部接管，不叠外层 */
+.tool-result-table-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
 }
 </style>

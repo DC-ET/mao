@@ -1,5 +1,10 @@
 # 技能分发包调整说明
 
+## 0.0.512 (2026-11-11)
+
+### 前端（桌面 / Web）
+- **工具结果表格化视图：列表类结果一键转表格**（方案 docs/plan/2026-11-10-tool-result-table-view-technical-design.md，提案批次 28）：`task_list` / `list_scheduled_tasks` / `list_signal_watchers` / `dump_user_messages` 及自定义 HTTP / MCP 工具返回的「列表形 JSON」结果，卡片结果区出现「表格 / 原文」切换（默认原文，与现状逐字节一致；按钮仅命中时出现）。判定从严：顶层数组或唯一数组字段包裹对象、元素全为扁平键值对象（值仅 string/number/boolean/null）才转表，嵌套值 / 多数组字段 / 空数组 / 超限一律保持原文——不设键名白名单（目标工具数组键 todos/tasks/watchers/files 与任意自定义包裹键同规则命中，误判防护靠唯一性 + 扁平性双闸）。表格复用中心 `TableGrid`（首行表头、数值列右对齐、200 行虚拟滚动），规模上限 201 行 × 30 列 / 1MB 文本；「复制为 CSV」按 RFC 4180 转义，粘贴进 Excel 行列同构；视图偏好按工具名存 localStorage（`aw-tool-result-view.*`，设备本地口径）。零后端改动、零迁移、零新依赖；解析输入为结果全文（后端摘要链不改写结果本体），表格态可呈现超过原文态 4000 字截断显示量的完整数据。
+
 ## 0.0.511 (2026-11-11)
 
 ### 后端
