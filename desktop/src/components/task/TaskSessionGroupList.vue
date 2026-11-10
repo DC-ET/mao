@@ -42,9 +42,6 @@
               alt="微信"
               draggable="false"
             />
-            <el-icon v-else-if="groupIconKind(group.key, group.sessions) === 'dingtalk'" :size="13">
-              <ChatDotRound />
-            </el-icon>
             <img
               v-else-if="groupIconKind(group.key, group.sessions) === 'dingtalk'"
               class="brand-icon"
