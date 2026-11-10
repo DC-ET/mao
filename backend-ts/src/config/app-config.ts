@@ -10,7 +10,6 @@ export interface DingtalkBotConfig {
   reconnectBaseMs: number;
   reconnectMaxMs: number;
   maxConsecutiveFailures: number;
-  oauth: { clientId: string; clientSecret: string; redirectUri: string };
   progressCardTemplateId: string;
   queueCardTemplateId: string;
   replyMaxLength: number;
@@ -220,7 +219,6 @@ const DEFAULTS: AppConfig = {
     reconnectBaseMs: 1000,
     reconnectMaxMs: 30000,
     maxConsecutiveFailures: 5,
-    oauth: { clientId: '', clientSecret: '', redirectUri: '' },
     progressCardTemplateId: '',
     queueCardTemplateId: '',
     replyMaxLength: 2000,
@@ -579,9 +577,8 @@ export function loadConfig(): AppConfig {
   if (process.env.APP_DINGTALK_BOT_SECRET) {
     cfg.dingtalk.appSecretKey = process.env.APP_DINGTALK_BOT_SECRET;
   }
-  if (process.env.DINGTALK_OAUTH_CLIENT_ID) cfg.dingtalk.oauth.clientId = process.env.DINGTALK_OAUTH_CLIENT_ID;
-  if (process.env.DINGTALK_OAUTH_SECRET) cfg.dingtalk.oauth.clientSecret = process.env.DINGTALK_OAUTH_SECRET;
-  if (process.env.DINGTALK_OAUTH_REDIRECT_URI) cfg.dingtalk.oauth.redirectUri = process.env.DINGTALK_OAUTH_REDIRECT_URI;
+  // 钉钉 OAuth 登录三项（V191）已后台化：见 settings/settings-bootstrap.ts 的 env→DB 导入，
+  // 此处不再读环境变量（对齐飞书 auth.feishu.* 的做法）。
   if (process.env.DINGTALK_PROGRESS_CARD_TEMPLATE_ID) cfg.dingtalk.progressCardTemplateId = process.env.DINGTALK_PROGRESS_CARD_TEMPLATE_ID;
   if (process.env.DINGTALK_QUEUE_CARD_TEMPLATE_ID) cfg.dingtalk.queueCardTemplateId = process.env.DINGTALK_QUEUE_CARD_TEMPLATE_ID;
   cached = cfg;

@@ -47,6 +47,17 @@ export interface FeishuOAuthSettings {
   redirectUri: string;
 }
 
+/**
+ * 实例级钉钉 OAuth 登录配置（V191）。绑定用的登录应用与机器人是两套凭证：
+ * 机器人 Client ID / Secret 在「能力 → 钉钉机器人」按机器人各行管理，
+ * 这三项是用户授权绑定走的登录应用，必须与机器人同一企业。
+ */
+export interface DingtalkOauthSettings {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+}
+
 export interface UploadSettings {
   storageMode: string;
   baseUrl: string;

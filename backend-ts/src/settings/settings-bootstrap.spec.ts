@@ -49,8 +49,7 @@ describe('runSettingsBootstrap', () => {
     expect(updateById).not.toHaveBeenCalled();
   });
 
-  it('encryptsTinyfishSecretAndImportsProvider', async () => {
-    findByKey.mockImplementation(async (key: string) => {
+  it('encryptsTinyfishSecretAndImportsProvider', async () => {    findByKey.mockImplementation(async (key: string) => {
       if (key === 'tools.tinyfishApiKey' || key === 'tools.webSearchProvider') return row(key, null);
       return row('tools.tavilyApiKey', null);
     });
@@ -61,6 +60,26 @@ describe('runSettingsBootstrap', () => {
     expect(String(tinyfish![0].value)).not.toBe('tf-secret');
     const provider = calls.find(([s]) => s.settingKey === 'tools.webSearchProvider');
     expect(provider![0].value).toBe('tinyfish');
+  });
+
+  it('importsDingtalkOauthEnvValues', async () => {
+    findByKey.mockImplementation(async (key: string) => {
+      if (key.startsWith('dingtalk.oauth.')) return row(key, null);
+      return row('auth.ldap.url', 'ldap://already-set');
+    });
+    await runSettingsBootstrap(repo, 'k', {
+      DINGTALK_OAUTH_CLIENT_ID: 'ding-client',
+      DINGTALK_OAUTH_SECRET: 'ding-secret',
+      DINGTALK_OAUTH_REDIRECT_URI: 'https://mao.example/api/v1/dingtalk/oauth/callback',
+    });
+    const calls = updateById.mock.calls;
+    const clientId = calls.find(([s]) => s.settingKey === 'dingtalk.oauth.clientId');
+    expect(clientId![0].value).toBe('ding-client');
+    const secret = calls.find(([s]) => s.settingKey === 'dingtalk.oauth.clientSecret');
+    // secret 行必须加密后入库，不明文落库
+    expect(String(secret![0].value)).not.toBe('ding-secret');
+    const redirectUri = calls.find(([s]) => s.settingKey === 'dingtalk.oauth.redirectUri');
+    expect(redirectUri![0].value).toBe('https://mao.example/api/v1/dingtalk/oauth/callback');
   });
 
   it('survivesIndividualImportFailure', async () => {

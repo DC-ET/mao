@@ -516,7 +516,6 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
       reconnectBaseMs: cfg.dingtalk.reconnectBaseMs,
       reconnectMaxMs: cfg.dingtalk.reconnectMaxMs,
       maxConsecutiveFailures: cfg.dingtalk.maxConsecutiveFailures,
-      oauth: cfg.dingtalk.oauth,
       progressCardTemplateId: cfg.dingtalk.progressCardTemplateId,
       queueCardTemplateId: cfg.dingtalk.queueCardTemplateId,
       replyMaxLength: cfg.dingtalk.replyMaxLength,

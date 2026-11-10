@@ -50,7 +50,7 @@ describe('DingtalkInboundProcessor', () => {
       resolveUserId: async () => null,
       sendBindingCard,
       sendReply,
-      oauthConfigured: () => true,
+      oauthConfigured: async () => true,
     }).process('1', event());
     expect(sendBindingCard).toHaveBeenCalled();
     expect(onMessage).not.toHaveBeenCalled();

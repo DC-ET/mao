@@ -46,7 +46,6 @@ import type { DingtalkBot, DingtalkInboundContext, DingtalkNormalizedMessage } f
 import { groupProjectKey, privateProjectKey, resolveDingtalkWorkspace } from './workspace.js';
 
 export interface DingtalkRuntimeConfig extends DingtalkMonitorConfig {
-  oauth: DingtalkOauthConfig;
   progressCardTemplateId: string;
   queueCardTemplateId: string;
   replyMaxLength: number;
@@ -88,7 +87,11 @@ export function createDingtalkRuntime(deps: {
   agentService: AgentService;
   modelService: ModelService;
   userRepo: { findById(id: number): Promise<{ id?: number } | null> };
-  settingService: { getSiteBaseUrl(): Promise<string | null> };
+  settingService: {
+    getSiteBaseUrl(): Promise<string | null>;
+    /** 钉钉 OAuth 登录配置（V191）：实时读 system_setting，保存后即时生效。 */
+    getDingtalkOauthConfig(): Promise<DingtalkOauthConfig>;
+  };
   taskTerminal: { finishExecution(sessionId: number, userId: number, phase: string, executionId: string, failureReason?: string): Promise<void> };
   activityService: unknown;
   activityHeartbeat: unknown;
@@ -365,10 +368,13 @@ export function createDingtalkRuntime(deps: {
 
   handlerBox.current = handler;
 
+  /** 钉钉 OAuth 配置实时读取（V191）：后台保存后即时生效，无需重启。 */
+  const oauthConfig = (): Promise<DingtalkOauthConfig> => deps.settingService.getDingtalkOauthConfig();
+
   const processor = new DingtalkInboundProcessor(handler, {
     messageService,
     mergeWindowMs: deps.config.mergeWindowMs,
-    oauthConfigured: () => oauthConfigured(deps.config.oauth),
+    oauthConfigured: async () => oauthConfigured(await oauthConfig()),
     resolveUserId: ( _accountId, event) => binding.findUserId(event.senderUserid, event.senderUnionId),
     rememberMember: async (accountId, event, userId) => {
       if (event.senderUserid == null) return;
@@ -376,8 +382,9 @@ export function createDingtalkRuntime(deps: {
     },
     sendReply: (accountId, event, text) => sendText(Number(accountId), event, text),
     sendBindingCard: async (accountId, event) => {
-      if (!oauthConfigured(deps.config.oauth)) return false;
-      const origin = webOriginOf(deps.config.oauth.redirectUri);
+      const oauth = await oauthConfig();
+      if (!oauthConfigured(oauth)) return false;
+      const origin = webOriginOf(oauth.redirectUri);
       if (origin == null) return false;
       const state = await oauthStates.create(null, 3 * 60 * 1000);
       await pending.insert({ state, botId: Number(accountId), event }, new Date(Date.now() + 3 * 60 * 1000));
@@ -469,11 +476,12 @@ export function createDingtalkRuntime(deps: {
         jwt: deps.jwt,
         repository: binding,
         oauthStates,
-        oauth: deps.config.oauth,
+        oauth: oauthConfig,
         onCallback: async (state, userId, code) => {
-          const userToken = await exchangeUserAccessToken(fetchImpl, deps.config.oauth, code);
+          const oauth = await oauthConfig();
+          const userToken = await exchangeUserAccessToken(fetchImpl, oauth, code);
           const unionId = await fetchUnionId(fetchImpl, userToken);
-          const legacy = await tokens.getLegacyToken(deps.config.oauth.clientId, deps.config.oauth.clientSecret);
+          const legacy = await tokens.getLegacyToken(oauth.clientId, oauth.clientSecret);
           const userid = await fetchUseridByUnionId(fetchImpl, legacy, unionId);
           await binding.bind(userId, unionId, userid);
           const replay = await pending.claim(state);

@@ -116,7 +116,7 @@ describe('LocalToolSessionRegistry', () => {
       hasLocalClientConnection: vi.fn().mockReturnValue(true),
       hasDeviceConnection: vi.fn().mockReturnValue(true),
       sendToLocalClients: vi.fn(),
-      sendToDevice: vi.fn(),
+      sendToDevice: vi.fn(() => ({ targetCount: 1, successCount: 1, failureCount: 0 })),
     } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
     const registry = new LocalToolSessionRegistry(wsRegistry, { selectById: vi.fn() } as unknown as SessionMapper);
     registry.setTargetForSession(10, 7, 'dev-a');
@@ -138,7 +138,7 @@ describe('LocalToolSessionRegistry', () => {
       hasLocalClientConnection: vi.fn(() => true),
       hasDeviceConnection: vi.fn(() => true),
       sendToLocalClients: vi.fn(),
-      sendToDevice: vi.fn(),
+      sendToDevice: vi.fn(() => ({ targetCount: 1, successCount: 1, failureCount: 0 })),
     } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
     const registry = new LocalToolSessionRegistry(wsRegistry, { selectById: vi.fn() } as unknown as SessionMapper);
     registry.setTargetForSession(10, 7, 'dev-a');
@@ -153,7 +153,7 @@ describe('LocalToolSessionRegistry', () => {
       hasLocalClientConnection: vi.fn(() => true),
       hasDeviceConnection: vi.fn(() => true),
       sendToLocalClients: vi.fn(),
-      sendToDevice: vi.fn(),
+      sendToDevice: vi.fn(() => ({ targetCount: 1, successCount: 1, failureCount: 0 })),
     } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
     const registry = new LocalToolSessionRegistry(wsRegistry, { selectById: vi.fn() } as unknown as SessionMapper);
     registry.setTargetForSession(10, 7, 'dev-a');
@@ -178,7 +178,7 @@ describe('LocalToolSessionRegistry', () => {
       hasLocalClientConnection: vi.fn(() => true),
       hasDeviceConnection: vi.fn(() => true),
       sendToLocalClients: vi.fn(),
-      sendToDevice: vi.fn(),
+      sendToDevice: vi.fn(() => ({ targetCount: 1, successCount: 1, failureCount: 0 })),
       getDeviceExecutorSocket: vi.fn(() => executor),
     } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
     const registry = new LocalToolSessionRegistry(wsRegistry, { selectById: vi.fn() } as unknown as SessionMapper);
@@ -207,7 +207,7 @@ describe('LocalToolSessionRegistry', () => {
       hasLocalClientConnection: vi.fn(() => false),
       hasDeviceConnection: vi.fn(() => true),
       sendToLocalClients: vi.fn(),
-      sendToDevice: vi.fn(),
+      sendToDevice: vi.fn(() => ({ targetCount: 1, successCount: 1, failureCount: 0 })),
     } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
     const sessionMapper = { selectById: vi.fn(async () => ({ id: 20, userId: 7, targetDeviceId: 'dev-db' })) };
     const registry = new LocalToolSessionRegistry(wsRegistry, sessionMapper as unknown as SessionMapper);
@@ -215,5 +215,59 @@ describe('LocalToolSessionRegistry', () => {
     await registry.sendToolRequest(20, 'tool', '{}', null, false, null);
     expect(wsRegistry.sendToDevice).toHaveBeenCalledWith(7, 'dev-db', expect.anything());
     expect(wsRegistry.sendToLocalClients).not.toHaveBeenCalled();
+  });
+
+  // 线上事故回归（2026-11-10 会话 2316）：桌面端 WS 闪断后 mao-agent 重连抢走执行连接，
+  // 但其 LocalExecutor 不处理该会话 → 帧进了黑洞。此前 sendToDevice 的成功数被丢弃，
+  // 调用方只看到「在线」就开等，白等 900s 才超时。现在零投递必须立即回错。
+  it('failsImmediatelyWhenDeviceDispatchDeliversToNobody', async () => {
+    const wsRegistry = {
+      hasLocalClientConnection: vi.fn(() => true),
+      hasDeviceConnection: vi.fn(() => true),
+      sendToLocalClients: vi.fn(),
+      // 半死连接：readyState 判定通过，但 send 实际零成功
+      sendToDevice: vi.fn(() => ({ targetCount: 1, successCount: 0, failureCount: 1 })),
+      getDeviceExecutorSocket: vi.fn(() => ({ id: 'ws-dead' })),
+    } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
+    const registry = new LocalToolSessionRegistry(wsRegistry, { selectById: vi.fn() } as unknown as SessionMapper);
+    registry.setTargetForSession(30, 7, 'dev-dead');
+
+    const pending = await registry.sendToolRequest(30, 'shell', '{}', null, false, null);
+    // requestId 必须为 null：调用方据此跳过审批登记，不会留下孤儿审批
+    expect(pending.requestId).toBeNull();
+    expect(await pending.future).toContain('本地执行端未连接');
+    // pending 表不得残留：否则后续 failAllForSocket 会二次 resolve 同一条
+    expect((registry as unknown as { pendingRequests: Map<number, Map<string, unknown>> }).pendingRequests.get(30)?.size ?? 0).toBe(0);
+  });
+
+  it('doesNotLeakPendingEntryWhenDeviceHasNoExecutorSocket', async () => {
+    const wsRegistry = {
+      hasLocalClientConnection: vi.fn(() => true),
+      hasDeviceConnection: vi.fn(() => true),
+      sendToLocalClients: vi.fn(),
+      sendToDevice: vi.fn(() => ({ targetCount: 0, successCount: 0, failureCount: 0 })),
+      getDeviceExecutorSocket: vi.fn(() => null),
+    } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
+    const registry = new LocalToolSessionRegistry(wsRegistry, { selectById: vi.fn() } as unknown as SessionMapper);
+    registry.setTargetForSession(31, 7, 'dev-none');
+    const pending = await registry.sendToolRequest(31, 'shell', '{}', null, false, null);
+    expect(pending.requestId).toBeNull();
+    expect(await pending.future).toContain('本地执行端未连接');
+  });
+
+  it('keepsPendingWhenDeviceDispatchSucceeds', async () => {
+    const wsRegistry = {
+      hasLocalClientConnection: vi.fn(() => true),
+      hasDeviceConnection: vi.fn(() => true),
+      sendToLocalClients: vi.fn(),
+      sendToDevice: vi.fn(() => ({ targetCount: 1, successCount: 1, failureCount: 0 })),
+      getDeviceExecutorSocket: vi.fn(() => ({ id: 'ws-live' })),
+    } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
+    const registry = new LocalToolSessionRegistry(wsRegistry, { selectById: vi.fn() } as unknown as SessionMapper);
+    registry.setTargetForSession(32, 7, 'dev-ok');
+    const pending = await registry.sendToolRequest(32, 'shell', '{}', null, false, null);
+    expect(pending.requestId).not.toBeNull();
+    registry.completeToolRequest(32, pending.requestId!, '{"ok":true}');
+    expect(await pending.future).toBe('{"ok":true}');
   });
 });
