@@ -124,12 +124,12 @@ mao admin-session delete --id 100
 mao admin-session archive --id 100
 ```
 
-## 批量恢复 402/403 失败会话（管理后台页面功能，无 CLI 子命令）
+## 批量恢复失败会话（管理后台页面功能，无 CLI 子命令）
 
-管理后台「会话管理」页右上角「恢复 402/403 失败会话」按钮（需 `session:write`）：扫描最近 24 小时 / 3 天 / 7 天内活跃、`phase=FAILED`、且最后一次 `scene='agent'` LLM 调用为 402/403 失败的 NORMAL 主会话，预览后勾选发起后台异步续跑（不插入新消息）。对应接口：
+管理后台「会话管理」页右上角「恢复失败会话」按钮（需 `session:write`）：扫描最近 24 小时 / 3 天 / 7 天内活跃且 `phase=FAILED` 的 NORMAL 主会话，**不限失败原因**（402/403、其它模型错误、工具失败、超时等都会列出）。弹窗列出清单，管理员勾选后发起后台异步续跑（不插入新消息）。对应接口：
 
-- `GET /admin/sessions/recover-failed/preview?windowHours=24&scope=QUOTA`：候选清单（`windowHours` 1–168；`scope=QUOTA` 仅额度类 / `ALL_402_403` 全部 402/403），每项带 `willRecover`/`skipReason`/`errorSummary`/`lastUserMessage`/`scheduledTask`/`hasProgressCard`。
-- `POST /admin/sessions/recover-failed/run`：`{ sessionIds: number[], scope }`，立即返回 `{ accepted, skipped }`（单批上限 20）。恢复复用崩溃恢复内核，原飞书/钉钉进度卡片原地复活并持续更新；无卡片映射的会话完成后推送最终回复。LOCAL 模式、子代理/边路、有待重试定时任务 run 的会话会被跳过。
+- `GET /admin/sessions/recover-failed/preview?windowHours=24`：候选清单（`windowHours` 1–168，默认 24）。每项带 `willRecover`/`skipReason`/`errorSummary`/`lastUserMessage`/`scheduledTask`/`hasProgressCard`。错误摘要优先取会话终态 `executionError`，没有则回落到最后一次失败的 `scene='agent'` LLM 调用。最多 200 条，`truncated=true` 表示窗口内还有更早的失败会话未列出。历史查询参数 `scope`（`QUOTA` / `ALL_402_403`）已忽略。
+- `POST /admin/sessions/recover-failed/run`：`{ sessionIds: number[] }`，立即返回 `{ accepted, skipped }`（单批上限 20）。请求体里的 `scope` 已忽略。恢复复用崩溃恢复内核，原飞书/钉钉进度卡片原地复活并持续更新；无卡片映射的会话完成后推送最终回复。LOCAL 模式、子代理/边路、有待重试定时任务 run 的会话会被跳过。
 
 ## 成功失败判断
 

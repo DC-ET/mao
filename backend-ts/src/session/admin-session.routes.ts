@@ -9,12 +9,9 @@ import { emptyQuestionRegistry } from './types.js';
 import { compactAdminTranscript } from './admin-message-compact.js';
 import { toAdminSessionVO, toInFlightToolCallsMessageVOs, toMessageVOList, toPendingAskUserQuestionsMessageVOs } from './session-vo.js';
 import type { InFlightToolRegistry } from '../harness/core/in-flight-tool-registry.js';
-import {
-  FAILED_RECOVERY_SCOPES,
-  isFailedRecoveryScope,
-  type FailedSessionRecoveryPreview,
-  type FailedSessionRecoveryRunResult,
-  type FailedRecoveryScope,
+import type {
+  FailedSessionRecoveryPreview,
+  FailedSessionRecoveryRunResult,
 } from './failed-session-recovery.service.js';
 
 export interface AdminSessionRouteDeps {
@@ -26,12 +23,12 @@ export interface AdminSessionRouteDeps {
   askUserQuestionsRegistry?: AskUserQuestionsRegistry;
   inFlightToolRegistry?: InFlightToolRegistry;
   /**
-   * 因 402/403 失败会话的批量恢复服务（技术方案 2026-11-06）：可选依赖，
-   * 未注入（灰度关闭）时预览返回空清单、执行返回 503 语义的业务错误。
+   * 失败会话批量恢复：可选依赖，未注入时预览返回空清单、执行返回业务错误。
+   * 历史请求里的 scope（QUOTA / ALL_402_403）已忽略，不再按错误类型收窄。
    */
   failedSessionRecovery?: {
-    preview(windowHours: number, scope: FailedRecoveryScope): Promise<FailedSessionRecoveryPreview>;
-    run(sessionIds: number[], scope: FailedRecoveryScope): Promise<FailedSessionRecoveryRunResult>;
+    preview(windowHours: number): Promise<FailedSessionRecoveryPreview>;
+    run(sessionIds: number[]): Promise<FailedSessionRecoveryRunResult>;
   };
 }
 
@@ -39,17 +36,6 @@ export interface AdminSessionRouteDeps {
 const RECOVERY_WINDOW_DEFAULT = 24;
 const RECOVERY_WINDOW_MIN = 1;
 const RECOVERY_WINDOW_MAX = 168;
-
-function parseRecoveryScope(raw: unknown): FailedRecoveryScope {
-  if (raw == null) return 'QUOTA';
-  if (!isFailedRecoveryScope(raw)) {
-    throw new BusinessException(
-      ErrorCode.PARAM_INVALID,
-      `scope 仅支持 ${FAILED_RECOVERY_SCOPES.join(' / ')}`,
-    );
-  }
-  return raw;
-}
 
 function parseSessionIds(raw: unknown): number[] {
   if (!Array.isArray(raw)) {
@@ -249,34 +235,33 @@ export function registerAdminSessionRoutes(app: FastifyInstance, deps: AdminSess
     return sendOk(reply);
   });
 
-  // ---- 因 402/403 失败会话的批量恢复（技术方案 2026-11-06）----
+  // ---- 失败会话批量恢复 ----
   // 与 /v1/admin/sessions/:id 同前缀：Fastify（find-my-way）静态段优先，不会被 :id 吞掉。
   // 恢复属于写操作（会改变会话状态并重新执行），预览虽只读也统一走 session:write——
   // 预览返回用户消息内容，口径与「入口按钮仅 session:write 可见」一致。
+  // 查询参数 / 请求体里的 scope 是旧口径（QUOTA / ALL_402_403），现已忽略。
   app.get('/v1/admin/sessions/recover-failed/preview', async (request, reply) => {
     await requireWrite(request);
+    const rawWindow = queryInt(request, 'windowHours', RECOVERY_WINDOW_DEFAULT);
+    const windowHours = Math.max(RECOVERY_WINDOW_MIN, Math.min(rawWindow, RECOVERY_WINDOW_MAX));
     if (deps.failedSessionRecovery == null) {
       return sendOk(reply, {
-        windowHours: RECOVERY_WINDOW_DEFAULT,
-        scope: parseRecoveryScope(queryOptStr(request, 'scope')),
+        windowHours,
         total: 0,
         recoverableCount: 0,
+        truncated: false,
         items: [],
       } satisfies FailedSessionRecoveryPreview);
     }
-    const rawWindow = queryInt(request, 'windowHours', RECOVERY_WINDOW_DEFAULT);
-    const windowHours = Math.max(RECOVERY_WINDOW_MIN, Math.min(rawWindow, RECOVERY_WINDOW_MAX));
-    const scope = parseRecoveryScope(queryOptStr(request, 'scope'));
-    return sendOk(reply, await deps.failedSessionRecovery.preview(windowHours, scope));
+    return sendOk(reply, await deps.failedSessionRecovery.preview(windowHours));
   });
 
   app.post('/v1/admin/sessions/recover-failed/run', async (request, reply) => {
     await requireWrite(request);
-    const body = (request.body ?? {}) as { sessionIds?: unknown; scope?: unknown };
-    const scope = parseRecoveryScope(body.scope);
+    const body = (request.body ?? {}) as { sessionIds?: unknown };
     if (deps.failedSessionRecovery == null) {
       throw new BusinessException(ErrorCode.INTERNAL_ERROR, '批量恢复功能未启用');
     }
-    return sendOk(reply, await deps.failedSessionRecovery.run(parseSessionIds(body.sessionIds), scope));
+    return sendOk(reply, await deps.failedSessionRecovery.run(parseSessionIds(body.sessionIds)));
   });
 }

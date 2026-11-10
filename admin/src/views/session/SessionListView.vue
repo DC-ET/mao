@@ -4,9 +4,9 @@
       <template #header>
         <div class="card-header">
           <span>会话管理</span>
-          <el-tooltip content="扫描最近一段时间内因 402/403（额度不足等）失败的主会话，一键发起恢复" placement="top">
+          <el-tooltip content="列出最近一段时间内失败的主会话，勾选后在后台续跑" placement="top">
             <el-button v-if="canWrite" type="warning" plain size="small" @click="openRecoveryDialog">
-              恢复 402/403 失败会话
+              恢复失败会话
             </el-button>
           </el-tooltip>
         </div>
@@ -257,16 +257,17 @@
       />
     </el-card>
 
-    <!-- 恢复 402/403 失败会话（技术方案 2026-11-06）：预览清单 + 勾选 + 一键发起 -->
+    <!-- 失败会话批量恢复：预览清单 + 管理员勾选 + 发起续跑 -->
     <el-dialog
       v-model="recoveryVisible"
-      title="恢复 402/403 失败会话"
+      title="恢复失败会话"
       width="960px"
       :close-on-click-modal="false"
     >
       <div class="recovery-desc">
-        扫描最近一段时间内活跃、当前失败、且最后一次模型调用因 402/403 中断的主会话，一键在后台续跑（不插入新消息）。
-        恢复后原飞书/钉钉进度卡片会原地复活并持续更新；无卡片的会话在完成后推送最终回复。发起前请先确认模型额度已恢复。
+        列出最近一段时间内活跃、当前失败的主会话（不限 402/403，含权限、工具错误、超时等）。勾选后在后台续跑，不插入新消息。
+        恢复后原飞书/钉钉进度卡片会原地复活并持续更新；无卡片的会话在完成后推送最终回复。失败原因仍在时，会话可能再次失败。
+        本地执行、定时任务待重试、正在执行的会话不能勾选。
       </div>
       <div class="recovery-filters">
         <el-select v-model="recovery.windowHours" style="width: 150px" @change="fetchRecoveryPreview">
@@ -274,11 +275,16 @@
           <el-option label="最近 3 天" :value="72" />
           <el-option label="最近 7 天" :value="168" />
         </el-select>
-        <el-select v-model="recovery.scope" style="width: 170px" @change="fetchRecoveryPreview">
-          <el-option label="仅额度类错误" value="QUOTA" />
-          <el-option label="全部 402/403" value="ALL_402_403" />
-        </el-select>
+        <el-input
+          v-model="recoveryKeyword"
+          placeholder="筛选标题、用户或错误"
+          clearable
+          style="width: 220px"
+        />
         <el-button type="primary" plain :loading="recoveryLoading" @click="fetchRecoveryPreview">重新扫描</el-button>
+      </div>
+      <div class="recovery-summary">
+        共 {{ recoveryItems.length }} 条失败会话，其中 {{ recoverableCount }} 条可恢复<template v-if="recoveryKeyword.trim()">，当前筛选 {{ visibleRecoveryItems.length }} 条</template>。请勾选要恢复的会话，单批最多 {{ RECOVERY_MAX_BATCH }} 个。
       </div>
       <el-alert
         v-if="recoverableCount > RECOVERY_MAX_BATCH"
@@ -286,11 +292,20 @@
         :closable="false"
         show-icon
         style="margin-bottom: 12px"
-        :title="`可恢复 ${recoverableCount} 个，单批最多 ${RECOVERY_MAX_BATCH} 个，默认已勾选最近活跃的 ${RECOVERY_MAX_BATCH} 个，请分批恢复其余会话`"
+        :title="`可恢复 ${recoverableCount} 个，单批最多 ${RECOVERY_MAX_BATCH} 个，请分批勾选`"
+      />
+      <el-alert
+        v-if="recoveryTruncated"
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+        title="已列出最近活跃的 200 条，更早的失败会话未显示。可缩短扫描窗口，或先处理当前清单。"
       />
       <el-table
         ref="recoveryTableRef"
-        :data="recoveryItems"
+        :data="visibleRecoveryItems"
+        row-key="sessionId"
         v-loading="recoveryLoading"
         max-height="420"
         @selection-change="onRecoverySelectionChange"
@@ -580,11 +595,12 @@ async function handleDelete(row: any) {
   } catch { /* 拦截器已提示失败 */ }
 }
 
-// ---- 恢复 402/403 失败会话（技术方案 2026-11-06）----
+// ---- 失败会话批量恢复 ----
 
 interface RecoveryItem {
   sessionId: number
   userName: string | null
+  agentName: string | null
   title: string | null
   failedAt: string | null
   errorSummary: string
@@ -600,8 +616,6 @@ const RECOVERY_SKIP_LABELS: Record<string, string> = {
   NOT_FAILED: '非失败状态',
   LOCAL_MODE: '本地执行模式',
   NON_NORMAL_SESSION: '非主会话',
-  NOT_402_403: '非 402/403 错误',
-  NON_QUOTA_ERROR: '非额度类错误',
   PENDING_TASK_RETRY: '定时任务待重试',
   ALREADY_RUNNING: '执行中',
   RECOVERING: '恢复中',
@@ -614,20 +628,36 @@ function recoverySkipLabel(reason: string): string {
 }
 
 const recoveryVisible = ref(false)
-const recovery = reactive({ windowHours: 24, scope: 'QUOTA' })
+const recovery = reactive({ windowHours: 24 })
+const recoveryKeyword = ref('')
 const recoveryItems = ref<RecoveryItem[]>([])
-const recoverySelected = ref<RecoveryItem[]>([])
+const selectedRecoveryIds = ref<number[]>([])
 const recoveryLoading = ref(false)
 const recoverySubmitting = ref(false)
+const recoveryTruncated = ref(false)
 const recoveryTableRef = ref()
+/** 回写表格勾选时忽略 selection-change，避免筛选时把已选但当前不可见的行丢掉。 */
+let syncingRecoverySelection = false
 
 /** 单批恢复上限（与后端 FAILED_RECOVERY_MAX_BATCH 对齐） */
 const RECOVERY_MAX_BATCH = 20
 const recoverableCount = computed(() => recoveryItems.value.filter((item) => item.willRecover).length)
+const recoverySelected = computed(() =>
+  recoveryItems.value.filter((item) => selectedRecoveryIds.value.includes(item.sessionId) && item.willRecover),
+)
+const visibleRecoveryItems = computed(() => {
+  const keyword = recoveryKeyword.value.trim().toLowerCase()
+  if (!keyword) return recoveryItems.value
+  return recoveryItems.value.filter((item) =>
+    [item.title, item.userName, item.agentName, item.errorSummary, item.lastUserMessage, String(item.sessionId)]
+      .some((part) => (part ?? '').toLowerCase().includes(keyword)),
+  )
+})
 
 function openRecoveryDialog() {
   recoveryVisible.value = true
-  recoverySelected.value = []
+  recoveryKeyword.value = ''
+  selectedRecoveryIds.value = []
   fetchRecoveryPreview()
 }
 
@@ -637,26 +667,46 @@ async function fetchRecoveryPreview() {
   recoveryLoading.value = true
   try {
     const { data } = await api.get('/admin/sessions/recover-failed/preview', {
-      params: { windowHours: recovery.windowHours, scope: recovery.scope }
+      params: { windowHours: recovery.windowHours }
     })
     if (seq !== fetchRecoverySeq) return
     recoveryItems.value = data?.items || []
-    recoverySelected.value = []
-    // 默认勾选可恢复项（技术方案 §4.6），单批最多 RECOVERY_MAX_BATCH 个（列表按最后活跃倒序，
-    // 即默认勾选最近活跃的一批）；不可恢复行 selectable 已禁用不会进勾选
-    await nextTick()
-    recoveryItems.value
-      .filter((item) => item.willRecover)
-      .slice(0, RECOVERY_MAX_BATCH)
-      .forEach((item) => recoveryTableRef.value?.toggleRowSelection(item, true))
+    recoveryTruncated.value = data?.truncated === true
+    selectedRecoveryIds.value = []
+    // 失败原因不再预筛，不默认勾选，由管理员自行选择。
+    await syncRecoverySelection()
   } catch { /* 拦截器已提示失败 */ } finally {
     if (seq === fetchRecoverySeq) recoveryLoading.value = false
   }
 }
 
 function onRecoverySelectionChange(rows: RecoveryItem[]) {
-  recoverySelected.value = rows
+  if (syncingRecoverySelection) return
+  const visibleIds = new Set(visibleRecoveryItems.value.map((item) => item.sessionId))
+  const kept = selectedRecoveryIds.value.filter((id) => !visibleIds.has(id))
+  const visibleSelected = rows.filter((row) => row.willRecover).map((row) => row.sessionId)
+  selectedRecoveryIds.value = [...kept, ...visibleSelected]
 }
+
+async function syncRecoverySelection() {
+  await nextTick()
+  const table = recoveryTableRef.value
+  if (table == null) return
+  syncingRecoverySelection = true
+  try {
+    table.clearSelection()
+    const selected = new Set(selectedRecoveryIds.value)
+    for (const item of visibleRecoveryItems.value) {
+      if (selected.has(item.sessionId)) table.toggleRowSelection(item, true)
+    }
+  } finally {
+    syncingRecoverySelection = false
+  }
+}
+
+watch(recoveryKeyword, () => {
+  void syncRecoverySelection()
+})
 
 async function submitRecovery() {
   const ids = recoverySelected.value.map((item) => item.sessionId)
@@ -667,7 +717,7 @@ async function submitRecovery() {
   }
   try {
     await ElMessageBox.confirm(
-      `确认对选中的 ${ids.length} 个会话发起恢复？恢复在后台异步执行，原渠道卡片会持续更新；请先确认模型额度已恢复。`,
+      `确认对选中的 ${ids.length} 个会话发起恢复？恢复在后台异步执行，原渠道卡片会持续更新。若失败原因仍在，会话可能再次失败。`,
       '确认恢复',
       { confirmButtonText: '发起恢复', cancelButtonText: '取消', type: 'warning' }
     )
@@ -677,8 +727,7 @@ async function submitRecovery() {
   recoverySubmitting.value = true
   try {
     const { data } = await api.post('/admin/sessions/recover-failed/run', {
-      sessionIds: ids,
-      scope: recovery.scope
+      sessionIds: ids
     })
     const accepted = data?.accepted?.length ?? 0
     const skipped = data?.skipped?.length ?? 0
@@ -748,7 +797,13 @@ onActivated(() => {
 .recovery-filters {
   display: flex;
   gap: 10px;
+  margin-bottom: 8px;
+}
+
+.recovery-summary {
   margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
 }
 
 .search-form {

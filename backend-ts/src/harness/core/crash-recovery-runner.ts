@@ -96,7 +96,7 @@ export class CrashRecoveryRunner {
   /** 崩溃恢复允许进入的相位（现有行为，不得改动）。 */
   private static readonly DEFAULT_ALLOWED_PHASES: readonly string[] = ['RUNNING', 'RESUMING'];
   /**
-   * 批量恢复（因 402/403 失败）允许进入的相位：仅 FAILED，且重查时仍要求 FAILED——
+   * 批量恢复失败会话允许进入的相位：仅 FAILED，且重查时仍要求 FAILED——
    * 预览到执行之间用户可能已手动重试（phase 变 RUNNING）或会话被收尾，重查是最后一道闸（§4.7 L2）。
    */
   private static readonly FAILED_ALLOWED_PHASES: readonly string[] = ['FAILED'];
@@ -389,7 +389,7 @@ export class CrashRecoveryRunner {
   }
 
   /**
-   * 批量恢复因 402/403 失败、已被人工选中的会话（技术方案 2026-11-06 §4.4）。
+   * 批量恢复已被人工选中的失败会话。
    * 与崩溃恢复共用 runRecovery 的续跑流程，差异仅在于：
    *   1) 允许进入时 phase=FAILED（且任务开跑重查时仍要求 FAILED，防预览后状态变化）；
    *   2) 执行前额外校验「实例内不在恢复 / 不在跑」；

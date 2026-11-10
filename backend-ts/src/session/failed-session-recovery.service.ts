@@ -3,25 +3,18 @@ import { ErrorCode } from '../common/error-code.js';
 import { harnessLog } from '../harness/log.js';
 import { userMessagePreviewOf } from '../notification/task/user-message-preview.js';
 import type { FailedSessionCandidateRow } from './session.repository.js';
+import { parseFailureReason } from './session-vo.js';
 import type { Session } from './types.js';
 
-/** 恢复口径（§4.2）：QUOTA=仅额度类（默认）；ALL_402_403=全部 402/403（权限类恢复也会再失败，需显式切换）。 */
-export const FAILED_RECOVERY_SCOPES = ['QUOTA', 'ALL_402_403'] as const;
-export type FailedRecoveryScope = (typeof FAILED_RECOVERY_SCOPES)[number];
-
-export const isFailedRecoveryScope = (value: unknown): value is FailedRecoveryScope =>
-  typeof value === 'string' && (FAILED_RECOVERY_SCOPES as readonly string[]).includes(value);
-
 /**
- * 跳过原因（§4.5.1 / §4.7）。服务层产出前 6 项；RECOVERING / EXECUTOR_BUSY / SUBMIT_FAILED
+ * 跳过原因。服务层产出前四项；RECOVERING / EXECUTOR_BUSY / SUBMIT_FAILED
  * 由恢复内核（CrashRecoveryRunner.recoverFailedSessions）回填。
+ * 失败原因不再作为跳过条件：402/403、权限、工具错误、超时等一律进入清单，由管理员勾选。
  */
 export type FailedRecoverySkipReason =
   | 'NOT_FAILED'
   | 'LOCAL_MODE'
   | 'NON_NORMAL_SESSION'
-  | 'NOT_402_403'
-  | 'NON_QUOTA_ERROR'
   | 'PENDING_TASK_RETRY'
   | 'ALREADY_RUNNING'
   | 'RECOVERING'
@@ -53,9 +46,10 @@ export interface FailedSessionRecoveryItem {
 
 export interface FailedSessionRecoveryPreview {
   windowHours: number;
-  scope: FailedRecoveryScope;
   total: number;
   recoverableCount: number;
+  /** 窗口内失败会话超过预览上限时为 true，清单只含最近活跃的一批。 */
+  truncated: boolean;
   items: FailedSessionRecoveryItem[];
 }
 
@@ -82,19 +76,12 @@ export interface FailedRecoveryKernel {
 
 /** 单批恢复上限（§4.7）：避免一次占满执行池，超限直接拒绝并提示分批。 */
 export const FAILED_RECOVERY_MAX_BATCH = 20;
-/** 预览清单上限：管理操作场景候选通常个位数，7 天窗也只在数百行内截断。 */
+/** 预览清单上限：7 天窗内失败会话可能上百，超出部分提示管理员缩小窗口或分批处理。 */
 const PREVIEW_LIMIT = 200;
 const SUMMARY_MAX_CHARS = 200;
-/** 额度类错误关键词（§4.2，大小写不敏感）：403 里的权限类（模型无权访问、内容拦截）恢复必然再失败。 */
-const QUOTA_ERROR_KEYWORDS = ['insufficient', 'quota', '预扣费', '余额', 'balance', '欠费', 'credit'];
+const FALLBACK_ERROR_SUMMARY = '执行失败';
 const HTTP_STATUS_PATTERN = /LLM API returned (\d{3})/;
 const ERROR_CODE_PATTERN = /"code"\s*:\s*"([^"]+)"/;
-
-export function isQuotaRelatedError(message: string | null | undefined): boolean {
-  if (message == null || message === '') return false;
-  const lower = message.toLowerCase();
-  return QUOTA_ERROR_KEYWORDS.some((keyword) => lower.includes(keyword.toLowerCase()));
-}
 
 function toSqlDateTime(date: Date): string {
   const pad = (n: number): string => String(n).padStart(2, '0');
@@ -119,7 +106,7 @@ function toIdSet(values: Array<number | string | null | undefined>): number[] {
 
 /** 预览 / 执行共用的候选仓库窄接口（session.repository 的子集 + 会话单查）。 */
 export interface FailedRecoveryStore {
-  listFailedSessionsWithLastAgentError(
+  listFailedSessionsForRecovery(
     opts: { windowStart?: string | null; ids?: number[]; limit?: number },
   ): Promise<FailedSessionCandidateRow[]>;
   listSessionIdsWithPendingTaskRetry(sessionIds: number[]): Promise<Set<number>>;
@@ -151,11 +138,13 @@ export interface FailedSessionRecoveryDeps {
 }
 
 /**
- * 因 402/403（额度不足等）失败会话的一键批量恢复（技术方案 2026-11-06）。
+ * 失败会话批量恢复：时间窗内全部 FAILED 主会话进清单，管理员勾选后发起续跑。
  *
  * 职责：候选查询编排 + 排除判定 + 预览装配 + 委托恢复内核执行 + 结果汇总与日志。
  * 续跑流程本身完全复用 CrashRecoveryRunner（清理尾部 → RESUMING → RUNNING → execute
  * → finishExecution → onExecutionFinished），本服务不重写任何续跑逻辑。
+ * 不按错误类型过滤：402/403、其它 HTTP 状态、工具错误、超时都列出，能否勾选只看
+ * 执行模式、会话类型、定时任务重试链和是否已在跑。
  */
 export class FailedSessionRecoveryService {
   private kernel: FailedRecoveryKernel | null = null;
@@ -167,26 +156,26 @@ export class FailedSessionRecoveryService {
     this.kernel = kernel;
   }
 
-  /** 候选扫描 + 逐条排除判定（只读，§4.5.1）。 */
-  async preview(windowHours: number, scope: FailedRecoveryScope): Promise<FailedSessionRecoveryPreview> {
+  /** 候选扫描 + 逐条排除判定（只读）。不按错误类型过滤。 */
+  async preview(windowHours: number): Promise<FailedSessionRecoveryPreview> {
     const hours = this.normalizeWindowHours(windowHours);
     const windowStart = toSqlDateTime(new Date((this.deps.now?.() ?? new Date()).getTime() - hours * 3_600_000));
-    const rows = await this.deps.store.listFailedSessionsWithLastAgentError({ windowStart, limit: PREVIEW_LIMIT });
-    const items = await this.buildItems(rows, scope);
+    const rows = await this.deps.store.listFailedSessionsForRecovery({ windowStart, limit: PREVIEW_LIMIT });
+    const items = await this.buildItems(rows);
     return {
       windowHours: hours,
-      scope,
       total: items.length,
       recoverableCount: items.filter((item) => item.willRecover).length,
+      truncated: rows.length >= PREVIEW_LIMIT,
       items,
     };
   }
 
   /**
-   * 发起恢复（§4.5.2）：对每个 id 重新校验（预览到执行之间状态可能变化），
+   * 发起恢复：对每个 id 重新校验（预览到执行之间状态可能变化），
    * 通过后交内核逐个异步提交，立即返回受理结果——不等执行完成。
    */
-  async run(sessionIds: number[], scope: FailedRecoveryScope): Promise<FailedSessionRecoveryRunResult> {
+  async run(sessionIds: number[]): Promise<FailedSessionRecoveryRunResult> {
     const ids = toIdSet(sessionIds);
     if (ids.length === 0) return { accepted: [], skipped: [] };
     if (ids.length > FAILED_RECOVERY_MAX_BATCH) {
@@ -195,7 +184,7 @@ export class FailedSessionRecoveryService {
         `单批最多恢复 ${FAILED_RECOVERY_MAX_BATCH} 个会话，请分批恢复`,
       );
     }
-    const rows = await this.deps.store.listFailedSessionsWithLastAgentError({ ids });
+    const rows = await this.deps.store.listFailedSessionsForRecovery({ ids });
     const rowById = new Map(rows.map((row) => [row.sessionId, row]));
     const pendingRetry = await this.deps.store.listSessionIdsWithPendingTaskRetry(rows.map((row) => row.sessionId));
 
@@ -205,8 +194,7 @@ export class FailedSessionRecoveryService {
     for (const id of ids) {
       const row = rowById.get(id);
       if (row == null) {
-        // 候选行缺失：要么会话不存在/已不是 FAILED（用户已手动重试或发消息），要么最后一次
-        // agent 调用不再是 402/403（例如又跑过一轮成功调用后因别的原因失败）。
+        // 候选行缺失：会话不存在、已不是 FAILED，或不是可恢复的主会话（已归档 / 子代理 / 边路）。
         skipped.push({ sessionId: id, reason: await this.resolveMissingRowReason(id) });
         continue;
       }
@@ -214,7 +202,7 @@ export class FailedSessionRecoveryService {
         skipped.push({ sessionId: id, reason: 'ALREADY_RUNNING' });
         continue;
       }
-      const reason = this.skipReasonFor(row, scope, pendingRetry);
+      const reason = this.skipReasonFor(row, pendingRetry);
       if (reason != null) {
         skipped.push({ sessionId: id, reason });
         continue;
@@ -247,29 +235,30 @@ export class FailedSessionRecoveryService {
   }
 
   /** 预览到执行之间状态可能变化：候选行消失时给出更细的跳过原因。 */
-  private async resolveMissingRowReason(id: number): Promise<Extract<FailedRecoverySkipReason, 'NOT_FAILED' | 'NOT_402_403'>> {
+  private async resolveMissingRowReason(
+    id: number,
+  ): Promise<Extract<FailedRecoverySkipReason, 'NOT_FAILED' | 'NON_NORMAL_SESSION'>> {
     let session: Session | null = null;
     try {
       session = await this.deps.store.findById(id);
     } catch { /* 查询失败按不存在处理 */ }
     if (session == null || (session.phase ?? '') !== 'FAILED') return 'NOT_FAILED';
-    return 'NOT_402_403';
+    if ((session.sessionType ?? 'NORMAL') !== 'NORMAL') return 'NON_NORMAL_SESSION';
+    return 'NOT_FAILED';
   }
 
-  /** 排除判定（§4.3）：返回 null 表示可恢复。预览与执行复用同一判定。 */
+  /** 排除判定：返回 null 表示可恢复。不看错误类型。预览与执行复用同一判定。 */
   private skipReasonFor(
     row: FailedSessionCandidateRow,
-    scope: FailedRecoveryScope,
     pendingRetry: Set<number>,
   ): FailedRecoverySkipReason | null {
     if ((row.executionMode ?? 'CLOUD') === 'LOCAL') return 'LOCAL_MODE';
     if ((row.sessionType ?? 'NORMAL') !== 'NORMAL') return 'NON_NORMAL_SESSION';
-    if (scope === 'QUOTA' && !isQuotaRelatedError(row.errorMessage)) return 'NON_QUOTA_ERROR';
     if (pendingRetry.has(row.sessionId)) return 'PENDING_TASK_RETRY';
     return null;
   }
 
-  private async buildItems(rows: FailedSessionCandidateRow[], scope: FailedRecoveryScope): Promise<FailedSessionRecoveryItem[]> {
+  private async buildItems(rows: FailedSessionCandidateRow[]): Promise<FailedSessionRecoveryItem[]> {
     const userIds = toIdSet(rows.map((row) => row.userId));
     const agentIds = toIdSet(rows.map((row) => row.agentId));
     const [users, agents, pendingRetry, taskRefs, cardMap] = await Promise.all([
@@ -283,7 +272,8 @@ export class FailedSessionRecoveryService {
     const agentNameById = new Map(agents.map((a) => [Number(a.id), a.name ?? null]));
 
     const items = await Promise.all(rows.map(async (row) => {
-      const baseReason = this.skipReasonFor(row, scope, pendingRetry);
+      const failure = describeFailure(row);
+      const baseReason = this.skipReasonFor(row, pendingRetry);
       const claimed = baseReason == null && this.deps.isSessionClaimed(row.sessionId);
       const skipReason = baseReason ?? (claimed ? 'ALREADY_RUNNING' : null);
       let lastUserMessage = '';
@@ -300,10 +290,10 @@ export class FailedSessionRecoveryService {
         executionMode: row.executionMode,
         phase: 'FAILED',
         lastActivityAt: row.lastActivityAt,
-        failedAt: row.failedAt,
-        httpStatus: parseHttpStatus(row.errorMessage),
-        errorCode: parseErrorCode(row.errorMessage),
-        errorSummary: truncate(row.errorMessage, SUMMARY_MAX_CHARS),
+        failedAt: failure.failedAt,
+        httpStatus: parseHttpStatus(failure.errorMessage),
+        errorCode: parseErrorCode(failure.errorMessage),
+        errorSummary: truncate(failure.errorMessage, SUMMARY_MAX_CHARS),
         lastUserMessage,
         scheduledTask: taskRefs.get(row.sessionId)?.[0] ?? null,
         hasProgressCard: cardMap.get(row.sessionId) != null,
@@ -360,11 +350,29 @@ export class FailedSessionRecoveryService {
   }
 }
 
+function llmCallFailed(success: number | boolean | null | undefined): boolean {
+  return success === 0 || success === false;
+}
+
+/**
+ * 错误摘要优先用终态 executionError（与会话列表失败原因同源），
+ * 没有则回落到最后一次失败的 agent 场景 LLM 调用。两者都没有时给占位文案，避免清单空白。
+ * 失败时间：最后一次 agent 调用本身失败时用该调用时间，否则用会话最后活跃时间。
+ */
+function describeFailure(row: FailedSessionCandidateRow): { errorMessage: string; failedAt: string | null } {
+  const runtime = parseFailureReason(row.runtimeStatusJson, 'FAILED')?.trim() ?? '';
+  const llmFailed = llmCallFailed(row.llmSuccess);
+  const llmMessage = (row.llmErrorMessage ?? '').trim();
+  const errorMessage = runtime || (llmFailed ? llmMessage : '') || FALLBACK_ERROR_SUMMARY;
+  const failedAt = llmFailed && row.llmCalledAt ? row.llmCalledAt : (row.lastActivityAt ?? null);
+  return { errorMessage, failedAt };
+}
+
 function parseHttpStatus(message: string | null): number | null {
   const match = message?.match(HTTP_STATUS_PATTERN);
   if (match == null) return null;
   const status = Number(match[1]);
-  return status === 402 || status === 403 ? status : null;
+  return status >= 100 && status <= 599 ? status : null;
 }
 
 function parseErrorCode(message: string | null): string | null {

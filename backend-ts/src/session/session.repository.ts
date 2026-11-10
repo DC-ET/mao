@@ -78,7 +78,7 @@ export interface MessageSearchHitRow {
   score: number;
 }
 
-/** 因 402/403 失败会话批量恢复的候选行（技术方案 2026-11-06 §4.2）：会话 + 最后一条 agent 场景 LLM 调用摘要。 */
+/** 失败会话批量恢复的候选行：会话 + 终态错误 + 最后一条 agent 场景 LLM 调用（可空）。 */
 export interface FailedSessionCandidateRow {
   sessionId: number;
   userId: number | null;
@@ -87,8 +87,11 @@ export interface FailedSessionCandidateRow {
   executionMode: string | null;
   sessionType: string | null;
   lastActivityAt: string | null;
-  errorMessage: string | null;
-  failedAt: string | null;
+  /** runtime_status_json 原文；mysql2 jsonStrings 下为字符串。 */
+  runtimeStatusJson: string | null;
+  llmErrorMessage: string | null;
+  llmSuccess: number | boolean | null;
+  llmCalledAt: string | null;
 }
 
 function searchWhere(filter: MessageSearchSqlFilter): { where: string; params: unknown[] } {
@@ -183,17 +186,16 @@ export class SessionRepository {
   }
 
   /**
-   * 候选查询（技术方案 2026-11-06 §4.2）：最近活跃、phase=FAILED 的 NORMAL 主会话，
-   * 关联其最后一条 scene='agent' 的 LLM 调用（须为 402/403 失败——用「最后一条」而非
-   * 「窗口内出现过」，避免把 403 之后又因别的原因失败的会话误捞；scene='agent' 排除
-   * compaction / session_title 等辅助调用）。
+   * 失败会话批量恢复的候选：最近活跃、phase=FAILED 的 NORMAL 主会话。
+   * 不按错误类型过滤（402/403、其它模型错误、工具失败、超时都入选）。
+   * LEFT JOIN 最后一条 scene='agent' 的 LLM 调用，只为错误摘要回落；
+   * 没有 agent 调用、或最后一次调用已成功但会话仍失败（工具/超时）的会话也要列出。
+   * scene='agent' 排除 compaction / session_title 等辅助调用。
    *
-   * 额度类关键词过滤放在服务层（failed-session-recovery.service）：scope=QUOTA 未命中的行
-   * 在预览里要以 skipReason=NON_QUOTA_ERROR 展示而非直接消失，SQL 层不筛。
-   * windowStart 传 null 时不限时间窗（run 复检按 id 直查；窗口是预览的展示口径，
+   * windowStart 不传时不限时间窗（run 复检按 id 直查；窗口是预览的展示口径，
    * 不是安全闸——安全闸是 phase=FAILED 重查 + 执行池/实例内并发防护）。
    */
-  listFailedSessionsWithLastAgentError(
+  listFailedSessionsForRecovery(
     opts: { windowStart?: string | null; ids?: number[]; limit?: number } = {},
   ): Promise<FailedSessionCandidateRow[]> {
     const conditions = [
@@ -201,8 +203,6 @@ export class SessionRepository {
       "s.status = 'ACTIVE'",
       "s.phase = 'FAILED'",
       "s.session_type = 'NORMAL'",
-      'l.success = 0',
-      "(l.error_message LIKE 'LLM API returned 402%' OR l.error_message LIKE 'LLM API returned 403%')",
     ];
     const params: unknown[] = [];
     if (opts.windowStart != null) {
@@ -219,9 +219,10 @@ export class SessionRepository {
       `SELECT s.id AS sessionId, s.user_id AS userId, s.agent_id AS agentId, s.title,
               s.execution_mode AS executionMode, s.session_type AS sessionType,
               s.last_activity_at AS lastActivityAt,
-              l.error_message AS errorMessage, l.created_at AS failedAt
+              s.runtime_status_json AS runtimeStatusJson,
+              l.error_message AS llmErrorMessage, l.success AS llmSuccess, l.created_at AS llmCalledAt
        FROM \`session\` s
-       JOIN llm_call l ON l.id = (
+       LEFT JOIN llm_call l ON l.id = (
          SELECT l2.id FROM llm_call l2
          WHERE l2.session_id = s.id AND l2.scene = 'agent'
          ORDER BY l2.id DESC LIMIT 1

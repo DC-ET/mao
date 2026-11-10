@@ -271,20 +271,24 @@ describe('FileChangeRepository', () => {
 });
 
 describe('SessionRepository failed-session recovery queries', () => {
-  it('listFailedSessionsWithLastAgentError 按窗口/ids 组装 SQL，且空 ids 短路不查库', async () => {
-    const db = mockDb(null, [{ sessionId: 431, errorMessage: 'LLM API returned 403: x' }]);
+  it('listFailedSessionsForRecovery 按窗口/ids 组装 SQL，不按 402/403 收窄，且空 ids 短路不查库', async () => {
+    const db = mockDb(null, [{ sessionId: 431, llmErrorMessage: 'tool failed' }]);
     const repo = new SessionRepository(db as never);
-    const rows = await repo.listFailedSessionsWithLastAgentError({ windowStart: '2026-11-06 00:00:00' });
-    expect(rows).toEqual([{ sessionId: 431, errorMessage: 'LLM API returned 403: x' }]);
+    const rows = await repo.listFailedSessionsForRecovery({ windowStart: '2026-11-06 00:00:00' });
+    expect(rows).toEqual([{ sessionId: 431, llmErrorMessage: 'tool failed' }]);
     const [sql, params] = db.query.mock.calls[0];
-    expect(String(sql)).toContain("s.phase = 'FAILED'");
-    expect(String(sql)).toContain("s.session_type = 'NORMAL'");
-    expect(String(sql)).toContain("l2.scene = 'agent'");
-    expect(String(sql)).toContain("l.error_message LIKE 'LLM API returned 402%'");
-    expect(String(sql)).toContain('s.last_activity_at >= ?');
+    const text = String(sql);
+    expect(text).toContain("s.phase = 'FAILED'");
+    expect(text).toContain("s.session_type = 'NORMAL'");
+    expect(text).toContain("l2.scene = 'agent'");
+    expect(text).toContain('LEFT JOIN llm_call');
+    expect(text).toContain('s.runtime_status_json AS runtimeStatusJson');
+    expect(text).not.toContain('LLM API returned 402');
+    expect(text).not.toContain('l.success = 0');
+    expect(text).toContain('s.last_activity_at >= ?');
     expect(params).toEqual(['2026-11-06 00:00:00']);
 
-    await repo.listFailedSessionsWithLastAgentError({ ids: [431, 473] });
+    await repo.listFailedSessionsForRecovery({ ids: [431, 473] });
     const [idsSql, idsParams] = db.query.mock.calls[1];
     expect(String(idsSql)).toContain('s.id IN (?,?)');
     expect(String(idsSql)).not.toContain('s.last_activity_at >= ?');
@@ -292,7 +296,7 @@ describe('SessionRepository failed-session recovery queries', () => {
 
     const emptyDb = mockDb(null, []);
     const emptyRepo = new SessionRepository(emptyDb as never);
-    expect(await emptyRepo.listFailedSessionsWithLastAgentError({ ids: [] })).toEqual([]);
+    expect(await emptyRepo.listFailedSessionsForRecovery({ ids: [] })).toEqual([]);
     expect(emptyDb.query).not.toHaveBeenCalled();
   });
 

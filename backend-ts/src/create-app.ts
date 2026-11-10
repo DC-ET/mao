@@ -944,7 +944,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   wsHandler.registerImQueueDrainHandler((sessionId) => { void feishuInboundHandler.drainNextIfPending(sessionId); });
   wsHandler.registerImQueueDrainHandler((sessionId) => { void dingtalk.drainNextIfPending(sessionId); });
 
-  // 因 402/403 失败会话的一键批量恢复（技术方案 2026-11-06）：
+  // 失败会话批量恢复：
   // 候选查询编排 + 排除判定 + 预览/执行入口；续跑内核在 app-lifecycle 构造 CrashRecoveryRunner
   // 后经 attachKernel 注入（路由注册先于 lifecycle 装配，故服务在此提前构造）。
   const failedSessionRecovery = new FailedSessionRecoveryService({

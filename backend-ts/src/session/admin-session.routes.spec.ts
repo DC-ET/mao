@@ -34,8 +34,8 @@ function buildApp(opts: { canWrite: boolean } = { canWrite: true }): Harness {
     archiveSession: vi.fn(),
   };
   const recovery = {
-    preview: vi.fn(async (windowHours: number, scope: string) => ({
-      windowHours, scope, total: 1, recoverableCount: 1,
+    preview: vi.fn(async (windowHours: number) => ({
+      windowHours, total: 1, recoverableCount: 1, truncated: false,
       items: [{ sessionId: 431, willRecover: true, skipReason: null }],
     })),
     run: vi.fn(async (sessionIds: number[]) => ({ accepted: sessionIds, skipped: [] })),
@@ -52,7 +52,7 @@ function buildApp(opts: { canWrite: boolean } = { canWrite: true }): Harness {
 }
 
 describe('admin session recovery routes', () => {
-  it('previewPassesWindowAndScopeThrough', async () => {
+  it('previewPassesWindowAndIgnoresLegacyScope', async () => {
     const { fastify, recovery } = buildApp();
     const res = await fastify.inject({
       method: 'GET',
@@ -62,22 +62,23 @@ describe('admin session recovery routes', () => {
     const body = JSON.parse(res.body);
     expect(body.code).toBe(0);
     expect(body.data.windowHours).toBe(72);
-    expect(body.data.scope).toBe('ALL_402_403');
-    expect(recovery.preview).toHaveBeenCalledWith(72, 'ALL_402_403');
+    expect(body.data.scope).toBeUndefined();
+    expect(recovery.preview).toHaveBeenCalledWith(72);
   });
 
-  it('previewClampsWindowAndDefaultsScope', async () => {
+  it('previewClampsWindow', async () => {
     const { fastify, recovery } = buildApp();
     const res = await fastify.inject({ method: 'GET', url: '/v1/admin/sessions/recover-failed/preview?windowHours=999' });
     expect(res.statusCode).toBe(200);
-    expect(recovery.preview).toHaveBeenCalledWith(168, 'QUOTA');
+    expect(recovery.preview).toHaveBeenCalledWith(168);
   });
 
-  it('previewRejectsInvalidScope', async () => {
-    const { fastify } = buildApp();
+  it('previewIgnoresUnknownScope', async () => {
+    const { fastify, recovery } = buildApp();
     const res = await fastify.inject({ method: 'GET', url: '/v1/admin/sessions/recover-failed/preview?scope=EVERYTHING' });
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body).code).toBe(2001);
+    expect(JSON.parse(res.body).code).toBe(0);
+    expect(recovery.preview).toHaveBeenCalledWith(24);
   });
 
   it('previewRequiresSessionWrite', async () => {
@@ -97,7 +98,7 @@ describe('admin session recovery routes', () => {
     const body = JSON.parse(res.body);
     expect(body.code).toBe(0);
     expect(body.data).toEqual({ accepted: [431, 473], skipped: [] });
-    expect(recovery.run).toHaveBeenCalledWith([431, 473], 'QUOTA');
+    expect(recovery.run).toHaveBeenCalledWith([431, 473]);
   });
 
   it('runValidatesSessionIdsShape', async () => {
@@ -155,7 +156,7 @@ describe('admin session recovery routes without service injected', () => {
     const res = await fastify.inject({ method: 'GET', url: '/v1/admin/sessions/recover-failed/preview' });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body).data).toEqual({
-      windowHours: 24, scope: 'QUOTA', total: 0, recoverableCount: 0, items: [],
+      windowHours: 24, total: 0, recoverableCount: 0, truncated: false, items: [],
     });
   });
 
