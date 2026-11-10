@@ -194,7 +194,9 @@ export function createDingtalkRuntime(deps: {
         round,
         elapsedMs: mapped === 'running' ? undefined : Date.now() - startedAt,
         tools,
-        detail: mapped === 'failed' || mapped === 'cancelled' ? content : undefined,
+        // 正文全状态透传：running 是流式累积的 assistant 文本，终态是最终回复。
+        // 此前只透传 failed/cancelled，导致完成卡只剩状态行、看不到结果全文。
+        detail: content,
         sessionUrl: await sessionDetailUrl(sessionId),
         sessionId,
         senderUserid: sender,

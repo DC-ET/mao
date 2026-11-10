@@ -5,6 +5,9 @@ const TITLES = {
   cancelled: '任务已取消',
 } as const;
 
+/** 卡片正文上限：钉钉 markdown 组件超长会被截断，留足余量给状态行与工具列表。 */
+const BODY_MAX = 1500;
+
 export type DingtalkProgressStatus = keyof typeof TITLES;
 
 export function formatDingtalkDuration(ms: number): string {
@@ -20,6 +23,12 @@ export function formatDingtalkDuration(ms: number): string {
   return restMinutes === 0 ? `${hours} 小时` : `${hours} 小时 ${restMinutes} 分`;
 }
 
+/**
+ * 进度卡正文：`**状态：处理完成** · 共 3 轮 · 耗时 44 秒` + 空行 + 正文 + 工具列表。
+ * 与飞书进度卡同构（feishu/progress-card.ts 的 statusLineOf + content + tools），
+ * 区别是飞书分三个 markdown 元素，钉钉模板只有一个 markdown 变量，故拼接成单串。
+ * @param detail 本轮/终态正文；running 态为流式累积的 assistant 文本，终态为最终回复。
+ */
 export function progressCardParams(input: {
   status: DingtalkProgressStatus;
   round: number;
@@ -30,21 +39,27 @@ export function progressCardParams(input: {
   sessionId: number;
   senderUserid: string;
 }): Record<string, string> {
-  const meta: string[] = [];
-  if (input.round > 0) meta.push(input.status === 'running' ? `第 ${input.round} 轮` : `共 ${input.round} 轮`);
-  if (input.status !== 'running' && input.elapsedMs != null) meta.push(`耗时 ${formatDingtalkDuration(input.elapsedMs)}`);
-  const lines = [meta.join(' · ')];
+  const sections: string[] = [statusLineOf(input.status, input.round, input.elapsedMs)];
+  const detail = input.detail?.trim() ?? '';
+  if (detail !== '') sections.push(detail);
   const tools = (input.tools ?? []).filter((tool) => tool.trim() !== '');
-  if (tools.length > 0) lines.push(tools.map((tool) => `- ${tool}`).join('\n'));
-  if (input.detail != null && input.detail.trim() !== '') lines.push(input.detail.trim());
+  if (tools.length > 0) sections.push(`**本轮工具**\n${tools.map((tool) => `- ${tool}`).join('\n')}`);
   return {
     title: TITLES[input.status],
-    body: lines.filter((line) => line !== '').join('\n').slice(0, 1500),
+    body: sections.join('\n\n').slice(0, BODY_MAX),
     status: input.status,
     sessionUrl: input.sessionUrl ?? '',
     sessionId: String(input.sessionId),
     senderUserid: input.senderUserid,
   };
+}
+
+/** 状态行：`**状态：处理完成** · 共 3 轮 · 耗时 44 秒`（与飞书 statusLineOf 同口径）。 */
+function statusLineOf(status: DingtalkProgressStatus, round: number, elapsedMs?: number): string {
+  const meta: string[] = [];
+  if (round > 0) meta.push(status === 'running' ? `第 ${round} 轮` : `共 ${round} 轮`);
+  if (status !== 'running' && elapsedMs != null) meta.push(`耗时 ${formatDingtalkDuration(elapsedMs)}`);
+  return `**状态：${TITLES[status]}**${meta.length > 0 ? ` · ${meta.join(' · ')}` : ''}`;
 }
 
 export function queueCardParams(input: {
