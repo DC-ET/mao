@@ -42,7 +42,7 @@ export function buildTrendLineOption(config: TrendLineConfig): ChartOption {
   const splitLine = config.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'
   const tooltipBg = config.isDark ? '#26262a' : '#ffffff'
   const tooltipBorder = config.isDark ? '#4a4a50' : '#e5e5ea'
-  const tooltipText = config.isDark ? '#c8c8cd' : '#1d1d1f'
+  const tooltipText = config.isDark ? '#d0d0d4' : '#1d1d1f'
   const axisFormat = (line: TrendLine) =>
     (line.right ? config.rightAxis?.format : undefined) ?? config.leftAxis.format
   const withLegend = config.lines.length > 1

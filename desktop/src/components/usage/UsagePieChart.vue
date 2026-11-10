@@ -22,7 +22,7 @@ const chartOption = computed<ChartOption>(() => {
   const textColor = isDark.value ? '#b0b0b5' : '#86868b'
   const tooltipBg = isDark.value ? '#26262a' : '#ffffff'
   const tooltipBorder = isDark.value ? '#4a4a50' : '#e5e5ea'
-  const tooltipText = isDark.value ? '#c8c8cd' : '#1d1d1f'
+  const tooltipText = isDark.value ? '#d0d0d4' : '#1d1d1f'
   const sliceBorder = isDark.value ? '#26262a' : '#ffffff'
   return {
     color: CHART_PALETTE,

@@ -12,7 +12,7 @@ import { useTerminalWS } from './useTerminalWS'
 
 const DARK_THEME = {
   background: '#26262a',
-  foreground: '#c8c8cd',
+  foreground: '#d0d0d4',
   cursor: '#ffffff',
   selectionBackground: '#264f78',
   black: '#26262a',
