@@ -17,6 +17,7 @@
   "files": [
     "bin/",
     "lib/",
+    "template/",
     "SKILL.md",
     "business_process.md",
     "reference/"
