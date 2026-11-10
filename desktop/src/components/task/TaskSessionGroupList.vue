@@ -45,6 +45,15 @@
             <el-icon v-else-if="groupIconKind(group.key, group.sessions) === 'dingtalk'" :size="13">
               <ChatDotRound />
             </el-icon>
+            <img
+              v-else-if="groupIconKind(group.key, group.sessions) === 'dingtalk'"
+              class="brand-icon"
+              :src="dingtalkLogo"
+              width="13"
+              height="13"
+              alt="钉钉"
+              draggable="false"
+            />
             <el-icon v-else-if="groupIconKind(group.key, group.sessions) === 'embed'" :size="13">
               <Monitor />
             </el-icon>
@@ -192,11 +201,12 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Loading, Plus, Delete, Check, Close, Cloudy, PartlyCloudy, Folder, FolderOpened, EditPen, ArrowDown, ArrowRight, ChatDotRound, Monitor, AlarmClock } from '@element-plus/icons-vue'
+import { Loading, Plus, Delete, Check, Close, Cloudy, PartlyCloudy, Folder, FolderOpened, EditPen, ArrowDown, ArrowRight, Monitor, AlarmClock } from '@element-plus/icons-vue'
 import type { Session } from '../../stores/session'
 import { useReadinessStore } from '../../stores/readiness'
 import { groupIconKind } from '../../utils/cloud-project'
 import feishuLogo from '../../assets/feishu-logo.svg'
+import dingtalkLogo from '../../assets/dingtalk-logo.svg'
 import weixinLogo from '../../assets/weixin-logo.png'
 
 const readinessStore = useReadinessStore()
