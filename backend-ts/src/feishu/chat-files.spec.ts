@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { useTmpDir } from '../testing/tmp-dir.js';
 import { describe, expect, it } from 'vitest';
 import { chatFilesDateOf, chatFilesDirOf, resolveChatFileTarget } from './chat-files.js';
@@ -7,7 +7,8 @@ import { chatFilesDateOf, chatFilesDirOf, resolveChatFileTarget } from './chat-f
 describe('chat-files', () => {
   it('chatFilesDirOf buckets by Shanghai date under chat-files', () => {
     const dir = chatFilesDirOf('/ws', new Date('2026-10-01T10:00:00+08:00'));
-    expect(dir).toBe(join('/ws', 'chat-files', chatFilesDateOf(new Date('2026-10-01T10:00:00+08:00'))));
+    // resolve 镜像实现契约（Windows 盘符解析；Linux 恒等）
+    expect(dir).toBe(resolve('/ws', 'chat-files', chatFilesDateOf(new Date('2026-10-01T10:00:00+08:00'))));
     expect(dir).toContain('chat-files');
   });
 

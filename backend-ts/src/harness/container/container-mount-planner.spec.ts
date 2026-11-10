@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { ContainerMountPlanner, MountPlanError } from './container-mount-planner.js';
 import { useTmpDir } from '../../testing/tmp-dir.js';
 
@@ -29,7 +29,7 @@ describe('container mount planner', () => {
     const mounts = planner.plan(7, 5);
     // 除 share 两条按 Agent 收窄的子路径（2026-11-09）外，每条 rw 挂载都只含 user=7 的路径
     for (const m of mounts.filter((x) => x.mode === 'rw' && x.purpose !== 'share' && x.purpose !== 'shareAgent')) {
-      expect(m.hostPath).toContain('/7');
+      expect(m.hostPath).toContain(sep + '7');
       expect(m.hostPath.startsWith(base)).toBe(true);
     }
     // dist 只读
@@ -48,7 +48,8 @@ describe('container mount planner', () => {
     expect(tmp?.hostPath).toBe(join(base, 'tmp', '7'));
     expect(tmp?.containerPath).toBe('/tmp');
     expect(tmp?.mode).toBe('rw');
-    expect(statSync(tmp!.hostPath).mode & 0o7777).toBe(0o1777);
+    // sticky 位（0o1777）仅 POSIX 文件系统可表达：Windows 开发机 mode 无此语义
+    if (process.platform !== 'win32') expect(statSync(tmp!.hostPath).mode & 0o7777).toBe(0o1777);
     // 不包含其他用户尾段
     expect(JSON.stringify(mounts)).not.toContain('/users/8');
     expect(JSON.stringify(mounts)).not.toContain('/runtime/8');

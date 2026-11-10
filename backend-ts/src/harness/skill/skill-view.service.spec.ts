@@ -133,7 +133,8 @@ describe('SkillViewService（技能视图物化）', () => {
     expect(existsSync(join(view!, 'out-link.txt'))).toBe(false);
   });
 
-  it('保留文件可执行位', async () => {
+  // Windows fs.chmod 不支持执行位（mode 恒 0o666）：posix 部署语义
+  it.skipIf(process.platform === 'win32')('保留文件可执行位', async () => {
     const root = useTmpDir('skill-view-exec-');
     const source = makeSkillSource(root);
     mkdirSync(join(source, 'bin'), { recursive: true });

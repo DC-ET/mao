@@ -1,5 +1,13 @@
 # 技能分发包调整说明
 
+## 0.0.514 (2026-11-11)
+
+### 后端
+- **修复 4 处跨平台生产缺陷**（前后端全量测试在 Windows 开发机跑查发现，Linux 部署行为不变）：①electron 更新清单缓存排除正则只认 `/` 分隔符——`fastifyStatic` 的 setHeaders 拿到平台本地路径，Windows 部署下 `latest*.yml`/`releases/*.yml` 错误走 7 天强缓存（自动更新可能拿到陈旧清单），改为 `/` 与 `\` 双兼容；②容器运行时闭包 manifest 的文件键从 `path.relative` 改为强制 POSIX 分隔符——buildId 是容器代码漂移检测的事实源，Windows 构建机与 Linux 部署此前会产出不同 manifest；③`toWorkspaceRelative` 的工作区相对路径展示统一为 `/` 分隔（IM 图片保存提示等面向用户与 Agent 的文案，Windows 开发机不再出现反斜杠）；④信号脚本探针超时击杀在 Windows（无负 pid 进程组语义）改为直接终止 leader——此前超时后探针进程无法回收、整条链路挂起 5s 超时。
+
+### agent-cli
+- **rg 路径归一修正**：Windows 下 rg 输出带 `.\` 前缀，grep/glob 结果路径剥掉该前缀后按平台形态透传（各消费方按平台 join 构造），Linux 输出恒等透传。测试基建：临时目录清理在 Windows 上遇句柄占用（git 子进程残留）降级为告警不淹没断言失败；若干 POSIX-only 语义用例（执行位恢复、0600 文件模式、bash 回退目录、进程组击杀）在 Windows 跳过。
+
 ## 0.0.513 (2026-11-11)
 
 ### 前端（桌面 / Web）

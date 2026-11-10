@@ -1,6 +1,6 @@
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   executeScriptProbe,
@@ -126,7 +126,13 @@ describe('executeScriptProbe', () => {
   it('cwd 为脚本所在目录', async () => {
     const result = await run(writeScript('pwd.sh', 'pwd\n'));
     expect(result.ok).toBe(true);
-    expect(result.stdout?.trim()).toBe(realpathSync(workDir!));
+    const cwdOut = result.stdout?.trim() ?? '';
+    if (process.platform === 'win32') {
+      // msys/git-bash 的 sh 把 Windows 路径打印为 /c/... 或 /tmp/... 形态：比对目录名
+      expect(cwdOut.endsWith(basename(workDir!))).toBe(true);
+    } else {
+      expect(cwdOut).toBe(realpathSync(workDir!));
+    }
   });
 
   it('stdin 关闭：脚本读 stdin 立即得 EOF 而非挂起', async () => {

@@ -77,7 +77,8 @@ describe('会话来源写入点（技术方案 2026-10-29 §2.1）', () => {
     // 尾参从 'new', null, null 变化时本用例失败，提醒重新确认来源落位。
     const { readFileSync } = await import('node:fs');
     const { join, dirname } = await import('node:path');
-    const here = dirname(new URL(import.meta.url).pathname);
+    const { fileURLToPath } = await import('node:url');
+    const here = dirname(fileURLToPath(import.meta.url));
     const feishu = readFileSync(join(here, '..', 'app-feishu-messaging.ts'), 'utf8');
     expect(feishu).toMatch(/'new', null, null, 'feishu',/);
     const dingtalk = readFileSync(join(here, '..', 'dingtalk', 'runtime.ts'), 'utf8');

@@ -562,7 +562,8 @@ describe('SearchTools', () => {
       dir,
     ));
     expect(result.total_matches).toBe(1);
-    expect(result.matches[0].file).toBe('desktop/src/useChat.ts');
+    // 相对路径分隔符平台化（Windows 为反斜杠），语义为该文件自身
+    expect(result.matches[0].file).toBe(join('desktop', 'src', 'useChat.ts'));
   });
 
   it('grepSearchFindsMatchesWithContextAndIgnoreCase', async () => {

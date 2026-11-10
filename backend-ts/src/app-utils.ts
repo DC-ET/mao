@@ -83,7 +83,10 @@ export function runtimeSessionCleanup(runtimeRoot: string): (userId: number, ses
 
 // ========== 上传静态托管 ==========
 
-const UPLOAD_CACHE_EXCLUDED = /(^|\/)(releases\/[^/]*\.(json|ya?ml)|latest[^/]*\.ya?ml)$/i;
+// 分隔符双兼容：fastifyStatic setHeaders 拿到的是平台本地路径（Windows 为反斜杠），
+// 正则只认 / 会漏掉 electron 更新清单，导致 Windows 部署错误长缓存。
+// 字符类内写作 [\\/]（反斜杠 + 正斜杠都接受）
+const UPLOAD_CACHE_EXCLUDED = /(^|[\\/])(releases[\\/][^\\/]*\.(json|ya?ml)|latest[^\\/]*\.ya?ml)$/i;
 
 function uploadCacheHeaders(path: string): Record<string, string> {
   if (UPLOAD_CACHE_EXCLUDED.test(path)) return { 'Cache-Control': 'no-cache' };

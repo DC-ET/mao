@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { existsSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join, sep } from 'node:path';
 import { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { useTmpDir } from '../../../testing/tmp-dir.js';
@@ -180,7 +180,7 @@ describe('materializeImageApiResult（图片产物按用户隔离）', () => {
     const dir = useTmpDir('mat-');
     const payload = materializeImageApiResult(apiResult, dir, 'gen', 'https://mao.example/api/v1', 'cat', 7, '/api/v1');
     const image = payload.images[0] as Record<string, unknown>;
-    const fileName = (image.image_path as string).split('/').pop()!;
+    const fileName = basename(image.image_path as string);
     expect(image.image_url).toBe(`https://mao.example/uploads/7/${fileName}`);
   });
 
@@ -188,7 +188,7 @@ describe('materializeImageApiResult（图片产物按用户隔离）', () => {
     const dir = useTmpDir('mat-');
     const payload = materializeImageApiResult(apiResult, dir, 'gen', 'https://mao.example/api', 'cat', 7);
     const image = payload.images[0] as Record<string, unknown>;
-    const fileName = (image.image_path as string).split('/').pop()!;
+    const fileName = basename(image.image_path as string);
     expect(image.image_path).toBe(join(dir, '7', fileName));
     expect(image.image_url).toBe(`https://mao.example/uploads/7/${fileName}`);
     expect(existsSync(image.image_path as string)).toBe(true);
@@ -199,7 +199,7 @@ describe('materializeImageApiResult（图片产物按用户隔离）', () => {
     const dir = useTmpDir('mat-');
     const payload = materializeImageApiResult(apiResult, dir, 'gen', 'https://mao.example/api', 'cat');
     const image = payload.images[0] as Record<string, unknown>;
-    const fileName = (image.image_path as string).split('/').pop()!;
+    const fileName = basename(image.image_path as string);
     expect(image.image_path).toBe(join(dir, fileName));
     expect(image.image_url).toBe(`https://mao.example/uploads/${fileName}`);
     expect(readdirSync(dir).some((f) => f === fileName)).toBe(true);
@@ -268,9 +268,9 @@ describe('GenerateImageTool', () => {
     const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'cat' }), 1, 7, null));
     expect(result.error).toBeUndefined();
     const image = result.images[0];
-    expect(image.image_path.startsWith(join(dir, '7') + '/')).toBe(true);
+    expect(image.image_path.startsWith(join(dir, '7') + sep)).toBe(true);
     expect(image.image_url.startsWith('https://mao.example/uploads/7/')).toBe(true);
-    const fileName = image.image_path.split('/').pop();
+    const fileName = basename(image.image_path);
     expect(existsSync(join(dir, '7', fileName))).toBe(true);
     // 只建 {uid} 子目录，平坦根不落文件
     expect(readdirSync(dir)).toEqual(['7']);
@@ -281,7 +281,7 @@ describe('GenerateImageTool', () => {
     const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'cat' }), 1));
     expect(result.error).toBeUndefined();
     const image = result.images[0];
-    expect(image.image_path.startsWith(dir + '/')).toBe(true);
+    expect(image.image_path.startsWith(dir + sep)).toBe(true);
     expect(image.image_path).not.toContain(`${join(dir, '7')}`);
     expect(image.image_url.startsWith('https://mao.example/uploads/gen-')).toBe(true);
   });
@@ -433,7 +433,7 @@ describe('EditImageTool', () => {
     }), 1, 7, null));
     expect(result.error).toBeUndefined();
     const image = result.images[0];
-    expect(image.image_path.startsWith(join(out, '7') + '/')).toBe(true);
+    expect(image.image_path.startsWith(join(out, '7') + sep)).toBe(true);
     expect(image.image_url.startsWith('https://mao.example/uploads/7/edit-')).toBe(true);
     expect(readdirSync(join(out, '7')).some((f) => f.startsWith('edit-') && f.endsWith('.png'))).toBe(true);
   });

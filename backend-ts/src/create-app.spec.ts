@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { resolve } from 'node:path';
 import { useTmpDir } from './testing/tmp-dir.js';
 import { registerUploadStatic, resolveShareDir } from './app-utils.js';
 
@@ -60,8 +61,9 @@ describe('registerUploadStatic', () => {
 
 describe('resolveShareDir', () => {
   it('accepts absolute paths and normalizes trailing slash', () => {
-    expect(resolveShareDir('/opt/mao-data/share')).toBe('/opt/mao-data/share');
-    expect(resolveShareDir('/mnt/share/')).toBe('/mnt/share');
+    // resolve 镜像实现契约（Windows 开发机上 /opt/... 会被盘符解析）：Linux 语义不变
+    expect(resolveShareDir('/opt/mao-data/share')).toBe(resolve('/opt/mao-data/share'));
+    expect(resolveShareDir('/mnt/share/')).toBe(resolve('/mnt/share'));
   });
 
   it('expands ~ to the home directory', () => {

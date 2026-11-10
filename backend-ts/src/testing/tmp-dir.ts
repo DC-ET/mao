@@ -25,7 +25,14 @@ const IN_REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '
 
 function withAutoCleanup(dir: string): string {
   onTestFinished(() => {
-    rmSync(dir, { recursive: true, force: true });
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch (e) {
+      // Windows 开发机：git/子进程残留句柄导致清理 EPERM 是常态（目录留给系统临时目录
+      // 回收），让清理失败淹没断言失败会本末倒置；POSIX 保持严格（清理失败应当暴露）。
+      if (process.platform !== 'win32') throw e;
+      console.warn('[tmp-dir] cleanup skipped (win32):', (e as Error).message);
+    }
   });
   return dir;
 }

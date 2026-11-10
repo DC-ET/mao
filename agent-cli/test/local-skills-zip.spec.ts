@@ -93,7 +93,8 @@ describe('extractZip', () => {
     fs.rmSync(dest, { recursive: true, force: true });
   });
 
-  it('restores executable mode from zip unixMode', () => {
+  // Windows fs.chmod 不支持执行位恢复：posix 部署语义
+  it.skipIf(process.platform === 'win32')('restores executable mode from zip unixMode', () => {
     const dest = tempDir();
     const zip = buildZip([
       { name: 'sk/tool.sh', data: '#!/bin/sh\necho hi', unixMode: 0o100755 },

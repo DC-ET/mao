@@ -57,7 +57,8 @@ describe('SkillViewService 蓝绿并发（round-3 I-1 回归）', () => {
     return folder;
   }
 
-  it('竞态②命中：保留胜者视图与 meta，下一轮自动重建而非钉死旧内容', async () => {
+  // Windows rename 到已存在目录报 EPERM（posix 可覆盖）：蓝绿竞态语义为 Linux 部署
+  it.skipIf(process.platform === 'win32')('竞态②命中：保留胜者视图与 meta，下一轮自动重建而非钉死旧内容', async () => {
     const root = useTmpDir('skill-view-race-');
     const source = makeSkillSource(root, 'java', 'body-v1');
     const viewsRoot = path.join(root, 'skill-views');

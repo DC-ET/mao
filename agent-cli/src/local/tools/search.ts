@@ -40,12 +40,17 @@ function resolveSearchScope(resolvedPath: string): SearchScope {
 }
 
 function relativizeRgPath(filePath: string, searchRoot: string): string {
-  const trimmed = filePath.startsWith('./') ? filePath.slice(2) : filePath;
+  // rg 在 Windows 上会带 ".\" 前缀并以 \ 分隔：剥掉 dot 前缀、其余原样透传
+  // （各消费方按平台 join 构造期望）；Linux 输出无前缀、恒等透传。
+  const trimmed = filePath.startsWith('./') || filePath.startsWith('.' + path.sep)
+    ? filePath.slice(2)
+    : filePath;
   if (path.isAbsolute(trimmed)) {
     const normalized = path.normalize(trimmed);
-    return normalized.startsWith(searchRoot) ? path.relative(searchRoot, normalized) : normalized;
+    const rel = normalized.startsWith(searchRoot) ? path.relative(searchRoot, normalized) : normalized;
+    return path.sep === '/' ? rel : rel.split(path.sep).join('/');
   }
-  return path.normalize(trimmed);
+  return trimmed;
 }
 
 function globWithNode(pattern: string, scope: SearchScope, headLimit: number): string[] {

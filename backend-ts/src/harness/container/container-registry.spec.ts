@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { ContainerRegistry, type DockerCli } from './container-registry.js';
 import { containerHostsFingerprint } from '../../common/container-hosts.js';
 import { useTmpDir } from '../../testing/tmp-dir.js';
@@ -139,9 +139,10 @@ describe('container registry', () => {
     // 不暴露端口
     expect(runArgs).not.toContain('-p ');
     expect(runArgs).not.toContain('--publish');
-    // 只挂本用户目录
-    expect(runArgs).toContain('/users/7:');
-    expect(runArgs).not.toContain('/users/8:');
+    // 只挂本用户目录（挂载串两侧均为平台本地路径：分隔符归一后断言容器挂载点，Linux 恒等）
+    const normalizedArgs = runArgs!.split(sep).join('/');
+    expect(normalizedArgs).toContain('/users/7:');
+    expect(normalizedArgs).not.toContain('/users/8:');
     // dist 只读
     expect(runArgs).toContain(':ro');
     // 并发复用：running 状态直接复用，不再创建第二个容器
@@ -775,7 +776,8 @@ describe('container registry', () => {
     const smoke = log.find((l) => l.startsWith('run --rm'));
     expect(smoke).toBeDefined();
     expect(smoke).toContain(`-v ${join(base, 'dist')}:${join(base, 'dist')}:ro`);
-    expect(smoke).toContain(join(base, 'dist', 'harness', 'container', 'runtime-agent.js'));
+    // agent 入口串为 file:// + posix 拼接（host 段是平台路径）：归一后断言关键段
+    expect(smoke!.split(sep).join('/')).toContain('/harness/container/runtime-agent.js');
   });
 
   it('precheckRejectsImageThatCannotLoadDistAgent', async () => {

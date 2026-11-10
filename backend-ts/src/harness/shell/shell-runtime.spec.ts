@@ -174,7 +174,8 @@ describe('ShellSessionManager', () => {
     manager.close('sh-exit');
   });
 
-  it('kills the whole process group when a session closes', async () => {
+  // 进程组语义与 msys pid 空间在 Windows 不可观测：Linux 部署语义
+  it.skipIf(process.platform === 'win32')('kills the whole process group when a session closes', async () => {
     const dir = useTmpDir('mao-shell-');
     mkdirSync(join(dir, 'runtime'), { recursive: true });
     const manager = new ShellSessionManager(

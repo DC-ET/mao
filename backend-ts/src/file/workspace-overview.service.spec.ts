@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { sep as pathSep } from 'node:path';
+import { escapeLike } from '../session/message-search.js';
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { useTmpDir } from '../testing/tmp-dir.js';
@@ -276,7 +278,8 @@ describe('SessionRepository workspace usage SQL（技术方案 §3 D7）', () =>
     expect(sql).toContain("LIKE CONCAT(?, '%')");
     expect(sql).toContain('ESCAPE');
     // LIKE 通配符被转义，路径字面量（含 %）不扩大匹配范围
-    expect(params).toEqual([7, '/root/7/proj%ect', '/root/7/proj\\%ect/']);
+    // 前缀分隔符取平台 path.sep（Windows 下反斜杠会被 LIKE 转义），Linux 行为不变
+    expect(params).toEqual([7, '/root/7/proj%ect', escapeLike('/root/7/proj%ect' + pathSep)]);
   });
 
   it('aggregateWorkspaceUsageAnyUser builds per-prefix OR clauses without user filter', async () => {
@@ -293,8 +296,8 @@ describe('SessionRepository workspace usage SQL（技术方案 §3 D7）', () =>
     expect(sql.match(/workspace = \?/g)?.length).toBe(2);
     // LIKE 通配符（含 _）被转义，路径字面量不扩大匹配范围
     expect(params).toEqual([
-      '/root/feishu-chat/b/oc_a', '/root/feishu-chat/b/oc\\_a/',
-      '/root/dingtalk-chat/b/cid', '/root/dingtalk-chat/b/cid/',
+      '/root/feishu-chat/b/oc_a', escapeLike('/root/feishu-chat/b/oc_a' + pathSep),
+      '/root/dingtalk-chat/b/cid', escapeLike('/root/dingtalk-chat/b/cid' + pathSep),
     ]);
   });
 
@@ -305,7 +308,7 @@ describe('SessionRepository workspace usage SQL（技术方案 §3 D7）', () =>
     const [sql, params] = vi.mocked(queryOne).mock.calls[0]! as unknown as [string, unknown[]];
     expect(sql).toContain('LIMIT 1');
     expect(sql).toContain('ESCAPE');
-    expect(params).toEqual([7, '/root/feishu-chat/b/oc%x', '/root/feishu-chat/b/oc\\%x/']);
+    expect(params).toEqual([7, '/root/feishu-chat/b/oc%x', escapeLike('/root/feishu-chat/b/oc%x' + pathSep)]);
     queryOne.mockResolvedValueOnce(null);
     expect(await repo.existsSessionUnderWorkspace(7, '/root/feishu-chat/b/oc_x')).toBe(false);
   });

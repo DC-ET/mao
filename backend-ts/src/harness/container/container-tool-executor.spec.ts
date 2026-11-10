@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { delimiter, join, sep } from 'node:path';
 import { ContainerToolExecutor } from './container-tool-executor.js';
 import type { RuntimeEnvelope } from './runtime-channel-protocol.js';
 import { useTmpDir } from '../../testing/tmp-dir.js';
@@ -351,7 +351,10 @@ describe('container tool executor', () => {
     }), envelopeOf(userWorkspace));
     const parsed = JSON.parse(result);
     expect(parsed.error).toBeUndefined();
-    expect(parsed.output).toContain(shareSub);
+    // Windows 开发机 sh 的 pwd 输出 msys 形态（/d/...）：把期望路径转成 msys 形态比对（Linux 恒等）
+    const BS = String.fromCharCode(92)
+    const toMsys = (p: string) => /^[a-zA-Z]:/.test(p) ? `/${p[0].toLowerCase()}/${p.slice(3).split(BS).join('/')}` : p
+    expect(parsed.output).toContain(toMsys(shareSub))
   });
 
   it('shellToolRejectsForeignWorkdirInStrictMode', async () => {
@@ -431,7 +434,8 @@ describe('container tool executor', () => {
     expect(parsed.output).toContain('BRK=[1]');
     // deps bin 前置进 PATH
     expect(parsed.output).toContain(`BIN=[${depsEnv.MAO_DEPS_BIN}]`);
-    expect(parsed.output).toContain(`PATH=[${depsEnv.MAO_DEPS_BIN}:`);
+    // PATH 分隔符平台化（Windows 为 ';'）
+    expect(parsed.output).toContain(`PATH=[${depsEnv.MAO_DEPS_BIN}${delimiter}`);
   });
 
   it('injectsThreeLayerEnvVarsFromEnvelopeAndFiltersReservedKeys', async () => {
@@ -540,7 +544,7 @@ describe('container tool executor', () => {
     const parsed = JSON.parse(shellResult);
     expect(parsed.error).toBeUndefined();
     expect(parsed.output).toContain(`BIN=[${depsEnv.MAO_DEPS_BIN}]`);
-    expect(parsed.output).toContain(`PATH=[${depsEnv.MAO_DEPS_BIN}:`);
+    expect(parsed.output).toContain(`PATH=[${depsEnv.MAO_DEPS_BIN}${delimiter}`);
   });
 });
 
