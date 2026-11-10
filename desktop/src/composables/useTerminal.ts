@@ -11,11 +11,11 @@ import { installImeTextareaSweeper, shouldInstallImeSweeper } from '../utils/ter
 import { useTerminalWS } from './useTerminalWS'
 
 const DARK_THEME = {
-  background: '#252525',
-  foreground: '#cccccc',
+  background: '#232328',
+  foreground: '#e4e4e8',
   cursor: '#ffffff',
   selectionBackground: '#264f78',
-  black: '#252525',
+  black: '#232328',
   red: '#f44747',
   green: '#6a9955',
   yellow: '#d7ba7d',

@@ -104,7 +104,43 @@ describe('style.css 源码守卫（等值改写与预设块的精确计数）', 
     expect(countOccurrences(css, "html[data-font-scale='large']")).toBe(1)
     expect(countOccurrences(css, "html[data-font-scale='std']")).toBe(0)
   })
+
+  it('深色文字与边框达到对比度下限（相对卡片 / 页面底）', () => {
+    const dark = css.slice(css.indexOf('[data-theme="dark"]'), css.indexOf('Accent Presets'))
+    const token = (name: string) => {
+      const matched = dark.match(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})`))
+      expect(matched, name).not.toBeNull()
+      return matched![1]
+    }
+    const surface = token('--aw-surface')
+    const canvas = token('--aw-canvas')
+    expect(contrast(token('--aw-ink'), surface)).toBeGreaterThanOrEqual(12)
+    expect(contrast(token('--aw-ink-muted'), surface)).toBeGreaterThanOrEqual(7)
+    expect(contrast(token('--aw-ink-muted-48'), surface)).toBeGreaterThanOrEqual(5.5)
+    expect(contrast(token('--aw-ink-muted-40'), surface)).toBeGreaterThanOrEqual(4.5)
+    expect(contrast(token('--aw-border'), surface)).toBeGreaterThanOrEqual(3)
+    expect(contrast(token('--aw-divider'), canvas)).toBeGreaterThanOrEqual(2)
+    expect(css).toContain('html.dark')
+    expect(css).toContain('--el-text-color-disabled: var(--aw-ink-muted-40)')
+    expect(css).toContain('html[data-theme="dark"] body')
+  })
 })
+
+function contrast(a: string, b: string): number {
+  const lum = (hex: string) => {
+    const channel = (c: number) => {
+      const s = c / 255
+      return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+    }
+    const h = hex.slice(1)
+    const r = channel(parseInt(h.slice(0, 2), 16))
+    const g = channel(parseInt(h.slice(2, 4), 16))
+    const bl = channel(parseInt(h.slice(4, 6), 16))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl
+  }
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x)
+  return (hi + 0.05) / (lo + 0.05)
+}
 
 describe('组件硬编码守卫（components/ + views/ 剥离回退形态后 0 命中）', () => {
   /** 剥离 var(--aw-primary…) / var(--aw-accent…) 整个表达式（含回退值），回退字面量不参与守卫 */
