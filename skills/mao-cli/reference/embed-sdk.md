@@ -185,7 +185,17 @@ npm run build   # vue-tsc + vite lib 构建
 npm run size    # size-limit，gzip 预算 200KB
 ```
 
-产物接线：`desktop/package.json` 的 `prebuild` 会跑 `desktop/scripts/build-embed-sdk.cjs`，把 `sdk/embed/dist/mao-chat.js` 复制进 `desktop/public/embed/`，随 `scripts/deploy-desktop.sh` rsync 上线。**只改 SDK 源码时也要提交更新后的 `desktop/public/embed/*.js`**（产物入 git）。
+产物接线：SDK 产物**入 git**，`desktop build` 与部署都只消费已提交产物，不再重复构建 `sdk/embed`。工作流：
+
+```bash
+cd sdk/embed
+npm run build                       # 源码改完后在本地构建一次
+# 产物需手动复制进 desktop/public/embed/ 并提交：
+#   desktop/public/embed/mao-chat.js          （latest 副本）
+#   desktop/public/embed/mao-chat.v{version}.js（版本锁定副本）
+```
+
+`desktop/package.json` 的 `prebuild` 跑 `desktop/scripts/sync-embed-sdk.cjs`，只把 `desktop/public/embed/` 里的产物同步进 `desktop/dist/embed/`（源缺失时回退 `sdk/embed/dist/`，两者都没有则报错退出），随 `scripts/deploy-desktop.sh` 上线。CI 的 `embed-sdk` job 会重新构建 SDK 并比对 sha256，**改了 SDK 源码却漏提交产物会在 CI 挂掉**，所以提交前务必确认 `desktop/public/embed/*.js` 已更新。
 
 上线验证与独立 MySQL 测试见仓库 [company-sso-validation.md](../../../docs/guides/company-sso-validation.md)，默认跳过的数据库测试不能算通过。
 

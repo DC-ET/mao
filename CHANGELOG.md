@@ -1,3 +1,8 @@
+## 0.0.497 (2026-11-10)
+
+### Embed SDK
+- **产物改为提交 git，部署不再重复构建**：`/embed/mao-chat.js` 此前由每次 desktop 构建的 `prebuild` 现构 `sdk/embed` 生成，服务器上常留下「构建产物未提交」的脏改动，且线上产物与仓库可能不一致。现 SDK 产物（`desktop/public/embed/mao-chat.js` 与版本锁定副本 `mao-chat.v{version}.js`）**入 git**，改 SDK 源码后在 `sdk/embed` 跑一次 `npm run build` 并提交产物即可；desktop 构建与部署只消费已提交产物。CI `embed-sdk` job 新增产物一致性校验（重新构建并比对 sha256），**改了 SDK 源码却漏提交产物会在 CI 直接挂掉**。本次同时补上 0.3.3 产物。
+
 ## 0.0.496 (2026-11-10)
 
 ### Embed SDK
