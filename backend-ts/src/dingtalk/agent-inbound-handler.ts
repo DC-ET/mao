@@ -324,21 +324,26 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
       if (cancelFlag.get()) {
         const wasInterrupted = this.interrupted.has(sessionId);
         await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
-        await cardListener?.cancel(wasInterrupted);
+        const cancelled = await cardListener?.cancel(wasInterrupted);
         await this.options.onExecutionFinished?.(sessionId, context, executionId, 'CANCELLED');
-        return { text: cardListener == null ? (wasInterrupted ? '任务已被下一条消息中断。' : '任务已取消。') : null, phase: 'CANCELLED' };
+        const text = cardListener == null || cancelled === false
+          ? (wasInterrupted ? '任务已被下一条消息中断。' : '任务已取消。')
+          : null;
+        return { text, phase: 'CANCELLED' };
       }
       await this.options.onExecutionFinished?.(sessionId, context, executionId, 'COMPLETED');
       const text = await this.options.sessionService.getLatestAssistantReply(sessionId);
-      await cardListener?.complete(text);
-      return { text, phase: 'COMPLETED' };
+      // 卡片终态更新成功就靠卡片呈现结果，不再另发一条消息；更新失败（网络抖动/模板问题）
+      // 才回落文本，避免用户两边都收不到。与飞书同口径。
+      const completed = await cardListener?.complete(text);
+      return { text: cardListener == null || completed === false ? text : null, phase: 'COMPLETED' };
     } catch (error) {
       console.error(`钉钉 Agent 执行失败, sessionId=${sessionId}`, error);
       await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
       const failText = error instanceof Error ? error.message : 'Agent 执行异常';
-      await cardListener?.fail(failText);
+      const failed = await cardListener?.fail(failText);
       await this.options.onExecutionFinished?.(sessionId, context, executionId, 'FAILED', failText);
-      return { text: failText, phase: 'FAILED' };
+      return { text: cardListener == null || failed === false ? failText : null, phase: 'FAILED' };
     } finally {
       if (swap && savedId != null) {
         await this.options.sessionService.replaceMessageContent?.(savedId, built.persisted).catch((error) => {
@@ -376,22 +381,28 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
       );
       if (cancelFlag.get()) {
         await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
-        await cardListener.cancel(this.interrupted.has(sessionId));
+        const cancelled = await cardListener.cancel(this.interrupted.has(sessionId));
         await this.options.onExecutionFinished?.(sessionId, stub, executionId, 'CANCELLED');
         await this.options.afterDelivery?.(sessionId, 'CANCELLED');
+        if (!cancelled) await this.reply(await this.replyContext(sessionId, stub), '任务已取消。', sessionId);
         return 'CANCELLED';
       }
       await this.options.onExecutionFinished?.(sessionId, stub, executionId, 'COMPLETED');
       const text = await this.options.sessionService.getLatestAssistantReply(sessionId);
-      await cardListener.complete(text);
-      if (text) await this.reply(await this.replyContext(sessionId, stub), text, sessionId);
+      const completed = await cardListener.complete(text);
+      // 卡片终态更新成功就靠卡片呈现结果，不再另发一条消息；失败才回落文本（与 runExecution 同口径）。
+      if (!completed && text !== '') {
+        await this.reply(await this.replyContext(sessionId, stub), text, sessionId);
+      }
       await this.options.afterDelivery?.(sessionId, 'COMPLETED');
       return 'COMPLETED';
     } catch (error) {
       const failText = error instanceof Error ? error.message : 'Agent 执行异常';
-      await cardListener?.fail(failText);
+      const failed = await cardListener?.fail(failText);
       await this.options.onExecutionFinished?.(sessionId, stub, '', 'FAILED', failText);
-      if (failText) await this.reply(await this.replyContext(sessionId, stub), failText, sessionId);
+      if (failed === false && failText !== '') {
+        await this.reply(await this.replyContext(sessionId, stub), failText, sessionId);
+      }
       await this.options.afterDelivery?.(sessionId, 'FAILED');
       return 'FAILED';
     } finally {
