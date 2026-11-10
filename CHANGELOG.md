@@ -1,5 +1,16 @@
 # 技能分发包调整说明
 
+## 0.0.510 (2026-11-10)
+
+### 后端
+- **管理后台「容器管理」纳入 Docker 未在册残留容器**：此前列表只含当前后端进程在册的容器（注册表纯内存），后端重启 / 崩溃后遗留的 Docker 容器（优雅重启产生的 exited、异常残骸的 running）完全不可见，「重建全部」也覆盖不到，只能靠 `container-gc.sh` 定时静默清理。现列表合并 `docker ps -a`（按 `mao.runtime=user` label 过滤）：未在册容器标记 `tracked=false` 一并展示（含 Docker 上报的存在时长）；docker 扫描失败时降级为仅在册列表，不影响接口可用。`POST /v1/users/:id/container/recycle` 语义扩展：对未在册残留容器执行 `docker rm -f` 并返回新增的 `removed` 状态（按容器名 + 运行时 label 精确匹配，绝不误删外部容器），下次使用时按最新配置自动重建（挂载数据在宿主机目录，不受影响）；整用户聚合回收同时清扫在册容器与该用户的残留容器（聚合优先级 failed > skipped-busy > rebuilt > removed）。孤儿删除与并发 `ensureRunning` 经同键串行锁互斥，锁内复核防止误删刚被纳管的新容器。旧命名 `mao-user-{纯数字}` 孤儿容器仍由 `container-gc.sh` 清理。容器列表 / 回收结果契约类型下沉 `@mao/contracts`。
+- **管理后台新增「在线设备」实时查询接口**：新增 `GET /v1/statistics/online-devices`（权限 `analytics:read`），返回当前 WS 在线连接实时快照——总数（连接数 / 去重在线用户数 / 去重设备数）、按客户端类型（桌面客户端 / 安卓 App / 终端 CLI / 浏览器 Web / 页面嵌入）分组计数与按用户的连接列表（设备名 / 平台 / 设备 ID / 连接时长 / 认证到期 / 认证来源）。数据源为 WS 连接注册表纯内存快照（`StreamingWsRegistry.listConnections()`，register 时新增 connectedAt 记录），零新增表零迁移；「在线」= WS 连接存活，断线即离线，无历史留存。去重设备口径：electron / cli 按 `(userId, deviceId)` 去重（同机桌面多窗口与 mao-agent CLI 共用 device.json 算一台），安卓壳逐条计数，browser / embed 无设备标识不计入设备数。响应契约类型下沉 `@mao/contracts`（statistics.ts）。只读快照不触发过期连接的惰性关闭（无 close 副作用）。
+
+### admin
+- **容器管理面板支持查看与清理 Docker 残留容器**：未在册容器在状态列显示「未在册」标签（悬停说明来源与处置方式），启动时间列显示 Docker 上报的存在时长，操作列提供「删除」（确认弹窗说明「下次使用时自动重建」语义）；「重建全部」覆盖未在册残留容器，确认与结果汇总区分重建 / 删除计数。列表与回收结果类型改从 `@mao/contracts` 消费，不再本地手写。
+- **新增「在线设备」菜单页**：与「用量分析」同级（overview 组，权限 `analytics:read`）。统计卡展示在线连接 / 在线用户 / 去重设备三个数字与五类客户端分组计数；表格按用户列出每条在线连接（客户端类型标签、设备名 / 平台 / 设备 ID 一键复制、连接时长、认证到期、认证来源）。15s 自动轮询 + 手动刷新 + 「更新于」时间戳；页面切走自动停轮询（keepAlive onActivated/onDeactivated），轮询失败静默保留旧数据、靠「更新于」暴露陈旧，避免每 15s 弹红条。客户端类型中文名走 `Record<WsClientType, string>` 穷尽汉化表（联合扩张漏项编译期即失败）。
+
+
 ## 0.0.509 (2026-11-10)
 
 ### mao-cli

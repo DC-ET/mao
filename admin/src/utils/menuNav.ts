@@ -21,7 +21,8 @@ import {
   Wallet,
   Key,
   Aim,
-  Operation
+  Operation,
+  Cellphone
 } from '@element-plus/icons-vue'
 
 export interface MenuItemDef {
@@ -44,7 +45,8 @@ export const menuGroups: MenuGroupDef[] = [
     id: 'overview',
     label: '',
     items: [
-      { index: '/analytics', label: '用量分析', icon: TrendCharts, permission: 'analytics:read' }
+      { index: '/analytics', label: '用量分析', icon: TrendCharts, permission: 'analytics:read' },
+      { index: '/online-devices', label: '在线设备', icon: Cellphone, permission: 'analytics:read' }
     ]
   },
   {

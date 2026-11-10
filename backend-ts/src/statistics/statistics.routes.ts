@@ -30,4 +30,10 @@ export function registerStatisticsRoutes(app: FastifyInstance, deps: StatisticsR
     await requireRequestPermission(deps.permissionService, req, 'analytics:read');
     sendJson(reply, 200, ok(await deps.statistics.getUserStats()));
   });
+
+  // 当前在线设备（WS 连接实时快照，技术方案 2026-11-10）
+  app.get('/v1/statistics/online-devices', async (req, reply) => {
+    await requireRequestPermission(deps.permissionService, req, 'analytics:read');
+    sendJson(reply, 200, ok(await deps.statistics.getOnlineDevices()));
+  });
 }

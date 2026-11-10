@@ -2,6 +2,13 @@ import type { Db } from '../db/db.js';
 import { notDeleted } from '../db/db.js';
 import type { LlmModel, UserRow } from '../domain/types.js';
 import { shanghaiYmd } from '../common/json.js';
+import type { OnlineDeviceConnection, OnlineDevicesVo, WsClientType } from '@mao/contracts';
+import type { WsConnectionSnapshot } from '../session/ws/streaming-ws-registry.js';
+
+/** 在线连接快照来源（结构化注入，statistics 不依赖 StreamingWsRegistry 实现，测试注假实例即可）。 */
+export interface WsRegistrySnapshot {
+  listConnections(): WsConnectionSnapshot[];
+}
 
 export interface StatisticsStore {
   countAgents(): Promise<number>;
@@ -107,7 +114,7 @@ export class StatisticsDbStore implements StatisticsStore {
 }
 
 export class StatisticsService {
-  constructor(private readonly store: StatisticsStore) {}
+  constructor(private readonly store: StatisticsStore, private readonly wsRegistry?: WsRegistrySnapshot) {}
 
   /**
    * 全局累计概览。7 个计数互不依赖，并行发出：
@@ -168,6 +175,66 @@ export class StatisticsService {
       });
     }
     return stats;
+  }
+
+  /**
+   * 当前在线设备（WS 连接）实时快照（技术方案 2026-11-10）。纯内存读 + 一次用户表查询；
+   * wsRegistry 未注入（内部装配未传）时返回空快照，行为等同「无人在线」，不抛错。
+   *
+   * 去重设备数口径：electron / cli 连接按 (userId, deviceId) 去重（同机多窗口/桌面+CLI 共用
+   * device.json 算一台）+ android 连接逐条计数（壳不自报 deviceId）；browser / embed 无设备
+   * 标识不计入设备数——统计卡必须同时展示连接数与设备数，避免拿浏览器连接数当设备数。
+   */
+  async getOnlineDevices(): Promise<OnlineDevicesVo> {
+    const connections = this.wsRegistry?.listConnections() ?? [];
+    const users = await this.store.listUsers();
+    const userById = new Map<number, UserRow>();
+    for (const user of users) {
+      if (user.id != null) userById.set(user.id, user);
+    }
+
+    // 字面量穷尽五类：WsClientType 联合扩张时这里因缺键编译期报错，与 admin 汉化表同机制
+    const byClientType: Record<WsClientType, number> = { electron: 0, android: 0, cli: 0, browser: 0, embed: 0 };
+    const deviceKeys = new Set<string>();
+    const grouped = new Map<number, OnlineDeviceConnection[]>();
+    for (const conn of connections) {
+      byClientType[conn.clientType] += 1;
+      if (conn.device != null) {
+        deviceKeys.add(`${conn.userId}:${conn.device.id}`);
+      } else if (conn.clientType === 'android') {
+        deviceKeys.add(`${conn.userId}:android:${conn.wsSessionId}`);
+      }
+      let list = grouped.get(conn.userId);
+      if (!list) {
+        list = [];
+        grouped.set(conn.userId, list);
+      }
+      list.push({
+        wsSessionId: conn.wsSessionId,
+        clientType: conn.clientType,
+        connectedAt: conn.connectedAt,
+        authExpiresAt: conn.authExpiresAt,
+        authSource: conn.authSource,
+        device: conn.device,
+      });
+    }
+
+    const userEntries = [...grouped.entries()].map(([userId, conns]) => {
+      const user = userById.get(userId);
+      return {
+        userId,
+        username: user?.username ?? '(已删除用户)',
+        displayName: user?.displayName ?? null,
+        connections: conns,
+      };
+    });
+    userEntries.sort((a, b) => a.userId - b.userId);
+
+    return {
+      total: { connections: connections.length, users: grouped.size, devices: deviceKeys.size },
+      byClientType,
+      users: userEntries,
+    };
   }
 }
 

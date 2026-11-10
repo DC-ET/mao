@@ -548,7 +548,8 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
   const feishuMonitor = new FeishuMonitorService(cfg.feishu.bot, d.feishuBots, feishuInboundProcessor, async (data: any) => feishuCardActionService.handle(data, ''));
 
   const analyticsService = new AnalyticsService(new AnalyticsDbStore(db));
-  const statisticsService = new StatisticsService(new StatisticsDbStore(db));
+  // wsRegistry：在线设备页快照来源（create-app 装配时已传入，见 FeishuHandlerDeps 的 any 透传）
+  const statisticsService = new StatisticsService(new StatisticsDbStore(db), d.wsRegistry);
   const adminAnalytics = new AdminAnalyticsService(statisticsService, new AdminAnalyticsDbStore(db));
   const httpToolStatsStore = new AdminAnalyticsDbStore(db);
   const mcpValidator = new McpServerValidatorImpl(d.mcpServerLookup);

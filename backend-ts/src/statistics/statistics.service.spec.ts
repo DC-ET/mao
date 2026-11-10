@@ -134,3 +134,90 @@ describe('StatisticsService', () => {
     expect(stats[1].lastLoginAt).toBeNull();
   });
 });
+
+describe('StatisticsService getOnlineDevices（在线设备实时快照）', () => {
+  function storeWithUsers(users: Array<{ id?: number; username?: string; displayName?: string | null }>): StatisticsStore {
+    return {
+      countAgents: vi.fn(),
+      countModels: vi.fn(),
+      countUsers: vi.fn(),
+      countSessions: vi.fn(),
+      countMessages: vi.fn(),
+      countSessionsSince: vi.fn(),
+      countMessagesSince: vi.fn(),
+      selectAgentUsageStats: vi.fn(),
+      listModels: vi.fn(),
+      countMessagesByModel: vi.fn(),
+      selectTokenCountByModel: vi.fn(),
+      sumUsageByModelId: vi.fn(),
+      listUsers: vi.fn(async () => users as never),
+      countSessionsByUser: vi.fn(),
+    };
+  }
+
+  it('aggregatesTotalsByClientTypeAndDedupesDevices', async () => {
+    const connections = [
+      // 同一用户同机：桌面多窗口（同 deviceId）+ CLI 进程（共用 device.json）→ 三条连接一台设备
+      { wsSessionId: 'ws-1', userId: 1, clientType: 'electron', connectedAt: 100, authExpiresAt: null, authSource: null, device: { id: 'dev-a', name: 'Mac', platform: 'darwin' } },
+      { wsSessionId: 'ws-2', userId: 1, clientType: 'electron', connectedAt: 200, authExpiresAt: null, authSource: null, device: { id: 'dev-a', name: 'Mac', platform: 'darwin' } },
+      { wsSessionId: 'ws-3', userId: 1, clientType: 'cli', connectedAt: 300, authExpiresAt: null, authSource: null, device: { id: 'dev-a', name: 'Mac', platform: 'darwin' } },
+      // 另一台设备
+      { wsSessionId: 'ws-4', userId: 1, clientType: 'cli', connectedAt: 400, authExpiresAt: null, authSource: null, device: { id: 'dev-b', name: 'Win', platform: 'win32' } },
+      // 安卓壳：逐条计入设备数
+      { wsSessionId: 'ws-5', userId: 2, clientType: 'android', connectedAt: 500, authExpiresAt: null, authSource: null, device: null },
+      // 浏览器两条连接：计入连接数，不计入设备数
+      { wsSessionId: 'ws-6', userId: 2, clientType: 'browser', connectedAt: 600, authExpiresAt: 999, authSource: 'company_sso', device: null },
+      { wsSessionId: 'ws-7', userId: 2, clientType: 'browser', connectedAt: 700, authExpiresAt: null, authSource: null, device: null },
+    ];
+    const service = new StatisticsService(storeWithUsers([
+      { id: 1, username: 'alice', displayName: 'Alice' },
+      { id: 2, username: 'bob', displayName: null },
+    ]), { listConnections: vi.fn(() => connections as never) });
+
+    const vo = await service.getOnlineDevices();
+
+    expect(vo.total).toEqual({ connections: 7, users: 2, devices: 3 }); // dev-a + dev-b + android 逐条（ws-5）；browser 不计入
+    expect(vo.byClientType).toEqual({ electron: 2, android: 1, cli: 2, browser: 2, embed: 0 });
+    expect(vo.users.map((u) => u.username)).toEqual(['alice', 'bob']);
+    expect(vo.users[0].connections).toHaveLength(4);
+    expect(vo.users[0].connections[0]).toMatchObject({ wsSessionId: 'ws-1', device: { id: 'dev-a' } });
+    expect(vo.users[1].displayName).toBeNull();
+    expect(vo.users[1].connections[0]).toMatchObject({ wsSessionId: 'ws-5', authExpiresAt: null });
+    expect(vo.users[1].connections[1]).toMatchObject({ wsSessionId: 'ws-6', authExpiresAt: 999, authSource: 'company_sso' });
+  });
+
+  it('countsAndroidConnectionsAsDevicesAndExcludesBrowserEmbedFromDevices', async () => {
+    const connections = [
+      { wsSessionId: 'ws-a', userId: 1, clientType: 'android', connectedAt: 1, authExpiresAt: null, authSource: null, device: null },
+      { wsSessionId: 'ws-b', userId: 1, clientType: 'android', connectedAt: 2, authExpiresAt: null, authSource: null, device: null },
+      { wsSessionId: 'ws-c', userId: 1, clientType: 'browser', connectedAt: 3, authExpiresAt: null, authSource: null, device: null },
+      { wsSessionId: 'ws-d', userId: 1, clientType: 'embed', connectedAt: 4, authExpiresAt: null, authSource: null, device: null },
+    ];
+    const service = new StatisticsService(storeWithUsers([{ id: 1, username: 'alice' }]), { listConnections: vi.fn(() => connections as never) });
+
+    const vo = await service.getOnlineDevices();
+
+    expect(vo.total).toEqual({ connections: 4, users: 1, devices: 2 });
+    expect(vo.byClientType).toEqual({ electron: 0, android: 2, cli: 0, browser: 1, embed: 1 });
+  });
+
+  it('placeholdersConnectionsOfDeletedUsers', async () => {
+    const connections = [
+      { wsSessionId: 'ws-1', userId: 99, clientType: 'cli', connectedAt: 1, authExpiresAt: null, authSource: null, device: { id: 'dev-x', name: 'X', platform: 'linux' } },
+    ];
+    const service = new StatisticsService(storeWithUsers([{ id: 1, username: 'alice' }]), { listConnections: vi.fn(() => connections as never) });
+
+    const vo = await service.getOnlineDevices();
+
+    expect(vo.total).toEqual({ connections: 1, users: 1, devices: 1 });
+    expect(vo.users[0]).toMatchObject({ userId: 99, username: '(已删除用户)', displayName: null });
+  });
+
+  it('returnsEmptySnapshotWithoutRegistryInjected', async () => {
+    const service = new StatisticsService(storeWithUsers([{ id: 1, username: 'alice' }]));
+    const vo = await service.getOnlineDevices();
+    expect(vo.total).toEqual({ connections: 0, users: 0, devices: 0 });
+    expect(vo.byClientType).toEqual({ electron: 0, android: 0, cli: 0, browser: 0, embed: 0 });
+    expect(vo.users).toEqual([]);
+  });
+});
