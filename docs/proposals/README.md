@@ -35,6 +35,8 @@
 | [中心 Tab 效率补完](2026-11-08-center-tab-efficiency.md) | 25 | 技术方案：[docs/plan/2026-11-08-center-tab-efficiency-technical-design.md](../plan/2026-11-08-center-tab-efficiency-technical-design.md) |
 | [消息代码块折叠与换行](2026-11-08-message-code-block-polish.md) | 26 | 技术方案：[docs/plan/2026-11-08-message-code-block-polish-technical-design.md](../plan/2026-11-08-message-code-block-polish-technical-design.md) |
 | [外观个性化与视觉令牌收编](2026-11-08-appearance-personalization.md) | 27 | 技术方案：[docs/plan/2026-11-08-appearance-personalization-technical-design.md](../plan/2026-11-08-appearance-personalization-technical-design.md)（密度档与暗色收编随方案取消，见其 §3.2 勘误） |
+| [输入效率包](2026-11-10-rich-paste-annotate.md) | 28 | 技术方案：[docs/plan/2026-11-10-rich-paste-annotate-technical-design.md](../plan/2026-11-10-rich-paste-annotate-technical-design.md) |
+| [工具结果表格化视图](2026-11-10-tool-result-table-view.md) | 28 | 技术方案：[docs/plan/2026-11-10-tool-result-table-view-technical-design.md](../plan/2026-11-10-tool-result-table-view-technical-design.md) |
 
 ## 已落地
 
@@ -137,6 +139,7 @@
 | [会话图片快览](2026-11-08-session-image-gallery.md) | 26 | 图片密集会话是低频场景，暂无需求 |
 | [流式渲染平滑](2026-11-08-streaming-render-smoothness.md) | 27 | 评审否决（2026-11-08） |
 | [设置可达性](2026-11-08-settings-discoverability.md) | 27 | 评审否决（2026-11-08） |
+| [会话阅读视图](2026-11-10-reading-mode.md) | 28 | 评审否决（2026-11-10） |
 
 ## 产品边界
 
@@ -179,3 +182,4 @@
 | 25 | 2026-11-08 | 消息菜单、Tab 效率、会话快切 |
 | 26 | 2026-11-08 | 图片快览、代码块折叠 |
 | 27 | 2026-11-08 | 外观个性化、流式渲染平滑、设置可达性 |
+| 28 | 2026-11-10 | 阅读视图、输入效率包、工具结果表格化 |
