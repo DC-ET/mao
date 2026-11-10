@@ -28,6 +28,7 @@ export type { PageReadToolName, PageWriteToolName } from './page';
 export type { MemoryScope, MemoryStatus, MemorySource } from './memory';
 export type { ApprovalRuleType, ApprovalRuleScope, ApprovalHint } from './approval-rule';
 export type { FeedbackReason, FeedbackSource, FeedbackStatus } from './feedback';
+export type { ContainerEntrySummary, ContainerRecycleStatus, ContainerRecycleResult } from './container';
 export type { ToolVO } from './tool';
 export type { UserInfoVO, LoginVO } from './user';
 export type { ModelVO, ModelPageResult, ModelListFilter, ClientImpersonation, ApiProtocol } from './model';

@@ -989,7 +989,7 @@ describe('container registry', () => {
     const all = await registry.recycleUser(7, { force: true });
     expect(all).toEqual({ userId: 7, agentId: null, status: 'rebuilt' });
     // listEntries 按 (userId, agentId) 升序、含 agentId
-    const summary = registry.listEntries().map((e) => `${e.userId}/${e.agentId}`);
+    const summary = (await registry.listEntries()).map((e) => `${e.userId}/${e.agentId}`);
     expect(summary).toContain('7/5');
     expect(summary).toContain('7/6');
   });
@@ -1001,15 +1001,15 @@ describe('container registry', () => {
     }
     const log: string[] = [];
     const { registry } = makeRegistry(base, log);
-    expect(registry.listEntries()).toEqual([]);
+    expect(await registry.listEntries()).toEqual([]);
     await registry.ensureRunning(7, 5);
-    const [summary] = registry.listEntries();
+    const [summary] = await registry.listEntries();
     expect(summary).toMatchObject({
       userId: 7, containerName: 'mao-user-7-agent-5', state: 'running', busy: false,
     });
     expect(summary!.startedAtMs).toBeGreaterThan(0);
     registry.reportRuntimeStatus(7, 5, { shellSessions: 0, pendingTasks: 2, attachedTerminals: 0 });
-    expect(registry.listEntries()[0]!.busy).toBe(true);
+    expect((await registry.listEntries())[0]!.busy).toBe(true);
   });
 
   // —— 容器内代码版本漂移自动收敛（V178，技术方案 §3.4/§3.5） ——
@@ -1022,7 +1022,7 @@ describe('container registry', () => {
     await registry.ensureRunning(7, 5);
     // 容器 agent 上报旧版本 → 空闲时自动重启进程（stop + start，不 rm/run 重建）
     registry.reportAgentHello(7, 5, 'old-1');
-    expect(registry.listEntries()[0]).toMatchObject({
+    expect((await registry.listEntries())[0]).toMatchObject({
       runtimeBuild: 'old-1', hostRuntimeBuild: 'host-1', pendingUpgrade: true,
     });
     log.length = 0;
@@ -1032,7 +1032,7 @@ describe('container registry', () => {
     expect(log.filter((line) => line.startsWith('start mao-user-7')).length).toBe(1);
     // 重启后 agent 上报新版本 → 一致，不再动作
     registry.reportAgentHello(7, 5, 'host-1');
-    expect(registry.listEntries()[0]!.pendingUpgrade).toBe(false);
+    expect((await registry.listEntries())[0]!.pendingUpgrade).toBe(false);
     log.length = 0;
     await registry.ensureRunning(7, 5);
     expect(dockerOps(log)).toEqual([]);
@@ -1147,8 +1147,155 @@ describe('container registry', () => {
     await registry.ensureRunning(7, 5);
     expect(dockerOps(log)).toEqual([]);
     expect(log.some((line) => line.startsWith('start mao-user-7'))).toBe(false);
-    const summary = registry.listEntries()[0]!;
+    const summary = (await registry.listEntries())[0]!;
     expect(summary.hostRuntimeBuild).toBeNull();
     expect(summary.pendingUpgrade).toBe(false);
+  });
+
+  // —— 管理后台容器管理：纳入 Docker 未在册残留容器（2026-11-10） ——
+
+  /** 构造返回固定 ps 输出的 DockerCli（ps 参数照记日志供断言；其余命令转发 inner）。 */
+  function fakePsDocker(log: string[], psOutput: () => string): DockerCli {
+    const inner = fakeDocker(log);
+    return {
+      async run(args) {
+        if (args[0] === 'ps') {
+          log.push(args.join(' '));
+          return psOutput();
+        }
+        return inner.run(args);
+      },
+    };
+  }
+
+  it('listsTrackedStoppedEntryWithTrackedFlag', async () => {
+    // 停止的在册容器照常列出（tracked=true）：idle 回收 stop 不 rm，条目仍在注册表
+    const base = makeBase('mao-registry-list-stopped-');
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log, {}, fakePsDocker(log, () => ''));
+    await registry.ensureRunning(7, 5);
+    registry.getEntry(7, 5)!.lastUsedAtMs = Date.now() - 100 * 60_000;
+    await registry.reapExpired(); // → stopped
+    const rows = await registry.listEntries();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      userId: 7, agentId: 5, state: 'stopped', tracked: true, busy: false, ageText: null,
+    });
+    expect(rows[0]!.startedAtMs).toBeGreaterThan(0);
+  });
+
+  it('listsUntrackedDockerLeftovers', async () => {
+    // 合并 Docker 残留（不在注册表）：exited/dead → stopped、running → running；
+    // 旧命名孤儿（无 agent label）与非数字 label 行跳过；按 (userId, agentId) 排序
+    const base = makeBase('mao-registry-list-leftovers-');
+    const psOutput = [
+      'mao-user-7-agent-5\t7\t5\trunning\tAbout a minute ago',
+      'mao-user-7-agent-6\t7\t6\texited\t2 hours ago',
+      'mao-user-9-agent-1\t9\t1\tdead\t3 days ago',
+      'mao-user-7\t7\t\trunning\t5 days ago', // 旧命名孤儿：container-gc.sh 的辖区
+      'junk\tabc\t5\texited\t1 day ago',      // 非数字 label：不可能是本系统容器
+      '',
+    ].join('\n');
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log, {}, fakePsDocker(log, () => psOutput));
+    expect(await registry.listEntries()).toEqual([
+      {
+        userId: 7, agentId: 5, containerName: 'mao-user-7-agent-5', state: 'running',
+        tracked: false, busy: false, startedAtMs: 0, lastUsedAtMs: 0,
+        runtimeBuild: null, hostRuntimeBuild: null, pendingUpgrade: false, ageText: 'About a minute ago',
+      },
+      {
+        userId: 7, agentId: 6, containerName: 'mao-user-7-agent-6', state: 'stopped',
+        tracked: false, busy: false, startedAtMs: 0, lastUsedAtMs: 0,
+        runtimeBuild: null, hostRuntimeBuild: null, pendingUpgrade: false, ageText: '2 hours ago',
+      },
+      {
+        userId: 9, agentId: 1, containerName: 'mao-user-9-agent-1', state: 'stopped',
+        tracked: false, busy: false, startedAtMs: 0, lastUsedAtMs: 0,
+        runtimeBuild: null, hostRuntimeBuild: null, pendingUpgrade: false, ageText: '3 days ago',
+      },
+    ]);
+  });
+
+  it('degradesToTrackedOnlyWhenDockerScanFails', async () => {
+    // docker ps 失败：列表降级为仅在册条目（不整体失败）；聚合回收不受影响
+    const base = makeBase('mao-registry-list-ps-fail-');
+    const log: string[] = [];
+    const inner = fakeDocker(log);
+    const docker: DockerCli = {
+      async run(args) {
+        if (args[0] === 'ps') throw new Error('docker ps failed: cannot connect to daemon');
+        return inner.run(args);
+      },
+    };
+    const { registry } = makeRegistry(base, log, {}, docker);
+    await registry.ensureRunning(7, 5);
+    const rows = await registry.listEntries();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ userId: 7, agentId: 5, tracked: true });
+    log.length = 0;
+    const result = await registry.recycleUser(7, { force: true });
+    expect(result.status).toBe('rebuilt');
+    expect(dockerOps(log)).toEqual(['stop -t', 'rm -f', 'run -d']);
+  });
+
+  it('removesUntrackedLeftoverOnSingleRecycle', async () => {
+    // 指定 agentId + 无在册条目：Docker 有残留 → rm -f（removed）；无残留 → none（不 rm）
+    const base = makeBase('mao-registry-recycle-leftover-');
+    let psResult = 'abc123\n';
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log, {}, fakePsDocker(log, () => psResult));
+    const removed = await registry.recycleUser(7, { agentId: 5 });
+    expect(removed).toEqual({ userId: 7, agentId: 5, status: 'removed' });
+    expect(dockerOps(log)).toEqual(['rm -f']);
+    // ps 窄过滤（精确名 + 运行时 label 三重匹配，绝不误删外部容器）与 rm 目标名
+    const psArgs = log.find((l) => l.startsWith('ps -a'))!;
+    expect(psArgs).toContain('--filter name=^/mao-user-7-agent-5$');
+    expect(psArgs).toContain('--filter label=mao.runtime=user');
+    expect(psArgs).toContain('--filter label=mao.user=7');
+    expect(psArgs).toContain('--filter label=mao.agent=5');
+    expect(log.some((l) => l.startsWith('rm -f mao-user-7-agent-5'))).toBe(true);
+
+    log.length = 0;
+    psResult = '';
+    const none = await registry.recycleUser(7, { agentId: 5 });
+    expect(none).toEqual({ userId: 7, agentId: 5, status: 'none' });
+    expect(dockerOps(log)).toEqual([]);
+  });
+
+  it('aggregateRecycleSweepsUntrackedLeftovers', async () => {
+    // 整用户回收 = 在册条目（停→rm→重建）∪ Docker 残留（rm）；其他用户容器不动；
+    // 聚合优先级：有 rebuilt 即 rebuilt；忙碌在册（skipped-busy）盖过 removed；
+    // 只有 removed 时聚合结果为 removed
+    const base = makeBase('mao-registry-recycle-sweep-');
+    const psOutput = [
+      'mao-user-7-agent-5\t7\t5\trunning\tAbout a minute ago',
+      'mao-user-7-agent-6\t7\t6\texited\t2 hours ago',
+      'mao-user-9-agent-1\t9\t1\texited\t3 days ago',
+      '',
+    ].join('\n');
+    const log: string[] = [];
+    const { registry } = makeRegistry(base, log, {}, fakePsDocker(log, () => psOutput));
+    await registry.ensureRunning(7, 5);
+    log.length = 0;
+    const rebuilt = await registry.recycleUser(7, { force: true });
+    expect(rebuilt).toEqual({ userId: 7, agentId: null, status: 'rebuilt' });
+    expect(log.some((l) => l.startsWith('stop -t 10 mao-user-7-agent-5'))).toBe(true);
+    expect(log.some((l) => l.startsWith('rm -f mao-user-7-agent-6'))).toBe(true);
+    expect(log.some((l) => l.startsWith('rm -f mao-user-9-agent-1'))).toBe(false);
+    expect(dockerOps(log).filter((op) => op === 'rm -f').length).toBe(2); // 在册重建的 rm + 残留 rm
+
+    // 忙碌在册（未强制）盖过 removed
+    registry.reportRuntimeStatus(7, 5, { shellSessions: 1, pendingTasks: 0, attachedTerminals: 0 });
+    const busy = await registry.recycleUser(7);
+    expect(busy.status).toBe('skipped-busy');
+
+    // 无在册条目、只有残留 → removed
+    const log2: string[] = [];
+    const { registry: reg2 } = makeRegistry(base, log2, {}, fakePsDocker(log2, () => psOutput));
+    const onlyRemoved = await reg2.recycleUser(7, { force: true });
+    expect(onlyRemoved).toEqual({ userId: 7, agentId: null, status: 'removed' });
+    expect(log2.some((l) => l.startsWith('rm -f mao-user-7-agent-6'))).toBe(true);
+    expect(log2.some((l) => l.startsWith('rm -f mao-user-9-agent-1'))).toBe(false);
   });
 });

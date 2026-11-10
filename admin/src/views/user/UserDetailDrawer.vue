@@ -258,6 +258,7 @@ async function recycleContainer() {
     const { data } = await api.post(`/users/${props.user.id}/container/recycle`, {})
     const status = data?.status as string | undefined
     if (status === 'rebuilt') ElMessage.success('容器已重建')
+    else if (status === 'removed') ElMessage.success('残留容器已删除（后端重启后不在册），下次使用时自动按最新配置重建')
     else if (status === 'none') ElMessage.info('该用户当前没有在册容器，下次使用时按最新配置创建')
     else if (status === 'skipped-busy') ElMessage.warning('容器内有正在运行的任务，已跳过；可在「系统设置 → 容器管理」勾选强制重建')
     else ElMessage.error(`重建失败：${data?.error || '未知错误'}`)
