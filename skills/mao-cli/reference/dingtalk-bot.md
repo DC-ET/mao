@@ -26,7 +26,17 @@
 
 ## 使用流程
 
-1. 开放平台创建企业内部应用，机器人收消息选 Stream 并发布。权限至少包括企业内机器人发送消息、卡片实例写、上传媒体。登录应用配置回调，并开通「根据 unionid 获取用户」和通讯录个人信息读。卡片平台发布进度卡、排队卡，按钮 actionId 为 `cancel`、`retry`、`run`。
+1. 开放平台创建企业内部应用，机器人收消息选 Stream 并发布。在「权限管理」按权限点搜索并开通下表，然后到「版本管理与发布」发一版，权限才生效。登录应用（`DINGTALK_OAUTH_CLIENT_ID` 对应的应用，可以就是这个机器人应用）还要在「登录与分享」登记回调。卡片平台发布进度卡、排队卡，按钮 actionId 为 `cancel`、`retry`、`run`。
+
+   | 后台名称 | 权限点 | 用途 |
+   |----------|--------|------|
+   | 企业内机器人发送消息权限 | `qyapi_robot_sendmsg` | 私聊 / 群聊回复，以及下载用户发来的图片、文件 |
+   | 互动卡片实例写权限 | `Card.Instance.Write` | 投放并更新进度卡、排队卡 |
+   | 成员信息读权限 | `qyapi_get_member` | 绑定：用 unionId 换企业内 userid。接口名是「根据 unionid 获取用户」 |
+   | 通讯录个人信息读权限 | `Contact.User.Read` | 绑定：授权后读取当前用户的 unionId |
+   | 调用企业 API 的基本权限 | `qyapi_base` | 上传图片、文件。企业内部应用通常默认已有 |
+
+   绑定用的两项（`qyapi_get_member`、`Contact.User.Read`）开在登录应用上；发消息、卡片和上传开在机器人应用上。两边是同一个应用时一次开齐。
 2. 后端配置 `APP_DINGTALK_BOT_SECRET`、`DINGTALK_OAUTH_CLIENT_ID` / `DINGTALK_OAUTH_SECRET` / `DINGTALK_OAUTH_REDIRECT_URI`，打开 `DINGTALK_BOT_ENABLED`。登录应用必须和机器人在同一企业。
 3. 管理后台添加机器人：内部 App Key、名称、Client ID、Client Secret、Robot Code、可选 Agent / 模型 / 模板 ID，然后启用。
 4. 用户在「设置 → 渠道绑定 → 钉钉Bot」绑定，或在钉钉里给机器人发一条消息，按卡片短链登录后再授权。
@@ -61,6 +71,7 @@
 
 - **保存机器人报「未配置 APP_DINGTALK_BOT_SECRET」**：先配密钥再重启。
 - **钉钉里回复「管理员尚未配置钉钉登录」**：补齐 `DINGTALK_OAUTH_*`，回调地址要和开放平台「登录与分享」一致。
+- **绑定页提示「没有调用该接口的权限」**：登录应用未开通「成员信息读权限」（`qyapi_get_member`）。到该应用「权限管理」开通后发布版本，再重新绑定。若报错里的权限点是 `Contact.User.Read`，同样开通「通讯录个人信息读权限」并发布。
 - **全员无法识别身份**：应用未发布，回调里没有 `senderStaffId`。发布后再测。外部群成员没有企业 userid，第一期不支持。
 - **已绑定其他账号**：一个 userid 只能绑一个 Mao 用户，一个 Mao 用户只能绑一个钉钉身份。先解绑再绑，不会自动改绑。
 - **有时没反应**：同一个 Client ID 只能有一条 Stream。本地调试用另一个应用。配重了也不会静默共存——重复的那条会被标记为失败，它此前建立的连接会被一并断开，只保留一条；反过来已持有连接的认领方不会被误杀。
