@@ -299,40 +299,39 @@ html.android-capacitor .terminal-keybar-btn {
 
 /* ============================================
    Dark Mode
-   页面后退、卡片抬起、控件边框单独加亮。次要文字整档抬亮：
-   说明/导航 ≥7:1，元信息 ≥5.5:1，最弱提示 ≥4.5:1（均相对卡片底）。
-   主文字 #f5f5f7 维持不动。浅色令牌不在本块。
+   底色接近原来的炭黑，不往纯黑压。次要文字只抬到能读（卡片上约 7:1 / 4.6:1），
+   边框停在看得见的深灰，避免浅灰线发亮。主文字 #f5f5f7 维持不动。
    ============================================ */
 
 [data-theme="dark"] {
-  --aw-canvas: #121214;
-  --aw-canvas-parchment: #1c1c20;
-  --aw-surface: #232328;
-  --aw-surface-hover: #2e2e34;
-  --aw-surface-glass: rgba(28, 28, 32, 0.86);
-  --aw-surface-pearl: #1a1a1e;
-  --aw-surface-black: #121214;
-  --aw-surface-code: #16161a;
-  --aw-surface-code-header: #2a2a30;
-  --aw-text-code: #e8e8ed;
+  --aw-canvas: #1c1c1e;
+  --aw-canvas-parchment: #222226;
+  --aw-surface: #26262a;
+  --aw-surface-hover: #303036;
+  --aw-surface-glass: rgba(28, 28, 30, 0.86);
+  --aw-surface-pearl: #202024;
+  --aw-surface-black: #1c1c1e;
+  --aw-surface-code: #1a1a1e;
+  --aw-surface-code-header: #2c2c32;
+  --aw-text-code: #d4d4d8;
 
   --aw-ink: #f5f5f7;
   --aw-body: #f5f5f7;
   --aw-body-on-dark: #f5f5f7;
-  --aw-body-muted: #c8c8cd;
-  --aw-ink-muted: #c8c8cd;
-  --aw-ink-muted-80: #e4e4e8;
-  --aw-ink-muted-64: #b8b8be;
-  --aw-ink-muted-60: #b0b0b6;
-  --aw-ink-muted-48: #a1a1a8;
-  --aw-ink-muted-40: #8e8e96;
-  --aw-muted: #c8c8cd;
+  --aw-body-muted: #b0b0b5;
+  --aw-ink-muted: #b0b0b5;
+  --aw-ink-muted-80: #d0d0d4;
+  --aw-ink-muted-64: #a6a6ab;
+  --aw-ink-muted-60: #9c9ca2;
+  --aw-ink-muted-48: #94949a;
+  --aw-ink-muted-40: #909096;
+  --aw-muted: #b0b0b5;
 
-  /* 卡片边用 divider（约 2.3:1 对页面底）；输入框/按钮用 border（约 3.3:1 对卡片） */
-  --aw-divider-soft: #4e4e56;
-  --aw-divider: #4e4e56;
-  --aw-hairline: #72727a;
-  --aw-border: #72727a;
+  /* 分割线保持安静；控件边框比旧版 #38383a 略亮，但不走到浅灰 */
+  --aw-divider-soft: #3a3a3e;
+  --aw-divider: #3a3a3e;
+  --aw-hairline: #4a4a50;
+  --aw-border: #4a4a50;
 
   --aw-primary-on-dark: #2997ff;
   --aw-primary-lighter: rgba(var(--aw-accent-rgb), 0.18);
@@ -344,9 +343,9 @@ html.android-capacitor .terminal-keybar-btn {
   --aw-accent-rgb: 41, 151, 255;
   --aw-accent-bg: rgba(var(--aw-accent-rgb), 0.12);
 
-  --aw-nav-bg: #121214;
+  --aw-nav-bg: #1c1c1e;
   --aw-nav-text: #f5f5f7;
-  --aw-nav-text-muted: #c8c8cd;
+  --aw-nav-text-muted: #b0b0b5;
 
   /* Colors — Tag chips (editor/file reference) */
   --aw-tag-skill: #5b9bd5;
@@ -372,8 +371,8 @@ html.android-capacitor .terminal-keybar-btn {
   --aw-status-waiting-bg: rgba(230, 184, 76, 0.12);
 
   /* Terminal */
-  --aw-terminal-bg: #232328;
-  --aw-terminal-header-bg: #232328;
+  --aw-terminal-bg: #26262a;
+  --aw-terminal-header-bg: #26262a;
 }
 
 /* ============================================
@@ -544,16 +543,6 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/*
- * 深色底上的浅色中文，灰度抗锯齿会把笔画磨细，再叠加为浅色 SF Pro 调的 -0.374px
- * 字距，12–13px 说明文字会糊成一片。深色改回系统抗锯齿，字距归零。浅色保持原样。
- */
-html[data-theme="dark"] body {
-  -webkit-font-smoothing: auto;
-  -moz-osx-font-smoothing: auto;
-  letter-spacing: 0;
-}
-
 #app {
   height: 100vh;
 }
@@ -707,7 +696,7 @@ a:hover {
  * Element Plus 暗色皮肤写在 html.dark (0,1,1) 上，压过 [data-theme="dark"] (0,1,0)。
  * 文字、背景、填充、边框放到同选择器，且本文件在暗色皮肤之后加载，才能接管。
  * 主色不在这里改：默认档维持 EP 蓝，非默认强调色仍由预设暗色块 (0,2,1) 接管。
- * 输入框填充 #16161a 比卡片更深一档，配 --aw-border 才能从卡片里读出来。
+ * 输入框填充比卡片深一档，边框用 --aw-border（深灰，不发亮）。
  */
 html.dark {
   --el-text-color-primary: var(--aw-ink);
@@ -718,13 +707,13 @@ html.dark {
   --el-bg-color: var(--aw-canvas);
   --el-bg-color-page: var(--aw-canvas);
   --el-bg-color-overlay: var(--aw-surface);
-  --el-fill-color: #2e2e34;
-  --el-fill-color-light: #2a2a30;
-  --el-fill-color-lighter: #1e1e24;
-  --el-fill-color-blank: #16161a;
+  --el-fill-color: #303036;
+  --el-fill-color-light: #2a2a2e;
+  --el-fill-color-lighter: #222226;
+  --el-fill-color-blank: #1c1c1e;
   --el-border-color: var(--aw-border);
   --el-border-color-light: var(--aw-divider);
-  --el-border-color-lighter: #2e2e34;
+  --el-border-color-lighter: #303036;
 }
 
 /* ============================================

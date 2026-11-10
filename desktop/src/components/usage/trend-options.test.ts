@@ -85,6 +85,6 @@ describe('trend-options', () => {
     const light = optionOf(config()) as unknown as { tooltip: { backgroundColor: string } }
     const dark = optionOf(config({ isDark: true })) as unknown as { tooltip: { backgroundColor: string } }
     expect(light.tooltip.backgroundColor).toBe('#ffffff')
-    expect(dark.tooltip.backgroundColor).toBe('#232328')
+    expect(dark.tooltip.backgroundColor).toBe('#26262a')
   })
 })

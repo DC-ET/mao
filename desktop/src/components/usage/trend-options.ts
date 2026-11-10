@@ -38,10 +38,10 @@ export interface TrendLineConfig {
 
 /** 折线图 option 构建（纯函数，便于单测）：主题配色、双轴、tooltip 读数都在这里收口。 */
 export function buildTrendLineOption(config: TrendLineConfig): ChartOption {
-  const axisColor = config.isDark ? '#c8c8cd' : '#86868b'
-  const splitLine = config.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.06)'
-  const tooltipBg = config.isDark ? '#232328' : '#ffffff'
-  const tooltipBorder = config.isDark ? '#72727a' : '#e5e5ea'
+  const axisColor = config.isDark ? '#b0b0b5' : '#86868b'
+  const splitLine = config.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'
+  const tooltipBg = config.isDark ? '#26262a' : '#ffffff'
+  const tooltipBorder = config.isDark ? '#4a4a50' : '#e5e5ea'
   const tooltipText = config.isDark ? '#f5f5f7' : '#1d1d1f'
   const axisFormat = (line: TrendLine) =>
     (line.right ? config.rightAxis?.format : undefined) ?? config.leftAxis.format
