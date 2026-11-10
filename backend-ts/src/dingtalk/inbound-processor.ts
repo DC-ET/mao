@@ -13,7 +13,7 @@ export interface DingtalkInboundProcessorOptions {
   resolveUserId?: (accountId: string, event: DingtalkNormalizedMessage) => Promise<number | null>;
   sendReply?: (accountId: string, event: DingtalkNormalizedMessage, text: string) => Promise<void>;
   sendBindingCard?: (accountId: string, event: DingtalkNormalizedMessage) => Promise<boolean>;
-  oauthConfigured?: () => boolean;
+  oauthConfigured?: () => Promise<boolean>;
   rememberMember?: (accountId: string, event: DingtalkNormalizedMessage, userId: number) => Promise<void>;
   /** 入站防抖合并窗口时长（ms）。同账号 + 会话 + 发送者的连续文本消息合并为一次触发；0 = 禁用（与加窗前一致）。 */
   mergeWindowMs?: number;
@@ -197,7 +197,7 @@ export class DingtalkInboundProcessor {
   }
 
   private async sendBindingGuide(accountId: string, event: DingtalkNormalizedMessage): Promise<void> {
-    if (this.options.oauthConfigured != null && !this.options.oauthConfigured()) {
+    if (this.options.oauthConfigured != null && !(await this.options.oauthConfigured())) {
       await this.reply(accountId, event, OAUTH_MISSING_TEXT);
       return;
     }

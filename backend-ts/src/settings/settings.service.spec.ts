@@ -287,6 +287,45 @@ describe('SystemSettingService', () => {
     expect(cfg.redirectUri).toBe('http://localhost:9080/api/v1/auth/feishu/callback');
   });
 
+  it('getDingtalkOauthConfigReadsAndDecryptsSecret', async () => {
+    const secretRow = setting('dingtalk.oauth.clientSecret', '集成配置', 1);
+    secretRow.isSecret = 1;
+    secretRow.value = encryptAesGcmNonNull('ding-secret', 'test-secret-key');
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => {
+      if (key === 'dingtalk.oauth.clientId') return { ...setting(key, '集成配置', 1), value: 'ding-client' };
+      if (key === 'dingtalk.oauth.clientSecret') return secretRow;
+      if (key === 'dingtalk.oauth.redirectUri') return { ...setting(key, '集成配置', 1), value: 'https://mao.example/api/v1/dingtalk/oauth/callback' };
+      return null;
+    });
+    const svc = new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, 'test-secret-key');
+    expect(await svc.getDingtalkOauthConfig()).toEqual({
+      clientId: 'ding-client',
+      clientSecret: 'ding-secret',
+      redirectUri: 'https://mao.example/api/v1/dingtalk/oauth/callback',
+    });
+  });
+
+  it('getDingtalkOauthConfigFallsBackToEmptyWhenUnset', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(null);
+    expect(await service().getDingtalkOauthConfig()).toEqual({ clientId: '', clientSecret: '', redirectUri: '' });
+  });
+
+  it('updateDingtalkRedirectUriRejectsNonHttpScheme', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(setting('dingtalk.oauth.redirectUri', '集成配置', 1));
+    await expect(service().update('dingtalk.oauth.redirectUri', 'ftp://mao.example/cb')).rejects.toThrow(/http/);
+  });
+
+  it('updateDingtalkSecretEncrypts', async () => {
+    const secretRow = setting('dingtalk.oauth.clientSecret', '集成配置', 1);
+    secretRow.isSecret = 1;
+    vi.mocked(mapper.findByKey).mockResolvedValue(secretRow);
+    const svc = new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, 'test-secret-key');
+    const updated = await svc.update('dingtalk.oauth.clientSecret', 'ding-new-secret');
+    expect(updated.value).toBe('******');
+    expect(secretRow.value).not.toBe('ding-new-secret');
+    expect((await svc.getDingtalkOauthConfig()).clientSecret).toBe('ding-new-secret');
+  });
+
   it('updateSecretRejectsMaskSubmission', async () => {
     const secretRow = setting('auth.ldap.password', '集成配置', 1);
     secretRow.isSecret = 1;

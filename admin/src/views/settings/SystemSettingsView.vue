@@ -284,6 +284,7 @@ const INTEGRATION_KEYS = new Set([
   'auth.password.enabled',
   'auth.ldap.enabled', 'auth.ldap.url', 'auth.ldap.baseDn', 'auth.ldap.userDn', 'auth.ldap.password', 'auth.ldap.userSearchBase',
   'auth.feishu.enabled', 'auth.feishu.appId', 'auth.feishu.appSecret', 'auth.feishu.redirectUri',
+  'dingtalk.oauth.clientId', 'dingtalk.oauth.clientSecret', 'dingtalk.oauth.redirectUri',
   'upload.storageMode', 'upload.baseUrl', 'file.maxSizeMb', 'site.baseUrl',
   'tools.webSearchProvider', 'tools.tavilyApiKey', 'tools.tinyfishApiKey',
   'oss.region', 'oss.accessKeyId', 'oss.accessKeySecret', 'oss.bucket',
@@ -303,6 +304,7 @@ const INTEGRATION_LABELS: Record<string, string> = {
   password: '账号密码登录',
   ldap: 'LDAP 认证',
   feishu: '飞书 OAuth 登录',
+  dingtalk: '钉钉 OAuth 登录',
   upload: '上传配置',
   site: '站点',
   oss: 'OSS 对象存储',
@@ -326,6 +328,7 @@ const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' |
       { kind: 'ecp', name: 'ecp' },
       { kind: 'integration', name: 'ldap' },
       { kind: 'integration', name: 'feishu' },
+      { kind: 'integration', name: 'dingtalk' },
       // 集成配置分类：既有 key 均走 IntegrationConfigPanel / 专属面板，此处只渲染 embed.agentId（浮窗助手）
       { kind: 'category', name: '集成配置' },
     ],

@@ -27,7 +27,7 @@
 ## 使用流程
 
 1. 开放平台创建企业内部应用，机器人收消息选 Stream 并发布。权限至少包括企业内机器人发送消息、卡片实例写、上传媒体。登录应用配置回调，并开通「根据 unionid 获取用户」和通讯录个人信息读。卡片平台发布进度卡、排队卡，按钮 actionId 为 `cancel`、`retry`、`run`。
-2. 后端配置 `APP_DINGTALK_BOT_SECRET`、`DINGTALK_OAUTH_CLIENT_ID` / `DINGTALK_OAUTH_SECRET` / `DINGTALK_OAUTH_REDIRECT_URI`，打开 `DINGTALK_BOT_ENABLED`。登录应用必须和机器人在同一企业。
+2. 后端配置 `APP_DINGTALK_BOT_SECRET`、打开 `DINGTALK_BOT_ENABLED`。绑定用登录应用在管理后台「系统设置 → 登录认证 → 钉钉 OAuth 登录」填写 Client ID / Client Secret / 回调地址，保存后即时生效。登录应用必须和机器人在同一企业。
 3. 管理后台添加机器人：内部 App Key、名称、Client ID、Client Secret、Robot Code、可选 Agent / 模型 / 模板 ID，然后启用。
 4. 用户在「设置 → 渠道绑定 → 钉钉Bot」绑定，或在钉钉里给机器人发一条消息，按卡片短链登录后再授权。
 5. 私聊直接发消息。群里把机器人拉进群后 @ 它。想开新会话就发 `---`。
@@ -60,7 +60,7 @@
 ## 排障
 
 - **保存机器人报「未配置 APP_DINGTALK_BOT_SECRET」**：先配密钥再重启。
-- **钉钉里回复「管理员尚未配置钉钉登录」**：补齐 `DINGTALK_OAUTH_*`，回调地址要和开放平台「登录与分享」一致。
+- **钉钉里回复「管理员尚未配置钉钉登录」**：到管理后台「系统设置 → 登录认证 → 钉钉 OAuth 登录」补齐 Client ID / Client Secret / 回调地址，回调地址要和开放平台「登录与分享」一致。
 - **全员无法识别身份**：应用未发布，回调里没有 `senderStaffId`。发布后再测。外部群成员没有企业 userid，第一期不支持。
 - **已绑定其他账号**：一个 userid 只能绑一个 Mao 用户，一个 Mao 用户只能绑一个钉钉身份。先解绑再绑，不会自动改绑。
 - **有时没反应**：同一个 Client ID 只能有一条 Stream。本地调试用另一个应用。配重了也不会静默共存——重复的那条会被标记为失败，它此前建立的连接会被一并断开，只保留一条；反过来已持有连接的认领方不会被误杀。

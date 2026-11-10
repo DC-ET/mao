@@ -62,6 +62,16 @@ export const INTEGRATION_GROUP_CATALOG: IntegrationGroupSpec[] = [
     ],
   },
   {
+    name: 'dingtalk',
+    title: '钉钉 OAuth 登录',
+    keys: ['dingtalk.oauth.clientId', 'dingtalk.oauth.clientSecret', 'dingtalk.oauth.redirectUri'],
+    fields: [
+      { key: 'dingtalk.oauth.clientId', label: 'Client ID', hint: '绑定用登录应用，须与机器人同一企业' },
+      { key: 'dingtalk.oauth.clientSecret', label: 'Client Secret', secret: true },
+      { key: 'dingtalk.oauth.redirectUri', label: '回调地址', hint: '需与钉钉开放平台「登录与分享」配置一致', pattern: /^https?:\/\//, patternMessage: '需以 http:// 或 https:// 开头' },
+    ],
+  },
+  {
     name: 'upload',
     title: '上传配置',
     keys: ['upload.storageMode', 'upload.baseUrl', 'file.maxSizeMb'],

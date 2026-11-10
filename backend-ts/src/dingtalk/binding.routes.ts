@@ -16,7 +16,8 @@ export interface DingtalkBindingRouteDeps {
   jwt: JwtService;
   repository: MysqlDingtalkBindingRepository;
   oauthStates: MysqlDingtalkOauthStateRepository;
-  oauth: DingtalkOauthConfig;
+  /** OAuth 配置惰性读取（V191）：每次实时查 system_setting，后台保存后即时生效。 */
+  oauth: () => Promise<DingtalkOauthConfig>;
   onCallback: (state: string, userId: number, code: string) => Promise<void>;
 }
 
@@ -28,11 +29,12 @@ export function registerDingtalkBindingRoutes(app: FastifyInstance, deps: Dingta
 
   app.post('/v1/dingtalk/binding', async (request, reply) => {
     const userId = requireUserId(request, deps.jwt);
-    if (!oauthConfigured(deps.oauth)) {
+    const oauth = await deps.oauth();
+    if (!oauthConfigured(oauth)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '管理员尚未配置钉钉登录，暂时无法绑定');
     }
     const state = await deps.oauthStates.create(userId, SETTINGS_TTL_MS);
-    return sendJson(reply, 200, ok({ authUrl: dingtalkAuthorizeUrl(deps.oauth, state), state }));
+    return sendJson(reply, 200, ok({ authUrl: dingtalkAuthorizeUrl(oauth, state), state }));
   });
 
   app.delete('/v1/dingtalk/binding', async (request, reply) => {
@@ -43,22 +45,24 @@ export function registerDingtalkBindingRoutes(app: FastifyInstance, deps: Dingta
 
   app.get('/v1/dingtalk/bind/:state', async (request, reply) => {
     const state = pathParam(request, 'state');
-    const origin = webOriginOf(deps.oauth.redirectUri);
+    const oauth = await deps.oauth();
+    const origin = webOriginOf(oauth.redirectUri);
     const userId = request.userId;
     if (userId == null) {
       if (origin == null) return reply.code(503).type('text/plain').send('管理员尚未配置钉钉登录，暂时无法绑定');
       return reply.redirect(`${origin}/login?redirect=${encodeURIComponent(`/dingtalk/bind/${state}`)}`);
     }
     const attached = await deps.oauthStates.attachUser(state, userId);
-    if (attached !== 'OK' || !oauthConfigured(deps.oauth)) {
+    if (attached !== 'OK' || !oauthConfigured(oauth)) {
       return redirectSettings(reply, origin, 'bindError=expired');
     }
-    return reply.redirect(dingtalkAuthorizeUrl(deps.oauth, state));
+    return reply.redirect(dingtalkAuthorizeUrl(oauth, state));
   });
 
   app.get('/v1/dingtalk/oauth/callback', async (request, reply) => {
     const query = request.query as { code?: string; state?: string };
-    const origin = webOriginOf(deps.oauth.redirectUri);
+    const oauth = await deps.oauth();
+    const origin = webOriginOf(oauth.redirectUri);
     const state = query.state ?? '';
     const code = query.code ?? '';
     const consumed = state === '' ? null : await deps.oauthStates.consume(state);

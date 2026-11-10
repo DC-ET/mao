@@ -1,3 +1,11 @@
+## 0.0.504 (2026-11-10)
+
+### 后端
+- **钉钉 OAuth 登录配置迁入管理后台**：绑定用登录应用的 Client ID / Client Secret / 回调地址此前只能改 `.env` 再重启后端，现在在「系统设置 → 登录认证 → 钉钉 OAuth 登录」维护，保存后即时生效。配置改由 `system_setting` 承载（`dingtalk.oauth.clientId` / `clientSecret` / `redirectUri`，Secret 加密存储、列表返回掩码），绑定短链、授权跳转、回调换 token 全部改为实时读取，不再依赖启动时快照。做法与飞书 OAuth 登录（`auth.feishu.*`）一致：`DINGTALK_OAUTH_*` 环境变量不再生效，升级时首次启动由 SettingsBootstrap 自动导入 DB（管理员在后台保存过的行不被覆盖），导入后即可从 `.env` 删除。`DINGTALK_BOT_ENABLED` 与 `APP_DINGTALK_BOT_SECRET` 仍是环境变量（前者改后需重启，后者是加密主密钥，放进同一张表等于用同一把钥匙锁门和锁钥匙）。
+
+### 管理后台
+- **系统设置新增「钉钉 OAuth 登录」组**：与「飞书 OAuth 登录」并列在登录认证分组下，含 Client ID、Client Secret（密码框 + 已设置提示 + 清空）、回调地址（格式校验），复用集成配置的保存与测试链路。
+
 ## 0.0.503 (2026-11-10)
 
 ### 后端

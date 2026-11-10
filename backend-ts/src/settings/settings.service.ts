@@ -12,7 +12,7 @@ import {
 } from '../common/container-auto-upgrade.js';
 import { decryptAesGcm, encryptAesGcmNonNull } from '../crypto/aes-gcm.js';
 import type {
-  AgentLookup, AgentRuntimeSettings, EmailSmtpSettings, FeishuOAuthSettings, HarnessTuningSettings, LdapSettings, ModelLookup,
+  AgentLookup, AgentRuntimeSettings, DingtalkOauthSettings, EmailSmtpSettings, FeishuOAuthSettings, HarnessTuningSettings, LdapSettings, ModelLookup,
   NotificationTuningSettings, OssSettings, SettingsRuntimeConfig, SystemSetting, SystemSettingRepository,
   TavilySettings, TerminalSettings, TinyFishSettings, UploadSettings, WebSearchConfig, WebSearchProvider,
 } from './types.js';
@@ -54,6 +54,10 @@ export const FEISHU_ENABLED_KEY = 'auth.feishu.enabled';
 export const FEISHU_APP_ID_KEY = 'auth.feishu.appId';
 export const FEISHU_APP_SECRET_KEY = 'auth.feishu.appSecret';
 export const FEISHU_REDIRECT_URI_KEY = 'auth.feishu.redirectUri';
+/** 钉钉 OAuth 登录（V191）：绑定用登录应用，须与机器人同一企业。 */
+export const DINGTALK_OAUTH_CLIENT_ID_KEY = 'dingtalk.oauth.clientId';
+export const DINGTALK_OAUTH_CLIENT_SECRET_KEY = 'dingtalk.oauth.clientSecret';
+export const DINGTALK_OAUTH_REDIRECT_URI_KEY = 'dingtalk.oauth.redirectUri';
 export const UPLOAD_STORAGE_MODE_KEY = 'upload.storageMode';
 export const UPLOAD_BASE_URL_KEY = 'upload.baseUrl';
 /** 站点根 URL（V170）：IM 卡片「会话详情」等网页深链的 origin 来源。留空回落 upload.baseUrl。 */
@@ -356,6 +360,19 @@ export class SystemSettingService {
       this.getText(FEISHU_REDIRECT_URI_KEY, DEFAULT_FEISHU_REDIRECT_URI),
     ]);
     return { enabled, appId, appSecret, redirectUri };
+  }
+
+  /**
+   * 钉钉 OAuth 登录配置（V191）：每次调用实时读库，保存后即时生效（不入缓存）。
+   * 缺行回落空串，由 oauthConfigured 判定「未配置」。
+   */
+  async getDingtalkOauthConfig(): Promise<DingtalkOauthSettings> {
+    const [clientId, clientSecret, redirectUri] = await Promise.all([
+      this.getText(DINGTALK_OAUTH_CLIENT_ID_KEY),
+      this.getSecret(DINGTALK_OAUTH_CLIENT_SECRET_KEY),
+      this.getText(DINGTALK_OAUTH_REDIRECT_URI_KEY),
+    ]);
+    return { clientId, clientSecret, redirectUri };
   }
 
   async getUploadConfig(): Promise<UploadSettings> {
@@ -946,6 +963,9 @@ export class SystemSettingService {
     }
     if (key === FEISHU_REDIRECT_URI_KEY && !/^https?:\/\//i.test(value!)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '飞书回调地址必须以 http:// 或 https:// 开头');
+    }
+    if (key === DINGTALK_OAUTH_REDIRECT_URI_KEY && !/^https?:\/\//i.test(value!)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '钉钉回调地址必须以 http:// 或 https:// 开头');
     }
     if (key === UPLOAD_BASE_URL_KEY && !/^https?:\/\//i.test(value!)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '上传基础地址必须以 http:// 或 https:// 开头');

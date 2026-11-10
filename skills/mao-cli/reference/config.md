@@ -164,13 +164,14 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 | `DINGTALK_BOT_ENABLED` | false | 钉钉机器人通道总开关 |
 | `DINGTALK_BOT_RECONCILE_INTERVAL_MS` | 5000 | 扫表间隔 |
 | `APP_DINGTALK_BOT_SECRET` | - | 机器人 Client Secret 的 AES-GCM 密钥，不复用飞书那一项 |
-| `DINGTALK_OAUTH_CLIENT_ID` / `DINGTALK_OAUTH_SECRET` / `DINGTALK_OAUTH_REDIRECT_URI` | - | 绑定用登录应用，须与机器人同一企业 |
 | `DINGTALK_PROGRESS_CARD_TEMPLATE_ID` | - | 进度卡模板，可被机器人行覆盖 |
 | `DINGTALK_QUEUE_CARD_TEMPLATE_ID` | - | 排队卡模板 |
 | `DINGTALK_BOT_REPLY_MAX_LENGTH` | 2000 | markdown 截断长度 |
 | `DINGTALK_BOT_GROUP_CONTEXT_MAX_ITEMS` | 10 | @ 往来条数 |
 | `DINGTALK_BOT_GROUP_CONTEXT_MAX_MINUTES` | 120 | @ 往来时间窗 |
 | `DINGTALK_BOT_MERGE_WINDOW_MS` | 1000 | 入站防抖合并窗口（毫秒）：同一发送者在同一会话内窗口期中连续发出的多条纯文本（含不带图富文本）合并为一次任务触发，正文按到达顺序拼接；带图富文本、图片、语音/视频、`---` 仍立即单独触发。设为 0 关闭合并，重启后端生效 |
+
+绑定用登录应用（Client ID / Secret / 回调地址）已后台化，不再使用环境变量：管理后台「系统设置 → 登录认证 → 钉钉 OAuth 登录」，保存后即时生效。设置键 `dingtalk.oauth.clientId` / `dingtalk.oauth.clientSecret` / `dingtalk.oauth.redirectUri`。登录应用须与机器人同一企业，回调地址须与开放平台「登录与分享」一致。从旧版本升级时，`DINGTALK_OAUTH_CLIENT_ID` / `DINGTALK_OAUTH_SECRET` / `DINGTALK_OAUTH_REDIRECT_URI` 仍会被首次启动的 SettingsBootstrap 自动导入 DB，导入后即可从 `.env` 删除。
 
 使用详见 [dingtalk-bot.md](dingtalk-bot.md)。任务完成通知里的钉钉 Webhook 与本通道无关。
 
