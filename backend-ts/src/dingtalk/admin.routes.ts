@@ -24,8 +24,7 @@ interface DingtalkBotRequest {
   robotCode?: string;
   agentId?: number | null;
   modelId?: number | null;
-  progressCardTemplateId?: string | null;
-  queueCardTemplateId?: string | null;
+  cardTemplateId?: string | null;
   enabled?: boolean | number;
 }
 
@@ -73,8 +72,7 @@ export function registerDingtalkBotRoutes(app: FastifyInstance, deps: DingtalkBo
       appKey: body.appKey!, name: body.name!, clientId: body.clientId!, robotCode: body.robotCode!,
       clientSecret: encryptAesGcm(body.clientSecret!, deps.secretKey)!,
       agentId: body.agentId ?? null, modelId: body.modelId ?? null,
-      progressCardTemplateId: emptyToNull(body.progressCardTemplateId),
-      queueCardTemplateId: emptyToNull(body.queueCardTemplateId),
+      cardTemplateId: emptyToNull(body.cardTemplateId),
       enabled: enabledValue(body.enabled, 1),
     };
     try {
@@ -103,8 +101,7 @@ export function registerDingtalkBotRoutes(app: FastifyInstance, deps: DingtalkBo
     }
     bot.agentId = body.agentId !== undefined ? body.agentId : bot.agentId;
     bot.modelId = body.modelId !== undefined ? body.modelId : bot.modelId;
-    if (body.progressCardTemplateId !== undefined) bot.progressCardTemplateId = emptyToNull(body.progressCardTemplateId);
-    if (body.queueCardTemplateId !== undefined) bot.queueCardTemplateId = emptyToNull(body.queueCardTemplateId);
+    if (body.cardTemplateId !== undefined) bot.cardTemplateId = emptyToNull(body.cardTemplateId);
     bot.enabled = body.enabled === undefined ? bot.enabled : enabledValue(body.enabled, bot.enabled ?? 1);
     try {
       await repository.update(bot);

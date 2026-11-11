@@ -47,8 +47,7 @@ import type { DingtalkBot, DingtalkInboundContext, DingtalkNormalizedMessage } f
 import { groupProjectKey, privateProjectKey, resolveDingtalkWorkspace } from './workspace.js';
 
 export interface DingtalkRuntimeConfig extends DingtalkMonitorConfig {
-  progressCardTemplateId: string;
-  queueCardTemplateId: string;
+  cardTemplateId: string;
   replyMaxLength: number;
   groupContextMaxItems: number;
   groupContextMaxMinutes: number;
@@ -151,10 +150,9 @@ export function createDingtalkRuntime(deps: {
     getSiteBaseUrl: () => deps.settingService.getSiteBaseUrl(),
   });
 
-  const templateOf = (bot: DingtalkBot, kind: 'progress' | 'queue'): string | null => {
-    const row = kind === 'progress' ? bot.progressCardTemplateId : bot.queueCardTemplateId;
-    const env = kind === 'progress' ? deps.config.progressCardTemplateId : deps.config.queueCardTemplateId;
-    const value = (row != null && row !== '' ? row : env).trim();
+  const templateOf = (bot: DingtalkBot): string | null => {
+    // 排队/进度/终态共用同一模板（一卡到底，V192 单列）；行配置优先，env 兜底。
+    const value = (bot.cardTemplateId != null && bot.cardTemplateId !== '' ? bot.cardTemplateId : deps.config.cardTemplateId).trim();
     return value === '' ? null : value;
   };
 
@@ -212,13 +210,29 @@ export function createDingtalkRuntime(deps: {
     const botId = Number(context.accountId);
     const cred = await credentialsOf(botId);
     if (cred == null) return null;
-    const templateId = templateOf(cred.bot, 'progress');
     const sender = context.senderUserid ?? '';
-    if (templateId == null) return textProgress(botId, context, sessionId);
     const startedAt = Date.now();
     const params = progressCardParams({
       status: 'running', round: 0, detail: '任务已接收，正在准备执行。', sessionUrl: await sessionDetailUrl(sessionId), sessionId, senderUserid: sender,
     });
+
+    // 一卡到底：排队卡就地升级为进度卡（飞书同款，技术方案 §4.3.3）。队列行带了 outTrackId 就走
+    // updateCard 首刷，不再 createAndDeliverCard 新建实例，避免旧排队卡残留「排队中」。
+    // 升级不检查模板 ID：卡片实例已存在，更新按 outTrackId 定位，与模板无关——只配过排队模板的 bot 也能升级。
+    const existing = context.progressCardOutTrackId?.trim();
+    if (existing != null && existing !== '') {
+      const token = await tokens.getAccessToken(cred.bot.clientId, cred.secret);
+      await updateCard(fetchImpl, token, existing, params)
+        .catch((error) => console.warn(`钉钉排队卡升级进度卡失败, sessionId=${sessionId}`, error));
+      // 映射无论如何都要写：取消/重试回调靠 findProgress(outTrackId) 定位这张卡。
+      await progressRepo.upsert({
+        sessionId, botId, outTrackId: existing, chatType: context.chatType, conversationId: context.conversationId, senderUserid: sender,
+      }).catch((error) => console.warn(`钉钉进度卡映射写入失败, sessionId=${sessionId}`, error));
+      return cardProgress(cred, existing, sessionId, sender, startedAt);
+    }
+
+    const templateId = templateOf(cred.bot);
+    if (templateId == null) return textProgress(botId, context, sessionId);
     const outTrackId = await createAndDeliverCard(fetchImpl, await tokens.getAccessToken(cred.bot.clientId, cred.secret), {
       chatType: context.chatType, senderUserid: sender, conversationId: context.conversationId, templateId, cardParamMap: params,
       robotCode: cred.bot.robotCode,
@@ -305,10 +319,10 @@ export function createDingtalkRuntime(deps: {
     queueService: queue,
     resolveBotId: (accountId) => Number(accountId),
     createProgressCard: createProgress,
-    createQueueCard: async (context, queueId) => {
+    createQueueCard: async (context, queueId, _sessionId, rankNo) => {
       const cred = await credentialsOf(Number(context.accountId));
       if (cred == null) return null;
-      const templateId = templateOf(cred.bot, 'queue');
+      const templateId = templateOf(cred.bot);
       if (templateId == null) return null;
       const sender = context.senderUserid ?? '';
       return createAndDeliverCard(fetchImpl, await tokens.getAccessToken(cred.bot.clientId, cred.secret), {
@@ -316,7 +330,7 @@ export function createDingtalkRuntime(deps: {
         senderUserid: sender,
         conversationId: context.conversationId,
         templateId,
-        cardParamMap: queueCardParams({ status: 'queued', preview: context.text, queueId, senderUserid: sender }),
+        cardParamMap: queueCardParams({ status: 'queued', preview: context.text, queueId, senderUserid: sender, rankNo }),
         robotCode: cred.bot.robotCode,
       });
     },
@@ -364,7 +378,7 @@ export function createDingtalkRuntime(deps: {
       const row = await progressRepo.findBySessionId(sessionId);
       if (row == null) return;
       const cred = await credentialsOf(row.botId);
-      if (cred == null || templateOf(cred.bot, 'progress') == null) return;
+      if (cred == null || templateOf(cred.bot) == null) return;
       const params = progressCardParams({
         status: 'failed', round: 0, detail: `回复发送失败：${reason}`, sessionUrl: await sessionDetailUrl(sessionId),
         sessionId, senderUserid: row.senderUserid ?? '',
@@ -491,7 +505,7 @@ export function createDingtalkRuntime(deps: {
       target,
       text,
       sessionId,
-      templateId: templateOf(cred.bot, 'progress'),
+      templateId: templateOf(cred.bot),
       sessionUrl: await sessionDetailUrl(sessionId),
       senderUserid: target.userId ?? '',
       replyMaxLength: deps.config.replyMaxLength,
@@ -552,7 +566,7 @@ export function createDingtalkRuntime(deps: {
       const row = await progressRepo.findBySessionId(sessionId);
       if (row == null) return null;
       const cred = await credentialsOf(row.botId);
-      if (cred == null || templateOf(cred.bot, 'progress') == null) return null;
+      if (cred == null || templateOf(cred.bot) == null) return null;
       const session = await deps.sessionService.getSession(sessionId).catch(() => null);
       const startedAt = parseSqlTimeMs(session?.startedAt) ?? Date.now();
       const progress = cardProgress(cred, row.outTrackId, sessionId, row.senderUserid ?? '', startedAt);

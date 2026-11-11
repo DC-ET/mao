@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * 钉钉进度卡模板自检：检查 dingtalk-progress-card.json 与后端契约是否一致。
+ * 钉钉互动卡片模板自检：检查 dingtalk-card.json（排队/进度/终态合并模板，V192）与后端契约是否一致。
  *
  * 用法：node template/check-template.js
  *
  * 检查项都是历史上真实踩过的坑，改完模板 JSON 后跑一遍再导入卡片平台：
  *   1. 后端 cardParamMap 需要的变量必须在 variableList 中声明
  *   2. Markdown 组件必须绑定 body 变量（否则正文永远为空）
- *   3. 按钮 actionId 必须是 cancel / retry
+ *   3. 按钮 actionId 必须是 cancel / retry / run（「取消排队」与「取消任务」共用 cancel，靠可见性互斥）
  *   4. 按钮 actionType 必须是 request，否则点击不触发卡片回调
  *   5. 按钮可见性与「请求成功判定条件」不能为空，且判定值必须与后端回传的 status 对应
  *   6. 组件树里不得再出现 ${title} 文本节点（与 body 状态行重复，顶部标题已删）
@@ -20,13 +20,13 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const file = path.join(__dirname, 'dingtalk-progress-card.json');
+const file = path.join(__dirname, 'dingtalk-card.json');
 
-/** 后端 progressCardParams 实际下发的字段（card-body.ts）。 */
-const REQUIRED_VARS = ['title', 'body', 'status', 'canCancel', 'canRetry'];
+/** 后端 progressCardParams / queueCardParams 实际下发的字段并集（card-body.ts）。 */
+const REQUIRED_VARS = ['title', 'body', 'status', 'canRun', 'canCancel', 'canRetry', 'senderUserid', 'queueId', 'sessionId', 'tag'];
 
 /** actionId -> 后端回调成功时回传的 status 值（card-action.service.ts）。 */
-const ACTION_STATUS = { cancel: 'cancelled', retry: 'running' };
+const ACTION_STATUS = { cancel: 'cancelled', retry: 'running', run: 'started' };
 
 /**
  * actionId -> 控制按钮可见性的 boolean 变量（card-body.ts 的 canCancel/canRetry）。
@@ -34,7 +34,7 @@ const ACTION_STATUS = { cancel: 'cancelled', retry: 'running' };
  * 字符串 isEqual 比较导入后会被抹成空条件（@triple{'' , 'visible', 'gone'} 恒假），
  * 按钮永远不显示——这是「按钮不出现」的真实根因。
  */
-const ACTION_VISIBLE = { cancel: 'canCancel', retry: 'canRetry' };
+const ACTION_VISIBLE = { cancel: ['canCancel', 'canRun'], retry: ['canRetry'], run: ['canRun'] };
 
 let failures = 0;
 
@@ -88,6 +88,7 @@ const vars = (editor.variableList ?? []).map((v) => v.name);
 for (const name of REQUIRED_VARS) {
   if (!vars.includes(name)) fail(`variableList 缺少变量 ${name}（后端 cardParamMap 会传它）`);
 }
+if (vars.includes('preview')) fail('variableList 仍声明 preview：V192 起排队/进度正文已与 body 合一，preview 变量必须删除');
 if (failures === 0) ok(`variableList 声明完整：${vars.join(', ')}`);
 
 // 2. Markdown 组件绑定 body
@@ -135,9 +136,13 @@ function walk(node) {
       const id = button.id;
       seenActions.push(id);
 
-      if (!ACTION_STATUS[id]) {
-        fail(`按钮 ${id} 不是契约内的 actionId（应为 cancel / retry），后端无法识别`);
+      const actionId = textOf(button.actionId);
+      if (!ACTION_STATUS[actionId]) {
+        fail(`按钮 ${id} 的 actionId 是 ${JSON.stringify(actionId)}，不在契约内（应为 cancel / retry / run），后端无法识别`);
         continue;
+      }
+      if (id !== actionId && !(id === 'cancelQueue' && actionId === 'cancel')) {
+        fail(`按钮 ${id} 的 actionId 是 ${JSON.stringify(actionId)}：除「取消排队」（cancelQueue→cancel，与取消任务共用 actionId 靠可见性互斥）外，id 与 actionId 应一致`);
       }
       if (button.actionType !== 'request') {
         fail(`按钮 ${id} 的 actionType 是 ${JSON.stringify(button.actionType)}，必须为 "request"，否则点击不触发卡片回调`);
@@ -146,26 +151,26 @@ function walk(node) {
       // 平台导入后会把 widgetInfo 里的条件抹成空串，按钮恒隐藏。
       const vis = button.visible?.condition;
       const visCondition = vis?.conditions?.length === 1 ? vis.conditions[0] : null;
-      if (visCondition?.op !== 'isTrue' || visCondition?.variable !== ACTION_VISIBLE[id]) {
-        fail(`按钮 ${id} 的可见性条件应为 isTrue(${ACTION_VISIBLE[id]})；字符串 isEqual 比较会被平台抹成空条件，按钮不显示`);
+      const allowedVars = ACTION_VISIBLE[actionId] ?? ACTION_VISIBLE[id] ?? [];
+      if (visCondition?.op !== 'isTrue' || !allowedVars.includes(visCondition?.variable)) {
+        fail(`按钮 ${id} 的可见性条件应为 isTrue(${allowedVars.join(' 或 ')})；字符串 isEqual 比较会被平台抹成空条件，按钮不显示`);
       }
-      const declared = editor.variableList?.find((v) => v.name === ACTION_VISIBLE[id]);
+      const declared = editor.variableList?.find((v) => v.name === visCondition?.variable);
       if (declared == null) {
-        fail(`variableList 缺少 boolean 变量 ${ACTION_VISIBLE[id]}（按钮可见性依赖它）`);
+        fail(`variableList 缺少 boolean 变量 ${visCondition?.variable}（按钮可见性依赖它）`);
       } else if (declared.type !== 'boolean') {
-        fail(`变量 ${ACTION_VISIBLE[id]} 的类型是 ${declared.type}，必须为 boolean（平台只渲染 boolean 的 isTrue/isFalse）`);
+        fail(`变量 ${visCondition?.variable} 的类型是 ${declared.type}，必须为 boolean（平台只渲染 boolean 的 isTrue/isFalse）`);
       }
       // disabled 是编辑态遗留：渲染时按钮置灰且不响应点击，取消/重试都点不动。
       if (button.status === 'disabled') {
         fail(`按钮 ${id} 的 status 是 disabled：按钮置灰且不响应点击，应改为 normal`);
       }
       // actionId 必须是字面量；dynamicString 空 content 时点击不上报 actionId，后端无法路由。
-      const actionId = textOf(button.actionId);
-      if (actionId !== id) {
-        fail(`按钮 ${id} 的 actionId 是 ${JSON.stringify(actionId)}，必须是字面量 "${id}"，否则点击不上报该 actionId`);
+      if (actionId === '') {
+        fail(`按钮 ${id} 的 actionId 是空串（dynamicString 无 content），点击不上报 actionId，后端无法路由`);
       }
-      if (!isEqualCondition(button.successCondition, 'status', ACTION_STATUS[id])) {
-        fail(`按钮 ${id} 的「请求成功判定条件」应为 status == ${ACTION_STATUS[id]}（留空则平台告警且 Toast 不生效）`);
+      if (!isEqualCondition(button.successCondition, 'status', ACTION_STATUS[actionId])) {
+        fail(`按钮 ${id} 的「请求成功判定条件」应为 status == ${ACTION_STATUS[actionId]}（留空则平台告警且 Toast 不生效）`);
       }
       if (button.successCondition?.conditions?.length === 0) {
         fail(`按钮 ${id} 的「请求成功判定条件」为空`);

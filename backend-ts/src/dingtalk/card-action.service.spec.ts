@@ -110,3 +110,62 @@ describe('DingtalkCardActionService', () => {
     expect(JSON.stringify(decision?.response)).toContain('任务已结束，无法重试');
   });
 });
+
+describe('DingtalkCardActionService 一卡到底（V192）', () => {
+  /** 升级卡：队列行已被 claimNext 认领进入 RUNNING（执行进行中），与进度卡映射共用同一 outTrackId。 */
+  function runningRow(): DingtalkInboundQueueRow {
+    return row({ outTrackId: 'card-out-1', status: 'RUNNING' });
+  }
+
+  function decideWith(options: { findProgress?: () => unknown; cancelRunning?: () => Promise<boolean>; cancel?: () => Promise<string> }) {
+    const cancelRunning = options.cancelRunning ?? vi.fn(async () => true);
+    const built = service({
+      queuePort: { findByOutTrackId: async () => runningRow(), cancel: options.cancel ?? vi.fn(async () => 'CANCELLED' as const) },
+      findProgress: options.findProgress ?? (async () => null),
+      cancelRunning,
+    });
+    return { ...built, cancelRunning };
+  }
+
+  function decide(actions: DingtalkCardActionService, actionId: string) {
+    return actions.decide({
+      outTrackId: 'card-out-1',
+      userId: 'staff-a',
+      content: JSON.stringify({ cardPrivateData: { actionIds: [actionId], params: { senderUserid: 'staff-a' } } }),
+    });
+  }
+
+  it('执行中的升级卡点「取消任务」：RUNNING 行不遮蔽进度卡路由，cancelRunning 生效', async () => {
+    const cancelRunning = vi.fn(async () => true);
+    const { service: actions, queuePort } = service({
+      queuePort: { findByOutTrackId: async () => runningRow() },
+      findProgress: async () => ({
+        sessionId: 8, botId: 1, outTrackId: 'card-out-1', chatType: 'p2p', conversationId: null, senderUserid: 'staff-a',
+      } as never),
+      cancelRunning,
+    });
+
+    const decision = await decide(actions, 'cancel');
+
+    expect(queuePort.cancel).not.toHaveBeenCalled();
+    expect(cancelRunning).toHaveBeenCalledWith(8);
+    expect(JSON.stringify(decision?.response)).toContain('任务已取消');
+  });
+
+  it('执行中的升级卡收到陈旧 run 回调：按钮已隐藏（canRun=false），不动作', async () => {
+    const cancelRunning = vi.fn(async () => true);
+    const { service: actions, queuePort } = service({
+      queuePort: { findByOutTrackId: async () => runningRow() },
+      findProgress: async () => ({
+        sessionId: 8, botId: 1, outTrackId: 'card-out-1', chatType: 'p2p', conversationId: null, senderUserid: 'staff-a',
+      } as never),
+      cancelRunning,
+    });
+
+    const decision = await decide(actions, 'run');
+
+    expect(queuePort.cancel).not.toHaveBeenCalled();
+    expect(cancelRunning).not.toHaveBeenCalled();
+    expect(decision?.after).toBeUndefined();
+  });
+});

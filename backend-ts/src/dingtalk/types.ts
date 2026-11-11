@@ -10,8 +10,8 @@ export interface DingtalkBot {
   robotCode: string;
   agentId?: number | null;
   modelId?: number | null;
-  progressCardTemplateId?: string | null;
-  queueCardTemplateId?: string | null;
+  /** 钉钉互动卡片模板 ID：排队/进度/终态共用同一模板（一卡到底，V192 起单列）。 */
+  cardTemplateId?: string | null;
   enabled?: number;
   deleted?: number;
   createdAt?: string | null;
@@ -54,6 +54,8 @@ export interface DingtalkInboundContext extends DingtalkNormalizedMessage {
   maoUserId?: number;
   groupContext?: string;
   senderLabel?: string;
+  /** 排队卡实例 ID：非空表示本轮执行应就地升级该卡为进度卡，不新建卡片（飞书同义字段 progressCardMessageId）。 */
+  progressCardOutTrackId?: string | null;
 }
 
 export interface DingtalkReply { text?: string | null; }
@@ -116,7 +118,7 @@ export interface DingtalkTaskQueuePort {
     senderUserid: string;
     maoUserId: number | null;
     payload: string;
-  }): Promise<number>;
+  }): Promise<{ id: number; rankNo: number | null }>;
   setOutTrackId(id: number, outTrackId: string): Promise<void>;
   claimNext(sessionId: number): Promise<DingtalkInboundQueueRow | null>;
   complete(id: number): Promise<void>;

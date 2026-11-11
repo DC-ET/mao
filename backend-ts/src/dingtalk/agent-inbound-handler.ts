@@ -104,7 +104,7 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
      * 覆盖「定时任务在会话忙时入队 → 该会话后续只有钉钉执行」导致的永久排队。
      */
     onQueuesDrained?: (sessionId: number) => void;
-    createQueueCard?: (context: DingtalkInboundContext, queueId: number, sessionId: number) => Promise<string | null>;
+    createQueueCard?: (context: DingtalkInboundContext, queueId: number, sessionId: number, rankNo?: number) => Promise<string | null>;
     resolveBotId?: (accountId: string) => number;
     p2pSessionControl?: DingtalkP2pSessionControl;
     onReply?: (context: DingtalkInboundContext, text: string, sessionId?: number) => Promise<void>;
@@ -418,9 +418,9 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
     }
     const botId = this.options.resolveBotId?.(context.accountId) ?? Number(context.accountId);
     const payload = JSON.stringify(buildQueuePayload(botId, context, built));
-    let queueId: number;
+    let queued: { id: number; rankNo: number | null };
     try {
-      queueId = await queueService.enqueue({
+      queued = await queueService.enqueue({
         sessionId, botId, messageId: context.messageId, senderUserid: context.senderUserid ?? '',
         maoUserId: session.executionUserId ?? context.maoUserId ?? null, payload,
       });
@@ -429,7 +429,8 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
       await this.reply(context, '当前任务正在执行中，消息排队失败，请稍后重试。', sessionId);
       return;
     }
-    const outTrackId = await this.options.createQueueCard?.(context, queueId, sessionId).catch(() => null) ?? null;
+    const queueId = queued.id;
+    const outTrackId = await this.options.createQueueCard?.(context, queueId, sessionId, queued.rankNo ?? undefined).catch(() => null) ?? null;
     if (outTrackId != null) await queueService.setOutTrackId(queueId, outTrackId);
     else await this.reply(context, '当前任务执行中，你的消息已排队等待处理。', sessionId);
   }
@@ -696,13 +697,16 @@ function buildQueuePayload(botId: number, context: DingtalkInboundContext, built
   return { persisted: built.persisted, forModel: built.forModel, context: stored, botId };
 }
 
-function contextFromQueue(payload: DingtalkQueuePayload, row: DingtalkInboundQueueRow): DingtalkInboundContext {
+/** 队列行 → 入站上下文（含一卡到底的 progressCardOutTrackId 透传）。导出仅为单测（仓库纯函数可测惯例）。 */
+export function contextFromQueue(payload: DingtalkQueuePayload, row: DingtalkInboundQueueRow): DingtalkInboundContext {
   const s = payload.context;
   return {
     accountId: s.accountId, chatType: s.chatType, conversationId: s.conversationId, messageId: s.messageId,
     senderUserid: s.senderUserid, senderUnionId: s.senderUnionId, senderName: s.senderName,
     msgtype: s.msgtype, text: s.text, downloadCodes: [], fileName: s.fileName, quotedText: s.quotedText ?? null,
     isInAtList: true, maoUserId: row.maoUserId ?? s.maoUserId, groupContext: s.groupContext, senderLabel: s.senderLabel,
+    // 一卡到底：排队卡实例 ID 随上下文进入 createProgressCard，就地升级为进度卡（飞书 progressCardMessageId 同义）
+    progressCardOutTrackId: row.outTrackId,
   };
 }
 

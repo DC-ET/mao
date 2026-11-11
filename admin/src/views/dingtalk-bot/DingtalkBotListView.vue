@@ -102,11 +102,8 @@
         <el-form-item label="Robot Code" prop="robotCode">
           <el-input v-model="form.robotCode" maxlength="128" placeholder="发送与下载使用，不假定等于 Client ID" />
         </el-form-item>
-        <el-form-item label="进度卡模板">
-          <el-input v-model="form.progressCardTemplateId" maxlength="128" placeholder="留空则用环境变量" />
-        </el-form-item>
-        <el-form-item label="排队卡模板">
-          <el-input v-model="form.queueCardTemplateId" maxlength="128" placeholder="留空则用环境变量" />
+        <el-form-item label="卡片模板">
+          <el-input v-model="form.cardTemplateId" maxlength="128" placeholder="留空则用环境变量；排队/进度/终态共用同一模板" />
         </el-form-item>
         <el-form-item label="Agent">
           <el-select v-model="form.agentId" clearable filterable placeholder="使用默认 Agent" class="form-select">
@@ -145,8 +142,7 @@ interface DingtalkBot {
   enabled: number
   agentId?: number | null
   modelId?: number | null
-  progressCardTemplateId?: string | null
-  queueCardTemplateId?: string | null
+  cardTemplateId?: string | null
   clientSecretConfigured: boolean
 }
 
@@ -166,7 +162,7 @@ const formRef = ref<FormInstance>()
 const textModels = computed(() => models.value.filter(model => !model.modelType || model.modelType === 'text'))
 const form = reactive({
   name: '', appKey: '', clientId: '', clientSecret: '', robotCode: '',
-  progressCardTemplateId: '', queueCardTemplateId: '',
+  cardTemplateId: '',
   agentId: undefined as number | undefined, modelId: undefined as number | undefined,
 })
 const formRules: FormRules = {
@@ -240,7 +236,7 @@ function modelName(modelId: number | null | undefined) {
 function openCreate() {
   isEdit.value = false
   editingId.value = null
-  Object.assign(form, { name: '', appKey: '', clientId: '', clientSecret: '', robotCode: '', progressCardTemplateId: '', queueCardTemplateId: '', agentId: undefined, modelId: undefined })
+  Object.assign(form, { name: '', appKey: '', clientId: '', clientSecret: '', robotCode: '', cardTemplateId: '', agentId: undefined, modelId: undefined })
   formVisible.value = true
 }
 
@@ -249,7 +245,7 @@ function openEdit(bot: DingtalkBot) {
   editingId.value = bot.id
   Object.assign(form, {
     name: bot.name, appKey: bot.appKey, clientId: bot.clientId, clientSecret: '', robotCode: bot.robotCode,
-    progressCardTemplateId: bot.progressCardTemplateId ?? '', queueCardTemplateId: bot.queueCardTemplateId ?? '',
+    cardTemplateId: bot.cardTemplateId ?? '',
     agentId: bot.agentId ?? undefined, modelId: bot.modelId ?? undefined,
   })
   formVisible.value = true
@@ -264,8 +260,7 @@ async function handleSubmit() {
     robotCode: form.robotCode.trim(),
     agentId: form.agentId ?? null,
     modelId: form.modelId ?? null,
-    progressCardTemplateId: form.progressCardTemplateId.trim(),
-    queueCardTemplateId: form.queueCardTemplateId.trim(),
+    cardTemplateId: form.cardTemplateId.trim(),
   }
   if (!isEdit.value) {
     payload.appKey = form.appKey.trim()

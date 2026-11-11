@@ -10,7 +10,7 @@
 | 绑定 | 「设置 → 渠道绑定 → 钉钉Bot」绑定，或钉钉里点「点我绑定」短链。钉钉身份只绑定已有 Mao 用户，不创建账号，不要求 ECP 票 |
 | 私聊 | 文本、富文本、图片、文件。`---`（3 个及以上 `-` 或 `—`）新建会话；执行中收到 `---` 先取消当前任务 |
 | 群聊 | 只处理 @ 本机器人之后的文本、富文本、图片。上下文是最近的 @ 往来加上本条引用正文，不是完整群聊 |
-| 进度卡 / 排队卡 | 执行中、完成、失败、取消；排队时可立即发送或取消本条。只允许原发送者点按钮 |
+| 互动卡片（一卡到底） | 排队中 → 执行中 → 完成 / 失败 / 取消，**全程同一张卡**（排队卡在被消费时就地升级为进度卡）；排队时可立即发送（插队）或取消本条。只允许原发送者点按钮 |
 | 定时任务结果 | 在钉钉会话里创建的定时任务（以及该会话上的「立即执行」）成功后，最终回复推回原私聊或群。配了进度卡模板时发一张「处理完成」卡；没有模板，或卡片投放失败，改发 markdown。失败和取消不推 |
 | 网页同步 | 已经打开的网页 / 桌面 / 安卓会话会跟上这一轮执行 |
 | 工具 | 钉钉会话提供 `dingtalk_send_image` / `dingtalk_send_file`，不提供 `ask_user_questions` |
@@ -27,12 +27,12 @@
 
 ## 使用流程
 
-1. 开放平台创建企业内部应用，机器人收消息选 Stream 并发布。在「权限管理」按权限点搜索并开通下表，然后到「版本管理与发布」发一版，权限才生效。登录应用（绑定用的钉钉 OAuth 应用，可以就是这个机器人应用）还要在「登录与分享」登记回调。卡片平台发布进度卡、排队卡，按钮 actionId 为 `cancel`、`retry`、`run`。不想从零画卡片可以直接导入现成模板：见 [../template/README.md](../template/README.md)（变量契约 + 导入步骤 + 改模板注意点）。
+1. 开放平台创建企业内部应用，机器人收消息选 Stream 并发布。在「权限管理」按权限点搜索并开通下表，然后到「版本管理与发布」发一版，权限才生效。登录应用（绑定用的钉钉 OAuth 应用，可以就是这个机器人应用）还要在「登录与分享」登记回调。卡片平台发布**一张合并模板**（排队 / 进度 / 终态一卡到底），按钮 actionId 为 `run`、`cancel`、`retry`（「取消排队」与「取消任务」共用 `cancel`，靠可见性互斥）。不想从零画卡片可以直接导入现成模板：见 [../template/README.md](../template/README.md)（变量契约 + 导入步骤 + 改模板注意点）。
 
    | 后台名称 | 权限点 | 用途 |
    |----------|--------|------|
    | 企业内机器人发送消息权限 | `qyapi_robot_sendmsg` | 私聊 / 群聊回复，以及下载用户发来的图片、文件 |
-   | 互动卡片实例写权限 | `Card.Instance.Write` | 投放并更新进度卡、排队卡 |
+   | 互动卡片实例写权限 | `Card.Instance.Write` | 投放排队卡并就地更新为进度卡（一卡到底） |
    | 成员信息读权限 | `qyapi_get_member` | 绑定：用 unionId 换企业内 userid。接口名是「根据 unionid 获取用户」 |
    | 通讯录个人信息读权限 | `Contact.User.Read` | 绑定：授权后读取当前用户的 unionId |
    | 调用企业 API 的基本权限 | `qyapi_base` | 上传图片、文件。企业内部应用通常默认已有 |
@@ -51,7 +51,7 @@
 |------|------|------|
 | GET | `/v1/admin/dingtalk-bots` | 列表。不返回 `clientSecret`，只返回 `clientSecretConfigured` |
 | GET | `/v1/admin/dingtalk-bots/:id` | 单个 |
-| POST | `/v1/admin/dingtalk-bots` | 创建：`appKey`、`name`、`clientId`、`clientSecret`、`robotCode`、`agentId?`、`modelId?`、`progressCardTemplateId?`、`queueCardTemplateId?`、`enabled?` |
+| POST | `/v1/admin/dingtalk-bots` | 创建：`appKey`、`name`、`clientId`、`clientSecret`、`robotCode`、`agentId?`、`modelId?`、`cardTemplateId?`（排队/进度/终态共用同一模板）、`enabled?` |
 | PUT | `/v1/admin/dingtalk-bots/:id` | 更新。`clientSecret` 空串表示不改 |
 | DELETE | `/v1/admin/dingtalk-bots/:id` | 软删除 |
 | POST | `/v1/admin/dingtalk-bots/:id/enable` 与 `/disable` | 启停 |

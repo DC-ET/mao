@@ -38,8 +38,11 @@ export class DingtalkCardActionService {
     const event = parseCardCallback(raw);
     if (event == null) return undefined;
     if (event.actionId === 'run' || event.actionId === 'cancel') {
+      // 一卡到底后，升级卡在执行期间共用队列行 outTrackId：行进入 RUNNING 后该回调属于
+      // 进度卡（取消任务 / 重试），必须落到 findProgress 分支——队列表分支只管真正的排队态，
+      // 否则 RUNNING 行会被 decideQueue 的 ALREADY_STARTED 挡掉，执行期间的「取消任务」永远失败。
       const row = await this.options.queuePort.findByOutTrackId(event.outTrackId);
-      if (row != null) return this.decideQueue(event.userId, event.actionId, row);
+      if (row != null && row.status === 'QUEUED') return this.decideQueue(event.userId, event.actionId, row);
     }
     if (event.actionId === 'retry' || event.actionId === 'cancel') {
       const progress = await this.options.findProgress(event.outTrackId);
@@ -86,6 +89,10 @@ export class DingtalkCardActionService {
         })),
         after: async () => { await retry(progress.sessionId); },
       };
+    }
+    if (actionId !== 'cancel') {
+      // 排队态专用回调（run）落到进度卡：按钮此刻必已隐藏（canRun=false），陈旧点击不动作。
+      return { response: cardCallbackResponse(null, '该操作已失效') };
     }
     const cancelled = await this.options.cancelRunning(progress.sessionId);
     if (!cancelled) return { response: cardCallbackResponse(null, '该任务已结束') };

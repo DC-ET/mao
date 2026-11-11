@@ -11,13 +11,13 @@ export class DingtalkTaskQueueService implements DingtalkTaskQueuePort, Dingtalk
     senderUserid: string;
     maoUserId: number | null;
     payload: string;
-  }): Promise<number> {
+  }): Promise<{ id: number; rankNo: number | null }> {
     try {
       return await this.repo.transaction(async (tx) => {
         const maxRank = await tx.findMaxRankForUpdate(params.sessionId);
         const existing = await tx.findByBotAndMessage(params.botId, params.messageId);
-        if (existing != null) return existing.id;
-        return tx.insert({
+        if (existing != null) return { id: existing.id, rankNo: existing.rankNo };
+        return { id: await tx.insert({
           botId: params.botId,
           sessionId: params.sessionId,
           messageId: params.messageId,
@@ -27,12 +27,12 @@ export class DingtalkTaskQueueService implements DingtalkTaskQueuePort, Dingtalk
           rankNo: maxRank + 1,
           status: 'QUEUED',
           payload: params.payload,
-        });
+        }), rankNo: maxRank + 1 };
       });
     } catch (error) {
       console.warn(`钉钉消息入队冲突，回退查找已有行, botId=${params.botId}, messageId=${params.messageId}`, error);
       const existing = await this.repo.findByBotAndMessage(params.botId, params.messageId);
-      if (existing != null) return existing.id;
+      if (existing != null) return { id: existing.id, rankNo: existing.rankNo };
       throw error;
     }
   }

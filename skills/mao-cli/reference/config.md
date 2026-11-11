@@ -164,8 +164,7 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 | `DINGTALK_BOT_ENABLED` | false | 钉钉机器人通道总开关 |
 | `DINGTALK_BOT_RECONCILE_INTERVAL_MS` | 5000 | 扫表间隔 |
 | `APP_DINGTALK_BOT_SECRET` | - | 机器人 Client Secret 的 AES-GCM 密钥，不复用飞书那一项 |
-| `DINGTALK_PROGRESS_CARD_TEMPLATE_ID` | - | 进度卡模板，可被机器人行覆盖 |
-| `DINGTALK_QUEUE_CARD_TEMPLATE_ID` | - | 排队卡模板 |
+| `DINGTALK_CARD_TEMPLATE_ID` | - | 互动卡片模板（排队/进度/终态一卡到底共用），可被机器人行覆盖 |
 | `DINGTALK_BOT_REPLY_MAX_LENGTH` | 2000 | markdown 截断长度 |
 | `DINGTALK_BOT_GROUP_CONTEXT_MAX_ITEMS` | 10 | @ 往来条数 |
 | `DINGTALK_BOT_GROUP_CONTEXT_MAX_MINUTES` | 120 | @ 往来时间窗 |

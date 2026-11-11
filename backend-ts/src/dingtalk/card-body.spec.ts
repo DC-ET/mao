@@ -57,13 +57,45 @@ describe('progressCardParams', () => {
     expect(progressCardParams({ ...base, status: 'completed', detail: 'ok' })).toMatchObject({ canCancel: 'false', canRetry: 'false' });
     expect(progressCardParams({ ...base, status: 'cancelled' })).toMatchObject({ canCancel: 'false', canRetry: 'false' });
   });
+
+  // 合并模板（V192）下三按钮可见性变量全部显式下发：进度卡永远不该显示插队按钮。
+  it('canRun 恒为 false（合并模板要求三 boolean 全量下发）', () => {
+    const base = { round: 1, sessionId: 1, senderUserid: 'u' };
+    for (const status of ['running', 'failed', 'completed', 'cancelled'] as const) {
+      expect(progressCardParams({ ...base, status })).toMatchObject({ canRun: 'false' });
+    }
+  });
 });
 
 describe('queueCardParams', () => {
-  it('排队卡带预览与队列号', () => {
-    const params = queueCardParams({ status: 'queued', preview: '帮我看看', queueId: 12, senderUserid: 'u' });
+  it('排队态拼 body（状态行 + 消息摘要），canRun 开、其余 boolean 关', () => {
+    const params = queueCardParams({ status: 'queued', preview: '帮我看看磁盘', queueId: 12, senderUserid: 'u' });
 
-    expect(params).toEqual({ title: '排队中', preview: '帮我看看', status: 'queued', queueId: '12', senderUserid: 'u' });
+    expect(params).toEqual({
+      title: '排队中',
+      body: '**状态：排队中**\n\n帮我看看磁盘',
+      status: 'queued',
+      queueId: '12',
+      senderUserid: 'u',
+      canRun: 'true',
+      canCancel: 'false',
+      canRetry: 'false',
+    });
+  });
+
+  it('带 rankNo 时 body 含队列位次行', () => {
+    const params = queueCardParams({ status: 'queued', preview: '摘要', queueId: 12, senderUserid: 'u', rankNo: 2 });
+    expect(params.body).toBe('**状态：排队中**\n\n当前排在第 2 位\n\n摘要');
+  });
+
+  it('插队/取消终态：canRun 关、无位次行，摘要 80 字截断', () => {
+    const started = queueCardParams({ status: 'started', preview: 'x'.repeat(100), queueId: 3, senderUserid: 'u' });
+    expect(started.body).toBe(`**状态：已开始处理**\n\n${'x'.repeat(80)}`);
+    expect(started).toMatchObject({ canRun: 'false', canCancel: 'false', canRetry: 'false' });
+
+    const cancelled = queueCardParams({ status: 'cancelled', preview: 'y', queueId: 3, senderUserid: 'u', rankNo: 4 });
+    expect(cancelled.body).toBe('**状态：已取消**\n\ny');
+    expect(cancelled).toMatchObject({ canRun: 'false', canCancel: 'false', canRetry: 'false' });
   });
 });
 

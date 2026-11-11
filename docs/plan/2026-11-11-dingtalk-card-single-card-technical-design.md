@@ -76,17 +76,20 @@ if (event.actionId === 'retry' || event.actionId === 'cancel') {
 
 | 模块 | 位置 | 与本方案的关联 |
 |------|------|----------------|
-| 卡片参数拼装 | `backend-ts/src/dingtalk/card-body.ts` | `progressCardParams` / `queueCardParams` 变量集；第二步需统一 |
-| 投放与更新 | `backend-ts/src/dingtalk/card-client.ts` | `createAndDeliverCard` / `updateCard`（增量更新） |
-| 卡片生命周期 | `backend-ts/src/dingtalk/runtime.ts` | `createProgress`(:208)、`createQueueCard`(:305)、`templateOf`(:151)、`cardProgress`(:190)、`recoverProgress`(:513) |
-| 回调路由 | `backend-ts/src/dingtalk/card-action.service.ts:37-48` | 排队/进度分流，`run`/`cancel`/`retry` 三个 actionId |
-| 入站编排 | `backend-ts/src/dingtalk/agent-inbound-handler.ts` | `enqueueMessage`(:411) 调 `createQueueCard`；`executeQueued`(:505) 消费队列；`contextFromQueue`(:699) 重构上下文；`dropQueued`(:609) |
+| 卡片参数拼装 | `backend-ts/src/dingtalk/card-body.ts` | `progressCardParams`（:32，已含 canCancel/canRetry boolean）/ `queueCardParams`（:70，preview 形态）变量集；第二步需统一 |
+| 投放与更新 | `backend-ts/src/dingtalk/card-client.ts` | `createAndDeliverCard` / `updateCard`（:70-88，增量更新，不需要 templateId） |
+| 卡片生命周期 | `backend-ts/src/dingtalk/runtime.ts` | `templateOf`(:154)、`cardProgress`(:192)、`createProgress`(:211)、`createQueueCard`(:308)、`noteReplyFailure`(:363)、`recoverProgress`(:551)、`pushScheduledResult`(:478，定时结果卡，**第二步 templateOf 调用点**，评审补充) |
+| 回调路由 | `backend-ts/src/dingtalk/card-action.service.ts:37-48` | 排队/进度分流，`run`/`cancel`/`retry` 三个 actionId；`previewOf`(:8) |
+| 入站编排 | `backend-ts/src/dingtalk/agent-inbound-handler.ts` | `enqueueMessage`(:413，先投卡 :432 后 setOutTrackId :433)；`executeQueued`(:505)；`contextFromQueue`(:699)；`dropQueued`(:609) |
 | 队列仓储/服务 | `backend-ts/src/dingtalk/inbound-queue.{repository,service}.ts` | `outTrackId` 读写、CAS 认领、启动恢复 |
-| 进度卡映射 | `backend-ts/src/dingtalk/progress-card.repository.ts` | `upsert` / `findBySessionId` / `findByOutTrackId` / `deleteBySessionId` |
-| 模板 JSON / 自检 / 说明 | `skills/mao-cli/template/` | 第二步合并对象；`check-template.js` 需扩展 |
+| 进度卡映射 | `backend-ts/src/dingtalk/progress-card.repository.ts` | `upsert`(:32) / `findBySessionId` / `findByOutTrackId`(:50) / `deleteBySessionId`(:58)，行含 chatType/conversationId |
+| 定时结果卡 | `backend-ts/src/dingtalk/scheduled-result.ts` | `deliverScheduledDingtalkReply` 消费 `progressCardParams` + 外部传入 templateId（**第二步合并模板/参数收敛的消费方**，评审补充；不写进度卡映射，与升级分支无冲突） |
+| 模板 JSON / 自检 / 说明 | `skills/mao-cli/template/` | 第二步合并对象（仓库内仅有 progress 模板 JSON，排队模板只存在于钉钉平台侧）；`check-template.js` 需扩展 |
 | 飞书参照实现 | `backend-ts/src/feishu-cards.ts:189-195` | 一卡到底的既有范本 |
 
 ### 3.1 模板 ID 配置的现有引用点（第二步全部要改）
+
+> 仓库内引用一律为 camelCase 字段（`progressCardTemplateId`/`queueCardTemplateId`）；snake_case 列名仅存在于 V120 迁移的 DDL 里——实现时不要拿 snake_case 全仓搜索。
 
 | 层 | 位置 | 内容 |
 |----|------|------|
@@ -96,7 +99,7 @@ if (event.actionId === 'retry' || event.actionId === 'cancel') {
 | 后端路由 | `backend-ts/src/dingtalk/admin.routes.ts:27-28,76-77,106-107` | 请求体两个字段 + create/update 赋值 |
 | 后端配置 | `backend-ts/src/config/app-config.ts:13-14,222-223,582-583` | `DingtalkRuntimeConfig` 两个字段 + 两个 env |
 | 装配 | `backend-ts/src/app-feishu-handler.ts:519-520` | 透传两个字段给 runtime |
-| 模板选择 | `backend-ts/src/dingtalk/runtime.ts:151` | `templateOf(bot, kind)` 按 kind 读对应字段 |
+| 模板选择 | `backend-ts/src/dingtalk/runtime.ts:154` | `templateOf(bot, kind)` 按 kind 读对应字段；**调用点含 `pushScheduledResult`(:497，定时结果卡)，第二步改签名时必须同步**（评审补充） |
 | 管理后台 | `admin/src/views/dingtalk-bot/DingtalkBotListView.vue:105-110,148-149,169,243,252,267-268` | 两个表单输入框 + form 字段 + 提交体 |
 | 文档 | `skills/mao-cli/reference/config.md:167-168`、`dingtalk-bot.md:53`、`admin.md:258` | 两个 env、两个 API 参数、后台说明 |
 
@@ -253,7 +256,7 @@ const createProgress = async (context, sessionId) => {
 | `sessionId` | string | 会话 ID |
 | `tag` | string | 卡片标签（当前未传，保留占位） |
 
-`sessionUrl` 当前后端传了但模板未使用（进度卡模板只绑了 `body`），合并时若不加「会话详情」按钮就不声明。
+`sessionUrl` 当前后端传了但模板未使用（已实证：`dingtalk-progress-card.json` 无 `sessionUrl`/`title` 绑定，只绑 `body`），合并时若不加「会话详情」按钮就不声明。
 
 ### 5.3 关键约束：所有 boolean 必须补齐
 
@@ -313,7 +316,7 @@ const templateOf = (bot: DingtalkBot): string | null => {
 };
 ```
 
-去掉 `kind` 参数。调用点：`createProgress`（新建路径）、`createQueueCard`、`recoverProgress`、`noteReplyFailure`。
+去掉 `kind` 参数。调用点：`createProgress`（新建路径）、`createQueueCard`、`recoverProgress`、`noteReplyFailure`、**`pushScheduledResult`（:497，定时结果卡——评审补充；同链路的 `deliverScheduledDingtalkReply` 还消费 `progressCardParams`，`canRun: 'false'` 增补对其自动生效且语义正确：定时结果卡不该显示插队按钮）**。
 
 #### 管理后台
 
@@ -321,7 +324,7 @@ const templateOf = (bot: DingtalkBot): string | null => {
 
 #### 模板文件
 
-`skills/mao-cli/template/dingtalk-progress-card.json` 重命名为 `dingtalk-card.json`，并就地改造为合并模板。改名需同步：`check-template.js` 的 `file` 常量、`README.md` 的文档内引用。旧文件名不再保留。
+`skills/mao-cli/template/dingtalk-progress-card.json` 重命名为 `dingtalk-card.json`，并就地改造为合并模板。改名需同步：`check-template.js` 的 `file` 常量、`README.md` 的文档内引用。旧文件名不再保留。平台侧旧的排队卡模板成为孤儿实例（仓库内本就没有排队模板 JSON，实证 template 目录仅有 progress 一份），可由用户在钉钉开放平台手动删除（可选，不阻塞）。
 
 ### 5.7 自检脚本扩展
 
@@ -424,6 +427,7 @@ const ACTION_VISIBLE = { cancel: ['canCancel', 'canRun'], retry: ['canRetry'], r
 - [ ] 自检 + 反向验证 + 全量测试 + build + `admin` 侧 `npm run build`
 - [ ] **人工**：卡片平台导入 → 保存 → **发布** → 后台填模板 ID
 - [ ] `CHANGELOG.md` + `skills/mao-cli/reference/{dingtalk-bot,config,admin}.md` 同步
+- [ ] `backend-ts/src/dingtalk/runtime.ts` 的 `pushScheduledResult`（:497）与 `backend-ts/src/dingtalk/scheduled-result.ts`（`progressCardParams` 消费方）：templateOf 签名/参数收敛同步（评审补充）
 - [ ] 部署 + 钉钉侧全流程实测
 
 ## 10. 参考资料
@@ -432,3 +436,14 @@ const ACTION_VISIBLE = { cancel: ['canCancel', 'canRun'], retry: ['canRetry'], r
 - 飞书入站队列设计：`docs/plan/2026-08-28-feishu-inbound-queue-technical-design.md`（决策 5「一卡到底」）
 - 钉钉卡片更新语义（增量/全量）：钉钉开放平台「卡片更新」[^1^][^2^]
 - 本次已修复的按钮可见性约束：`skills/mao-cli/template/README.md`
+
+## 11. 评审修订记录（2026-11-12）
+
+1. **定时结果卡链路纳入第二步影响面（重要）**：本方案写作后，同批代码新增了 `dingtalk/scheduled-result.ts`（定时任务结果卡）与 `runtime.ts` 的 `pushScheduledResult`（:488-497）——后者调用 `templateOf(cred.bot, 'progress')`，是 §5.6 调用点清单遗漏的一处；`deliverScheduledDingtalkReply` 消费 `progressCardParams`（`canRun:'false'` 增补自动覆盖，语义正确：定时结果卡不显示插队按钮；其「不写进度卡映射」行为与第一步升级分支无冲突）。§3 索引、§3.1、§5.6、§9 落地清单已补。
+2. **行号全面更新**：templateOf :151→:154、cardProgress :190→:192、createProgress :208→:211、createQueueCard :305→:308、noteReplyFailure :357→:363、recoverProgress :513→:551、enqueueMessage :411→:413（contextFromQueue :699 / executeQueued :505 / dropQueued :609 / card-action.service :37-48 复核精确）。
+3. **§3.1 引用点表述修正**：仓库内引用为 camelCase 字段，snake_case 列名仅存在于 V120 DDL——防止实现者拿 snake_case 全仓搜索扑空。
+4. **§5.2 两条声明标注「已实证」**：`dingtalk-progress-card.json` 无 `sessionUrl`/`title` 绑定（node 实证），合并时不声明的口径成立。
+5. **平台侧孤儿模板说明**：仓库 template 目录只有 progress 模板 JSON（无 queue 模板 JSON，实证）——排队模板只存在于钉钉平台侧，合并后成为孤儿实例，可手动删除（可选，不阻塞）。§5.6。
+6. **升级分支语义复核确认**：升级不检查模板 ID 的附带好处成立——只配 queue 模板 ID 的 bot 升级后每轮 `updateCard` 同样无需模板 ID（`updateCard` 按 outTrackId 定位，实证 `card-client.ts` 签名）；`progressRepo.upsert` 行含 chatType/conversationId，§4.3.3 片段的字段在 context 作用域内可得（`types.ts:52` DingtalkInboundContext extends NormalizedMessage，chatType/conversationId 实证存在）。
+7. **V192 迁移编号确认**：当前迁移最大版本 V191（实证 db/migration 目录），V192 编号正确；V120 列名与 `AFTER model_id` 锚点实证存在。
+8. **实现轮 review 修正（2026-11-12，落地轮）**：①§2.3「路由逻辑不用改」的结论有一处 RUNNING 窗口遗漏——升级卡执行期间共用队列行 outTrackId，而行要到执行结束才删除，`decide()` 对 cancel 回调「队列行命中即 return」会让执行中的「取消任务」被 `decideQueue` 的 ALREADY_STARTED 挡掉、永远失败；已修：队列分支加 `row.status === 'QUEUED'` 闸门，RUNNING 行落到 `findProgress` 进度分支（升级卡必有映射），并补回归用例；②`decideProgress` 对非 retry 回调原本一律落入取消分支，加显式 `actionId === 'cancel'` 守卫（闸门放行后 RUNNING 行的陈旧 run 回调不得误取消）；③`enqueue` 返回 `{ id, rankNo }` 并接线到 `createQueueCard`，排队态 body 的「当前排在第 N 位」行从不可达变为可达（dedupe 路径 rankNo 取原行）；§5.4 的位次承诺兑现。

@@ -25,8 +25,7 @@ export class MysqlDingtalkBotRepository implements DingtalkBotRepository {
       robotCode: bot.robotCode,
       agentId: bot.agentId ?? null,
       modelId: bot.modelId ?? null,
-      progressCardTemplateId: bot.progressCardTemplateId ?? null,
-      queueCardTemplateId: bot.queueCardTemplateId ?? null,
+      cardTemplateId: bot.cardTemplateId ?? null,
       enabled: bot.enabled ?? 1,
       deleted: 0,
     });
@@ -44,8 +43,7 @@ export class MysqlDingtalkBotRepository implements DingtalkBotRepository {
       robotCode: bot.robotCode,
       agentId: bot.agentId ?? null,
       modelId: bot.modelId ?? null,
-      progressCardTemplateId: bot.progressCardTemplateId ?? null,
-      queueCardTemplateId: bot.queueCardTemplateId ?? null,
+      cardTemplateId: bot.cardTemplateId ?? null,
       enabled: bot.enabled ?? 1,
     });
   }

@@ -53,6 +53,9 @@ export function progressCardParams(input: {
     // （@triple{'' , 'visible', 'gone'} 恒假），按钮永远不显示。
     canCancel: String(input.status === 'running'),
     canRetry: String(input.status === 'failed'),
+    // 合并模板（V192）下三个按钮的可见性变量都要显式下发，无关态置 false——
+    // 任何一次 updateCard 都不会留下未声明的 undefined（技术方案 §5.3）。
+    canRun: 'false',
     sessionUrl: input.sessionUrl ?? '',
     sessionId: String(input.sessionId),
     senderUserid: input.senderUserid,
@@ -67,19 +70,26 @@ function statusLineOf(status: DingtalkProgressStatus, round: number, elapsedMs?:
   return `**状态：${TITLES[status]}**${meta.length > 0 ? ` · ${meta.join(' · ')}` : ''}`;
 }
 
+/** 排队卡参数：合并模板（V192）下与进度卡共用 body/status/三 boolean 变量，`preview` 变量已删除。
+ *  body 自拼 markdown（状态行 + 队列位次（可选）+ 消息摘要）；rankNo 由调用方在可得时传入（入队时无位次数据则省略）。 */
 export function queueCardParams(input: {
   status: 'queued' | 'started' | 'cancelled';
   preview: string;
   queueId: number;
   senderUserid: string;
+  rankNo?: number;
 }): Record<string, string> {
   const title = input.status === 'queued' ? '排队中' : input.status === 'started' ? '已开始处理' : '已取消';
+  const position = input.status === 'queued' && input.rankNo != null && input.rankNo > 0 ? `当前排在第 ${input.rankNo} 位\n\n` : '';
   return {
     title,
-    preview: input.preview.slice(0, 80),
+    body: `**状态：${title}**\n\n${position}${input.preview.slice(0, 80)}`,
     status: input.status,
     queueId: String(input.queueId),
     senderUserid: input.senderUserid,
+    canRun: String(input.status === 'queued'),
+    canCancel: 'false',
+    canRetry: 'false',
   };
 }
 

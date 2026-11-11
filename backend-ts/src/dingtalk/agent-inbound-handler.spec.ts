@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AgentDingtalkInboundHandler, NEW_SESSION_CONFIRM_TEXT } from './agent-inbound-handler.js';
+import { AgentDingtalkInboundHandler, contextFromQueue, NEW_SESSION_CONFIRM_TEXT } from './agent-inbound-handler.js';
 import type { DingtalkInboundContext } from './types.js';
 
 function context(overrides: Partial<DingtalkInboundContext> = {}): DingtalkInboundContext {
@@ -152,7 +152,7 @@ describe('AgentDingtalkInboundHandler retry identity', () => {
 describe('AgentDingtalkInboundHandler 平台队列接力（0.0.434）', () => {
   function makeQueue() {
     return {
-      enqueue: vi.fn(async () => 1),
+      enqueue: vi.fn(async () => ({ id: 1, rankNo: 1 })),
       setOutTrackId: vi.fn(async () => undefined),
       claimNext: vi.fn(async () => null),
       complete: vi.fn(async () => undefined),
@@ -239,5 +239,31 @@ describe('AgentDingtalkInboundHandler 终态回复', () => {
     await inbound.onMessage(context({ text: '你好' }));
 
     expect(reply).toHaveBeenCalledWith(expect.anything(), '回复', expect.anything());
+  });
+});
+
+describe('AgentDingtalkInboundHandler 队列上下文透传（一卡到底，批次 29 提案 5 同族技术方案）', () => {
+  it('contextFromQueue 把队列行 outTrackId 透传为 progressCardOutTrackId，maoUserId 取行值', async () => {
+    const row = {
+      id: 7, botId: 3, sessionId: 20, messageId: 'm1', outTrackId: 'card-out-1',
+      senderUserid: 'staff', maoUserId: 42, rankNo: 1,
+    } as never;
+    const payload = { context: { accountId: '3', chatType: 'p2p', conversationId: 'cid-1', messageId: 'm1', senderUserid: 'staff', senderUnionId: null, senderName: '张三', msgtype: 'text', text: '你好', fileName: null, quotedText: null } } as never;
+    const ctx = contextFromQueue(payload, row);
+
+    expect(ctx.progressCardOutTrackId).toBe('card-out-1');
+    expect(ctx.maoUserId).toBe(42);
+    expect(ctx.text).toBe('你好');
+  });
+
+  it('队列行无 outTrackId 时透传 null（升级分支自然走新建路径）', async () => {
+    const row = {
+      id: 7, botId: 3, sessionId: 20, messageId: 'm1', outTrackId: null,
+      senderUserid: 'staff', maoUserId: null, rankNo: 1,
+    } as never;
+    const payload = { context: { accountId: '3', chatType: 'p2p', conversationId: 'cid-1', messageId: 'm1', senderUserid: 'staff', senderUnionId: null, senderName: '张三', msgtype: 'text', text: '你好', fileName: null, quotedText: null } } as never;
+    const ctx = contextFromQueue(payload, row);
+
+    expect(ctx.progressCardOutTrackId).toBeNull();
   });
 });

@@ -10,8 +10,7 @@ export interface DingtalkBotConfig {
   reconnectBaseMs: number;
   reconnectMaxMs: number;
   maxConsecutiveFailures: number;
-  progressCardTemplateId: string;
-  queueCardTemplateId: string;
+  cardTemplateId: string;
   replyMaxLength: number;
   groupContext: { maxItems: number; maxMinutes: number };
   /** 入站防抖合并窗口（ms）：同账号+会话+发送者的连续文本消息合并为一次触发；0=禁用。 */
@@ -219,8 +218,7 @@ const DEFAULTS: AppConfig = {
     reconnectBaseMs: 1000,
     reconnectMaxMs: 30000,
     maxConsecutiveFailures: 5,
-    progressCardTemplateId: '',
-    queueCardTemplateId: '',
+    cardTemplateId: '',
     replyMaxLength: 2000,
     groupContext: { maxItems: 10, maxMinutes: 120 },
     mergeWindowMs: 1000,
@@ -579,8 +577,7 @@ export function loadConfig(): AppConfig {
   }
   // 钉钉 OAuth 登录三项（V191）已后台化：见 settings/settings-bootstrap.ts 的 env→DB 导入，
   // 此处不再读环境变量（对齐飞书 auth.feishu.* 的做法）。
-  if (process.env.DINGTALK_PROGRESS_CARD_TEMPLATE_ID) cfg.dingtalk.progressCardTemplateId = process.env.DINGTALK_PROGRESS_CARD_TEMPLATE_ID;
-  if (process.env.DINGTALK_QUEUE_CARD_TEMPLATE_ID) cfg.dingtalk.queueCardTemplateId = process.env.DINGTALK_QUEUE_CARD_TEMPLATE_ID;
+  if (process.env.DINGTALK_CARD_TEMPLATE_ID) cfg.dingtalk.cardTemplateId = process.env.DINGTALK_CARD_TEMPLATE_ID;
   cached = cfg;
   return cfg;
 }
