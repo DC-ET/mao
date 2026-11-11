@@ -408,7 +408,12 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     });
     registerUserRoutes(api, userService, userRepo, permissionService, containerOps);
     if (containerOps) {
-      registerAdminContainerRoutes(api, { containerOps, permissionService });
+      registerAdminContainerRoutes(api, {
+        containerOps,
+        permissionService,
+        userLookup: { findByIds: (ids) => userRepo.findByIds(ids) },
+        agentLookup: { findByIds: (ids) => agentRepo.findByIds(ids) },
+      });
     }
     registerPermissionRoutes(api, permissionService);
     registerGitCredentialRoutes(api, gitCredentials);

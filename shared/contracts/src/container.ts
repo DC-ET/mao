@@ -8,7 +8,7 @@
  * tracked=false 表示 Docker 中存在但当前后端进程不在册（重启/崩溃遗留的残留容器）。
  */
 
-/** 在册容器摘要（管理后台「容器管理」列表）。 */
+/** 容器注册表摘要（不含用户 / Agent 名称；管理端列表行见 ContainerAdminRow）。 */
 export interface ContainerEntrySummary {
   userId: number;
   agentId: number;
@@ -27,6 +27,18 @@ export interface ContainerEntrySummary {
   pendingUpgrade: boolean;
   /** Docker `RunningFor` 原文（如 "About a minute"）；仅未在册行展示，在册行为 null。 */
   ageText: string | null;
+}
+
+/**
+ * 管理后台「容器管理」列表行。
+ * 在注册表摘要上补用户 / Agent 展示名，由 `GET /v1/admin/containers` 装配（listEntries 不查库）。
+ * `userName` / `agentName` 为 null：对应用户或 Agent 已删除、不存在，或名称字段为空。
+ */
+export interface ContainerAdminRow extends ContainerEntrySummary {
+  /** 用户展示名：显示名称，否则用户名。 */
+  userName: string | null;
+  /** Agent 名称。 */
+  agentName: string | null;
 }
 
 /** 容器重建操作结果（管理后台「重建容器」）。removed = 未在册残留容器已删除，下次使用时按最新配置自动重建。 */

@@ -9,10 +9,10 @@
             <el-button
               type="primary"
               size="small"
-              :disabled="!canManage || rebuilding || rows.length === 0"
+              :disabled="!canManage || rebuilding || filteredRows.length === 0"
               :loading="rebuilding"
               @click="rebuildAll"
-            >重建全部</el-button>
+            >{{ queryActive ? '重建筛选结果' : '重建全部' }}</el-button>
             <el-button size="small" :loading="loading" @click="fetchRows">刷新</el-button>
           </div>
         </div>
@@ -44,10 +44,48 @@
       />
       <div v-if="resultSummary" class="result-summary">{{ resultSummary }}</div>
 
-      <el-table :data="rows" v-loading="loading" size="small" stripe>
-        <template #empty><el-empty description="当前没有容器记录" :image-size="48" /></template>
-        <el-table-column prop="userId" label="用户 ID" width="90" />
-        <el-table-column prop="agentId" label="Agent ID" width="90" />
+      <el-form :inline="true" size="small" class="search-form" @submit.prevent>
+        <el-form-item label="关键词">
+          <el-input
+            v-model="filters.keyword"
+            placeholder="用户 / Agent / 容器名 / ID"
+            clearable
+            style="width: 220px"
+          />
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="filters.state" placeholder="全部" clearable style="width: 110px">
+            <el-option label="运行中" value="running" />
+            <el-option label="已停止" value="stopped" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="在册">
+          <el-select v-model="filters.tracked" placeholder="全部" clearable style="width: 110px">
+            <el-option label="在册" value="tracked" />
+            <el-option label="未在册" value="untracked" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="忙碌">
+          <el-select v-model="filters.busy" placeholder="全部" clearable style="width: 110px">
+            <el-option label="有任务" value="busy" />
+            <el-option label="空闲" value="idle" />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-button :disabled="!queryActive" @click="resetFilters">重置</el-button>
+        </el-form-item>
+      </el-form>
+
+      <el-table :data="pageRows" v-loading="loading" size="small" stripe row-key="containerName">
+        <template #empty>
+          <el-empty :description="rows.length === 0 ? '当前没有容器记录' : '没有符合筛选条件的容器'" :image-size="48" />
+        </template>
+        <el-table-column label="用户" min-width="120" show-overflow-tooltip>
+          <template #default="{ row }">{{ displayUser(row) }}</template>
+        </el-table-column>
+        <el-table-column label="Agent" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ displayAgent(row) }}</template>
+        </el-table-column>
         <el-table-column prop="containerName" label="容器名" min-width="180" show-overflow-tooltip />
         <el-table-column label="状态" width="150">
           <template #default="{ row }">
@@ -122,16 +160,34 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <ResponsivePagination
+        v-if="filteredRows.length > 0"
+        class="pagination"
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :total="filteredRows.length"
+        :page-sizes="[10, 20, 50, 100]"
+        @size-change="currentPage = 1"
+      />
     </el-card>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { ContainerEntrySummary, ContainerRecycleResult } from '@mao/contracts'
+import type { ContainerAdminRow, ContainerRecycleResult } from '@mao/contracts'
 import { api } from '../../../api'
+import ResponsivePagination from '../../../components/ResponsivePagination.vue'
 import { CONTAINER_AUTO_UPGRADE_FIELD_ID } from '../settingsSearchCatalog'
+import {
+  clampPage,
+  filterContainerRows,
+  isContainerQueryActive,
+  pageOf,
+  type ContainerListQuery,
+} from '../containerListQuery'
 import { useAuthStore } from '../../../stores/auth'
 
 const authStore = useAuthStore()
@@ -169,8 +225,25 @@ async function saveAutoUpgrade(next: string | number | boolean) {
   }
 }
 
-const rows = ref<ContainerEntrySummary[]>([])
+const rows = ref<ContainerAdminRow[]>([])
 const loading = ref(false)
+const filters = reactive<ContainerListQuery>({ keyword: '', state: '', tracked: '', busy: '' })
+const currentPage = ref(1)
+const pageSize = ref(20)
+const queryActive = computed(() => isContainerQueryActive(filters))
+const filteredRows = computed(() => filterContainerRows(rows.value, filters))
+const pageRows = computed(() => pageOf(filteredRows.value, currentPage.value, pageSize.value))
+
+watch(filters, () => {
+  currentPage.value = 1
+})
+
+function resetFilters() {
+  filters.keyword = ''
+  filters.state = ''
+  filters.tracked = ''
+  filters.busy = ''
+}
 const includeBusy = ref(false)
 const rebuilding = ref(false)
 const progressCurrent = ref(0)
@@ -186,9 +259,27 @@ async function fetchRows() {
   try {
     const { data } = await api.get('/admin/containers')
     rows.value = Array.isArray(data) ? data : []
+    currentPage.value = clampPage(currentPage.value, filterContainerRows(rows.value, filters).length, pageSize.value)
   } catch { /* 拦截器已提示失败 */ } finally {
     loading.value = false
   }
+}
+
+function displayUser(row: ContainerAdminRow): string {
+  return row.userName?.trim() || `#${row.userId}`
+}
+
+function displayAgent(row: ContainerAdminRow): string {
+  return row.agentName?.trim() || `#${row.agentId}`
+}
+
+/** 确认框与失败明细用的称呼：有名称时带书名号，否则回落 #ID。 */
+function targetLabel(row: ContainerAdminRow): string {
+  const user = row.userName?.trim()
+  const agent = row.agentName?.trim()
+  const userText = user ? `用户「${user}」` : `用户 #${row.userId}`
+  const agentText = agent ? `Agent「${agent}」` : `Agent #${row.agentId}`
+  return `${userText}（${agentText}）`
 }
 
 function formatMs(ms?: number | null): string {
@@ -203,8 +294,8 @@ async function callRecycle(userId: number, force: boolean, agentId?: number): Pr
   return (data ?? { userId, agentId: agentId ?? null, status: 'failed' }) as ContainerRecycleResult
 }
 
-async function rebuildOne(row: ContainerEntrySummary) {
-  const target = `用户 #${row.userId}（Agent #${row.agentId}）`
+async function rebuildOne(row: ContainerAdminRow) {
+  const target = targetLabel(row)
   try {
     await ElMessageBox.confirm(
       row.tracked
@@ -218,8 +309,8 @@ async function rebuildOne(row: ContainerEntrySummary) {
   }
   try {
     const result = await callRecycle(row.userId, includeBusy.value, row.agentId)
-    if (result.status === 'rebuilt') ElMessage.success(`${target}容器已重建`)
-    else if (result.status === 'removed') ElMessage.success(`${target}残留容器已删除，下次使用时自动重建`)
+    if (result.status === 'rebuilt') ElMessage.success(`${target}的容器已重建`)
+    else if (result.status === 'removed') ElMessage.success(`${target}的残留容器已删除，下次使用时自动重建`)
     else if (result.status === 'none') ElMessage.info(`${target}当前没有容器`)
     else if (result.status === 'skipped-busy') ElMessage.warning(`${target}有在跑任务，已跳过`)
     else ElMessage.error(`${target}操作失败：${result.error || '未知错误'}`)
@@ -230,17 +321,19 @@ async function rebuildOne(row: ContainerEntrySummary) {
 }
 
 async function rebuildAll() {
-  const targets = includeBusy.value ? rows.value : rows.value.filter((row) => !row.busy)
-  const skipped = rows.value.length - targets.length
+  const scope = filteredRows.value
+  const targets = includeBusy.value ? scope : scope.filter((row) => !row.busy)
+  const skipped = scope.length - targets.length
   if (targets.length === 0) {
     ElMessage.info('没有可处理的容器（有任务的容器已跳过，可勾选「包括正在运行任务的容器」）')
     return
   }
   const untrackedCount = targets.filter((row) => !row.tracked).length
+  const scopeText = queryActive.value ? `当前筛选的 ${targets.length} 个容器` : `${targets.length} 个容器`
   try {
     await ElMessageBox.confirm(
-      `将依次处理 ${targets.length} 个容器${untrackedCount > 0 ? `（其中 ${untrackedCount} 个未在册残留容器将被删除）` : ''}${skipped > 0 ? `，跳过 ${skipped} 个有任务的容器` : ''}，过程中会中断容器内正在执行的任务。确定继续？`,
-      '重建全部容器',
+      `将依次处理 ${scopeText}${untrackedCount > 0 ? `（其中 ${untrackedCount} 个未在册残留容器将被删除）` : ''}${skipped > 0 ? `，跳过 ${skipped} 个有任务的容器` : ''}，过程中会中断容器内正在执行的任务。确定继续？`,
+      queryActive.value ? '重建筛选结果' : '重建全部容器',
       { confirmButtonText: '开始处理', cancelButtonText: '取消', type: 'warning' },
     )
   } catch {
@@ -265,20 +358,21 @@ async function rebuildAll() {
       else if (result.status === 'skipped-busy') skippedBusy += 1
       else {
         failed += 1
-        failures.push(`#${row.userId}/#${row.agentId}：${result.error || '未知错误'}`)
+        failures.push(`${targetLabel(row)}：${result.error || '未知错误'}`)
       }
     } catch (e: any) {
       failed += 1
-      failures.push(`#${row.userId}/#${row.agentId}：${e?.message || '请求失败'}`)
+      failures.push(`${targetLabel(row)}：${e?.message || '请求失败'}`)
     } finally {
       progressCurrent.value += 1
     }
   }
   rebuilding.value = false
   const parts = [`重建 ${rebuilt}`, `删除 ${removed}`, `无容器 ${none}`, `跳过 ${skippedBusy}`, `失败 ${failed}`]
-  resultSummary.value = `全部处理完成：${parts.join(' / ')}${failures.length > 0 ? `；失败明细：${failures.slice(0, 5).join('；')}` : ''}`
+  const doneTitle = queryActive.value ? '筛选结果处理完成' : '全部处理完成'
+  resultSummary.value = `${doneTitle}：${parts.join(' / ')}${failures.length > 0 ? `；失败明细：${failures.slice(0, 5).join('；')}` : ''}`
   if (failed > 0) ElMessage.warning(resultSummary.value)
-  else ElMessage.success('全部处理完成')
+  else ElMessage.success(doneTitle)
   await fetchRows()
 }
 
@@ -289,10 +383,13 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.group-header { display: flex; align-items: center; justify-content: space-between; }
+.group-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .group-title { font-weight: 600; }
-.header-actions { display: flex; align-items: center; gap: 12px; }
+.header-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .config-tip { margin-bottom: 12px; }
+.search-form { margin-bottom: 4px; }
+.search-form :deep(.el-form-item) { margin-bottom: 8px; }
+.pagination { margin-top: 12px; justify-content: flex-end; }
 .switch-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .switch-label { font-size: 13px; color: var(--el-text-color-regular); }
 .progress { margin-bottom: 10px; }
