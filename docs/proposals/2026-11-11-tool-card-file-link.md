@@ -2,7 +2,7 @@
 
 > Agent 的产出大量以「文件路径」形态出现在工具卡里：read_file / write_file / edit_file 的目标路径、grep_search / glob_search 的命中文件、shell 输出里打印的路径。这些路径今天一律是**纯文本**（`ToolCallCard.vue:143/:178` 的 `<pre>` 结果区、`ToolShellView.vue:9` 的命令行），用户想看文件全貌要自己抄路径 → 切到工作区文件管理 → 逐级点开。而中心 Tab 的文件查看器入口 API 是现成的——`useCenterTabs.ts:264` `openFileTab(filePath, title, workspaceRoot?)`——只是聊天侧组件**零接线**（grep `chat/*.vue` 无一处引用 `useCenterTabs`）。文件树右键菜单的「添加到聊天」已经打通了「文件 → 聊天」方向（工作区文件直管，批次 5），本提案补完反方向：**聊天 → 文件查看**。
 
-- 状态：已立项（2026-11-11，批次 29）
+- 状态：已落地（2026-11-11，批次 29，0.0.520）
 - 日期：2026-11-11
 - 提案总览见 [docs/proposals/README.md](README.md)
 - 规模：小（约 1 人日；**零后端、零迁移**，纯 desktop 前端增量）
