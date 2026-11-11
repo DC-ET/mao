@@ -84,7 +84,8 @@ describe('applyMenuVisibility', () => {
   })
 
   it('命中 index 的项移除，保留分组标题与顺序', () => {
-    const filtered = applyMenuVisibility(menuGroups, ['/analytics', '/agents'])
+    // overview 组有两项（用量分析 + 在线设备），需同时隐藏才整组剔除
+    const filtered = applyMenuVisibility(menuGroups, ['/analytics', '/online-devices', '/agents'])
     expect(filtered.map(g => g.id)).toEqual(['capability', 'runtime', 'security', 'system'])
     expect(filtered[0].label).toBe('能力')
     expect(filtered[0].items.map(i => i.label)).not.toContain('Agent 管理')

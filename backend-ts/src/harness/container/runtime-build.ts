@@ -96,7 +96,8 @@ function collectClosure(root: string, entry: string): string[] {
       stack.push(resolveSpecifier(file, specifier, root));
     }
   }
-  return [...visited].map((file) => path.relative(root, file)).sort();
+  // 键强制 POSIX：buildId 跨平台确定性（Windows 构建机与 Linux 部署产出同一 manifest）
+  return [...visited].map((file) => path.relative(root, file).replaceAll(path.sep, '/')).sort();
 }
 
 /** 相对说明符：`from './x.js'`、`import './x.js'`、`import('./x.js')`（tsc NodeNext 输出形态）。 */

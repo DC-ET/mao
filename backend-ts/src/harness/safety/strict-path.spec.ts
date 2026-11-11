@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { StrictPathResolver } from './strict-path.js';
 import { SecurityException } from './path-sandbox.js';
 import { useTmpDir } from '../../testing/tmp-dir.js';
@@ -111,6 +111,7 @@ describe('PathSandbox strict mode', () => {
     mkdirSync(workspace, { recursive: true });
     const sandbox = new PathSandbox(workspace);
     // 宿主机模式：resolveLenient 仍放行绝对路径（现状行为零变化）
-    expect(sandbox.resolveLenient('/tmp/anything', null)).toBe('/tmp/anything');
+    // 镜像实现契约：resolveLenient 放行绝对路径（Windows 开发机盘符解析；Linux 恒等）
+    expect(sandbox.resolveLenient('/tmp/anything', null)).toBe(resolve('/tmp/anything'));
   });
 });

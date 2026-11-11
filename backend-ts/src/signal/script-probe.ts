@@ -81,7 +81,12 @@ export function executeScriptProbe(req: ScriptProbeRequest): Promise<ScriptProbe
       if (spawnFailed) return;
       try {
         // 独立进程组：负 pid 杀整组（bash 及其全部后代），与 shell-session-manager 同模式。
-        if (child.pid != null) process.kill(-child.pid, 'SIGKILL');
+        // Windows（开发机）无负 pid 组语义：直接终止 leader，stdio 管道关闭后 settleNow
+        // 的兜底再收尾（prod 部署为 Linux，组语义在那里生效）。
+        if (child.pid != null) {
+          if (process.platform === 'win32') child.kill('SIGKILL');
+          else process.kill(-child.pid, 'SIGKILL');
+        }
       } catch {
         /* 组已不存在（ESRCH）——leader 已退出且无残留成员，正常路径 */
       }

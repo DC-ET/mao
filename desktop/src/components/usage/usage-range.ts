@@ -1,4 +1,4 @@
-import type { UsageDateRange, UsageRange } from '../../api'
+import type { UsageDateRange, UsageRange } from '@mao/contracts'
 
 /** 统计周期分组：日历周期在前，滚动窗口在后，自定义区间单独一段（见 PeriodPicker 弹层）。 */
 export const PERIOD_GROUPS: Array<{ label: string; options: Array<{ label: string; value: UsageRange }> }> = [

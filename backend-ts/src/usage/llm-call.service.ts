@@ -4,16 +4,22 @@ import { isCancelledError } from '../common/llm-cancel.js';
 import { LlmCallContext } from './llm-call-context.js';
 import { computeCostMicros, parsePriceColumn, type CostPrice } from './cost-micros.js';
 import type {
-  LlmCallAggFilter,
   LlmCallAgentAggRow,
-  LlmCallListFilter,
   LlmCallModelAggRow,
-  LlmCallRepository,
-  LlmCallRow,
   LlmCallSceneAggRow,
   LlmCallSummaryRow,
   LlmCallTrendRow,
+  MyUsageSummary,
+  MyUsageTrends,
   TrendGranularity,
+  UsageDateRange,
+  UsageRange,
+} from '@mao/contracts';
+import type {
+  LlmCallAggFilter,
+  LlmCallListFilter,
+  LlmCallRepository,
+  LlmCallRow,
 } from './llm-call.repository.js';
 
 export interface LlmCallModelConfig {
@@ -64,29 +70,27 @@ export type ModelPriceLookup = (id: number) => Promise<{
 } | null>;
 
 /**
- * 用户端统计周期：今日 / 昨日 / 本周 / 上周 / 本月 / 上月 + 近 7 / 30 天滚动窗口
- * + custom（自定义起止日期，见 UsageDateRange。均为 Asia/Shanghai 日历口径）。
+ * 单用户用量契约（周期枚举 / 自定义区间 / 总览与趋势响应）：下沉 @mao/contracts
+ * （2026-11-10 用户用量方案），这里 re-export 保持既有 import 路径不变。
+ * 事实源见 shared/contracts/src/usage.ts。
  */
-export type UsageRange =
-  | 'today'
-  | 'yesterday'
-  | 'week'
-  | 'lastWeek'
-  | 'month'
-  | 'lastMonth'
-  | 'last7'
-  | 'last30'
-  | 'custom';
+export type {
+  UsageRange,
+  UsageDateRange,
+  UsageWindow,
+  TrendGranularity,
+  LlmCallSummaryRow,
+  LlmCallModelAggRow,
+  LlmCallSceneAggRow,
+  LlmCallAgentAggRow,
+  LlmCallTrendRow,
+  MyUsageSummary,
+  MyUsageTrends,
+} from '@mao/contracts';
 
 const USAGE_RANGES: UsageRange[] = [
   'today', 'yesterday', 'week', 'lastWeek', 'month', 'lastMonth', 'last7', 'last30', 'custom',
 ];
-
-/** 自定义周期入参：闭区间日历日（YYYY-MM-DD），两端均可缺省。 */
-export interface UsageDateRange {
-  startDate?: string;
-  endDate?: string;
-}
 
 /** 用户端汇总默认周期。 */
 const USAGE_RANGE_DEFAULT: UsageRange = 'last30';
@@ -94,22 +98,6 @@ const USAGE_RANGE_DEFAULT: UsageRange = 'last30';
 /** range 入参白名单校验：非法/缺省回落默认周期（路由已解析，这里兜底防直接调用）。 */
 export function parseUsageRange(value: string | undefined): UsageRange {
   return USAGE_RANGES.includes(value as UsageRange) ? (value as UsageRange) : USAGE_RANGE_DEFAULT;
-}
-
-/** 用户端用量总览：窗口总账 + 按模型 + 按场景 + 按 Agent（一次请求给全，前端同周期展示）。 */
-export interface MyUsageSummary {
-  range: UsageRange;
-  totals: LlmCallSummaryRow;
-  byModel: LlmCallModelAggRow[];
-  byScene: LlmCallSceneAggRow[];
-  byAgent: LlmCallAgentAggRow[];
-}
-
-/** 用户端用量趋势：按天/小时分桶的连续序列（后端补零，无缺口）。 */
-export interface MyUsageTrends {
-  range: UsageRange;
-  granularity: TrendGranularity;
-  buckets: LlmCallTrendRow[];
 }
 
 interface CacheEntry {
@@ -369,7 +357,15 @@ export class LlmCallService {
       this.repo.aggregateByScene(userId, window),
       this.repo.aggregateByAgent(userId, window),
     ]);
-    return { range: resolved, totals, byModel, byScene, byAgent: await this.resolveAgentNames(byAgent) };
+    return {
+      range: resolved,
+      // 解析后的窗口随响应下发：admin 深链调用流水（startDate/endDate）直接取用，前端不复刻时区换算
+      window: { startYmd: window.startYmd, endYmd: window.endYmd },
+      totals,
+      byModel,
+      byScene,
+      byAgent: await this.resolveAgentNames(byAgent),
+    };
   }
 
   /** 按 Agent 汇总补名字：agent_id 为 null（压缩/标题等无归属调用）或已删 Agent 时名字为 null，前端兜底展示。 */
@@ -399,7 +395,7 @@ export class LlmCallService {
     const window = rangeWindow(resolved, dateRange);
     const rows = await this.repo.aggregateTrend(userId, window, granularity);
     const keys = buildTrendKeys(window.startYmd, window.endYmd, granularity);
-    return { range: resolved, granularity, buckets: fillTrendBuckets(rows, keys) };
+    return { range: resolved, granularity, window: { startYmd: window.startYmd, endYmd: window.endYmd }, buckets: fillTrendBuckets(rows, keys) };
   }
 
   private async enrichRecords(records: LlmCallRow[]): Promise<LlmCallListItem[]> {

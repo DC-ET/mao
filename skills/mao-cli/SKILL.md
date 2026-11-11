@@ -29,6 +29,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 | 自定义 HTTP 工具（管理员配置并关联到 Agent） | [reference/http-tool.md](reference/http-tool.md) |
 | 飞书机器人通道（绑定 / 群聊@机器人 / 多机器人配置） | [reference/feishu-bot.md](reference/feishu-bot.md) |
 | 钉钉机器人通道（绑定 / 群聊@机器人 / 多机器人配置） | [reference/dingtalk-bot.md](reference/dingtalk-bot.md) |
+| 钉钉进度卡 / 排队卡模板（卡片平台导入 JSON、变量契约、按钮可见性） | [template/README.md](template/README.md) |
 | 任务通知邮件渠道（SMTP 配置 / 用户选邮件推送） | [reference/settings.md](reference/settings.md#邮件通知配置notifyemail0.0.318-起) |
 | Electron LOCAL、工具审批、LOCAL 附件、托盘/通知/快捷键、打包与自动更新 | [reference/electron.md](reference/electron.md) |
 | 安卓壳、远程前端、APK OTA | [reference/android.md](reference/android.md) |

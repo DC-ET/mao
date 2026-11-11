@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { useTmpDir } from '../testing/tmp-dir.js';
 import { DEFAULT_WEIXIN_BOT_CONFIG } from './types.js';
@@ -75,6 +75,6 @@ describe('WeixinFileStorageService', () => {
   it('saveFile_returnsAbsolutePath', () => {
     const tempDir = useTmpDir('weixin-fs-');
     const saved = service.saveFile(tempDir, 'x.txt', Buffer.from([1]));
-    expect(saved.startsWith('/')).toBe(true);
+    expect(isAbsolute(saved)).toBe(true);
   });
 });

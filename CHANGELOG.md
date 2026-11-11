@@ -1,7 +1,70 @@
-## 0.0.506 (2026-11-10)
+## 0.0.515 (2026-11-11)
 
 ### 前端（桌面 / Web / 安卓）
 - **左右侧栏滚动条与对话区一致隐藏**：任务列表，以及右侧任务、文件、Git 页，内容仍可滚动，滚动条不再占位显示。
+
+## 0.0.514 (2026-11-11)
+
+### 后端
+- **修复 4 处跨平台生产缺陷**（前后端全量测试在 Windows 开发机跑查发现，Linux 部署行为不变）：①electron 更新清单缓存排除正则只认 `/` 分隔符——`fastifyStatic` 的 setHeaders 拿到平台本地路径，Windows 部署下 `latest*.yml`/`releases/*.yml` 错误走 7 天强缓存（自动更新可能拿到陈旧清单），改为 `/` 与 `\` 双兼容；②容器运行时闭包 manifest 的文件键从 `path.relative` 改为强制 POSIX 分隔符——buildId 是容器代码漂移检测的事实源，Windows 构建机与 Linux 部署此前会产出不同 manifest；③`toWorkspaceRelative` 的工作区相对路径展示统一为 `/` 分隔（IM 图片保存提示等面向用户与 Agent 的文案，Windows 开发机不再出现反斜杠）；④信号脚本探针超时击杀在 Windows（无负 pid 进程组语义）改为直接终止 leader——此前超时后探针进程无法回收、整条链路挂起 5s 超时。
+
+### agent-cli
+- **rg 路径归一修正**：Windows 下 rg 输出带 `.\` 前缀，grep/glob 结果路径剥掉该前缀后按平台形态透传（各消费方按平台 join 构造），Linux 输出恒等透传。测试基建：临时目录清理在 Windows 上遇句柄占用（git 子进程残留）降级为告警不淹没断言失败；若干 POSIX-only 语义用例（执行位恢复、0600 文件模式、bash 回退目录、进程组击杀）在 Windows 跳过。
+
+## 0.0.513 (2026-11-11)
+
+### 前端（桌面 / Web）
+- **输入效率包：富文本粘贴转 Markdown 与截图轻标注**（方案 docs/plan/2026-11-10-rich-paste-annotate-technical-design.md，提案批次 28）：①粘贴分流新增 text/html 分支——Word / 网页 / 飞书文档 / Excel 复制的富文本转为**等义 Markdown 源文本**插入输入框（标题/列表/粗斜体/链接/行内代码/代码块；Excel 区域含合并单元格按左上值展开成规整 GFM 表格、首行作表头），渲染层 MarkdownContent 正常渲染；turndown + turndown-plugin-gfm 动态加载（chunk 门禁加库内部字面量防进首屏包），converter 在 ChatInput setup 预热、粘贴时未就绪 / 超 512KB / 转换空一律回落现状纯文本兜底（无损降级）；三条既有分流契约（图片文件化 / ≥2000 字符长文本文件化 / 快捷命令标记）保序不动。②图片轻标注——待发图片缩略卡新增「标注」按钮，全屏 canvas 编辑器（画笔 / 矩形 / 箭头 / 文字 / 马赛克 / 撤销，固定红色单线宽），操作栈重放实现撤销、底图只读零损伤，确认后替换该待发附件为 PNG（原图驻内存保留，可反复重标）；图片发送通道（上传/LOCAL）零改动。零后端改动、零迁移；标注按钮在全部执行模式可用（图片发送通道无模式分支）。
+
+## 0.0.512 (2026-11-11)
+
+### 前端（桌面 / Web）
+- **工具结果表格化视图：列表类结果一键转表格**（方案 docs/plan/2026-11-10-tool-result-table-view-technical-design.md，提案批次 28）：`task_list` / `list_scheduled_tasks` / `list_signal_watchers` / `dump_user_messages` 及自定义 HTTP / MCP 工具返回的「列表形 JSON」结果，卡片结果区出现「表格 / 原文」切换（默认原文，与现状逐字节一致；按钮仅命中时出现）。判定从严：顶层数组或唯一数组字段包裹对象、元素全为扁平键值对象（值仅 string/number/boolean/null）才转表，嵌套值 / 多数组字段 / 空数组 / 超限一律保持原文——不设键名白名单（目标工具数组键 todos/tasks/watchers/files 与任意自定义包裹键同规则命中，误判防护靠唯一性 + 扁平性双闸）。表格复用中心 `TableGrid`（首行表头、数值列右对齐、200 行虚拟滚动），规模上限 201 行 × 30 列 / 1MB 文本；「复制为 CSV」按 RFC 4180 转义，粘贴进 Excel 行列同构；视图偏好按工具名存 localStorage（`aw-tool-result-view.*`，设备本地口径）。零后端改动、零迁移、零新依赖；解析输入为结果全文（后端摘要链不改写结果本体），表格态可呈现超过原文态 4000 字截断显示量的完整数据。
+
+## 0.0.511 (2026-11-11)
+
+### 后端
+- **管理后台新增「用户用量」视图接口**（方案 docs/plan/2026-11-10-admin-user-usage-product-design.md）：新增 `GET /v1/admin/users/:id/usage/summary`（周期总账 + 按模型 / 场景 / Agent 分布）与 `GET /v1/admin/users/:id/usage/trends`（按天 / 小时分桶、后端补零），复用桌面端「我的用量」同一套服务方法（`summaryForUser` / `trendsForUser`），零新表零迁移、聚合走既有 `idx_llm_call_user_created` 索引。权限 `analytics:read`（与用量分析同语义，方案 D1）；目标用户不存在 / 参数非法返回业务码 `USER_NOT_FOUND` / `PARAM_INVALID`（HTTP 200 Result 口径），自定义区间跨度上限 365 天（对齐桌面回溯口径，方案 D4）。连通性自检行（`connectivity_test`）`user_id` 恒为 NULL，单用户聚合结构上天然不含——与桌面 me/* 口径天然一致，无需排除参数（方案 §6.3）。周期与自定义区间解析沿用 me/* 语义（非法回落 last30、起止倒置交换），`summary/trends` 响应新增解析后的 `window`（起止日历日）供前端深链调用流水直接取用。用量契约（周期枚举 / 聚合行 / 响应壳）下沉 `@mao/contracts`（usage.ts），后端 re-export 保持既有 import 路径。
+
+### admin
+- **用户详情抽屉新增「用量」Tab**（方案 §5）：位于「会话」之后，权限 `analytics:read` 门控（无权限整 Tab 不渲染）；周期下拉（今日 / 昨日 / 本周 / 上周 / 本月 / 上月 / 近 7 天 / 近 30 天 / 自定义，默认近 30 天）+ 四张统计卡（总 Token / 总成本 / 调用次数与成功率 / 平均解码速度）+ 趋势双轴图（Token 左轴、调用次数右轴）+ 按模型 / 场景 / Agent 三块分布表；Tab 懒加载（首次激活才请求，不加重抽屉首开）。深链出口按钮按目标页权限二次门控：「查看调用流水」（`llm-call:read`，带周期日期直达）与「查看会话」（`session:read`）。用量分析页用户明细行新增「用量详情」反链（`/users?detail=&tab=usage`），用户列表解析深链打开抽屉并定位用量 Tab；场景名复用 `llmCallLabels` 汉化表。
+
+### 前端（桌面 / Web）
+- **用量类型契约收口**：桌面端手写的用量聚合类型（`UsageTotals` / `UsageModelRow` / `UsageSceneRow` / `UsageAgentRow` / `UsageTrendBucket` / `MyUsageSummary` / `MyUsageTrends` / 周期枚举等，api/index.ts 879-976 行）删除，改从 `@mao/contracts` 消费（`UsageTrendBucket` → `LlmCallTrendRow`、`UsageAgentRow` → `LlmCallAgentAggRow` 改名由编译期兜底）；字段零变化、行为零变化。
+
+## 0.0.510 (2026-11-10)
+
+### 后端
+- **管理后台「容器管理」纳入 Docker 未在册残留容器**：此前列表只含当前后端进程在册的容器（注册表纯内存），后端重启 / 崩溃后遗留的 Docker 容器（优雅重启产生的 exited、异常残骸的 running）完全不可见，「重建全部」也覆盖不到，只能靠 `container-gc.sh` 定时静默清理。现列表合并 `docker ps -a`（按 `mao.runtime=user` label 过滤）：未在册容器标记 `tracked=false` 一并展示（含 Docker 上报的存在时长）；docker 扫描失败时降级为仅在册列表，不影响接口可用。`POST /v1/users/:id/container/recycle` 语义扩展：对未在册残留容器执行 `docker rm -f` 并返回新增的 `removed` 状态（按容器名 + 运行时 label 精确匹配，绝不误删外部容器），下次使用时按最新配置自动重建（挂载数据在宿主机目录，不受影响）；整用户聚合回收同时清扫在册容器与该用户的残留容器（聚合优先级 failed > skipped-busy > rebuilt > removed）。孤儿删除与并发 `ensureRunning` 经同键串行锁互斥，锁内复核防止误删刚被纳管的新容器。旧命名 `mao-user-{纯数字}` 孤儿容器仍由 `container-gc.sh` 清理。容器列表 / 回收结果契约类型下沉 `@mao/contracts`。
+- **管理后台新增「在线设备」实时查询接口**：新增 `GET /v1/statistics/online-devices`（权限 `analytics:read`），返回当前 WS 在线连接实时快照——总数（连接数 / 去重在线用户数 / 去重设备数）、按客户端类型（桌面客户端 / 安卓 App / 终端 CLI / 浏览器 Web / 页面嵌入）分组计数与按用户的连接列表（设备名 / 平台 / 设备 ID / 连接时长 / 认证到期 / 认证来源）。数据源为 WS 连接注册表纯内存快照（`StreamingWsRegistry.listConnections()`，register 时新增 connectedAt 记录），零新增表零迁移；「在线」= WS 连接存活，断线即离线，无历史留存。去重设备口径：electron / cli 按 `(userId, deviceId)` 去重（同机桌面多窗口与 mao-agent CLI 共用 device.json 算一台），安卓壳逐条计数，browser / embed 无设备标识不计入设备数。响应契约类型下沉 `@mao/contracts`（statistics.ts）。只读快照不触发过期连接的惰性关闭（无 close 副作用）。
+
+### admin
+- **容器管理面板支持查看与清理 Docker 残留容器**：未在册容器在状态列显示「未在册」标签（悬停说明来源与处置方式），启动时间列显示 Docker 上报的存在时长，操作列提供「删除」（确认弹窗说明「下次使用时自动重建」语义）；「重建全部」覆盖未在册残留容器，确认与结果汇总区分重建 / 删除计数。用户详情抽屉「重建容器」适配新增的 `removed` 结果（残留删除成功不再误报「重建失败」）。列表与回收结果类型改从 `@mao/contracts` 消费，不再本地手写。
+- **新增「在线设备」菜单页**：与「用量分析」同级（overview 组，权限 `analytics:read`）。统计卡展示在线连接 / 在线用户 / 去重设备三个数字与五类客户端分组计数；表格按用户列出每条在线连接（客户端类型标签、设备名 / 平台 / 设备 ID 一键复制、连接时长、认证到期、认证来源）。15s 自动轮询 + 手动刷新 + 「更新于」时间戳；页面切走自动停轮询（keepAlive onActivated/onDeactivated），轮询失败静默保留旧数据、靠「更新于」暴露陈旧，避免每 15s 弹红条。客户端类型中文名走 `Record<WsClientType, string>` 穷尽汉化表（联合扩张漏项编译期即失败）。
+
+
+## 0.0.509 (2026-11-10)
+
+### mao-cli
+- **mao-cli 技能内置钉钉进度卡模板**：`skills/mao-cli/template/dingtalk-progress-card.json` 是 Mao 钉钉机器人进度卡在钉钉开放平台卡片编辑器的导入文件，排版与飞书进度卡同构（状态行 + 完整回复正文 + 本轮工具列表），终态后只保留结果、隐藏「取消任务」按钮，失败态显示「重试」。此前新增机器人必须自己在卡片平台从零画一套模板，现在可直接导入本文件、保存、发布，再把发布后的模板 ID 填到管理后台「钉钉机器人 → 进度卡模板 ID」。模板用法、变量契约与改模板注意点见 `skills/mao-cli/template/README.md`，已在 `SKILL.md` 知识库路由表与 `reference/dingtalk-bot.md` 交叉登记。
+
+## 0.0.508 (2026-11-10)
+
+### 后端
+- **钉钉进度卡改为「状态行 + 完整正文」，与飞书卡片同构**：此前完成卡只有一行「共 N 轮 · 耗时 X 秒」，Agent 的回复全文看不到——因为 `runtime.ts` 只在 failed/cancelled 时才把正文透传给卡片，running/completed 都丢掉了。现在正文全状态透传，卡片正文按 `**状态：处理完成** · 共 3 轮 · 耗时 44 秒` + 空行 + 回复全文 + `**本轮工具**` 列表拼接，执行中则实时显示流式累积的 assistant 文本与在途工具耗时。配套新增 `card-body.spec.ts` 锁住拼接格式、执行中不带耗时、超长截断等行为。
+
+
+## 0.0.507 (2026-11-10)
+
+### 后端
+- **修复钉钉任务完成后重复回复**：进度卡终态更新成功后，还会再发一条独立的文本消息，同一条结果出现两遍（卡片一份 + 消息一份）。现与飞书对齐：卡片终态（完成 / 取消 / 失败）更新成功就只由卡片呈现结果，不再另发消息；仅当卡片更新失败（网络抖动、模板问题）才回落发文本，保证用户至少收到一遍。
+
+
+## 0.0.506 (2026-11-10)
+
+### 后端
+- **修复钉钉进度卡/排队卡始终投放不出去**：钉钉 `createAndDeliverCard` 接口要求场域模型（`imRobotOpenSpaceModel` / `imGroupOpenSpaceModel`）与投放模型（`imRobotOpenDeliverModel` / `imGroupOpenDeliverModel`）**成对**传入，只传前者报 `param.openDeliverModelError`、只传后者在 HTTP 200 里回 `spaces of card is empty`，两者齐备才会真正进入场域投放。此前只传了前者，导致卡片从未创建成功，用户看不到进度卡，只能等 Agent 执行完收到一条纯文本回复。群聊投放此前还缺 `imGroupOpenDeliverModel.robotCode`（钉钉据此定位机器人，缺失报 `chatbot not exist`），现已从机器人配置带入。另外该接口 HTTP 200 不代表投放成功，场域级失败只体现在 `deliverResults` 里，现已解析该字段并抛错，避免"接口通了但用户什么都没收到"被静默放过。
+
 
 ## 0.0.505 (2026-11-10)
 
@@ -10,6 +73,10 @@
   - 设备定向投递零成功时（该设备当前没有任何可写执行连接），立即回「本地执行端未连接，请确保桌面客户端正在运行」，同时收敛服务端 pending，不再留下无人认领的等待。
   - 无审批请求下发后，若执行端在 60 秒内既没回 `tool_approval` 空表态也没回结果，即判通道半死并快速失败，提示用户确认桌面客户端在运行、未被后台挂起后重试。该窗口与总超时定时器同起跑并取更早触发者，只会让结果更早，绝不会把请求拖得比总超时更久。
   - `sendToDevice` 在主执行连接不可写（readyState 非 OPEN / 未授权）时，回退到同一 deviceId 的另一条存活连接（同机多窗口 / 多 CLI 进程场景），避免整个设备被误判离线。
+
+### 前端（桌面 / Web / 安卓）
+- **侧边栏钉钉分组改用钉钉品牌图标**：钉钉私聊 / 群聊分组此前用通用聊天气泡图标，与飞书、微信的品牌 logo 不一致，看不出这条分组来自哪个 IM。现在换成钉钉官方图形（`#1296DB` 品牌蓝），与既有飞书 / 微信图标同尺寸、同渲染方式；分组判定逻辑不变，仅替换图标资源。
+
 
 ## 0.0.504 (2026-11-10)
 

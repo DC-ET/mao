@@ -29,12 +29,13 @@ describe('bash resolution', () => {
     expect(requireBash()).toBe(bash);
   });
 
-  it('falls back to well-known directories when PATH is empty', () => {
+  // BASH_FALLBACK_DIRS 为 POSIX 目录（/bin /usr/bin…）：Windows 语义不可观测
+  it.skipIf(process.platform === 'win32')('falls back to well-known directories when PATH is empty', () => {
     process.env.PATH = '';
     expect(findBash()).not.toBeNull();
   });
 
-  it('prefers a bash found on PATH over the fallback directories', () => {
+  it.skipIf(process.platform === 'win32')('prefers a bash found on PATH over the fallback directories', () => {
     const fake = path.join(ws, 'bash');
     fs.writeFileSync(fake, '#!/bin/sh\n', { mode: 0o755 });
     process.env.PATH = ws;

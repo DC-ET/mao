@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { channelWorkspaceRoots, isChannelWorkspace, parseChannelWorkspace, FEISHU_CHAT_DIR, DINGTALK_CHAT_DIR } from './channel-workspace.js';
 
 /**
@@ -10,9 +10,10 @@ describe('channel workspace roots', () => {
   const root = '/opt/mao-data/workspace';
 
   it('derivesBothChannelRootsFromWorkspaceRoot', () => {
+    // resolve 镜像实现契约（Windows 开发机盘符解析）；Linux 上 resolve(绝对 join) 恒等
     expect(channelWorkspaceRoots(root)).toEqual([
-      join(root, FEISHU_CHAT_DIR),
-      join(root, DINGTALK_CHAT_DIR),
+      resolve(join(root, FEISHU_CHAT_DIR)),
+      resolve(join(root, DINGTALK_CHAT_DIR)),
     ]);
   });
 

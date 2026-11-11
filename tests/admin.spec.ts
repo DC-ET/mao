@@ -457,6 +457,7 @@ test.describe('Sidebar Navigation', () => {
   test('should navigate between all pages via sidebar', async ({ page }) => {
     const navItems = [
       { label: '用量分析', url: /\/analytics$/ },
+      { label: '在线设备', url: /\/online-devices$/ },
       { label: 'Agent 管理', url: /\/agents$/ },
       { label: '模型管理', url: /\/models$/ },
       { label: '飞书机器人', url: /\/feishu-bots$/ },

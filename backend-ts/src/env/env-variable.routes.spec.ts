@@ -7,7 +7,10 @@ import { registerAdminEnvVariableRoutes, registerEnvVariableRoutes } from './env
 import type { EnvVariable, EnvVariablePatch, EnvVariableRepository } from './types.js';
 
 const SECRET = 'routes-test-secret';
+import { resolve as resolvePath } from 'node:path';
 const ROOT = '/tmp/mao-env-routes-workspace';
+// 查询侧 normalizeWorkspaceKey = path.resolve：种子与断言用 resolve 形态（Linux 恒等）
+const ROOT_RESOLVED = resolvePath(ROOT);
 
 class MemoryRepo implements EnvVariableRepository {
   system: EnvVariable[] = [];
@@ -166,7 +169,7 @@ describe('env variable routes', () => {
 
   it('lists workspace variables by normalized workspace path', async () => {
     const { app, repo } = buildApp();
-    repo.seedWorkspace(9, ROOT, 'WS_ONLY', encryptAesCbc('v', SECRET));
+    repo.seedWorkspace(9, ROOT_RESOLVED, 'WS_ONLY', encryptAesCbc('v', SECRET));
     const { statusCode, json } = await app.inject({ method: 'GET', url: `/v1/user/workspace-env-variables?workspace=${ROOT}/` });
     expect(statusCode).toBe(200);
     expect(json().data.map((row: { envKey: string }) => row.envKey)).toEqual(['WS_ONLY']);
@@ -198,7 +201,7 @@ describe('env variable routes', () => {
   it('lets admins read user variables masked, with no write route', async () => {
     const { app, repo } = buildApp();
     repo.seedUser(42, 'GITEA_TOKEN', encryptAesCbc('abcdefgh', SECRET), '私有 token');
-    repo.seedWorkspace(42, ROOT, 'JAVA_HOME', encryptAesCbc('/opt/jdk', SECRET));
+    repo.seedWorkspace(42, ROOT_RESOLVED, 'JAVA_HOME', encryptAesCbc('/opt/jdk', SECRET));
 
     const userList = await app.inject({ method: 'GET', url: '/v1/admin/users/42/env-variables' });
     expect(userList.statusCode).toBe(200);
@@ -209,7 +212,7 @@ describe('env variable routes', () => {
 
     const wsList = await app.inject({ method: 'GET', url: `/v1/admin/users/42/workspace-env-variables?workspace=${ROOT}` });
     expect(wsList.statusCode).toBe(200);
-    expect(wsList.json().data[0]).toMatchObject({ workspacePath: ROOT, envKey: 'JAVA_HOME' });
+    expect(wsList.json().data[0]).toMatchObject({ workspacePath: ROOT_RESOLVED, envKey: 'JAVA_HOME' });
 
     const all = await app.inject({ method: 'GET', url: '/v1/admin/users/42/workspace-env-variables' });
     expect(all.json().data).toHaveLength(1);

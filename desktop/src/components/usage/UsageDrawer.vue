@@ -67,12 +67,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
-import {
-  fetchMyUsageSummary,
-  type MyUsageSummary,
-  type UsageDateRange,
-  type UsageRange,
-} from '../../api'
+import { fetchMyUsageSummary } from '../../api'
+import type { MyUsageSummary, UsageDateRange, UsageRange } from '@mao/contracts'
 import { defaultCustomDateRange, usageDateRange } from './usage-range'
 import PeriodPicker from './PeriodPicker.vue'
 import UsageOverviewTab from './UsageOverviewTab.vue'

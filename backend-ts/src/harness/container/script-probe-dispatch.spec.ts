@@ -43,7 +43,8 @@ describe('dispatchScriptProbe', () => {
     return file;
   }
 
-  it('执行本人项目内脚本，stdout 字节原样返回，且不继承通道 token', async () => {
+  // msys sh 的 env 变量跨边界翻译在 Windows 打印非原值：断言的是 Linux 部署语义
+  it.skipIf(process.platform === 'win32')('执行本人项目内脚本，stdout 字节原样返回，且不继承通道 token', async () => {
     const { projects, home, depsBin } = layout();
     const script = writeScript(projects, 'check.sh', [
       'printf "PATH=%s\\n" "$PATH"',
@@ -104,7 +105,8 @@ describe('dispatchScriptProbe', () => {
     }
   });
 
-  it('HOME 与 deps 前缀越出本人目录时丢掉，探针仍执行', async () => {
+  // msys sh 的 env 变量跨边界翻译在 Windows 打印非原值：断言的是 Linux 部署语义
+  it.skipIf(process.platform === 'win32')('HOME 与 deps 前缀越出本人目录时丢掉，探针仍执行', async () => {
     const { projects } = layout();
     const outside = mkdtempSync(join(tmpdir(), 'mao-probe-home-'));
     try {

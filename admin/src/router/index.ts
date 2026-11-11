@@ -85,6 +85,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '用量分析', keepAlive: true, permission: 'analytics:read' }
       },
       {
+        path: 'online-devices',
+        name: 'OnlineDevices',
+        component: () => import('../views/statistics/OnlineDevicesView.vue'),
+        meta: { title: '在线设备', keepAlive: true, permission: 'analytics:read' }
+      },
+      {
         path: 'llm-calls',
         name: 'LlmCalls',
         component: () => import('../views/llm-call/LlmCallView.vue'),

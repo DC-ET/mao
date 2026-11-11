@@ -357,3 +357,103 @@ describe('StreamingWsRegistry', () => {
     expect(dead.send).not.toHaveBeenCalled();
   });
 });
+
+describe('StreamingWsRegistry listConnections（管理后台在线设备页）', () => {
+  let registry: StreamingWsRegistry;
+
+  beforeEach(() => {
+    registry = new StreamingWsRegistry(10);
+  });
+
+  afterEach(() => {
+    registry.shutdown();
+  });
+
+  it('returnsFullSnapshotFieldsForLocalClientWithDevice', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_760_000_000_000);
+      registry.register(
+        mockSocket('ws-1'),
+        7,
+        'electron',
+        { userId: 7, authSource: 'company_sso', expiresAt: 1_760_100_000_000 },
+        true,
+        { id: 'dev-a', name: 'Mac', platform: 'darwin' },
+      );
+
+      expect(registry.listConnections()).toEqual([{
+        wsSessionId: 'ws-1',
+        userId: 7,
+        clientType: 'electron',
+        connectedAt: 1_760_000_000_000,
+        authExpiresAt: 1_760_100_000_000,
+        authSource: 'company_sso',
+        device: { id: 'dev-a', name: 'Mac', platform: 'darwin' },
+      }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('browserConnectionKeepsJwtExpiryWithoutAuthSource', () => {
+    registry.register(mockSocket('ws-1'), 3, 'browser', { userId: 3, expiresAt: 1_760_100_000_000 });
+    const snap = registry.listConnections();
+    expect(snap).toHaveLength(1);
+    expect(snap[0]).toMatchObject({ clientType: 'browser', authExpiresAt: 1_760_100_000_000, authSource: null, device: null });
+  });
+
+  it('unregisterRemovesConnectionFromSnapshot', () => {
+    const session = mockSocket('ws-1');
+    registry.register(session, 1, 'cli', undefined, true, { id: 'dev-a', name: 'Host', platform: 'linux' });
+    expect(registry.listConnections()).toHaveLength(1);
+    registry.unregister(session);
+    expect(registry.listConnections()).toEqual([]);
+  });
+
+  it('reRegisterRefreshesConnectedAtForSameSocket', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000_000);
+      const session = mockSocket('ws-1');
+      registry.register(session, 1, 'electron');
+      expect(registry.listConnections()[0].connectedAt).toBe(1_000_000);
+      // 同 socket 重新 auth（token 换发后重注册）：connectedAt 以最后一次为准
+      vi.setSystemTime(1_500_000);
+      registry.register(session, 1, 'electron', { userId: 1, expiresAt: 9_999_999 });
+      expect(registry.listConnections()[0]).toMatchObject({ connectedAt: 1_500_000, authExpiresAt: 9_999_999 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sameDeviceMultiWindowConnectionsAllAppear', () => {
+    // 列表页要看到同设备的多条连接（多窗口/多进程），去重口径交给聚合层
+    registry.register(mockSocket('ws-1'), 5, 'electron', undefined, true, { id: 'dev-a', name: 'Mac', platform: 'darwin' });
+    registry.register(mockSocket('ws-2'), 5, 'electron', undefined, true, { id: 'dev-a', name: 'Mac', platform: 'darwin' });
+    registry.register(mockSocket('ws-3'), 5, 'cli', undefined, true, { id: 'dev-a', name: 'Mac', platform: 'darwin' });
+    const snaps = registry.listConnections();
+    expect(snaps).toHaveLength(3);
+    expect(new Set(snaps.map((s) => s.wsSessionId))).toEqual(new Set(['ws-1', 'ws-2', 'ws-3']));
+    expect(snaps.every((s) => s.device?.id === 'dev-a')).toBe(true);
+  });
+
+  it('browserAndroidEmbedConnectionsReportNoDevice', () => {
+    registry.register(mockSocket('ws-1'), 1, 'browser');
+    registry.register(mockSocket('ws-2'), 1, 'android');
+    registry.register(mockSocket('ws-3'), 1, 'embed');
+    const snaps = registry.listConnections();
+    expect(snaps.map((s) => s.clientType)).toEqual(['browser', 'android', 'embed']);
+    expect(snaps.every((s) => s.device === null)).toBe(true);
+  });
+
+  it('expiredSsoConnectionStillAppearsWithoutBeingClosed', () => {
+    // 读路径纯只读：过期连接由既有惰性关闭机制（下一帧收发）兜底，快照不触发 close
+    const socket = mockSocket('ws-1');
+    registry.register(socket, 2, 'browser', { userId: 2, authSource: 'company_sso', expiresAt: 1 });
+    const snaps = registry.listConnections();
+    expect(snaps).toHaveLength(1);
+    expect(snaps[0]).toMatchObject({ authExpiresAt: 1, authSource: 'company_sso' });
+    expect(socket.close).not.toHaveBeenCalled();
+  });
+});

@@ -22,12 +22,14 @@ export type {
 } from './inbox';
 export type { QuickCommandItem, QuickCommandsVO } from './command';
 export type { LlmCallScene } from './usage';
+export type { UsageRange, UsageDateRange, UsageWindow, TrendGranularity, LlmCallSummaryRow, LlmCallModelAggRow, LlmCallSceneAggRow, LlmCallAgentAggRow, LlmCallTrendRow, MyUsageSummary, MyUsageTrends } from './usage';
 export type { SignalCompareMode, SignalWatcherStatus, SignalTriggerMode, SignalWatcherWarning, SignalWhenChangeInput, SignalCheckDetailInput, SignalProbeType } from './signal';
 export { SIGNAL_SNIPPET_MAX_CHARS, truncateSignalSnippet, formatSignalChangeValue, formatSignalCheckDetail } from './signal';
 export type { PageReadToolName, PageWriteToolName } from './page';
 export type { MemoryScope, MemoryStatus, MemorySource } from './memory';
 export type { ApprovalRuleType, ApprovalRuleScope, ApprovalHint } from './approval-rule';
 export type { FeedbackReason, FeedbackSource, FeedbackStatus } from './feedback';
+export type { ContainerEntrySummary, ContainerRecycleStatus, ContainerRecycleResult } from './container';
 export type { ToolVO } from './tool';
 export type { UserInfoVO, LoginVO } from './user';
 export type { ModelVO, ModelPageResult, ModelListFilter, ClientImpersonation, ApiProtocol } from './model';
@@ -37,6 +39,7 @@ export type { OnboardingState, ReadinessVO, OnboardingCompleteInput } from './re
 export type { BudgetScope, BudgetLimitType, BudgetAction, BudgetStatus, MyBudgetItemVO, MyBudgetsVO } from './budget';
 export type { AuditLog, AuditListFilter } from './audit';
 export type { MessageSearchGroup, MessageSearchHit, MessageSearchResult, SessionSource } from './session';
+export type { OnlineDeviceConnection, OnlineDeviceDeviceInfo, OnlineDevicesVo } from './statistics';
 export type { WorkspaceKind, WorkspaceChannel, WorkspaceChatType } from './workspace';
 export type {
   WsClientType,

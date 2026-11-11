@@ -60,7 +60,7 @@ Mao 围绕「**让 Agent 真正下场干活，同时在团队内可管可控**�
 
 ### 4. 自动化触发与团队治理
 - **主动干活与外部联动**：除交互对话外，支持 Cron [定时任务](skills/mao-cli/reference/scheduled-task.md)、监控外部接口异动自动拉起会话的[信号哨兵](skills/mao-cli/reference/signal-watcher.md)，以及供 CI/业务系统调用的[开放 API、入站 Webhook 与出站事件订阅](skills/mao-cli/reference/open-api.md)。任务结果、待审批项与每日运营摘要统一汇入[任务收件箱](skills/mao-cli/reference/inbox.md)。
-- **平台级治理**：支持任意 [OpenAI 兼容模型](skills/mao-cli/reference/model.md)；内建本地账号 / LDAP / 飞书登录、RBAC 角色权限、管理操作审计、[调用流水](skills/mao-cli/reference/llm-call.md)、[用量与成本分析](skills/mao-cli/reference/analytics.md)及[月度预算拦截](skills/mao-cli/reference/budget.md)；管理后台还可按部署场景隐藏不用的功能菜单（部署级全局生效，隐藏不影响访问权限）。
+- **平台级治理**：支持任意 [OpenAI 兼容模型](skills/mao-cli/reference/model.md)；内建本地账号 / LDAP / 飞书登录、RBAC 角色权限、管理操作审计、[调用流水](skills/mao-cli/reference/llm-call.md)、[用量与成本分析](skills/mao-cli/reference/analytics.md)及[月度预算拦截](skills/mao-cli/reference/budget.md)；管理后台「在线设备」页实时展示当前 WS 在线端（桌面客户端 / Web / 安卓 App / 终端 CLI）的连接数与按用户设备列表；还可按部署场景隐藏不用的功能菜单（部署级全局生效，隐藏不影响访问权限）。
 
 > 对比选型：若你需要低代码画布编排或托管 SaaS，建议看 Dify、n8n；若你想对齐 Codex 类 Agent 能力且要求私有化与团队治理，可参考 [与 OpenAI Codex 的对比](skills/mao-cli/reference/project.md#与-openai-codex-对比)。
 

@@ -65,6 +65,11 @@
           </div>
         </el-tab-pane>
 
+        <!-- 用量（lazy：首个懒加载 Tab，首次激活才请求 summary/trends；其余 Tab 由 handleOpen 预载） -->
+        <el-tab-pane v-if="canViewUsage" label="用量" name="usage" lazy>
+          <UserUsageTab :user-id="user.id" />
+        </el-tab-pane>
+
         <!-- 定时任务 -->
         <el-tab-pane label="定时任务" name="tasks">
           <el-table :data="tasks" v-loading="loadingTabs['tasks']" size="small" stripe>
@@ -206,6 +211,7 @@ import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
 // 复用全站统一的阶段文案（含 IDLE / WAITING_APPROVAL），勿在本页自造映射
 import { phaseLabel } from '../../utils/labels'
 import { useAuthStore } from '../../stores/auth'
+import UserUsageTab from './components/UserUsageTab.vue'
 
 interface UserRow {
   id: number
@@ -221,6 +227,8 @@ interface UserRow {
 const props = defineProps<{
   visible: boolean
   user: UserRow | null
+  /** 深链定位 Tab（/users?detail=&tab=usage）；非法/无权限值回落 sessions。 */
+  initialTab?: string
 }>()
 
 defineEmits<{
@@ -240,6 +248,8 @@ const loadingTabs = reactive<Record<string, boolean>>({})
 const canWrite = computed(() => authStore.hasPermission('user:write'))
 /** 容器重建（Docker 模式，V177）：独立权限 container:manage，默认仅管理员角色。 */
 const canManageContainer = computed(() => authStore.hasPermission('container:manage'))
+/** 用量 Tab（2026-11-10 用户用量方案）：与用量分析同语义 analytics:read；无权限整 Tab 不渲染。 */
+const canViewUsage = computed(() => authStore.hasPermission('analytics:read'))
 const recycling = ref(false)
 
 async function recycleContainer() {
@@ -258,6 +268,7 @@ async function recycleContainer() {
     const { data } = await api.post(`/users/${props.user.id}/container/recycle`, {})
     const status = data?.status as string | undefined
     if (status === 'rebuilt') ElMessage.success('容器已重建')
+    else if (status === 'removed') ElMessage.success('残留容器已删除（后端重启后不在册），下次使用时自动按最新配置重建')
     else if (status === 'none') ElMessage.info('该用户当前没有在册容器，下次使用时按最新配置创建')
     else if (status === 'skipped-busy') ElMessage.warning('容器内有正在运行的任务，已跳过；可在「系统设置 → 容器管理」勾选强制重建')
     else ElMessage.error(`重建失败：${data?.error || '未知错误'}`)
@@ -320,7 +331,8 @@ function execStatusLabel(status: string): string {
 }
 
 function handleOpen() {
-  activeTab.value = 'sessions'
+  // 深链可指定 initialTab；目标 Tab 无权限（如 usage 未授 analytics:read）时回落会话
+  activeTab.value = props.initialTab === 'usage' && canViewUsage.value ? 'usage' : 'sessions'
   sessionsPage.value = 1
   tasksPage.value = 1
   // 抽屉复用同一组件实例：先清空上一位用户的数据，避免加载期间透出旧明细

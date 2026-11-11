@@ -599,7 +599,12 @@ docker inspect mao-user-36-agent-5 --format '{{range .Mounts}}{{.Source}} -> {{.
 | 21:02 | 提交 `977eab84`（0.0.492，含 CHANGELOG / skills 文档 / DEPLOY.md）并推送（变基至远端 0.0.491 之后） | 完成 |
 | 21:03-21:05 | `cd /data && bash deploy-mao.sh --backend-only`：拉取 → 构建（runtime-build `df940c30…`）→ 蓝绿切换 9080→9081，健康检查 HTTP 302 | 完成 |
 | 21:05-21:10 | 部署后校验：`verify --pre-phase3` PASS；user5/agent1（21:05）、user58/agent5（21:08）容器已自动重建为新挂载（仅两条 share 子路径）；容器内跨 Agent 访问 ENOENT、私有区可写、`agents/5/settings.xml` 可读、脚本冒烟（`bash -n` 全过、push_flow 用法输出）通过；后端日志无 share 相关错误 | 完成 |
-| — | **观察期开始（1 天）** → 之后 `apply --phase=3`（删根下 `scripts/`、`settings.xml`、`settings_t.xml`）→ `verify --post-phase3`（要求 FAIL=0） | 待执行 |
+| 11-09 21:10 | **观察期开始（1 天）** | 至 11-10 21:30 观察期满 |
+| 11-10 21:30 | 观察期满预检（定时任务，只读）：`verify`（pre-phase3）**OK=38 / FAIL=0 / WARN=2**；容器面 9 个运行中全部新双路径挂载、96 个旧整根容器均为停止态（待用时按指纹重建，观察期内已自动重建 26 次无失败）；24h 日志 **0 条 share/路径类 ERROR**；会话 106 个（103 完成 / 2 取消 / 1 运行中），仅 2 次旧路径调用（`push_flow.sh`），会话均自行改用新路径完成 | 满足 phase3 前置 |
+| 11-10 21:30 | 修正经验库 1 处旧路径引用：`agent-experience/5/2026-11-05-NTX大促推单与预售统计口径.md`（11-10 更新文档时带入的「`/opt/mao-data/share/scripts/` 有副本」改为「同版脚本各 Agent 均有一份」） | 完成 |
+| 11-10 22:47 | `apply --phase=3 --yes`：自动打包 `backup/share-migrate-20261110-224758/phase3-residual.tgz`（19 个文件，含 scripts 全量 + settings.xml + settings_t.xml）→ 删除根下 `scripts/`、`settings.xml`、`settings_t.xml` | 完成；顶层仅剩 `agent-experience/`、`agents/`、`README.md`、`repos/`（空，按约定忽略） |
+| 11-10 22:48 | `verify --post-phase3` | **OK=40 / FAIL=0 / WARN=0，PASS** |
+| 11-10 22:48 | 运行容器抽查（mao-user-59-agent-5）：share 根仅 `agent-experience` + `agents`；本 Agent 脚本 14 个齐全；旧根 `scripts/` 已不存在 | 通过 |
 
 > 备注：① 旧容器（尚未使用过的）将在下次使用时按指纹漂移自动重建为新挂载，属预期一次性收敛；② `share/repos` 空目录按用户决定忽略（不清理）；③ 观察期关注「旧路径不存在」类反馈与 `[container] recreating` 日志。
 

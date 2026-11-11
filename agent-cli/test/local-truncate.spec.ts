@@ -26,7 +26,8 @@ describe('persistToolResult', () => {
     expect(parsed.truncated).toBe(true);
     const file = path.join(resolveShellOutputDir(SESSION_ID), 'big.out');
     expect(fs.existsSync(file)).toBe(true);
-    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    // Windows fs.chmod 不生效（0600 为 POSIX 部署语义）
+    if (process.platform !== 'win32') expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     expect(String(parsed.output_file)).toContain('big.out');
     expect(String(parsed.output)).toContain('truncated');
   });

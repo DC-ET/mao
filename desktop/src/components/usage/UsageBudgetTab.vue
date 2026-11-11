@@ -59,7 +59,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import type { BudgetStatus, MyBudgetItemVO } from '@mao/contracts'
-import { fetchMyBudgets, fetchMyUsageSummary, type UsageAgentRow } from '../../api'
+import { fetchMyBudgets, fetchMyUsageSummary } from '../../api'
+import type { LlmCallAgentAggRow } from '@mao/contracts'
 import { formatCost } from '../../utils/usageFormat'
 import {
   budgetLimitTypeLabel,
@@ -84,13 +85,13 @@ const error = ref(false)
 const sortedItems = computed(() => sortBudgetItems(items.value))
 
 /** P3 归因行：按成本降序（最大的消耗方在最上方）。 */
-const agentRows = ref<UsageAgentRow[]>([])
+const agentRows = ref<LlmCallAgentAggRow[]>([])
 
 function statusTagType(status: BudgetStatus): 'success' | 'warning' | 'danger' {
   return status === 'BLOCKED' ? 'danger' : status === 'WARNED' ? 'warning' : 'success'
 }
 
-function agentLabel(row: UsageAgentRow): string {
+function agentLabel(row: LlmCallAgentAggRow): string {
   // 无归属调用（压缩/标题等系统场景）agentId 为 null；Agent 已删查不到名字时兜底用 ID（同 UsageOverviewTab 口径）
   return row.agentName || (row.agentId != null ? `Agent #${row.agentId}` : '无 Agent')
 }

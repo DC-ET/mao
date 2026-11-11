@@ -24,16 +24,16 @@ function parseDateRange(startDate?: string, endDate?: string): { startAt?: strin
 }
 
 /** 趋势粒度白名单：非 'hour' 一律回落 'day'（与管理后台 trends 同口径）。 */
-function parseGranularity(value?: string): TrendGranularity {
+export function parseGranularity(value?: string): TrendGranularity {
   return value === 'hour' ? 'hour' : 'day';
 }
 
 /**
  * 自定义周期（range=custom）的起止日期：必须两端都是合法 YYYY-MM-DD 且 start ≤ end，
  * 否则整体回落默认周期 last30（非法入参不该让窗口变成「不限」或负数长度）。
- * 非 custom 周期忽略这两个参数。
+ * 非 custom 周期忽略这两个参数。导出供 admin 单用户用量路由（llm-usage-admin.routes.ts）复用。
  */
-function parseUsageDateRange(range: string | undefined, startDate?: string, endDate?: string): UsageDateRange | undefined {
+export function parseUsageDateRange(range: string | undefined, startDate?: string, endDate?: string): UsageDateRange | undefined {
   if (range !== 'custom') return undefined;
   if (!startDate || !endDate || !isValidYmd(startDate) || !isValidYmd(endDate)) return undefined;
   return startDate <= endDate ? { startDate, endDate } : { startDate: endDate, endDate: startDate };

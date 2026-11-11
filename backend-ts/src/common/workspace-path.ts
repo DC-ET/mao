@@ -10,5 +10,7 @@ export function toWorkspaceRelative(workspace: string | null | undefined, filePa
   if (workspace == null || workspace.trim() === '') return filePath;
   const rel = path.relative(path.resolve(workspace), filePath);
   if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return filePath;
-  return rel;
+  // 展示形态跨平台统一为 /：IM 提示、审计、grep 结果等面向用户与 Agent 的相对路径，
+  // Windows 开发机上不出现反斜杠（Linux 部署行为不变）
+  return rel.replaceAll(path.sep, '/');
 }

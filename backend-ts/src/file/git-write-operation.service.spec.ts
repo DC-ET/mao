@@ -88,6 +88,7 @@ describeGit('GitWriteOperationService git', () => {
     const repo = join(dir, 'repo');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'core.autocrlf', 'false');
     run(repo, 'git', 'config', 'user.name', 'Test');
     run(repo, 'git', 'config', 'user.email', 'a@b.c');
     writeFileSync(join(repo, 'base.txt'), 'base\n');
@@ -121,6 +122,7 @@ describeGit('GitWriteOperationService git', () => {
     const repo = join(dir, 'renamed');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'core.autocrlf', 'false');
     run(repo, 'git', 'config', 'user.name', 'Test');
     run(repo, 'git', 'config', 'user.email', 'a@b.c');
     writeFileSync(join(repo, '.env'), 'SECRET=never-upload\n');
@@ -150,6 +152,7 @@ describeGit('GitWriteOperationService git', () => {
     const repo = join(dir, 'refresh-repo');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'core.autocrlf', 'false');
     run(repo, 'git', 'config', 'user.name', 'Test');
     run(repo, 'git', 'config', 'user.email', 'a@b.c');
     writeFileSync(join(repo, 'base.txt'), 'base\n');
@@ -183,6 +186,7 @@ describeGit('GitWriteOperationService git', () => {
     const repo = join(dir, 'upstream-refresh');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'core.autocrlf', 'false');
     run(repo, 'git', 'config', 'user.name', 'Test');
     run(repo, 'git', 'config', 'user.email', 'a@b.c');
     writeFileSync(join(repo, 'base.txt'), 'base\n');
@@ -207,6 +211,7 @@ describeGit('GitWriteOperationService git', () => {
     const repo = join(dir, 'failed-refresh');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'core.autocrlf', 'false');
     run(repo, 'git', 'config', 'user.name', 'Test');
     run(repo, 'git', 'config', 'user.email', 'a@b.c');
     writeFileSync(join(repo, 'base.txt'), 'base\n');
@@ -231,6 +236,7 @@ describeGit('GitWriteOperationService git', () => {
     const repo = join(dir, 'multi-remote');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'core.autocrlf', 'false');
     run(repo, 'git', 'config', 'user.name', 'Test');
     run(repo, 'git', 'config', 'user.email', 'a@b.c');
     writeFileSync(join(repo, 'base.txt'), 'base\n');
@@ -262,6 +268,7 @@ describeGit('GitWriteOperationService git', () => {
     const repo = join(dir, 'multi-remote-fail');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'core.autocrlf', 'false');
     run(repo, 'git', 'config', 'user.name', 'Test');
     run(repo, 'git', 'config', 'user.email', 'a@b.c');
     writeFileSync(join(repo, 'base.txt'), 'base\n');
@@ -283,6 +290,7 @@ describeGit('GitWriteOperationService git', () => {
     const repo = join(dir, 'hang-repo');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'core.autocrlf', 'false');
     run(repo, 'git', 'config', 'user.name', 'Test');
     run(repo, 'git', 'config', 'user.email', 'a@b.c');
     writeFileSync(join(repo, 'base.txt'), 'base\n');
@@ -314,6 +322,7 @@ describeGit('GitWriteOperationService git', () => {
     const repo = join(dir, 'hang-multi-repo');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'core.autocrlf', 'false');
     run(repo, 'git', 'config', 'user.name', 'Test');
     run(repo, 'git', 'config', 'user.email', 'a@b.c');
     writeFileSync(join(repo, 'base.txt'), 'base\n');
@@ -341,6 +350,7 @@ describeGit('GitWriteOperationService git', () => {
     const repo = join(dir, 'repo');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'core.autocrlf', 'false');
     run(repo, 'git', 'config', 'user.name', 'Test');
     run(repo, 'git', 'config', 'user.email', 'a@b.c');
     writeFileSync(join(repo, 'base.txt'), 'base\n');
@@ -372,6 +382,7 @@ describeGit('GitWriteOperationService git', () => {
     const repo = join(dir, 'repo');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'core.autocrlf', 'false');
     run(repo, 'git', 'config', 'user.name', 'Test');
     run(repo, 'git', 'config', 'user.email', 'a@b.c');
     writeFileSync(join(repo, 'base.txt'), 'base\n');
@@ -449,6 +460,7 @@ describeGit('GitWriteOperationService git', () => {
     const repo = join(dir, 'repo');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'core.autocrlf', 'false');
     run(repo, 'git', 'config', 'user.name', 'Test');
     run(repo, 'git', 'config', 'user.email', 'a@b.c');
     writeFileSync(join(repo, 'base.txt'), 'base\n');
@@ -473,6 +485,7 @@ describeGit('GitWriteOperationService git', () => {
     const repo = join(dir, name);
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'core.autocrlf', 'false');
     run(repo, 'git', 'config', 'user.name', 'Test');
     run(repo, 'git', 'config', 'user.email', 'a@b.c');
     writeFileSync(join(repo, 'base.txt'), 'base\n');
@@ -513,6 +526,7 @@ describeGit('GitWriteOperationService git', () => {
     const repo = join(dir, 'fetch-all-repo');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'core.autocrlf', 'false');
     run(repo, 'git', 'config', 'user.name', 'Test');
     run(repo, 'git', 'config', 'user.email', 'a@b.c');
     writeFileSync(join(repo, 'base.txt'), 'base\n');
@@ -557,6 +571,7 @@ describeGit('GitWriteOperationService git', () => {
     const repo = join(dir, 'fetch-partial-repo');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'core.autocrlf', 'false');
     run(repo, 'git', 'config', 'user.name', 'Test');
     run(repo, 'git', 'config', 'user.email', 'a@b.c');
     writeFileSync(join(repo, 'base.txt'), 'base\n');
@@ -581,6 +596,7 @@ describeGit('GitWriteOperationService git', () => {
     const repo = join(dir, 'fetch-hang-repo');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'core.autocrlf', 'false');
     run(repo, 'git', 'config', 'user.name', 'Test');
     run(repo, 'git', 'config', 'user.email', 'a@b.c');
     writeFileSync(join(repo, 'base.txt'), 'base\n');
@@ -606,6 +622,7 @@ describeGit('GitWriteOperationService git', () => {
     const repo = join(dir, 'repo');
     mkdirSync(repo, { recursive: true });
     run(repo, 'git', 'init');
+    run(repo, 'git', 'config', 'core.autocrlf', 'false');
     run(repo, 'git', 'config', 'user.name', 'Test');
     run(repo, 'git', 'config', 'user.email', 'a@b.c');
     writeFileSync(join(repo, 'base.txt'), 'base\n');

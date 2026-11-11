@@ -3,6 +3,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 import { harnessLog } from '../log.js';
+import type { ContainerEntrySummary, ContainerRecycleResult } from '@mao/contracts';
 import type { CloudRuntimeConfig } from '../../config/app-config.js';
 import { ContainerMountPlanner, type ContainerMount } from './container-mount-planner.js';
 import { isChannelWorkspace } from './channel-workspace.js';
@@ -83,41 +84,20 @@ export interface ContainerEntry {
   upgradeTargetBuild?: string;
 }
 
-/** 容器重建操作结果（管理后台「重建容器」）。 */
-export type ContainerRecycleStatus = 'rebuilt' | 'none' | 'skipped-busy' | 'failed';
-
-export interface ContainerRecycleResult {
-  userId: number;
-  /** 被回收的容器 agentId；null = 整用户聚合结果（未指定 agentId 的全量回收）。 */
-  agentId: number | null;
-  status: ContainerRecycleStatus;
-  /** status='failed' 时的错误摘要。 */
-  error?: string;
-}
-
-/** 在册容器摘要（管理后台「容器管理」列表）。 */
-export interface ContainerEntrySummary {
-  userId: number;
-  agentId: number;
-  containerName: string;
-  state: 'running' | 'stopped';
-  busy: boolean;
-  startedAtMs: number;
-  lastUsedAtMs: number;
-  /** 容器内 agent 上报的运行时版本；null = 旧 agent 未上报 / 未连接。 */
-  runtimeBuild: string | null;
-  /** 本实例加载的运行时版本；null = dist manifest 缺失（自动升级检查关闭）。 */
-  hostRuntimeBuild: string | null;
-  /** 代码漂移待收敛（running 且两者不一致）。 */
-  pendingUpgrade: boolean;
-}
+/**
+ * 容器运维契约（admin「容器管理」列表 + 重建结果）：类型下沉 @mao/contracts，
+ * 后端 re-export 保持既有 import 路径不变。事实源见 shared/contracts/src/container.ts。
+ */
+export type { ContainerEntrySummary, ContainerRecycleStatus, ContainerRecycleResult } from '@mao/contracts';
 
 /** 管理后台容器运维依赖（窄接口，路由层用，不暴露生命周期内部细节）。 */
 export interface ContainerOps {
-  listEntries(): ContainerEntrySummary[];
+  /** 列表 = 本进程在册容器 ∪ Docker 中未在册的运行时残留容器（tracked=false）。 */
+  listEntries(): Promise<ContainerEntrySummary[]>;
   /**
-   * 重建容器：指定 agentId 时回收该 (user, agent) 容器；缺省回收该用户全部在册容器
-   * （聚合结果，任一失败即 failed）。none=当前无在册容器（下次使用时按新配置创建）。
+   * 重建容器：指定 agentId 时回收该 (user, agent) 容器；缺省回收该用户全部容器
+   * （在册走停→rm→重建，Docker 残留未在册容器直接 rm，聚合结果，任一失败即 failed）。
+   * none=当前无任何容器（下次使用时按新配置创建）。
    */
   recycleUser(userId: number, opts?: { force?: boolean; agentId?: number }): Promise<ContainerRecycleResult>;
 }
@@ -320,15 +300,20 @@ export class ContainerRegistry {
     return this.entries.get(containerKey(userId, agentId));
   }
 
-  /** 在册容器摘要（管理后台「容器管理」列表；creating 中间态不列出）。 */
-  listEntries(): ContainerEntrySummary[] {
-    return [...this.entries.values()]
+  /**
+   * 「容器管理」列表（creating 中间态不列出）：本进程在册容器（tracked=true）∪
+   * Docker 中存在但不在册的运行时残留容器（tracked=false，后端重启/崩溃遗留，
+   * 只能整删，下次使用时按最新配置惰性重建）。docker 扫描失败时降级为仅在册条目。
+   */
+  async listEntries(): Promise<ContainerEntrySummary[]> {
+    const tracked = [...this.entries.values()]
       .filter((entry) => entry.state === 'running' || entry.state === 'stopped')
       .map((entry) => ({
         userId: entry.userId,
         agentId: entry.agentId,
         containerName: entry.containerName,
         state: entry.state as 'running' | 'stopped',
+        tracked: true,
         busy: isBusy(entry),
         startedAtMs: entry.startedAtMs,
         lastUsedAtMs: entry.lastUsedAtMs,
@@ -337,17 +322,70 @@ export class ContainerRegistry {
         pendingUpgrade: entry.state === 'running'
           && this.hostRuntimeBuild != null
           && entry.runtimeBuild !== this.hostRuntimeBuild,
-      }))
-      .sort((a, b) => a.userId - b.userId || a.agentId - b.agentId);
+        ageText: null,
+      }));
+    const rows = await this.listDockerRows();
+    const untracked = rows
+      .filter((row) => !this.entries.has(containerKey(row.userId, row.agentId)))
+      .map((row) => ({
+        userId: row.userId,
+        agentId: row.agentId,
+        containerName: row.name,
+        state: row.running ? ('running' as const) : ('stopped' as const),
+        tracked: false,
+        busy: false,
+        startedAtMs: 0,
+        lastUsedAtMs: 0,
+        runtimeBuild: null,
+        hostRuntimeBuild: this.hostRuntimeBuild,
+        pendingUpgrade: false,
+        ageText: row.ageText,
+      }));
+    return [...tracked, ...untracked].sort((a, b) => a.userId - b.userId || a.agentId - b.agentId);
+  }
+
+  /**
+   * Docker 中全部运行时容器行（ps -a + label 过滤，解析 mao.user/mao.agent label）。
+   * - 旧命名孤儿（mao-user-{纯数字}，升级自复合容器键之前）没有 agent label，直接跳过
+   *   ——它们在 Registry 重启后必为孤儿，仍由 container-gc.sh 兜底清理；
+   * - docker 异常时返回空数组：列表/聚合回收降级为仅在册条目，不因 ps 失败整体失败。
+   */
+  private async listDockerRows(): Promise<Array<{ userId: number; agentId: number; name: string; running: boolean; ageText: string | null }>> {
+    let out: string;
+    try {
+      out = await this.docker.run([
+        'ps', '-a',
+        '--filter', 'label=mao.runtime=user',
+        '--format', '{{.Names}}\t{{.Label "mao.user"}}\t{{.Label "mao.agent"}}\t{{.State}}\t{{.RunningFor}}',
+      ], 15_000);
+    } catch (e) {
+      harnessLog('warn', `[container] list docker containers failed (degrade to tracked entries only): ${(e as Error).message}`);
+      return [];
+    }
+    const rows: Array<{ userId: number; agentId: number; name: string; running: boolean; ageText: string | null }> = [];
+    for (const line of out.split('\n')) {
+      const [name, user, agent, state, age] = line.split('\t');
+      if (!name?.trim() || !/^\d+$/.test(user ?? '') || !/^\d+$/.test(agent ?? '')) continue;
+      rows.push({
+        userId: Number(user),
+        agentId: Number(agent),
+        name: name.trim(),
+        // restarting/paused 视为运行中；created（从未启动）/exited/dead/removing → stopped
+        running: state === 'running' || state === 'restarting' || state === 'paused',
+        ageText: age?.trim() || null,
+      });
+    }
+    return rows;
   }
 
   /**
    * 重建容器（管理后台「重建容器」）：
-   * - 指定 agentId：只回收该 (user, agent) 容器——无在册条目 → none；忙碌且未强制 →
-   *   skipped-busy；其余复用 rebuildEntry（停 → rm → docker run），重建后自动带上最新
-   *   hosts 注入；
-   * - 缺省 agentId：回收该用户全部在册容器，聚合结果（任一 failed 即 failed，其次
-   *   skipped-busy，全部 rebuilt 才 rebuilt；全部不存在为 none）。
+   * - 指定 agentId：只回收该 (user, agent) 容器——无在册条目时尝试删除 Docker 残留
+   *   未在册容器（removed；不存在则 none）；忙碌且未强制 → skipped-busy；其余复用
+   *   rebuildEntry（停 → rm → docker run），重建后自动带上最新 hosts 注入；
+   * - 缺省 agentId：回收该用户全部容器（在册条目 + Docker 未在册残留），聚合结果
+   *   （任一 failed 即 failed，其次 skipped-busy，有 rebuilt 即 rebuilt，只有 removed
+   *   时为 removed；全部不存在为 none）。
    * - 失败不抛出，返回 failed + 错误摘要（供批量场景逐条汇报）。
    * 与自动重建共用 per-key 串行锁，不会并发互相摧毁。
    */
@@ -356,27 +394,89 @@ export class ContainerRegistry {
       const agentId = opts.agentId;
       return this.withUserLock(containerKey(userId, agentId), () => this.recycleOne(userId, agentId, opts.force === true));
     }
-    const targets = [...this.entries.values()].filter((entry) => entry.userId === userId);
-    if (targets.length === 0) return { userId, agentId: null, status: 'none' as const };
     const results: ContainerRecycleResult[] = [];
-    for (const entry of targets) {
+    for (const entry of [...this.entries.values()].filter((entry) => entry.userId === userId)) {
       results.push(await this.withUserLock(containerKey(userId, entry.agentId), () => this.recycleOne(userId, entry.agentId, opts.force === true)));
     }
+    for (const agentId of await this.untrackedAgentIdsOf(userId)) {
+      results.push(await this.withUserLock(containerKey(userId, agentId), () => this.removeUntrackedLocked(userId, agentId, opts.force === true)));
+    }
+    if (results.length === 0) return { userId, agentId: null, status: 'none' as const };
     const failed = results.find((r) => r.status === 'failed');
     if (failed) return { userId, agentId: null, status: 'failed' as const, error: failed.error };
     const skipped = results.find((r) => r.status === 'skipped-busy');
     if (skipped) return { userId, agentId: null, status: 'skipped-busy' as const };
-    return { userId, agentId: null, status: 'rebuilt' as const };
+    if (results.some((r) => r.status === 'rebuilt')) return { userId, agentId: null, status: 'rebuilt' as const };
+    if (results.some((r) => r.status === 'removed')) return { userId, agentId: null, status: 'removed' as const };
+    // 全为 none（残留恰被外部 gc 清掉等）：如实报 none，不虚报已删除
+    return { userId, agentId: null, status: 'none' as const };
   }
 
   /** 回收单个 (user, agent) 容器；调用方必须已持有该键的串行锁。 */
   private async recycleOne(userId: number, agentId: number, force: boolean): Promise<ContainerRecycleResult> {
     const entry = this.entries.get(containerKey(userId, agentId));
-    if (entry == null) return { userId, agentId, status: 'none' as const };
-    if (!force && isBusy(entry)) return { userId, agentId, status: 'skipped-busy' as const };
+    if (entry != null) return this.rebuildTrackedLocked(entry, force);
+    return this.removeUntrackedLocked(userId, agentId, force);
+  }
+
+  /** 在册容器回收（停 → rm → docker run）；调用方必须已持有该键的串行锁。 */
+  private async rebuildTrackedLocked(entry: ContainerEntry, force: boolean): Promise<ContainerRecycleResult> {
+    if (!force && isBusy(entry)) return { userId: entry.userId, agentId: entry.agentId, status: 'skipped-busy' as const };
     try {
       await this.rebuildEntry(entry, entry.sessionWorkspaces);
-      return { userId, agentId, status: 'rebuilt' as const };
+      return { userId: entry.userId, agentId: entry.agentId, status: 'rebuilt' as const };
+    } catch (e) {
+      return { userId: entry.userId, agentId: entry.agentId, status: 'failed' as const, error: (e as Error).message };
+    }
+  }
+
+  /**
+   * 该用户在 Docker 中存在但不在注册表内的容器 agentId 集合（聚合回收的第二类目标，
+   * 后端重启/崩溃遗留）。docker 扫描失败视为无目标（与列表接口同口径降级）。
+   */
+  private async untrackedAgentIdsOf(userId: number): Promise<number[]> {
+    const rows = await this.listDockerRows();
+    const agentIds = new Set<number>();
+    for (const row of rows) {
+      if (row.userId === userId && !this.entries.has(containerKey(row.userId, row.agentId))) {
+        agentIds.add(row.agentId);
+      }
+    }
+    return [...agentIds];
+  }
+
+  /**
+   * 删除不在册的 Docker 残留容器（recycleOne 的无条目分支；调用方已持有该键串行锁）。
+   * 残留容器脱离 Registry 管控（条目已随进程消失），无法走停→重建的在册路径，
+   * 直接 rm 让容器名腾出：下次 ensureRunning 按当前配置全新创建（与同名冲突自愈路径
+   * 一致，挂载数据都在宿主机目录不受影响）。
+   * - 锁内复核在册状态：聚合回收逐键取锁，扫描与取锁的间隙里并发 ensureRunning 可能
+   *   已建好容器并登记条目——此时必须回到在册重建路径，rm 会摧毁新容器并把条目毒化
+   *   成"自称 running、容器已不存在"（F-2 同类缺陷）；
+   * - 按容器名精确匹配 + 运行时 label 三重过滤（name/mao.user/mao.agent）：绝不误删
+   *   外部同名容器；
+   * - 无匹配容器 → none（不是失败：目标本就不存在）；docker 查询 / rm 失败 →
+   *   failed + 错误摘要，不抛出（批量场景逐条汇报，列表接口才做静默降级）。
+   */
+  private async removeUntrackedLocked(userId: number, agentId: number, force: boolean): Promise<ContainerRecycleResult> {
+    const entry = this.entries.get(containerKey(userId, agentId));
+    if (entry != null) return this.rebuildTrackedLocked(entry, force);
+    const name = ContainerRegistry.containerName(userId, agentId);
+    try {
+      const listed = await this.docker.run([
+        'ps', '-a',
+        '--filter', `name=^/${name}$`,
+        '--filter', 'label=mao.runtime=user',
+        '--filter', `label=mao.user=${userId}`,
+        '--filter', `label=mao.agent=${agentId}`,
+        '--format', '{{.ID}}',
+      ], 15_000);
+      if (!listed.split('\n').some((line) => line.trim() !== '')) {
+        return { userId, agentId, status: 'none' as const };
+      }
+      await this.docker.run(['rm', '-f', name], 30_000);
+      harnessLog('info', `[container] removed untracked container user=${userId} agent=${agentId} (admin recycle)`);
+      return { userId, agentId, status: 'removed' as const };
     } catch (e) {
       return { userId, agentId, status: 'failed' as const, error: (e as Error).message };
     }

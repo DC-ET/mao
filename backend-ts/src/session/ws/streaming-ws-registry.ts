@@ -1,3 +1,5 @@
+import type { WsClientType } from '@mao/contracts';
+
 import type { WsEvent } from './ws-event.js';
 
 import { wsEvent } from './ws-event.js';
@@ -38,6 +40,20 @@ export interface WsAuthMetadata {
   userId: number;
   authSource?: string;
   expiresAt: number;
+}
+
+/** 单条在线连接的只读快照（管理后台在线设备页用，技术方案 2026-11-10）。 */
+export interface WsConnectionSnapshot {
+  wsSessionId: string;
+  userId: number;
+  clientType: WsClientType;
+  /** 连接建立（最近一次 auth 成功 register）时间，epoch ms；同 socket 重复 register 以最后一次为准。 */
+  connectedAt: number;
+  /** 认证到期时间，epoch ms；company_sso 有值，本地登录为 null。 */
+  authExpiresAt: number | null;
+  authSource: string | null;
+  /** 连接自报设备信息，仅 electron / cli 携带；android / browser / embed 为 null。 */
+  device: WsDeviceInfo | null;
 }
 
 interface ConnectionAuth {
@@ -115,6 +131,8 @@ export class StreamingWsRegistry {
   private readonly sessionExecutions = new Map<number, string>();
   /** socket.id → 连接自报的设备信息（仅 LOCAL capable 客户端且字段合法时登记）。 */
   private readonly connectionDevice = new Map<string, WsDeviceInfo>();
+  /** socket.id → 连接建立时间（register 时刷新）：在线设备页展示连接时长用。 */
+  private readonly connectionConnectedAt = new Map<string, number>();
   /** userId → deviceId → 当前执行连接（同设备覆盖为最新一条，避免多窗口/多实例重复执行）。 */
   private readonly deviceExecutors = new Map<number, Map<string, WsSocket>>();
   /** agent sessionId → 绑定的 embed 连接（页面执行端）。每个会话只绑定一个页面连接。 */
@@ -177,6 +195,7 @@ export class StreamingWsRegistry {
     const normalizedClientType = this.normalizeClientType(clientType);
     this.sessionToClientType.set(session.id, normalizedClientType);
     this.sessionPageEnabled.set(session.id, pageEnabled);
+    this.connectionConnectedAt.set(session.id, Date.now());
     let set = this.userSessions.get(userId);
     if (!set) {
       set = new Set();
@@ -203,6 +222,7 @@ export class StreamingWsRegistry {
     if (auth?.timer) clearTimeout(auth.timer);
     this.connectionAuth.delete(session.id);
     this.sessionPageEnabled.delete(session.id);
+    this.connectionConnectedAt.delete(session.id);
     this.releaseEmbedConnection(session);
     this.releaseDevice(session);
     const userId = this.sessionToUser.get(session.id);
@@ -536,6 +556,31 @@ export class StreamingWsRegistry {
 
   getClientType(session: WsSocket): string | null {
     return this.sessionToClientType.get(session.id) ?? null;
+  }
+
+  /**
+   * 全量在线连接只读快照（管理后台在线设备页，技术方案 2026-11-10）。
+   * 纯读：不调用 isConnectionAuthorized（它对过期 company_sso 连接有顺手 close 的副作用），
+   * 过期未关连接照常出现在快照里，由既有惰性关闭机制（下一帧收发时关闭）兜底。
+   * device 直接取 connectionDevice（含同机多窗口的非执行连接）；设备去重口径由聚合层负责。
+   */
+  listConnections(): WsConnectionSnapshot[] {
+    const snapshots: WsConnectionSnapshot[] = [];
+    for (const [userId, sessions] of this.userSessions) {
+      for (const session of sessions) {
+        const auth = this.connectionAuth.get(session.id);
+        snapshots.push({
+          wsSessionId: session.id,
+          userId,
+          clientType: this.sessionToClientType.get(session.id) as WsClientType,
+          connectedAt: this.connectionConnectedAt.get(session.id) ?? 0,
+          authExpiresAt: auth?.metadata.expiresAt ?? null,
+          authSource: auth?.metadata.authSource ?? null,
+          device: this.connectionDevice.get(session.id) ?? null,
+        });
+      }
+    }
+    return snapshots;
   }
 
   /**

@@ -40,7 +40,8 @@ describe('local daemon', () => {
 
   it('resolves a relative trust root and pins approval TTY bits off', () => {
     expect(resolveDaemonWorkspace('proj', '/tmp/cwd')).toBe(path.resolve('/tmp/cwd', 'proj'));
-    expect(resolveDaemonWorkspace('/abs/root', '/tmp/cwd')).toBe('/abs/root');
+    // 镜像实现契约（path.resolve；Windows 开发机盘符解析，Linux 恒等）
+    expect(resolveDaemonWorkspace('/abs/root', '/tmp/cwd')).toBe(path.resolve('/abs/root'));
     expect(resolveDaemonWorkspace(undefined, '/tmp/cwd')).toBe(path.resolve('/tmp/cwd'));
     const cfg = parseCliConfig(['local', '--serve'], tty);
     const policy = buildDaemonApprovalPolicy(cfg);

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { RuntimeChannelServer, type RuntimeStatus } from './runtime-channel-server.js';
 import { alignContainerTimeZone, alignPasswdHome, RuntimeAgent } from './runtime-agent.js';
 import { ContainerMcpBridge } from './container-mcp-bridge.js';
@@ -33,7 +33,10 @@ function envelopeOf(workspace: string): RuntimeEnvelope {
   };
 }
 
-describe('runtime agent channel behavior', () => {
+// 通道走 Unix domain socket（AF_UNIX 文件路径）：Windows 上 listen 报 EACCES，
+// 本 describe 全部为 Linux/容器部署语义
+const describePosix = process.platform === 'win32' ? describe.skip : describe
+describePosix('runtime agent channel behavior', () => {
   let server: RuntimeChannelServer | null = null;
   let agent: RuntimeAgent | null = null;
   const savedEnv = new Map<string, string | undefined>();
@@ -244,9 +247,10 @@ describe('runtime agent channel behavior', () => {
     const agent = new RuntimeAgent('/tmp/mao-probe.sock', 'probe-token', 7, 5);
     try {
       // 2026-11-09 形态 C：share 按 Agent 收窄——登记本 Agent 两条子路径，不再登记 share 根
-      expect(registered).toContain('/opt/mao-data/share/agent-experience/5');
-      expect(registered).toContain('/opt/mao-data/share/agents/5');
-      expect(registered).not.toContain('/opt/mao-data/share');
+      // 默认根常量为 POSIX（容器内恒 Linux）：宿主测试机上 join 镜像其派生形态
+      expect(registered).toContain(join('/opt/mao-data/share', 'agent-experience', '5'));
+      expect(registered).toContain(join('/opt/mao-data/share', 'agents', '5'));
+      expect(registered).not.toContain(resolve('/opt/mao-data/share'));
     } finally {
       agent.dispose();
       spy.mockRestore();

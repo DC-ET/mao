@@ -7,10 +7,12 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-const chatPanel = readFileSync(new URL('./ChatPanel.vue', import.meta.url), 'utf8')
-const useStreamWS = readFileSync(new URL('../../composables/useStreamWS.ts', import.meta.url), 'utf8')
-const banner = readFileSync(new URL('./ExecutionErrorBanner.vue', import.meta.url), 'utf8')
-const usageBell = readFileSync(new URL('../usage/UsageBell.vue', import.meta.url), 'utf8')
+// Windows 检出为 CRLF：源码 tripwire 的字面串断言一律先归一为 LF（Linux 语义不变）
+const read = (url: URL) => readFileSync(url, 'utf8').replaceAll(String.fromCharCode(13) + String.fromCharCode(10), String.fromCharCode(10))
+const chatPanel = read(new URL('./ChatPanel.vue', import.meta.url))
+const useStreamWS = read(new URL('../../composables/useStreamWS.ts', import.meta.url))
+const banner = read(new URL('./ExecutionErrorBanner.vue', import.meta.url))
+const usageBell = read(new URL('../usage/UsageBell.vue', import.meta.url))
 
 /** 取出某个函数体（到下一个顶层 `}` 为止），用于断言内部调用了哪些动作 */
 function fnBody(src: string, signature: string): string {

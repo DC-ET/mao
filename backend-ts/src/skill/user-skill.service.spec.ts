@@ -150,7 +150,8 @@ describe('UserSkillService', () => {
     expect(service.deleteUserSkill(7, 'aaa', join(dir, '7', 'ghost')).code).toBe(404);
   });
 
-  it('restoresExecutableBitsForUploadedScripts', async () => {
+  // Windows fs.chmod 不支持执行位（mode 恒 0o666）：posix 部署语义
+  it.skipIf(process.platform === 'win32')('restoresExecutableBitsForUploadedScripts', async () => {
     const dir = useTmpDir('mao-uskill-');
     const service = new UserSkillService(dir, noSystemSkillNames);
     const uploaded = service.uploadUserSkill(7, [
@@ -250,7 +251,8 @@ describe('UserSkillService', () => {
     ]).code).toBe(0);
   });
 
-  it.skipIf(typeof process.getuid === 'function' && process.getuid() === 0)(
+  // Windows chmod 目录不可写拦截同样不生效：posix 部署语义
+  it.skipIf(process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0))(
     'keepsExistingSkillWhenReplaceCannotStart',
     () => {
       const dir = useTmpDir('mao-uskill-');

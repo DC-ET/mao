@@ -239,6 +239,8 @@ describe('LlmCallService 用户端用量汇总（/v1/llm-calls/me/summary|trends
     const { service, repo } = build();
     const result = await service.summaryForUser(7);
     expect(result.range).toBe('last30');
+    // window 随响应下发（admin 深链调用流水直接取用）：闭区间日历日与聚合窗口一致
+    expect(result.window).toEqual({ startYmd: '2026-09-11', endYmd: '2026-10-10' });
     for (const mock of [repo.aggregateSummary, repo.aggregateByModel, repo.aggregateByScene, repo.aggregateByAgent]) {
       expect(mock).toHaveBeenCalledWith(7, expect.objectContaining({
         startAt: '2026-09-11 00:00:00',
@@ -334,6 +336,7 @@ describe('LlmCallService 用户端用量汇总（/v1/llm-calls/me/summary|trends
     expect(month.buckets[29].bucket).toBe('2026-09-30');
     const custom = await service.trendsForUser(7, 'custom', 'day', { startDate: '2026-09-08', endDate: '2026-09-12' });
     expect(custom.range).toBe('custom');
+    expect(custom.window).toEqual({ startYmd: '2026-09-08', endYmd: '2026-09-12' });
     expect(custom.buckets.map((b) => b.bucket)).toEqual([
       '2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11', '2026-09-12',
     ]);

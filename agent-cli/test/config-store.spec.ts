@@ -132,7 +132,8 @@ describe('saveUserConfig', () => {
     saveUserConfig({ lastSessionId: 9 });
     expect(loadUserConfig()).toMatchObject({ baseUrl: 'https://a/api', lastSessionId: 9 });
     const mode = fs.statSync(CONFIG_FILE).mode & 0o777;
-    expect(mode).toBe(0o600);
+    // Windows fs.chmod 不生效（owner-only 模式为 POSIX 部署语义）
+    if (process.platform !== 'win32') expect(mode).toBe(0o600);
   });
 
   it('rememberLastSession only touches lastSessionId', async () => {
@@ -224,7 +225,7 @@ describe('input history', () => {
     appendInputHistory('第一条');
     appendInputHistory('多行\n第二行');
     expect(loadInputHistory()).toEqual(['第一条', '多行\n第二行']);
-    expect(fs.statSync(HISTORY_FILE).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(fs.statSync(HISTORY_FILE).mode & 0o777).toBe(0o600);
   });
 
   it('skips blank entries', async () => {

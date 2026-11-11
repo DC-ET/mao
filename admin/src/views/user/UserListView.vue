@@ -263,6 +263,7 @@
     <UserDetailDrawer
       :visible="detailVisible"
       :user="detailUser"
+      :initial-tab="detailInitialTab"
       @update:visible="detailVisible = $event"
     />
   </div>
@@ -342,6 +343,8 @@ const resetAuthSource = ref<string | null>(null)
 
 const detailVisible = ref(false)
 const detailUser = ref<any | null>(null)
+/** 深链定位 Tab（用量分析页「用量详情」→ /users?detail=&tab=usage）；列表「详情」按钮恒 undefined。 */
+const detailInitialTab = ref<string | undefined>(undefined)
 
 const rolesCache = ref<Array<{ id: number; name: string }>>([])
 /** 已经按地址栏应用过的 roleId。keep-alive 的 key 不含 query，切回时用它判断要不要重拉。 */
@@ -516,7 +519,41 @@ function handleResetPassword(row: any) {
 
 function handleDetail(row: any) {
   detailUser.value = row
+  detailInitialTab.value = undefined
   detailVisible.value = true
+}
+
+/**
+ * 用量分析页「用量详情」反链（方案 §5.7）：解析 ?detail={userId}&tab=usage，
+ * 取用户后打开抽屉并定位 Tab。地址栏参数取后即清（保留 roleId 等），keep-alive
+ * 回切不会重复打开；appliedDetailKey 防同参数重复拉取。
+ */
+let appliedDetailKey = ''
+async function syncDetailFromRoute(): Promise<void> {
+  const q = route.query
+  const raw = Array.isArray(q.detail) ? q.detail[0] : q.detail
+  const tabRaw = Array.isArray(q.tab) ? q.tab[0] : q.tab
+  if (raw == null || raw === '') return
+  const rest: LocationQuery = { ...q }
+  delete rest.detail
+  delete rest.tab
+  router.replace({ path: '/users', query: rest })
+  const parsed = Number(raw)
+  if (!Number.isInteger(parsed) || parsed <= 0) return
+  const tab = tabRaw === 'usage' ? 'usage' : undefined
+  const key = `${parsed}|${tab ?? ''}`
+  if (key === appliedDetailKey) return
+  appliedDetailKey = key
+  try {
+    const { data } = await api.get(`/users/${parsed}`)
+    if (!data) return
+    detailUser.value = data
+    detailInitialTab.value = tab
+    detailVisible.value = true
+  } catch {
+    // 失败回收防重键：URL 已被清掉，同参数深链必须还能重试，不能被死锁键吞掉
+    appliedDetailKey = ''
+  }
 }
 
 async function handleToggleStatus(row: any) {
@@ -568,11 +605,13 @@ onMounted(async () => {
     await authStore.fetchUserInfo()
   }
   fetchUsers()
+  void syncDetailFromRoute()
 })
 
-// 同页 query 变化（侧边栏回到 /users、角色页「成员」）不会重建 keep-alive 实例。
+// 同页 query 变化（侧边栏回到 /users、角色页「成员」、用量分析页「用量详情」）不会重建 keep-alive 实例。
 watch(() => route.fullPath, () => {
   applyRoleRouteChange()
+  void syncDetailFromRoute()
 })
 
 // keep-alive 首次挂载 onActivated 紧随 onMounted，跳过以免重复请求。
