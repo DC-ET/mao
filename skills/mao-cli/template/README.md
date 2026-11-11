@@ -1,7 +1,7 @@
 # 钉钉互动卡片模板（排队 / 进度 / 终态一卡到底）
 
 `dingtalk-card.json` 是 Mao 钉钉机器人互动卡片在钉钉开放平台卡片编辑器的导入文件（V192 起排队与进度合并为单一模板，一卡到底）。
-排版与飞书进度卡同构：状态行 + 完整回复正文 + 本轮工具列表；排队态显示「立即发送 / 取消排队」，执行中显示「取消任务」，终态只保留结果、隐藏操作按钮。
+排版与飞书进度卡同构：状态行 + 完整回复正文 + 本轮工具列表；排队态显示「立即发送 / 取消排队」，执行中显示「取消任务」，终态隐藏取消 / 重试等操作按钮、保留「会话详情」（completed 态另有「👎 不满意」点踩）。
 
 ## 怎么用
 
@@ -54,6 +54,10 @@ visibility="@triple{'' , 'visible', 'gone'}"   <!-- 条件位是空串，恒假�
 | `canRun` | boolean | `true` 时显示「立即发送」+「取消排队」按钮（仅排队态） |
 | `canCancel` | boolean | `true` 时显示「取消任务」按钮（仅 `running` 态） |
 | `canRetry` | boolean | `true` 时显示「重试」按钮（仅 `failed` 态） |
+| `canFeedback` | boolean | `true` 时显示「👎 不满意」点踩按钮（仅 `completed` 态；点击 toggle，文案随 `dislikeText` 翻转） |
+| `canOpenSession` | boolean | `true` 时显示「会话详情」跳转按钮（进度/终态恒 `true`，排队态 `false`） |
+| `dislikeText` | string | 点踩按钮文案：`👎 不满意` ↔ `👎 已点踩 · 再点取消`（后端按 toggle 态下发） |
+| `sessionUrl` | string | 会话详情深链 `/tasks/{id}`（「会话详情」按钮跳转目标） |
 | `senderUserid` | string | 原发送者（按钮回调鉴权：只有本人能操作自己的卡片） |
 | `queueId` | string | 队列行 ID（排队态回调定位） |
 | `sessionId` | string | 会话 ID |
@@ -61,7 +65,7 @@ visibility="@triple{'' , 'visible', 'gone'}"   <!-- 条件位是空串，恒假�
 
 状态 `status` 取值并集：排队 `queued` / 已插队 `started` / 已取消 `cancelled` / 执行中 `running` / 完成 `completed` / 失败 `failed`。
 
-按钮可见性：立即发送 `isTrue(canRun)`、取消排队 `isTrue(canRun)`（与「立即发送」同态并排）、取消任务 `isTrue(canCancel)`、重试 `isTrue(canRetry)`。终态卡片全部 `false`，不带按钮。
+按钮可见性：立即发送 `isTrue(canRun)`、取消排队 `isTrue(canRun)`（与「立即发送」同态并排）、点踩 `isTrue(canFeedback)`（仅完成态）、取消任务 `isTrue(canCancel)`、重试 `isTrue(canRetry)`、会话详情 `isTrue(canOpenSession)`（非排队态恒显，排序殿后）。
 **不要再改回「`status` 字符串 `isEqual` 比较」**——平台不会把它渲染成可用条件。
 
 ## 改模板时的注意点
@@ -70,7 +74,8 @@ visibility="@triple{'' , 'visible', 'gone'}"   <!-- 条件位是空串，恒假�
 - **不要删 `status` 变量**：删了按钮条件会悬空，取消/重试按钮会行为异常（`status` 可以不显示，但必须在变量表里）
 - `body` 是单个 markdown 变量，后端会把状态行、正文、工具列表拼成一个字符串再传，上限 6000 字符（与飞书进度卡正文相同；状态行和工具列表算在这 6000 里）
 - **卡片头部不要再放标题**：状态已由 `body` 首行「**状态：正在处理** · 第 1 轮」表达，`Card.cardName` 和 Grid 里的 `${title}` 文本都已删掉，再加回去就是同一信息出现两次
-- 卡片回调依赖三个 `actionId`：`run`（立即发送插队）、`cancel`（**「取消排队」与「取消任务」两个按钮共用**，靠 `canRun` / `canCancel` 可见性互斥）、`retry`（失败重试），改按钮时别改这三个 id
+- 卡片回调依赖四个 `actionId`：`run`（立即发送插队）、`cancel`（**「取消排队」与「取消任务」两个按钮共用**，靠 `canRun` / `canCancel` 可见性互斥）、`retry`（失败重试）、`dislike`（完成卡点踩 toggle），改按钮时别改这四个 id
+- **「会话详情」是 `actionType: url` 的跳转按钮**：无 actionId、无成功判定条件，url 绑 `${sessionUrl}`；自检脚本对它走独立校验分支
 - **`actionId` 必须填字面量**（`run` / `cancel` / `retry`），不能留空也不能绑变量：空 `dynamicString` 时点击不上报 actionId，后端 `parseCardCallback` 取不到值、整个回调分支不会触发（取消按钮曾因此完全无响应）
 - **按钮 `status` 不能是 `disabled`**：置灰且不响应点击，取消/重试都点不动（重试按钮曾遗留该值）
 - **按钮点击事件类型必须是「回传请求」**：若是「打开链接」，点击只会跳转、不会触发后端回调（重试按钮就曾因此完全失效）
@@ -78,6 +83,8 @@ visibility="@triple{'' , 'visible', 'gone'}"   <!-- 条件位是空串，恒假�
 - **ButtonBlock 要带区块级 `visible`**（恒显示那个）：缺了它整个按钮区块都不渲染，取消/重试两个按钮会一起消失；单个按钮的显隐靠各自按钮里的可见性条件
 - **`preview` 变量已删除**：V192 起排队态正文也走 `body`（`queueCardParams` 拼状态行 + 消息摘要），不要在变量表里再加回 `preview`
 - 一卡到底链路：排队卡实例在消息被消费时**就地升级**为进度卡（`updateCard` 增量刷新，不新建卡片），升级后同一张卡走完整生命周期（技术方案 2026-11-11-dingtalk-card-single-card §4）
+- **点踩汇入与桌面/飞书同一张统计表**（source=`dingtalk`，固定 NO_REASON）；重复点击 toggle 取消
+- **上线前需在钉钉客户端实测的三个首次依赖机制**：①按钮文案 `${dislikeText}` 变量插值（此前按钮全是静态文本）；②URL 按钮跳转变量 `${sessionUrl}`（此前无 URL 按钮）；③回调 cardParamMap 增量 merge 只传 `{status, dislikeText}` 是否正确保留其余变量（即方案 R1 的回调形态）
 
 ## 相关代码
 

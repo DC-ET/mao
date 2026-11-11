@@ -7,11 +7,13 @@ export type { FeedbackReason, FeedbackSource, FeedbackStatus };
 export const FEEDBACK_REASONS = ['WRONG_RESULT', 'SLOW_RESPONSE', 'NOT_SOLVED', 'OTHER', 'NO_REASON'] as const satisfies readonly FeedbackReason[];
 
 /** 点踩来源：desktop 为桌面/Web/安卓端，feishu 为飞书进度卡点踩。 */
-export const FEEDBACK_SOURCES = ['desktop', 'feishu'] as const satisfies readonly FeedbackSource[];
+// 点踩来源：desktop / feishu / dingtalk 三端汇入同一张统计表（V192 起钉钉完成卡也带点踩）。
+export const FEEDBACK_SOURCES = ['desktop', 'feishu', 'dingtalk'] as const satisfies readonly FeedbackSource[];
 
-/** 飞书点踩不选原因，固定写入该分类（后台展示为「未选择原因（飞书）」）。 */
+/** IM 卡片点踩（飞书/钉钉）不选原因，固定写入该分类（后台展示为「未选择原因」）。 */
 export const FEISHU_DISLIKE_REASON: FeedbackReason = 'NO_REASON';
 export const FEISHU_DISLIKE_SOURCE: FeedbackSource = 'feishu';
+export const DINGTALK_DISLIKE_SOURCE: FeedbackSource = 'dingtalk';
 
 /**
  * 处理态：PENDING 是唯一入口态；DISMISSED 为终态，不可回退。

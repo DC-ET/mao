@@ -17,8 +17,8 @@ export type FeedbackReason =
   | 'OTHER'
   | 'NO_REASON';
 
-/** 点踩来源：desktop 为桌面/Web/安卓端，feishu 为飞书进度卡点踩。 */
-export type FeedbackSource = 'desktop' | 'feishu';
+/** 点踩来源：desktop 为桌面/Web/安卓端，feishu 为飞书进度卡点踩，dingtalk 为钉钉进度卡点踩。 */
+export type FeedbackSource = 'desktop' | 'feishu' | 'dingtalk';
 
 /**
  * 处理态：PENDING 是唯一入口态；DISMISSED 为终态。

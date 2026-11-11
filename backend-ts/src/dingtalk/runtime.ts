@@ -39,6 +39,7 @@ import { DingtalkMonitorService, type DingtalkMonitorConfig, type DingtalkStream
 import { MysqlDingtalkOauthStateRepository } from './oauth.repository.js';
 import { dingtalkAuthorizeUrl, exchangeUserAccessToken, fetchUnionId, fetchUseridByUnionId, oauthConfigured, webOriginOf, type DingtalkOauthConfig } from './oauth-client.js';
 import { MysqlDingtalkPendingBindingRepository } from './pending-binding.repository.js';
+import { DINGTALK_DISLIKE_SOURCE } from '../feedback/feedback.repository.js';
 import { MysqlDingtalkProgressCardRepository } from './progress-card.repository.js';
 import { deliverScheduledDingtalkReply } from './scheduled-result.js';
 import { bindingCardParam, fileMessageParam, imageMessageParam, sendDingtalkMarkdown, sendDingtalkMessage, type DingtalkSendTarget as OutboundTarget } from './send.service.js';
@@ -81,6 +82,8 @@ export function createDingtalkRuntime(deps: {
   workspaceRoot: string;
   jwt: JwtService;
   permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
+  /** 完成卡点踩 toggle（钉钉卡片回调）：与桌面/飞书汇入同一张统计表。 */
+  feedbackService?: { toggleSessionDislike(userId: number, sessionId: number, source: string, messageId?: number): Promise<{ disliked: boolean } | null> };
   sessionService: SessionService;
   sessionRepo: SessionRepository;
   harness: HarnessService;
@@ -445,6 +448,11 @@ export function createDingtalkRuntime(deps: {
       });
     },
     getPhase: async (sessionId) => (await deps.sessionService.getSession(sessionId).catch(() => null))?.phase ?? null,
+    toggleDislike: deps.feedbackService == null ? undefined : async (sessionId) => {
+      const session = await deps.sessionService.getSession(sessionId).catch(() => null);
+      if (session == null) return null;
+      return deps.feedbackService!.toggleSessionDislike(session.userId, sessionId, DINGTALK_DISLIKE_SOURCE).catch(() => null);
+    },
     retryFailed: (sessionId) => handler.retryExecution(sessionId, async () => {
       const row = await progressRepo.findBySessionId(sessionId);
       if (row == null) return null;

@@ -97,7 +97,7 @@ export const REASON_LABELS: Record<FeedbackReason, string> = {
   SLOW_RESPONSE: '处理速度慢',
   NOT_SOLVED: '问题未解决',
   OTHER: '其他',
-  NO_REASON: '未选择原因（飞书）',
+  NO_REASON: '未选择原因',
 };
 
 export class FeedbackService {

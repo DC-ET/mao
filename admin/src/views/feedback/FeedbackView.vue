@@ -312,7 +312,8 @@ function reasonTagType(reason: FeedbackReason) {
 
 const SOURCE_LABELS: Record<FeedbackSource, string> = {
   feishu: '飞书',
-  desktop: '桌面端'
+  desktop: '桌面端',
+  dingtalk: '钉钉'
 }
 
 function sourceLabel(source: FeedbackSource) {

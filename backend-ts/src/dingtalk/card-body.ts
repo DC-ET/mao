@@ -8,6 +8,12 @@ const TITLES = {
 /** 卡片正文上限，与飞书进度卡正文（CARD_TEXT_MAX）同为 6000。状态行、回复、工具列表共用这一段。 */
 const BODY_MAX = 6000;
 
+/** 点踩按钮文案（飞书 FEISHU_DISLIKE_BUTTON 同款文案）：idle 为初始，disliked 为已点踩翻转态。 */
+export const DINGTALK_DISLIKE_LABELS = {
+  idle: '👎 不满意',
+  disliked: '👎 已点踩 · 再点取消',
+} as const;
+
 export type DingtalkProgressStatus = keyof typeof TITLES;
 
 export function formatDingtalkDuration(ms: number): string {
@@ -38,6 +44,8 @@ export function progressCardParams(input: {
   sessionUrl?: string;
   sessionId: number;
   senderUserid: string;
+  /** 完成卡点踩态：true 时「👎 不满意」按钮文案翻转为「已点踩 · 再点取消」（飞书同款 toggle）。 */
+  disliked?: boolean;
 }): Record<string, string> {
   const sections: string[] = [statusLineOf(input.status, input.round, input.elapsedMs)];
   const detail = input.detail?.trim() ?? '';
@@ -56,11 +64,16 @@ export function progressCardParams(input: {
     // 合并模板（V192）下三个按钮的可见性变量都要显式下发，无关态置 false——
     // 任何一次 updateCard 都不会留下未声明的 undefined（技术方案 §5.3）。
     canRun: 'false',
+    // 完成态显示「👎 不满意」点踩（与桌面/飞书汇入同一张统计表）；会话详情按钮恒显示。
+    canFeedback: String(input.status === 'completed'),
+    canOpenSession: 'true',
+    dislikeText: input.disliked ? DINGTALK_DISLIKE_LABELS.disliked : DINGTALK_DISLIKE_LABELS.idle,
     sessionUrl: input.sessionUrl ?? '',
     sessionId: String(input.sessionId),
     senderUserid: input.senderUserid,
   };
 }
+
 
 /** 状态行：`**状态：处理完成** · 共 3 轮 · 耗时 44 秒`（与飞书 statusLineOf 同口径）。 */
 function statusLineOf(status: DingtalkProgressStatus, round: number, elapsedMs?: number): string {
@@ -90,6 +103,10 @@ export function queueCardParams(input: {
     canRun: String(input.status === 'queued'),
     canCancel: 'false',
     canRetry: 'false',
+    canFeedback: 'false',
+    canOpenSession: 'false',
+    dislikeText: DINGTALK_DISLIKE_LABELS.idle,
+    sessionUrl: '',
   };
 }
 

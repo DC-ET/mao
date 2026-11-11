@@ -152,6 +152,66 @@ describe('DingtalkCardActionService 一卡到底（V192）', () => {
     expect(JSON.stringify(decision?.response)).toContain('任务已取消');
   });
 
+  it('完成卡点踩「👎 不满意」：toggleDislike 生效并回传翻转后的 dislikeText', async () => {
+    const toggleDislike = vi.fn(async () => ({ disliked: true }));
+    const { service: actions } = service({
+      findProgress: async () => ({
+        sessionId: 8, botId: 1, outTrackId: 'card-out-1', chatType: 'p2p', conversationId: null, senderUserid: 'staff-a',
+      } as never),
+      toggleDislike,
+    });
+
+    const decision = await decide(actions, 'dislike');
+
+    expect(toggleDislike).toHaveBeenCalledWith(8);
+    expect(JSON.stringify(decision?.response)).toContain('👎 已点踩 · 再点取消');
+    expect(JSON.stringify(decision?.response)).toContain('已标记不满意');
+  });
+
+  it('点踩再点一次取消：dislikeText 回到初始文案', async () => {
+    const toggleDislike = vi.fn(async () => ({ disliked: false }));
+    const { service: actions } = service({
+      findProgress: async () => ({
+        sessionId: 8, botId: 1, outTrackId: 'card-out-1', chatType: 'p2p', conversationId: null, senderUserid: 'staff-a',
+      } as never),
+      toggleDislike,
+    });
+
+    const decision = await decide(actions, 'dislike');
+
+    expect(JSON.stringify(decision?.response)).toContain('👎 不满意');
+    expect(JSON.stringify(decision?.response)).toContain('已取消点踩');
+  });
+
+  it('点踩 toggle 抛错或返回 null：提示未找到可反馈的任务结果', async () => {
+    for (const behavior of [async () => { throw new Error('db down'); }, async () => null]) {
+      const toggleDislike = vi.fn(behavior);
+      const { service: actions } = service({
+        findProgress: async () => ({
+          sessionId: 8, botId: 1, outTrackId: 'card-out-1', chatType: 'p2p', conversationId: null, senderUserid: 'staff-a',
+        } as never),
+        toggleDislike,
+      });
+
+      const decision = await decide(actions, 'dislike');
+
+      expect(JSON.stringify(decision?.response)).toContain('未找到可反馈的任务结果');
+    }
+  });
+
+  it('点踩 toggle 未装配时提示功能不可用', async () => {
+    const { service: actions } = service({
+      findProgress: async () => ({
+        sessionId: 8, botId: 1, outTrackId: 'card-out-1', chatType: 'p2p', conversationId: null, senderUserid: 'staff-a',
+      } as never),
+      toggleDislike: undefined,
+    });
+
+    const decision = await decide(actions, 'dislike');
+
+    expect(JSON.stringify(decision?.response)).toContain('点踩功能不可用');
+  });
+
   it('执行中的升级卡收到陈旧 run 回调：按钮已隐藏（canRun=false），不动作', async () => {
     const cancelRunning = vi.fn(async () => true);
     const { service: actions, queuePort } = service({

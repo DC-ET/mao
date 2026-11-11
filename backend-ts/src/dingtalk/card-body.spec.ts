@@ -65,6 +65,19 @@ describe('progressCardParams', () => {
       expect(progressCardParams({ ...base, status })).toMatchObject({ canRun: 'false' });
     }
   });
+
+  // 点踩 + 会话详情（批次 29 提案 5 同族补充）：仅完成态显示点踩，会话详情非排队态恒显示。
+  it('canFeedback 仅完成态开启；dislikeText 随 disliked 翻转；canOpenSession 恒 true', () => {
+    const base = { round: 1, sessionId: 1, senderUserid: 'u' };
+    const completed = progressCardParams({ ...base, status: 'completed', detail: 'ok' });
+    expect(completed).toMatchObject({ canFeedback: 'true', canOpenSession: 'true', dislikeText: '👎 不满意' });
+
+    expect(progressCardParams({ ...base, status: 'running' })).toMatchObject({ canFeedback: 'false' });
+    expect(progressCardParams({ ...base, status: 'failed' })).toMatchObject({ canFeedback: 'false' });
+
+    const disliked = progressCardParams({ ...base, status: 'completed', disliked: true });
+    expect(disliked.dislikeText).toBe('👎 已点踩 · 再点取消');
+  });
 });
 
 describe('queueCardParams', () => {
@@ -80,12 +93,24 @@ describe('queueCardParams', () => {
       canRun: 'true',
       canCancel: 'false',
       canRetry: 'false',
+      canFeedback: 'false',
+      canOpenSession: 'false',
+      dislikeText: '👎 不满意',
+      sessionUrl: '',
     });
   });
 
   it('带 rankNo 时 body 含队列位次行', () => {
     const params = queueCardParams({ status: 'queued', preview: '摘要', queueId: 12, senderUserid: 'u', rankNo: 2 });
     expect(params.body).toBe('**状态：排队中**\n\n当前排在第 2 位\n\n摘要');
+  });
+
+  it('排队态下发会话详情/点踩的关闭值与占位文案（合并模板全量下发原则）', () => {
+    const params = queueCardParams({ status: 'queued', preview: 'x', queueId: 1, senderUserid: 'u' });
+    expect(params).toMatchObject({
+      canFeedback: 'false', canOpenSession: 'false',
+      dislikeText: '👎 不满意', sessionUrl: '',
+    });
   });
 
   it('插队/取消终态：canRun 关、无位次行，摘要 80 字截断', () => {

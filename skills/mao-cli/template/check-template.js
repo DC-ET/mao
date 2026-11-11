@@ -7,7 +7,8 @@
  * 检查项都是历史上真实踩过的坑，改完模板 JSON 后跑一遍再导入卡片平台：
  *   1. 后端 cardParamMap 需要的变量必须在 variableList 中声明
  *   2. Markdown 组件必须绑定 body 变量（否则正文永远为空）
- *   3. 按钮 actionId 必须是 cancel / retry / run（「取消排队」与「取消任务」共用 cancel，靠可见性互斥）
+ *   3. 按钮 actionId 必须是 cancel / retry / run / dislike（「取消排队」与「取消任务」共用 cancel，靠可见性互斥）
+ *   3b. URL 跳转按钮（会话详情）无 actionId，校验可见性与 url 变量绑定
  *   4. 按钮 actionType 必须是 request，否则点击不触发卡片回调
  *   5. 按钮可见性与「请求成功判定条件」不能为空，且判定值必须与后端回传的 status 对应
  *   6. 组件树里不得再出现 ${title} 文本节点（与 body 状态行重复，顶部标题已删）
@@ -23,10 +24,10 @@ const path = require('node:path');
 const file = path.join(__dirname, 'dingtalk-card.json');
 
 /** 后端 progressCardParams / queueCardParams 实际下发的字段并集（card-body.ts）。 */
-const REQUIRED_VARS = ['title', 'body', 'status', 'canRun', 'canCancel', 'canRetry', 'senderUserid', 'queueId', 'sessionId', 'tag'];
+const REQUIRED_VARS = ['title', 'body', 'status', 'canRun', 'canCancel', 'canRetry', 'canFeedback', 'canOpenSession', 'dislikeText', 'senderUserid', 'queueId', 'sessionId', 'sessionUrl', 'tag'];
 
 /** actionId -> 后端回调成功时回传的 status 值（card-action.service.ts）。 */
-const ACTION_STATUS = { cancel: 'cancelled', retry: 'running', run: 'started' };
+const ACTION_STATUS = { cancel: 'cancelled', retry: 'running', run: 'started', dislike: 'completed' };
 
 /**
  * actionId -> 控制按钮可见性的 boolean 变量（card-body.ts 的 canCancel/canRetry）。
@@ -34,7 +35,10 @@ const ACTION_STATUS = { cancel: 'cancelled', retry: 'running', run: 'started' };
  * 字符串 isEqual 比较导入后会被抹成空条件（@triple{'' , 'visible', 'gone'} 恒假），
  * 按钮永远不显示——这是「按钮不出现」的真实根因。
  */
-const ACTION_VISIBLE = { cancel: ['canCancel', 'canRun'], retry: ['canRetry'], run: ['canRun'] };
+const ACTION_VISIBLE = { cancel: ['canCancel', 'canRun'], retry: ['canRetry'], run: ['canRun'], dislike: ['canFeedback'], sessionDetail: ['canOpenSession'] };
+
+/** URL 跳转按钮（无 actionId、无回调）：id -> url 必须绑定的变量。 */
+const URL_BUTTON_VARS = { sessionDetail: 'sessionUrl' };
 
 let failures = 0;
 
@@ -136,9 +140,29 @@ function walk(node) {
       const id = button.id;
       seenActions.push(id);
 
+      // URL 跳转按钮（「会话详情」）：无 actionId / 无成功判定条件；校验可见性 isTrue 与 url 变量绑定。
+      if (button.actionType !== 'request') {
+        const expectedVar = URL_BUTTON_VARS[id];
+        if (expectedVar == null) {
+          fail(`按钮 ${id} 的 actionType 是 ${JSON.stringify(button.actionType)}，不是契约内的 URL 按钮（仅 sessionDetail）`);
+          continue;
+        }
+        const vis = button.visible?.condition;
+        const visCondition = vis?.conditions?.length === 1 ? vis.conditions[0] : null;
+        const allowedVars = ACTION_VISIBLE[id] ?? [];
+        if (visCondition?.op !== 'isTrue' || !allowedVars.includes(visCondition?.variable)) {
+          fail(`按钮 ${id} 的可见性条件应为 isTrue(${allowedVars.join(' 或 ')})`);
+        }
+        const urlVar = button.url?.variable;
+        if (urlVar !== expectedVar) {
+          fail(`按钮 ${id} 的 url 应绑定变量 ${expectedVar}（当前 ${JSON.stringify(urlVar ?? null)}），否则跳转地址为空`);
+        }
+        continue;
+      }
+
       const actionId = textOf(button.actionId);
       if (!ACTION_STATUS[actionId]) {
-        fail(`按钮 ${id} 的 actionId 是 ${JSON.stringify(actionId)}，不在契约内（应为 cancel / retry / run），后端无法识别`);
+        fail(`按钮 ${id} 的 actionId 是 ${JSON.stringify(actionId)}，不在契约内（应为 cancel / retry / run / dislike），后端无法识别`);
         continue;
       }
       if (id !== actionId && !(id === 'cancelQueue' && actionId === 'cancel')) {

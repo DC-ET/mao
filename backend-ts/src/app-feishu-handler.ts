@@ -525,6 +525,7 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
     workspaceRoot: cfg.app.harness.workspaceRoot,
     jwt: d.jwt,
     permissionService: d.permissionService,
+    feedbackService: d.feedbackService,
     sessionService: d.sessionService,
     sessionRepo: d.sessionRepo,
     harness: d.harness,

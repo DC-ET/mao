@@ -1,4 +1,4 @@
-import { cardCallbackResponse, progressCardParams, queueCardParams } from './card-body.js';
+import { cardCallbackResponse, DINGTALK_DISLIKE_LABELS, progressCardParams, queueCardParams } from './card-body.js';
 import { parseCardCallback } from './card-callback.js';
 import type { DingtalkCardActionPort, DingtalkInboundQueueRow } from './types.js';
 import type { DingtalkProgressCardRow } from './progress-card.repository.js';
@@ -29,6 +29,8 @@ export class DingtalkCardActionService {
     findProgress: (outTrackId: string) => Promise<DingtalkProgressCardRow | null>;
     interruptAndDrain: (sessionId: number) => void;
     cancelRunning: (sessionId: number) => Promise<boolean>;
+    /** 完成卡点踩 toggle（飞书 handleProgressDislike 同语义：汇入桌面同一张统计表，NO_REASON）。 */
+    toggleDislike?: (sessionId: number) => Promise<{ disliked: boolean } | null>;
     retryFailed?: (sessionId: number) => Promise<{ ok: true } | { ok: false; reason: 'BUSY' | 'NOT_FAILED' | 'NO_PROGRESS' }>;
     getPhase?: (sessionId: number) => Promise<string | null>;
     sessionDetailUrl?: (sessionId: number) => Promise<string | undefined>;
@@ -44,7 +46,7 @@ export class DingtalkCardActionService {
       const row = await this.options.queuePort.findByOutTrackId(event.outTrackId);
       if (row != null && row.status === 'QUEUED') return this.decideQueue(event.userId, event.actionId, row);
     }
-    if (event.actionId === 'retry' || event.actionId === 'cancel') {
+    if (event.actionId === 'retry' || event.actionId === 'cancel' || event.actionId === 'dislike') {
       const progress = await this.options.findProgress(event.outTrackId);
       if (progress != null) return this.decideProgress(event.userId, event.actionId, event.params, progress);
     }
@@ -88,6 +90,19 @@ export class DingtalkCardActionService {
           status: 'running', round: 0, detail: '正在重试，请稍候…', sessionUrl, sessionId: progress.sessionId, senderUserid: sender,
         })),
         after: async () => { await retry(progress.sessionId); },
+      };
+    }
+    // 完成卡点踩（飞书 handleProgressDislike 同款）：toggle 后经 cardParamMap 增量刷新按钮文案。
+    if (actionId === 'dislike') {
+      const toggleDislike = this.options.toggleDislike;
+      if (toggleDislike == null) return { response: cardCallbackResponse(null, '点踩功能不可用') };
+      const result = await toggleDislike(progress.sessionId).catch(() => null);
+      if (result == null) return { response: cardCallbackResponse(null, '未找到可反馈的任务结果') };
+      return {
+        response: cardCallbackResponse({
+          status: 'completed',
+          dislikeText: result.disliked ? DINGTALK_DISLIKE_LABELS.disliked : DINGTALK_DISLIKE_LABELS.idle,
+        }, result.disliked ? '已标记不满意' : '已取消点踩'),
       };
     }
     if (actionId !== 'cancel') {
