@@ -88,6 +88,14 @@ export interface ChatMessage {
    * 已流出内容的唯一副本，applyFetchedMessages 据此保留它而不是按 REST 覆盖丢弃。
    */
   interrupted?: boolean
+  /**
+   * 该气泡属于被新 executionId 顶掉的旧执行（部署重启续跑 / 重试 / 插队）。
+   *
+   * 与 interrupted 的区别：被顶掉的气泡里未落库的内容会由新执行重新产出，REST
+   * 历史才是权威版本。终态重拉时不得按「唯一副本」保留，否则它会排在最终回复之后，
+   * 被轮次渲染当成 finalReply，把真正的最终回复挤进折叠步骤。
+   */
+  superseded?: boolean
 }
 
 export interface TodoItem {

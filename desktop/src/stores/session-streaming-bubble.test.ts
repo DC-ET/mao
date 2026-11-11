@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useSessionStore } from './session'
+import type { ChatMessage } from '../types/chat'
 
 vi.mock('../api', () => ({
   api: {
@@ -328,6 +329,7 @@ describe('部署重启续跑：旧 tracked 气泡不得与恢复执行的工具�
     expect(oldCall.status).toBe('error')
     expect(oldCall.summary).toBeTruthy()
     expect(msgs[1]!.interrupted).toBe(true)
+    expect(msgs[1]!.superseded).toBe(true)
     // 恢复执行的调用是唯一仍在 running 的一条，结果事件能落到它身上
     const newCall = msgs[2]!.toolCalls?.[0]!
     expect(newCall.id).toBe('new-1')
@@ -337,6 +339,53 @@ describe('部署重启续跑：旧 tracked 气泡不得与恢复执行的工具�
     store.updateToolCallResult('42', { tool_call_id: 'new-1', result: '200', status: 'success' })
     const running = store.getMessages('42').flatMap((m) => m.toolCalls ?? []).filter((c) => c.status === 'running')
     expect(running).toHaveLength(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // 线上回归（2026-11-11 会话 2326）：续跑完成后的终态重拉，旧执行气泡此前被当作
+  // 「唯一副本」保留并排在 REST 历史之后，轮次渲染取最后一条 assistant 当 finalReply，
+  // 界面于是停在部署前那半截内容，真正的最终回复被折叠进「已执行 N 个步骤」。
+  it('续跑完成后的终态重拉丢弃被顶掉的旧气泡，最终回复保持在最后一条', () => {
+    vi.useFakeTimers()
+    try {
+      const store = useSessionStore()
+      const user: ChatMessage = {
+        id: '100', role: 'user', content: '重新部署前后端服务', createdAt: '2026-11-11 11:09:50',
+      }
+      store.setMessages('42', [user])
+
+      // 旧执行：文本与 running 工具都堆在同一条 tracked 气泡里
+      store.ensureStreamingAssistantMessage('42')
+      store.appendDelta('42', '生产目录已更新到 7d4b395e。现在按标准流程部署')
+      store.appendToolCallStart('42', { tool_call_id: 'old-1', tool_name: 'shell', arguments: '{}' })
+      expect(store.getMessages('42')[1]!.toolCalls?.[0]!.status).toBe('running')
+
+      // 蓝绿切换：WS 重连带回恢复执行的新 executionId
+      store.discardStaleStreamingBubble('42')
+
+      // 恢复执行继续产出并完成（另起一条气泡）
+      vi.advanceTimersByTime(5_000)
+      store.ensureStreamingAssistantMessage('42')
+      store.appendDelta('42', '后端与管理后台已部署；桌面端依赖补齐后重跑成功')
+      store.markMessageComplete('42', {})
+
+      // 终态 REST：00:09 的旧内容已被续跑重新产出，最终回复 11:16:22 落库
+      const fetched: ChatMessage[] = [
+        user,
+        { id: '201', role: 'assistant', content: '', createdAt: '2026-11-11 11:10:09' },
+        { id: '202', role: 'assistant', content: '后端与管理后台已部署', createdAt: '2026-11-11 11:14:48' },
+        { id: '203', role: 'assistant', content: '已完成提交、推送和部署。', createdAt: '2026-11-11 11:16:22' },
+      ]
+      store.applyFetchedMessages('42', fetched)
+
+      const msgs = store.getMessages('42')
+      // 旧气泡（superseded）不得追加在 REST 之后，否则会被当成 finalReply
+      expect(msgs.map((m) => String(m.id))).toEqual(['100', '201', '202', '203'])
+      expect(msgs[msgs.length - 1]!.content).toBe('已完成提交、推送和部署。')
+      expect(msgs.some((m) => m.superseded === true)).toBe(false)
+      expect(msgs.flatMap((m) => m.toolCalls ?? []).some((c) => c.status === 'running')).toBe(false)
     } finally {
       vi.useRealTimers()
     }

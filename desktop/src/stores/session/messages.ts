@@ -11,10 +11,14 @@ import type { LlmRetryInfo } from './types'
 /**
  * 被中止轮次的助手气泡：服务端从不落库流中途取消的文本，这条气泡是已流出内容的
  * 唯一副本（有内容或有已终结的工具调用才算；空气泡没有保留价值）。
+ *
+ * superseded（被新执行顶掉）不算：那部分内容服务端没落库、但新执行会从最后落库
+ * 点重新产出，REST 历史是权威版本。保留它会被追加到最终回复之后，遮住真正的回复。
  */
 function isInterruptedAssistant(message: ChatMessage): boolean {
   return message.role === 'assistant'
     && message.interrupted === true
+    && message.superseded !== true
     && (message.content !== '' || (message.toolCalls?.length ?? 0) > 0)
 }
 
@@ -586,7 +590,9 @@ export function createMessageRuntimeModule(ctx: {
    *
    * 这里在新 executionId 登记时就地把旧气泡里未终结的调用标记为中断：已终结的
    * 工具轮次与已流出文本原样保留（那是旧执行真实产出过的内容），只是不再有转圈。
-   * 气泡同时打上 interrupted 标记，终态 REST 重拉时按既有规则保留为唯一副本。
+   * 气泡同时打上 interrupted（内容在此中止）与 superseded（由新执行重跑）标记：
+   * 终态 REST 重拉时 superseded 不按「唯一副本」保留——旧气泡排在最终回复之后
+   * 会被轮次渲染当成 finalReply，把真正的最终回复挤进折叠步骤（部署后终态回归）。
    */
   function discardStaleStreamingBubble(sessionId: string, reason = '执行中断，已重新开始') {
     const sid = String(sessionId)
@@ -604,6 +610,7 @@ export function createMessageRuntimeModule(ctx: {
         }
       }
       msg.interrupted = true
+      msg.superseded = true
       sessionMessages.value.set(sid, [...list])
     }
     streamingAssistantMessageIds.delete(sid)

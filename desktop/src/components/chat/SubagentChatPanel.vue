@@ -74,6 +74,7 @@ import {
   mapMessagesWithFileChanges,
   mapCompactionEvents,
 } from '../../utils/chatMessage'
+import { shouldPreserveLiveStreamOnFetch } from '../../utils/preserve-live-stream'
 import { normalizeMessageRole } from '../../types/chat'
 import type { QuestionAnswer } from '../../types/chat'
 import ChatRoundList from './ChatRoundList.vue'
@@ -211,26 +212,16 @@ async function loadMeta() {
   }
 }
 
-function isOptimisticOnly(msgs: ReturnType<typeof sessionStore.getMessages>): boolean {
-  if (msgs.length === 0) return true
-  return msgs.every(m =>
-    normalizeMessageRole(m.role ?? '') === 'user' &&
-    String(m.id).startsWith('subagent-user-')
-  )
-}
-
 /**
  * 是否应保留本地正在流式的内容，避免被可能滞后的历史回放整表覆盖。
- * 仅乐观 USER 占位不算「活跃流式」，必须允许 GET messages 回补。
+ * 仅乐观 USER 占位不算「活跃流式」，必须允许 GET messages 回补；终态一律以 REST 为准。
  */
 function shouldPreserveLiveStream(msgs: ReturnType<typeof sessionStore.getMessages>): boolean {
-  if (isOptimisticOnly(msgs)) return false
-  if (sessionStore.isSessionStreaming(sid.value)) return true
-  const last = msgs[msgs.length - 1]
-  if (last && normalizeMessageRole(last.role ?? '') === 'assistant') {
-    return last.toolCalls?.some(tc => tc.status === 'pending' || tc.status === 'running') ?? false
-  }
-  return false
+  return shouldPreserveLiveStreamOnFetch({
+    phase: phase.value,
+    streaming: sessionStore.isSessionStreaming(sid.value),
+    lastMessage: msgs[msgs.length - 1],
+  })
 }
 
 async function fetchMessages() {
