@@ -68,16 +68,13 @@
         </button>
       </div>
 
-      <!-- 用户消息：编辑态 -->
+      <!-- 用户消息：编辑态（v-else-if 分支：每次进入编辑态 MessageEditEditor 全新挂载，content 一次性注入） -->
       <div v-else-if="role === 'user' && isEditing" class="message-edit">
-        <textarea
-          ref="editInput"
+        <MessageEditEditor
+          ref="editEditorRef"
           v-model="editContent"
-          class="edit-textarea"
-          @keydown.escape="onEditKeydown($event, 'escape')"
-          @keydown.enter.ctrl="onEditKeydown($event, 'confirm')"
-          @keydown.enter.meta="onEditKeydown($event, 'confirm')"
-          rows="3"
+          @confirm="handleConfirm"
+          @cancel="$emit('cancelEdit')"
         />
         <!-- 编辑态原图可见可删（静默失败可见化）：移除只影响本次重发，历史消息不受影响 -->
         <div v-if="message.images && message.images.length > 0" class="edit-images">
@@ -340,6 +337,7 @@ import {
 import type { FeedbackReason } from '../../api'
 import { stripInternalMarkers } from '../../utils/internalMarkers'
 import { userVisibleText } from '../../utils/imageUrlAnnotation'
+import MessageEditEditor from './MessageEditEditor.vue'
 import {
   getBackgroundCompletion,
   isBackgroundNoticeFailed,
@@ -395,7 +393,7 @@ const emit = defineEmits<{
 
 // Edit mode state
 const editContent = ref(userVisibleText(props.message.content || ''))
-const editInput = ref<HTMLTextAreaElement>()
+const editEditorRef = ref<InstanceType<typeof MessageEditEditor> | null>(null)
 // 编辑态被移除的图片集合：只影响本次重发载荷，历史消息与已落库图片不受影响（D2 不二次确认，tooltip 明示）
 const removedImages = ref<Set<string>>(new Set())
 const userCollapsed = ref(true)
@@ -410,8 +408,8 @@ watch(() => props.isEditing, async (editing) => {
     // 每次进入编辑态重置移除集合：上次编辑的选择不残留到这一次
     removedImages.value = new Set()
     await nextTick()
-    editInput.value?.focus()
-    editInput.value?.select()
+    editEditorRef.value?.focus()
+    editEditorRef.value?.selectAll()
   }
 })
 
@@ -430,17 +428,6 @@ function handleConfirm() {
     // 显式携带剩余图片集合（D5）：空数组 = 移除全部图片，不能回落到原图
     const remaining = (props.message.images ?? []).filter(u => !removedImages.value.has(u))
     emit('confirmEdit', editContent.value, remaining)
-  }
-}
-
-/** 编辑态键盘处理：IME 组合态（中文候选上屏）不触发确认/取消，避免误提交或丢失未保存内容 */
-function onEditKeydown(event: KeyboardEvent, action: 'confirm' | 'escape') {
-  if (event.isComposing || event.keyCode === 229) return
-  event.preventDefault()
-  if (action === 'confirm') {
-    handleConfirm()
-  } else {
-    emit('cancelEdit')
   }
 }
 
@@ -1664,29 +1651,9 @@ async function copyMessage() {
   to { transform: rotate(360deg); }
 }
 
-/* Edit mode styles */
+/* Edit mode styles（编辑器容器视觉在 MessageEditEditor.vue 内的 .message-edit-editor-wrap） */
 .message-edit {
   width: 100%;
-}
-
-.edit-textarea {
-  width: 100%;
-  min-height: 60px;
-  padding: 8px 12px;
-  border: 1px solid var(--aw-primary);
-  border-radius: var(--aw-radius-sm);
-  background: var(--aw-surface);
-  color: var(--aw-ink);
-  font-size: var(--aw-text-caption);
-  line-height: 1.6;
-  resize: vertical;
-  outline: none;
-  transition: border-color 0.15s;
-  box-sizing: border-box;
-}
-
-.edit-textarea:focus {
-  border-color: var(--aw-primary-focus);
 }
 
 /* 编辑态原图缩略 + 移除按钮（移除仅影响本次重发） */

@@ -161,6 +161,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, inject } fr
 import { ElMessage } from 'element-plus'
 import { shouldDeferFocusToSearchJump } from '../../composables/searchJumpFocus'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
+import { markedTextToEditorHtml } from '../../utils/editor-tags'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import { TextSelection } from '@tiptap/pm/state'
@@ -1469,41 +1470,6 @@ onMounted(() => {
 /** 输入框是否有未发送内容（文本或附件），供队列消息撤回前检查草稿冲突。 */
 function hasDraft(): boolean {
   return editorContent.value.trim().length > 0 || pendingFiles.value.length > 0 || replyQuotes.value.length > 0
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
-
-/** 将含 @{..}@ / ${..}$ / #{..}# 标记的纯文本转换为含 Tag 节点的编辑器 HTML（与 handlePaste 的解析规则一致）。 */
-function markedTextToEditorHtml(text: string): string {
-  const parts = text.split(/(@\{[^}]+\}@|\$\{[^}]+\}\$|#\{[^}]+\}#)/)
-  return parts
-    .map(part => {
-      if (!part) return ''
-      const fileMatch = part.match(/^@\{(.+)\}@$/)
-      const skillMatch = part.match(/^\$\{(.+)\}\$$/)
-      const commandMatch = part.match(/^#\{(.+)\}#$/)
-      if (fileMatch) {
-        const path = escapeHtml(fileMatch[1])
-        const name = escapeHtml(fileMatch[1].split('/').pop() || fileMatch[1])
-        return `<span data-file-reference data-file-path="${path}">${name}</span>`
-      }
-      if (skillMatch) {
-        const name = escapeHtml(skillMatch[1])
-        return `<span data-quick-command data-command-type="skill" data-command-name="${name}">${name}</span>`
-      }
-      if (commandMatch) {
-        const name = escapeHtml(commandMatch[1])
-        return `<span data-quick-command data-command-type="command" data-command-name="${name}">${name}</span>`
-      }
-      return escapeHtml(part).replace(/\n/g, '<br>')
-    })
-    .join('')
 }
 
 /** 撤回回填：清空当前内容后写入文本与附件。第三个参数省略时保留已有回复引用；传入数组则改成这组引用（队列撤回传空数组，避免和正文里的引用块叠两份）。 */

@@ -17,10 +17,11 @@
 
 1. **展示态已渲染标签**：`MessageBubble.vue:60-63` 用 `parseQuickCommandSegments` 切分，非 text 段渲染为 `QuickCommandTag`/`FileReferenceTag` 组件。
 2. **编辑态裸显标记**：`MessageBubble.vue:72-79` 的编辑框是纯 `<textarea>`，`editContent` 由 `userVisibleText(message.content)` 直接填充（`:397`、`:407-414`），用户看到的是 `#{talk}#` 原文——与展示态、与主输入框三重不一致（截图即此状态）。
-3. **主输入框已是富编辑器且双向转换闭环**（ChatInput.vue）：
-   - 标记 → 标签节点：`markedTextToEditorHtml()`（`:1423-1442`）把含标记的纯文本切成 `span[data-quick-command]`/`span[data-file-reference]` HTML；`QuickCommandNode.parseHTML`（`tiptap/QuickCommandNode.ts:48`）与 `FileReferenceNode.parseHTML`（`tiptap/FileReferenceNode.ts:95`）解析为原子节点。
-   - 标签 → 标记：两节点均实现 `renderText`（`QuickCommandNode.ts:66-70` 产出 `#{name}#`/`${name}$`；`FileReferenceNode.ts:113-124` 产出 `@{path}@` 或经 `serializeFileRange` 的引用型后缀）；发送走 `editor.getText({ blockSeparator: '\n' })`（`ChatInput.vue:1195`）。
-   - **同一转换已在生产使用**：队列消息撤回回填 `restoreContent()`（`:1448-1465`）就是「拿原始标记文本 → 编辑器里渲染成标签」——队列撤回编辑已经能显示标签，气泡内编辑是唯一裸显标记的编辑入口。
+3. **主输入框已是富编辑器且双向转换闭环**（ChatInput.vue，行号为 2026-11-12 复核）：
+   - 标记 → 标签节点：`markedTextToEditorHtml()`（`:1483-1508`，`escapeHtml` :1474）把含标记的纯文本切成 `span[data-quick-command]`/`span[data-file-reference]` HTML；`QuickCommandNode.parseHTML`（`tiptap/QuickCommandNode.ts:48`）与 `FileReferenceNode.parseHTML`（`tiptap/FileReferenceNode.ts:95`）解析为原子节点。
+   - 标签 → 标记：两节点均实现 `renderText`（`QuickCommandNode.ts:66-70` 产出 `#{name}#`/`${name}$`；`FileReferenceNode.ts:113-124` 产出 `@{path}@` 或经 `serializeFileRange` 的引用型后缀）；发送走 `editor.getText({ blockSeparator: '\n' })`（`ChatInput.vue:1255` 等多处）。
+   - **同一转换已在生产使用**：队列消息撤回回填 `restoreContent()`（`:1510-1517`，`setContent` :1519）就是「拿原始标记文本 → 编辑器里渲染成标签」——队列撤回编辑已经能显示标签，气泡内编辑是唯一裸显标记的编辑入口。
+   - **round-trip 机制已核到 tiptap 内核**：`HardBreak.renderText` 返回 `"\n"`（node_modules 实证）；`getText` → `getTextSerializersFromSchema`（core :1928，收集带 `renderText` 的节点生成 `spec.toText`）→ `getTextBetween`（:1889，叶节点走 textSerializer 并停止下钻）——`<br>` 还原 `\n`、两个标签节点还原回标记，走的是同一条机制链。
 
 **结论：可行，且所需基础设施全部存在、已被队列撤回链路验证。** 本方案不新建任何解析/序列化能力，只做「共享函数搬迁」+「气泡编辑态换用最小 tiptap 编辑器」。
 
@@ -30,7 +31,7 @@
 |---|---|---|
 | 1 | 编辑已发送消息时，气泡内编辑框把 `#{talk}#`、`${skill}$`、`@{path}@` 渲染为标签 chip，样式与主输入框（`.editor-tag`）一致 | 必做 |
 | 2 | 标签作为原子节点可整块删除（Backspace），其余文本照常增删改 | 必做 |
-| 3 | 确认后发出/落库的内容与今天逐字节一致（仍是原始标记文本），`confirmEdit`/`editAndResend`/后端零改动 | 必做 |
+| 3 | 确认后发出/落库的内容与今天逐字节一致——基准是**今天的 payload = `userVisibleText(content)` 口径**（含 `[图片 N]` 注入行的消息回填时注入行已被剥离，见 §4.4-b），而非原始 content；`confirmEdit`/`editAndResend`/后端零改动 | 必做 |
 | 4 | 图片附件编辑能力（缩略可见、可标记移除，`MessageBubble.vue:83-111`）与 Esc 取消、Ctrl/Cmd+Enter 确认、IME 组合态守卫保持现状 | 回归 |
 | 5 | 编辑态内通过面板插入新标签、手动敲入的标记自动变标签 | 二期（与主输入框现有行为对齐，见 §3 决策 3） |
 
@@ -50,8 +51,8 @@
 
 ### 4.1 新增 `desktop/src/utils/editor-tags.ts`
 
-- 从 `ChatInput.vue:1474-1442` 原样搬入 `escapeHtml` 与 `markedTextToEditorHtml`（保留原注释口径：`@{…}@`/`${…}$`/`#{…}#` 三标记，`\n → <br>`，HTML 转义）。
-- 三个标记正则提为模块级导出常量（与 `quick-command-parser.ts:6-8` 的 `SKILL_PATTERN`/`COMMAND_PATTERN`/`FILE_PATTERN` 保持逐字同款 `[^}]+`，勿改写为惰性匹配等变体）。
+- 从 `ChatInput.vue` 原样搬入 `escapeHtml`（:1474）与 `markedTextToEditorHtml`（:1483-1508，保留原注释口径：`@{…}@`/`${…}$`/`#{…}#` 三标记，`\n → <br>`，HTML 转义）。
+- **正则以现状内联字面量原样迁移，不做常量化、不与 `quick-command-parser.ts` 的常量混用**（评审修正）：parser 的 `SKILL_PATTERN`/`COMMAND_PATTERN`/`FILE_PATTERN` 带 `/g` 标志（有 `lastIndex` 状态，重复 match/split 会漏判），而本函数用的是 split 非捕获组 + `^…$` 锚定的另一组正则——两者语义不同、不可互换，「保持同款」无法成立；常量化是零收益重构且有 lastIndex 风险。
 - 纯函数无副作用，供 ChatInput 与 MessageEditEditor 共用。
 
 ### 4.2 修改 `ChatInput.vue`
@@ -85,14 +86,16 @@ const editor = useEditor({
   - props：`{ modelValue: string }`（MessageBubble 的 `editContent`）。
   - emits：`update:modelValue(text)`、`confirm()`、`cancel()`。
   - `defineExpose({ focus, selectAll })`：`commands.focus('end')` / `commands.selectAll()`，对应 MessageBubble 进入编辑态后的 `focus()+select()`（`:413-414`）。
-- **键盘**（照搬 `MessageBubble.vue:436-445` 的 IME 守卫口径）：`Escape` → emit cancel；`Ctrl|Meta+Enter` → emit confirm；`event.isComposing \|\| event.keyCode === 229` 时直接 return。
+- **键盘**（评审补充挂载点）：经 `editorProps.handleKeyDown(view, event)` 实现（编辑器实例配置项，`event` 即 KeyboardEvent）——`event.isComposing \|\| event.keyCode === 229` 时 `return false`（放行 IME）；`Escape` → emit cancel + `return true`；`Ctrl|Meta+Enter` → emit confirm + `return true`。不挂 DOM 级 keydown 监听，避免与 ProseMirror 自身按键处理双轨。
 - **v-model 时序**：初始内容由 `content` 一次性注入，**初始不回写** `modelValue`；仅 `onUpdate` 回写（作展示态 mirror）。确认出口一律以 `getText` 为准，避免序列化空白差异覆盖用户原文。
 
 ### 4.4 修改 `MessageBubble.vue`
 
 - 编辑态模板（`:72-79`）：`<textarea v-model="editContent">` 换成 `<MessageEditEditor v-model="editContent" @confirm="handleConfirm" @cancel="$emit('cancelEdit')" ref="editEditorRef" />`；图片缩略区（`:83-111`）与操作按钮（`:113-120`）不动。
+- **新挂载前提（评审补充）**：编辑区在 `v-else-if="role === 'user' && isEditing"` 分支内（:71）——每次进入编辑态 `MessageEditEditor` 全新挂载，`content` 一次性注入天然成立；若未来把该分支改成常驻/`v-show`，必须补「进入编辑态重注入 content」的 watch（现有 `editContent.value = userVisibleText(...)` 回填只覆盖 mirror，不重置编辑器 doc）。
 - `watch(() => props.isEditing)`（`:407-414`）：`await nextTick()` 后改调 `editEditorRef.value?.focus()` + `selectAll()`（Expose 提供）。
 - `handleConfirm`（`:429-435`）：无需改动——`editContent` 仍是唯一真源，`confirmEdit(editContent.value, remaining)` 的 payload 与 today 相同（编辑器 onUpdate 实时同步）。
+- **回填口径（评审补充）**：`editContent` 回填值是 `userVisibleText(message.content)`（`utils/imageUrlAnnotation.ts:42-45`，带 `[图片 N]` 注入行的消息会剥离注入行）——round-trip 恒等的基准就是该回填值；确认出口 `getText` 与之恒等即「payload 与 today 逐字节一致」（§2 故事 3 的判定基准）。
 - 样式：`.edit-textarea` 的视觉属性（边框/背景/圆角/过渡）迁至 `.message-edit-editor-wrap`；追加 ProseMirror 内最小高度对齐（wrap min-height 60px）。
 
 ### 4.5 引用型文件标记的已知行为（记录，不额外处理）
@@ -103,7 +106,7 @@ const editor = useEditor({
 
 | 类型 | 文件 | 内容 |
 |---|---|---|
-| 新增 | desktop/src/utils/editor-tags.ts | `escapeHtml` / `markedTextToEditorHtml` 搬迁 + 标记正则常量 |
+| 新增 | desktop/src/utils/editor-tags.ts | `escapeHtml` / `markedTextToEditorHtml` 搬迁（正则保持内联字面量原样，不常量化） |
 | 新增 | desktop/src/utils/editor-tags.test.ts | 纯函数单测（见 §7） |
 | 新增 | desktop/src/components/chat/MessageEditEditor.vue | 最小编辑态 tiptap 编辑器 |
 | 新增 | desktop/src/components/chat/message-edit-tags.test.ts | 真实 tiptap round-trip + MessageBubble 模板断言 |
@@ -128,7 +131,7 @@ const editor = useEditor({
 
 - `editor-tags.test.ts`：三种标记单独/混合/相邻（`#{a}#${b}$@{c}@`）/多行/首尾；HTML 转义（`<>&"` 及标记名内的引号）；无标记文本恒等；空串；`\n → <br>` 映射。
 - `message-edit-tags.test.ts`：
-  - **真实 tiptap Editor round-trip**（参照 `paste-insert.test.ts`）：`new Editor({ extensions: [StarterKit.configure({...}), QuickCommandNode, FileReferenceNode], content: '<p>' + markedTextToEditorHtml(text) + '</p>' })` → `getText({ blockSeparator: '\n' })` 与原标记文本恒等（含多行、含引用型后缀形态）；`editor.state.doc` 中 quickCommand 节点数 = 标记数。
+  - **真实 tiptap Editor round-trip**（参照 `paste-insert.test.ts`）：`new Editor({ extensions: [StarterKit.configure({...}), QuickCommandNode, FileReferenceNode], content: '<p>' + markedTextToEditorHtml(text) + '</p>' })` → `getText({ blockSeparator: '\n' })` 与**回填输入文本**恒等（含多行、含引用型后缀形态；基准 = `userVisibleText` 口径的回填值，见 §4.4）；`editor.state.doc` 中 quickCommand 节点数 = 标记数。
   - **MessageBubble 模板断言**（沿用 `MessageBubble.imageUrl.test.ts` 的 SFC AST 手法）：编辑态容器（`role === 'user' && isEditing`）引用 `MessageEditEditor` 而非裸 `textarea`；确认按钮 disabled 仍读 `editContent.trim()`。
 - 构建：`cd desktop && npm run build`（`vue-tsc -b`，根 tsconfig 为 references 结构，勿用 `--noEmit` 单文件模式替代）。
 
@@ -147,3 +150,13 @@ const editor = useEditor({
 - 气泡编辑态的草稿持久化（编辑器内容仅驻内存，不落库）。
 - 后端接口/字段/WS 协议任何改动；数据库迁移。
 - 队列撤回回填链路的逻辑改动（仅共享函数搬迁，行为不变）。
+
+## 10. 评审修订记录（2026-11-12）
+
+1. **§4.1 正则常量化指令修正（会导致实现错误）**：原稿要求「三个标记正则提为模块级导出常量、与 `quick-command-parser.ts:6-8` 逐字同款」——parser 常量带 `/g` 标志（`lastIndex` 状态，重复 match/split 漏判），与本函数的 split 非捕获组 + `^…$` 锚定正则并非同款、不可互换。改为现状内联字面量原样迁移、不常量化、不混用。§4.1。
+2. **round-trip 基准写透**：回填值是 `userVisibleText(message.content)`（注入行剥离口径，`imageUrlAnnotation.ts:42-45`），逐字节一致的基准是今天的 payload（回填值口径）而非原始 content——§2 故事 3、§4.4、§7 同步明确。
+3. **键盘挂载点补充**：`editorProps.handleKeyDown`（不挂 DOM 级监听避免双轨），IME 守卫 return false 放行。§4.3。
+4. **新挂载前提显式化**：编辑区 `v-else-if` 结构保证每次进入编辑态全新挂载编辑器（content 一次性注入的前提）；改常驻/v-show 时须补重注入 watch。§4.4。
+5. **round-trip 机制核到 tiptap 内核**：`HardBreak.renderText` 返回 `"\n"`（node_modules 实证）；`getText` → `getTextSerializersFromSchema`（core:1928，`renderText` → `spec.toText`）→ `getTextBetween`（:1889）——`<br>` 还原 `\n` 与标签还原走同一机制链。§1。
+6. **行号引用更新**：`ChatInput.vue` 各函数实测行号（escapeHtml :1474、markedTextToEditorHtml :1483-1508、restoreContent :1510-1517/setContent :1519、发送 getText :1255 等）。§1/§4.1。
+7. **落地轮 review 修正（2026-11-12）**：①`editor-tags.ts` 迁移时 commandMatch 正则多写了一个反斜杠（`\#`），已恢复与 ChatInput 原文逐字节一致；②已知限制两则记录：安卓 WebView 下 Ctrl/Cmd+Enter 不触发确认（prosemirror-view 对 keyCode 13 提前短路，触屏场景用确认按钮），编辑器内 Enter = 换行分段（与主输入框 Enter 发送有意不同，多段落经 blockSeparator 还原 `\n`）。
