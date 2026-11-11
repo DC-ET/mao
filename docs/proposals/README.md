@@ -26,18 +26,17 @@
 
 ## 待评审
 
-| 提案 | 批次 | 一句话 |
-|---|---|---|
-| [工具卡文件路径联动中心 Tab](2026-11-11-tool-card-file-link.md) | 29 | 工具卡里的工作区路径可点击，直接在中心 Tab 文件查看器打开；shell 卡补「复制命令」 |
-| [Markdown 渲染补完](2026-11-11-markdown-render-polish.md) | 29 | GFM 任务列表（`- [ ]`）真实渲染 + 正文内联图片点击放大，纯渲染层 |
-| [命令面板动态组](2026-11-11-command-palette-dynamic-sources.md) | 29 | 面板从 28 条静态命令升级：Agent 目录、当前会话上下文动作、快捷键速查面板化 |
-| [审批键盘流](2026-11-11-approval-keyboard-flow.md) | 29 | 待审批卡片的 Y/N 快捷键 + 显式焦点序，审批语义零改动 |
-| [多会话并行状态可见性](2026-11-11-parallel-session-glanceability.md) | 29 | Tab 状态角标、浏览器标题态、等待审批任务栏提醒（可开关） |
+_当前无待评审提案。_
 
 ## 已立项
 
 | 提案 | 批次 | 说明 |
 |---|---|---|
+| [工具卡文件路径联动中心 Tab](2026-11-11-tool-card-file-link.md) | 29 | 技术方案：[docs/plan/2026-11-11-tool-card-file-link-technical-design.md](../plan/2026-11-11-tool-card-file-link-technical-design.md)（范围按复核收窄：glob/grep 链接已存在，剩 read/write/edit 路径行 + shell 复制命令） |
+| [Markdown 渲染补完](2026-11-11-markdown-render-polish.md) | 29 | 技术方案：[docs/plan/2026-11-11-markdown-render-polish-technical-design.md](../plan/2026-11-11-markdown-render-polish-technical-design.md)（复核修正：marked ^18 已渲染 checkbox，方案收窄为样式化 + 图片放大） |
+| [命令面板动态组](2026-11-11-command-palette-dynamic-sources.md) | 29 | 技术方案：[docs/plan/2026-11-11-command-palette-dynamic-sources-technical-design.md](../plan/2026-11-11-command-palette-dynamic-sources-technical-design.md)（`?` 速查组为面板内新增，既有全局 `?` 不动） |
+| [审批键盘流](2026-11-11-approval-keyboard-flow.md) | 29 | 技术方案：[docs/plan/2026-11-11-approval-keyboard-flow-technical-design.md](../plan/2026-11-11-approval-keyboard-flow-technical-design.md)（Y/N 走 ApprovalStack 同一 confirm；活跃 Tab 归属由 KeepAlive 结构性判定） |
+| [多会话并行状态可见性](2026-11-11-parallel-session-glanceability.md) | 29 | 技术方案：[docs/plan/2026-11-11-parallel-session-glanceability-technical-design.md](../plan/2026-11-11-parallel-session-glanceability-technical-design.md)（Tab 角标砍掉；标题态 + 任务栏闪烁，通知复用既有收件箱体系不新增通道） |
 | [中心 Tab 效率补完](2026-11-08-center-tab-efficiency.md) | 25 | 技术方案：[docs/plan/2026-11-08-center-tab-efficiency-technical-design.md](../plan/2026-11-08-center-tab-efficiency-technical-design.md) |
 | [消息代码块折叠与换行](2026-11-08-message-code-block-polish.md) | 26 | 技术方案：[docs/plan/2026-11-08-message-code-block-polish-technical-design.md](../plan/2026-11-08-message-code-block-polish-technical-design.md) |
 | [外观个性化与视觉令牌收编](2026-11-08-appearance-personalization.md) | 27 | 技术方案：[docs/plan/2026-11-08-appearance-personalization-technical-design.md](../plan/2026-11-08-appearance-personalization-technical-design.md)（密度档与暗色收编随方案取消，见其 §3.2 勘误） |

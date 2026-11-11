@@ -2,7 +2,7 @@
 
 > Agent 的产出大量以「文件路径」形态出现在工具卡里：read_file / write_file / edit_file 的目标路径、grep_search / glob_search 的命中文件、shell 输出里打印的路径。这些路径今天一律是**纯文本**（`ToolCallCard.vue:143/:178` 的 `<pre>` 结果区、`ToolShellView.vue:9` 的命令行），用户想看文件全貌要自己抄路径 → 切到工作区文件管理 → 逐级点开。而中心 Tab 的文件查看器入口 API 是现成的——`useCenterTabs.ts:264` `openFileTab(filePath, title, workspaceRoot?)`——只是聊天侧组件**零接线**（grep `chat/*.vue` 无一处引用 `useCenterTabs`）。文件树右键菜单的「添加到聊天」已经打通了「文件 → 聊天」方向（工作区文件直管，批次 5），本提案补完反方向：**聊天 → 文件查看**。
 
-- 状态：待评审（2026-11-11，批次 29）
+- 状态：已立项（2026-11-11，批次 29）
 - 日期：2026-11-11
 - 提案总览见 [docs/proposals/README.md](README.md)
 - 规模：小（约 1 人日；**零后端、零迁移**，纯 desktop 前端增量）
@@ -80,8 +80,8 @@
 
 ## 8. 决策记录
 
-待评审确认：
+已拍板（2026-11-11，评审确认）：
 
-1. **read_file / write_file 卡的路径与「内容预览」重复**：内容已在卡内展示（`ToolFileContent`），打开查看器看的是「全貌 + 上下文」——保留两个入口还是仅 grep/glob 链接化？P1 全量链接化，评审可收窄。
-2. **edit_file 链接打开的是当前文件态**（diff 视图入口另有 GitChangeList）：是否需要直达 diff？P1 不做，GitChangeList 已覆盖。
-3. **shell 输出正文是否链接化**：P1 不做（§2 非目标），评审若认为高频可后补（转义与误点评估）。
+1. **read_file / write_file 卡的路径与「内容预览」重复**：**全量链接化**——`read_file`/`write_file`/`edit_file` 路径字段与 grep/glob 命中列表文件名均可点击，卡内预览与查看器「全貌 + 上下文」两个入口并存。
+2. **edit_file 链接打开的是当前文件态**：**不直达 diff**——打开查看器当前文件态即可，diff 入口由既有 GitChangeList 覆盖。
+3. **shell 输出正文是否链接化**：**不做**——只链接结构化字段，自由文本路径保持纯文本（转义与误点成本不划算）；需要时后补。
