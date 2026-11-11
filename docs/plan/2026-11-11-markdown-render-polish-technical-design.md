@@ -45,7 +45,7 @@
 | 样式落点 | `style.css` 全局 markdown 段（:746 起的 `Markdown 富渲染` 区块内追加） | markdown-body 分散在聊天/文件预览/轨迹/技能/分享页多宿主，全局段是既有惯例（同段注释明说） |
 | 图片放大的标记方式 | `MarkdownContent` 渲染后处理：`!streaming` 分支调 `markZoomableImages(root)`，给符合条件的 `<img>` 加 `md-img-zoom` 类（排除 `<a>` 后代与 `.code-block` 内） | 与 mermaid/codeBlockCollapse 后处理同位同范式；排除规则落在标记层，点击层只认类，逻辑单点 |
 | 点击监听 | **组件内 `@click` 绑定在 root div**，`closest('img.md-img-zoom')` 命中即开预览 | 不引入 document 级常驻委托（utils/codeCopy 模式是为跨实例全局行为设计的）；组件卸载监听随组件销毁，零清理负担 |
-| 预览组件 | **`ElImageViewer`**（element-plus 2.14 公共导出，仓库首用）：`v-if` + `:url-list="[src]"` + `@close` 置空 | 不用「隐藏 el-image 再触发 preview」的黑科技；ElImageViewer 自带 Esc/遮罩关闭、z-index 管理，公开 API 稳定 |
+| 预览组件 | **`ElImageViewer`**（element-plus 2.14 公共导出，仓库首用）：`v-if` + `:url-list="[src]"` + **`teleported`（必须显式）** + `@close` 置空；模板直接写 `<el-image-viewer>` 标签（main.ts `app.use(ElementPlus)` 全量注册 + `element-plus/dist/index.css` 全量样式，与全部 el-* 组件用法一致，无需显式 import） | 不用「隐藏 el-image 再触发 preview」的黑科技；ElImageViewer 自带 Esc/遮罩关闭、z-index 管理，公开 API 稳定；**`teleported` 默认 false = 原地渲染**（node_modules 实证 `disabled: !teleported`），fixed 定位会被 overflow / transform 祖先裁剪——ToolCallCard 既有 el-image 也因此显式 `preview-teleported="true"`，本方案同口径 |
 | 图片 src 取值 | `img.currentSrc || img.src` 原值进 url-list | uploads 相对路径同源直显；data URI（如粘贴预览）同样可用 |
 | 流式行为 | 标记只在 `!streaming` 分支执行（与 Mermaid/代码块同位）；流中点击无预览 | 流式帧高频重建 DOM，逐帧标记是浪费；「streaming 翻转必触发回调」的既有语义（C6）保证流结束即标记 |
 
@@ -81,16 +81,17 @@ export function markZoomableImages(root: HTMLElement): void
 export function pickZoomImage(target: EventTarget | null): HTMLImageElement | null
 ```
 
-- `markZoomableImages`：`root.querySelectorAll('img')`，命中以下任一则跳过——`img.closest('a')` 非空；`img.closest('.code-block, pre')` 非空；`img.getAttribute('data-no-zoom') === 'true'`（逃生口）。其余加 `ZOOM_CLASS`。幂等（已带类跳过）。
+- `markZoomableImages`：`root.querySelectorAll('img')`，命中以下任一则跳过——`img.closest('a')` 非空；`img.closest('.code-block, pre')` 非空；`img.getAttribute('data-no-zoom') === 'true'`（逃生口，当前无设置方，预留给未来宿主内嵌图片场景）。其余加 `ZOOM_CLASS`。幂等（已带类跳过）。
 - `pickZoomImage`：从事件 target 向上 `closest('img.' + ZOOM_CLASS)`，命中且 `closest('a')` 为空时返回该 img（双保险），否则 null。
+- 样式（style.css markdown 段追加）：`.markdown-body .md-img-zoom { cursor: zoom-in; }`——点击放大的 affordance（现状 markdown-body 对 img 无任何样式规则，grep 实证）；只加光标不改布局，图片宽度等布局约束维持现状。
 
 ### 4.3 修改 `MarkdownContent.vue`
 
-1. 模板 root 加 `@click="onBodyClick"`；`<el-image-viewer v-if="previewUrl" :url-list="previewList" @close="closePreview" />`（previewList 为 `[previewUrl]` computed）。
+1. 模板 root 加 `@click="onBodyClick"`；`<el-image-viewer v-if="previewUrl" :url-list="previewList" teleported @close="closePreview" />`（previewList 为 `[previewUrl]` computed；`teleported` 必须显式，见 §3）。teleport 到 body 后 viewer 内点击不再冒泡回 root，委托零误开。
 2. `!streaming && root.value` 分支（:48-56）追加 `markZoomableImages(root.value)`（与 insertMermaidDiagrams 并列，先于 codeBlockEnhance 与否均可，互不依赖）。
 3. `onBodyClick(e: MouseEvent)`：`const img = pickZoomImage(e.target)`；命中时 `previewUrl.value = img.currentSrc || img.src`；未命中直接返回（不 preventDefault，链接等既有点击行为不变）。
 4. `closePreview()`：`previewUrl.value = ''`。
-5. 引入 `ElImageViewer`：显式 import（`import { ElImageViewer } from 'element-plus'`）——仓库 element-plus 按需/全量引入方式与既有组件一致，实施时照 MessageBubble 等组件的现有引入风格。
+5. 组件注册：模板直接写 `<el-image-viewer>`，无需显式 import——main.ts `app.use(ElementPlus, { locale: zhCn })` 全量注册、`element-plus/dist/index.css` 全量样式，全部 el-* 组件均此用法。
 
 ### 4.4 测试
 
@@ -98,7 +99,8 @@ export function pickZoomImage(target: EventTarget | null): HTMLImageElement | nu
    - 普通正文 img 被加类；`<a><img></a>` 不加；`.code-block` 内 img 不加；重复调用幂等。
    - `pickZoomImage`：img target 命中返回元素；a 内 img 返回 null；非 img target 返回 null。
 2. `useMarkdown` 既有测试全绿（渲染链零改动）；如有 marked 层任务列表产物断言，补一条 `- [x]` 产出 `<input checked disabled type="checkbox">` 的锁定用例（防未来 marked 升级/配置漂移）。
-3. 手测矩阵：聊天消息、文件预览（FileViewer）、轨迹（RunTracePanel）三宿主——任务列表样式与图片放大均生效；流式中点击无预览、流结束可点；暗色主题下 checkbox accent-color 与置灰可见。
+3. 新增 `desktop/src/components/common/MarkdownContent.test.ts`（组件级接线，评审补充）：mount 范式照 `ToolCallCard.test.ts`（mock `utils/theme` 与 `utils/monaco-colorize`），element-plus 注册用 `app.use(ElementPlus)`（`WorkspaceOverviewPanel.*.test.ts` 先例）——正文 img 点击 → `.el-image-viewer` 渲染于 body（teleported）；`<a><img></a>` 点击不弹；`streaming: true` 时点击不弹、翻转 false 后可弹；close 事件置空后 viewer 卸载。
+4. 手测矩阵：聊天消息、文件预览（FileViewer）、轨迹（RunTracePanel）三宿主——任务列表样式与图片放大均生效；流式中点击无预览、流结束可点；暗色主题下 checkbox accent-color 与置灰可见；viewer 全屏无裁剪（teleported 生效）。
 
 ## 5. 落地清单
 
@@ -106,8 +108,9 @@ export function pickZoomImage(target: EventTarget | null): HTMLImageElement | nu
 |---|---|---|
 | 修改 | desktop/src/style.css | markdown 段追加任务列表三条规则（:has()） |
 | 新增 | desktop/src/utils/markdownZoom.ts | markZoomableImages / pickZoomImage / ZOOM_CLASS |
-| 修改 | desktop/src/components/common/MarkdownContent.vue | root @click、ElImageViewer、!streaming 分支标记调用 |
+| 修改 | desktop/src/components/common/MarkdownContent.vue | root @click、el-image-viewer（teleported）、!streaming 分支标记调用 |
 | 新增 | desktop/src/utils/markdownZoom.test.ts | 标记与拾取纯函数用例 |
+| 新增 | desktop/src/components/common/MarkdownContent.test.ts | 组件级接线用例（点击 → viewer / a 包裹不弹 / 流式守卫） |
 | 修改 | desktop/src/composables/useMarkdown.test.ts（如存在） | `- [x]` checkbox 产物锁定用例 |
 | CHANGELOG | 根 CHANGELOG.md | 前端（桌面 / Web）小节，版本随发版批次 |
 | backend-ts / admin / android / agent-cli | — | **无改动**（安卓壳共用 UI，样式与预览同样生效） |
@@ -119,7 +122,7 @@ export function pickZoomImage(target: EventTarget | null): HTMLImageElement | nu
 |---|---|
 | `:has()` 在某宿主不可用（极老 WebView） | 仓库已用 `color-mix()`（Chrome 111+），`:has()`（105+）兼容面是其超集；即便失效也只是回到「bullet 叠显、无删除线」的今天现状，功能无损 |
 | 正文里字面 `[ ]`（非列表项）被误判 | 本方案零解析改动，不存在该回归面（提案原风险随 marked 既有能力一并消失） |
-| ElImageViewer 与 Mermaid/代码块折叠的全局 z-index 冲突 | element-plus viewer 默认 z-index 管理走 el-popup-manager（与 el-dialog 同源），仓库内 dialog/message 均已共存；实施后手测三宿主叠层 |
+| ElImageViewer 与 Mermaid/代码块折叠的全局 z-index 冲突 | element-plus viewer 默认 z-index 管理走 el-popup-manager（与 el-dialog 同源），仓库内 dialog/message 均已共存；`teleported` 后 viewer 挂 body 顶层，与 teleport 型 dialog 同层管理；实施后手测三宿主叠层 |
 | 点击放大劫持图片的原生拖拽 / 右键 | 委托只挂在 click，不拦截 contextmenu/dragstart；右键菜单行为不变 |
 | 长文重复渲染开销 | 标记是 O(imgs) 一次 classList 操作，且只在 !streaming 帧执行；对比每帧全量渲染可忽略 |
 | 消息流式中图片逐帧重建导致闪烁 | 现状已有行为（v-html 重建），本方案不触碰渲染链，不新增 |
@@ -128,7 +131,7 @@ export function pickZoomImage(target: EventTarget | null): HTMLImageElement | nu
 
 1. `- [ ]` / `- [x]` / `- [X]` 三态：checkbox 呈现、完成项灰色 + 删除线、无 bullet 叠显（手测 + marked 产物锁定用例）。
 2. 非列表位置的字面 `[ ]` 文本不受影响（本方案不改解析，回归基线即既有用例）。
-3. 正文图片点击弹预览、Esc / 遮罩关闭；带 `<a>` 包裹的图片点击走链接不弹预览；代码块内 img（如 mermaid 占位前的原文）不弹。
+3. 正文图片点击弹预览（viewer 全屏无裁剪，`teleported` 生效）、Esc / 遮罩关闭；带 `<a>` 包裹的图片点击走链接不弹预览；代码块内 img（如 mermaid 占位前的原文）不弹。
 4. 流式进行中点击图片无反应；流式结束下一帧起可点。
 5. 工具卡图片既有 el-image 预览回归不变（MarkdownContent 改动不波及 ToolCallCard）。
 6. 数学公式 / mermaid / 代码块 / 表格既有渲染回归零变化（`useMarkdown` 既有用例全绿）。
@@ -149,4 +152,13 @@ export function pickZoomImage(target: EventTarget | null): HTMLImageElement | nu
 - 会话级图片 gallery、批量下载；工具卡 `<img>` 放大绑定。
 - `useMarkdown.ts` 渲染链任何改动（marked 配置 / renderer / 缓存 / 流式节流）。
 - 图片的下载 / 新窗口打开等附加按钮（ElImageViewer 默认工具条之外的定制）。
+- 图片布局约束改动（max-width / 尺寸缩放等维持现状，本方案只加光标与点击）。
 - 后端、admin、agent-cli、数据库迁移的任何改动。
+
+## 10. 评审修订记录（2026-11-12）
+
+1. **`teleported` 必须显式（关键修正）**：实证 element-plus 2.14 `ElImageViewer` 的 `teleported` 默认 false（`disabled: !teleported`，原地渲染），fixed 定位会被 overflow/transform 祖先裁剪或错层；仓库先例 ToolCallCard 的 el-image 也因此显式 `preview-teleported="true"`。§3/§4.3/§6/§7 已补。
+2. **组件注册方式修正**：main.ts 是 `app.use(ElementPlus)` 全量注册 + 全量 CSS，模板直接写 `<el-image-viewer>` 即可；删除原稿「显式 import ElImageViewer」的错误指令（与仓库全部 el-* 用法不一致）。§3/§4.3-5。
+3. **补 affordance 样式**：`.markdown-body .md-img-zoom { cursor: zoom-in }`——现状 markdown-body 对 img 无任何样式规则，无可点击暗示；只加光标不改布局（§4.2/§9）。
+4. **补组件级接线测试**：原稿只有纯函数单测 + 手测，「点击 → viewer」接线无自动化。新增 MarkdownContent.test.ts，范式有先例（mock：ToolCallCard.test.ts；app.use(ElementPlus)：WorkspaceOverviewPanel.test.ts）。§4.4-3/§5。
+5. **遮罩点击退出落地补齐（实现轮 review 发现）**：§2/§3/§7 声称的「遮罩点击退出」需显式 `hide-on-click-modal`（element-plus 默认 false，实现初版遗漏）；实现补该属性，与 ToolCallCard el-image 既有口径（未开）刻意不同——本方案验收口径以更标准的查看器交互为准。另：多根模板使 attrs 透传失效，实现以 `useAttrs()` + `v-bind="attrs"` 恢复单根时代语义（ToolWebPageView `class="page-body"` 依赖此行为）。

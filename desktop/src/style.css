@@ -984,3 +984,26 @@ pre code {
   border-color: var(--el-color-primary-light-5);
 }
 
+
+/* GFM 任务列表：checkbox 由 marked gfm 管线产出（input disabled 只读），这里只管样式。
+   :has() 纯声明式，流式中间帧同样生效；兼容面参照 color-mix()（Chrome 111+）已覆盖 :has()（105+） */
+.markdown-body li:has(> input[type="checkbox"]) {
+  list-style: none;
+  margin-left: -1.1em; /* 抵消 ul/ol 的 padding-left，checkbox 与相邻普通列表项文字左缘对齐 */
+}
+
+.markdown-body li:has(> input[type="checkbox"]) > input[type="checkbox"] {
+  margin-right: 6px;
+  vertical-align: -2px;
+  accent-color: var(--aw-primary);
+}
+
+.markdown-body li:has(> input[type="checkbox"][checked]) {
+  color: var(--aw-ink-muted-48);
+  text-decoration: line-through;
+}
+
+/* 正文内联图片点击放大（utils/markdownZoom）：只加光标暗示，不改布局 */
+.markdown-body .md-img-zoom {
+  cursor: zoom-in;
+}
