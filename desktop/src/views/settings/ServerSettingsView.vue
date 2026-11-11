@@ -437,7 +437,11 @@ onMounted(() => {
   padding: 14px;
   border: 1px solid var(--aw-divider-soft);
   border-radius: var(--aw-radius-md, 10px);
-  background: var(--aw-bg, #fbfbfc);
+  /* 内嵌在 --aw-surface 卡片里的一层「浅底」：羊皮纸底（亮 #f5f5f7 / 暗 #222226）
+     在两种主题下都恰好比卡面深/浅一档，边界清晰又不抢焦点。
+     曾误写成未定义令牌 --aw-bg 配亮色回退值，回退值恒生效，暗色主题下这块会渲染成
+     纯白卡片（0.0.515 修复），勿改回去。 */
+  background: var(--aw-canvas-parchment);
   margin-bottom: 16px;
 }
 
