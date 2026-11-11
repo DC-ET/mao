@@ -53,6 +53,13 @@
               @click="runItem(entry.item)"
             >
               <span class="palette-item-title">{{ entry.item.title }}</span>
+              <img
+                v-if="entry.item.avatarUrl"
+                class="palette-item-avatar"
+                :src="entry.item.avatarUrl"
+                alt=""
+                @error="onAvatarError"
+              >
               <span v-if="entry.item.active" class="palette-item-check">✓</span>
             </button>
           </template>
@@ -64,7 +71,9 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { Close, Search } from '@element-plus/icons-vue'
+import { useAgentStore } from '../../stores/agent'
 import {
   buildCommands,
   filterCommands,
@@ -83,6 +92,9 @@ const isOpen = ref(false)
 const keyword = ref('')
 const activeIndex = ref(0)
 const items = ref<CommandItem[]>([])
+// 面板内按过 `?`：true 时快捷键组参与本帧列表；关闭面板复位（评审拍板：`?` 仅面板内生效）
+const showShortcuts = ref(false)
+const route = useRoute()
 // 打开面板前的焦点元素：关闭时还原（与 0.0.471 searchJumpFocus 同口径的开合闭环）
 let previouslyFocused: HTMLElement | null = null
 
@@ -95,6 +107,19 @@ const grouped = computed(() => {
   filtered.value.forEach((item, index) => {
     map[item.group].push({ item, index })
   })
+  // Agent 组渲染层截断（批次 29 提案 3 拍板）：无关键词时只展示前 6 条 + 置灰筛选提示。
+  // hint 的 index 取 -1——不与真实 filtered 下标碰撞，aria-selected 永不误亮；
+  // hover / click / 键盘移动已被 enabled 守卫拦截，无需参与选择语义。
+  const agents = map.agents
+  if (!keyword.value.trim() && agents.length > AGENT_GROUP_VISIBLE_MAX) {
+    map.agents = [
+      ...agents.slice(0, AGENT_GROUP_VISIBLE_MAX),
+      {
+        item: { id: 'agent:hint', group: 'agents', title: '输入名称筛选更多 Agent', enabled: false, run: () => undefined },
+        index: -1
+      }
+    ]
+  }
   return map
 })
 
@@ -117,10 +142,31 @@ watch(activeIndex, async () => {
   active?.scrollIntoView({ block: 'nearest' })
 })
 
+/** Agent 组无关键词时的可见上限（拍板口径：前 6 条 + 筛选提示；有关键词走既有搜索不截断）。 */
+const AGENT_GROUP_VISIBLE_MAX = 6
+
+/** 按当次快照重建命令清单（面板打开 / `?` 唤出 / Agent 拉取完成时调用）。 */
+function rebuildItems() {
+  const agentStore = useAgentStore()
+  items.value = buildCommands(props.host, {
+    agents: agentStore.agents,
+    inSessionRoute: route.name === 'Task',
+    showShortcuts: showShortcuts.value
+  })
+}
+
 function open() {
-  items.value = buildCommands(props.host)
+  showShortcuts.value = false
   keyword.value = ''
   activeIndex.value = 0
+  const agentStore = useAgentStore()
+  if (!agentStore.agents.length) {
+    // 首开空窗兜底：登录后首次打开是唯一 store 未加载场景，拉取完成时面板若仍开着就重建（不加 loading 态）
+    void agentStore.fetchAgents().then(() => {
+      if (isOpen.value) rebuildItems()
+    })
+  }
+  rebuildItems()
   previouslyFocused = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
     ? document.activeElement
     : null
@@ -156,6 +202,11 @@ function onItemHover(entry: { item: CommandItem; index: number }) {
   activeIndex.value = entry.index
 }
 
+/** 头像加载失败隐藏自身（纯装饰图，alt 为空，名称已承载语义）。 */
+function onAvatarError(e: Event) {
+  ;(e.target as HTMLElement).style.display = 'none'
+}
+
 /** ArrowUp/Down 在过滤结果上循环移位，跳过置灰项；全部置灰时不动。 */
 function moveSelection(dir: 1 | -1) {
   const list = filtered.value
@@ -180,6 +231,13 @@ function onInputKeydown(e: KeyboardEvent) {
     e.preventDefault()
     const item = filtered.value[activeIndex.value]
     if (item) runItem(item)
+  } else if (e.key === '?' && !e.isComposing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    // 面板内速查组（评审拍板 `?` 仅面板内生效）：不落入输入框，追加快捷键组键入即过滤；
+    // isComposing 防中文 IME 组合态吞字符（全局键无此问题——input 整体被 isTypingTarget 排除）；
+    // 修饰键排除与全局 `?` 分支口径对齐（Ctrl+Shift+/ 等组合键不触发）
+    e.preventDefault()
+    showShortcuts.value = true
+    rebuildItems()
   } else if (e.key === 'Escape') {
     isOpen.value = false
   }
@@ -260,6 +318,15 @@ defineExpose({ toggle, open, close })
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Agent 组条目右侧头像：装饰图（alt 空串），加载失败由 onAvatarError 隐藏 */
+.palette-item-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
 }
 
 .palette-item-check {

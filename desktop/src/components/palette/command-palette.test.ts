@@ -18,6 +18,7 @@ import {
   COMMAND_GROUP_ORDER,
   type CommandHostActions
 } from '../../composables/useCommandRegistry'
+import { SHORTCUT_ROWS } from '../../utils/shortcutRows'
 
 const mocks = vi.hoisted(() => ({
   setTheme: vi.fn(),
@@ -55,6 +56,10 @@ function makeHost(overrides: Partial<CommandHostActions> = {}): CommandHostActio
     openCommands: vi.fn(),
     logout: vi.fn(),
     openShortcutHelp: vi.fn(),
+    // 批次 29 提案 3：上下文动作组三方法（接口扩展的机械联动，既有断言零改动）
+    openWorkspaceFiles: vi.fn(),
+    openRunTrace: vi.fn(),
+    openUsage: vi.fn(),
     ...overrides
   }
 }
@@ -95,8 +100,8 @@ describe('buildCommands 命令清单（§2.3 定案 28 条）', () => {
     expect(counts).toEqual({ search: 1, actions: 8, appearance: 3, nav: 15, help: 1 })
   })
 
-  it('分组标签与渲染顺序齐备', () => {
-    expect(COMMAND_GROUP_ORDER).toEqual(['search', 'actions', 'appearance', 'nav', 'help'])
+  it('分组标签与渲染顺序齐备（批次 29 提案 3 扩三组：agents/context/shortcuts）', () => {
+    expect(COMMAND_GROUP_ORDER).toEqual(['search', 'agents', 'actions', 'context', 'appearance', 'nav', 'shortcuts', 'help'])
     for (const groupId of COMMAND_GROUP_ORDER) {
       expect(COMMAND_GROUP_LABELS[groupId]).toBeTruthy()
     }
@@ -241,6 +246,7 @@ describe('源码级回归（readFileSync，仿 chat-a11y.test.ts）', () => {
   const registrySrc = read('../../composables/useCommandRegistry.ts')
   const paletteSrc = read('./CommandPalette.vue')
   const helpSrc = read('./ShortcutHelpDialog.vue')
+  const shortcutRowsSrc = read('../../utils/shortcutRows.ts')
   const routerSrc = read('../../router/index.ts')
 
   it('TopNav 含 Ctrl/Cmd+Shift+P 分支', () => {
@@ -288,10 +294,91 @@ describe('源码级回归（readFileSync，仿 chat-a11y.test.ts）', () => {
     expect(paletteSrc).toContain('aria-label="关闭命令面板"')
   })
 
-  it('ShortcutHelpDialog 含 7 条快捷键 kbd 文案', () => {
+  it('快捷键速查 7 条落在单一数据源 shortcutRows.ts，对话框改为消费该常量（批次 29 提案 3 迁出）', () => {
     for (const combo of ['Ctrl/Cmd+K', 'Ctrl/Cmd+`', 'Ctrl/Cmd+Shift+P', '/', 'Enter', 'Shift+Enter', 'Esc']) {
-      expect(helpSrc, `缺快捷键 ${combo}`).toContain(`keys: '${combo}'`)
+      expect(shortcutRowsSrc, `缺快捷键 ${combo}`).toContain(`keys: '${combo}'`)
     }
-    expect(helpSrc.match(/keys: '/g)).toHaveLength(7)
+    expect(shortcutRowsSrc.match(/keys: '/g)).toHaveLength(7)
+    expect(helpSrc).toContain("from '../../utils/shortcutRows'")
+    expect(helpSrc).not.toContain("keys: '")
+  })
+})
+
+describe('buildCommands 动态组（批次 29 提案 3）', () => {
+  const agents = [
+    { id: '1', name: '运维', description: '', executionMode: 'CLOUD' },
+    { id: '2', name: 'Coder', avatarUrl: 'https://x/a.png', description: '', executionMode: 'LOCAL' },
+    { id: '3', name: '写作', description: '', executionMode: 'CLOUD' }
+  ]
+
+  it('缺省 dynamic：28 条静态不变，三个动态组都不出现', () => {
+    const commands = buildCommands(makeHost())
+    expect(commands.length).toBe(28)
+    expect(commands.filter(c => c.group === 'agents').length).toBe(0)
+    expect(commands.filter(c => c.group === 'context').length).toBe(0)
+    expect(commands.filter(c => c.group === 'shortcuts').length).toBe(0)
+  })
+
+  it('dynamic.agents → Agent 组逐条映射（title / id 前缀 / keywords / avatarUrl）', () => {
+    const commands = buildCommands(makeHost(), { agents, inSessionRoute: false, showShortcuts: false })
+    const group = commands.filter(c => c.group === 'agents')
+    expect(group.length).toBe(3)
+    expect(group[0].id).toBe('agent:run:1')
+    expect(group[0].title).toBe('新建会话 · 运维')
+    expect(group[0].keywords).toContain('运维')
+    expect(group[0].avatarUrl).toBeUndefined()
+    expect(group[1].avatarUrl).toBe('https://x/a.png')
+  })
+
+  it('Agent 条目 run 路由到既有 newTask=1&agentId= 契约', () => {
+    buildCommands(makeHost(), { agents, inSessionRoute: false, showShortcuts: false })
+      .find(c => c.id === 'agent:run:2')!
+      .run()
+    expect(mocks.routerPush).toHaveBeenCalledWith({ name: 'Home', query: { newTask: '1', agentId: '2' } })
+  })
+
+  it('agents 空数组 → Agent 组整组不渲染', () => {
+    const commands = buildCommands(makeHost(), { agents: [], inSessionRoute: false, showShortcuts: false })
+    expect(commands.filter(c => c.group === 'agents').length).toBe(0)
+  })
+
+  it('上下文组：inSessionRoute false 不渲染；true 恰好 3 条且 run 调 host 对应方法', () => {
+    const off = buildCommands(makeHost(), { agents: [], inSessionRoute: false, showShortcuts: false })
+    expect(off.filter(c => c.group === 'context').length).toBe(0)
+
+    const host = makeHost()
+    const on = buildCommands(host, { agents: [], inSessionRoute: true, showShortcuts: false })
+    const ctx = on.filter(c => c.group === 'context')
+    expect(ctx.length).toBe(3)
+    expect(ctx.map(c => c.id)).toEqual(['ctx:workspace-files', 'ctx:run-trace', 'ctx:usage'])
+    on.find(c => c.id === 'ctx:workspace-files')!.run()
+    on.find(c => c.id === 'ctx:run-trace')!.run()
+    on.find(c => c.id === 'ctx:usage')!.run()
+    expect(host.openWorkspaceFiles).toHaveBeenCalledOnce()
+    expect(host.openRunTrace).toHaveBeenCalledOnce()
+    expect(host.openUsage).toHaveBeenCalledOnce()
+  })
+
+  it('快捷键组：showShortcuts true 时 7 条与 SHORTCUT_ROWS 逐条一致；false 0 条', () => {
+    const on = buildCommands(makeHost(), { agents: [], inSessionRoute: false, showShortcuts: true })
+    const sc = on.filter(c => c.group === 'shortcuts')
+    expect(sc.length).toBe(SHORTCUT_ROWS.length)
+    sc.forEach((item, i) => {
+      expect(item.id).toBe(`shortcut:${i}`)
+      expect(item.title).toBe(SHORTCUT_ROWS[i].action)
+      expect(item.keywords).toBe(SHORTCUT_ROWS[i].keys)
+    })
+
+    const off = buildCommands(makeHost(), { agents: [], inSessionRoute: false, showShortcuts: false })
+    expect(off.filter(c => c.group === 'shortcuts').length).toBe(0)
+  })
+
+  it('分组顺序：agents 在 actions 前、context 紧随其后、shortcuts 贴近 help', () => {
+    expect(COMMAND_GROUP_ORDER.indexOf('agents')).toBeLessThan(COMMAND_GROUP_ORDER.indexOf('actions'))
+    expect(COMMAND_GROUP_ORDER.indexOf('context')).toBe(COMMAND_GROUP_ORDER.indexOf('actions') + 1)
+    expect(COMMAND_GROUP_ORDER.indexOf('shortcuts')).toBe(COMMAND_GROUP_ORDER.indexOf('help') - 1)
+    expect(COMMAND_GROUP_LABELS.agents).toBe('Agent')
+    expect(COMMAND_GROUP_LABELS.context).toBe('当前会话')
+    expect(COMMAND_GROUP_LABELS.shortcuts).toBe('快捷键')
   })
 })

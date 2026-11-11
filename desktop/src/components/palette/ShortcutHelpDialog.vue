@@ -20,22 +20,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-
-interface ShortcutRow {
-  keys: string
-  action: string
-}
-
-/** 7 条静态速查（技术方案 §2.3 帮助表）；键位与 TopNav handleSearchShortcut / ChatInput 既有行为一致。 */
-const SHORTCUT_ROWS: ShortcutRow[] = [
-  { keys: 'Ctrl/Cmd+K', action: '搜索会话' },
-  { keys: 'Ctrl/Cmd+`', action: '打开/关闭终端' },
-  { keys: 'Ctrl/Cmd+Shift+P', action: '命令面板' },
-  { keys: '/', action: '输入框快捷指令' },
-  { keys: 'Enter', action: '发送' },
-  { keys: 'Shift+Enter', action: '换行' },
-  { keys: 'Esc', action: '关闭浮层' }
-]
+import { SHORTCUT_ROWS } from '../../utils/shortcutRows'
 
 const visible = ref(false)
 

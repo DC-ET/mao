@@ -149,6 +149,7 @@ import { useAuthStore } from '../../stores/auth'
 import { useSessionStore } from '../../stores/session'
 import { useTerminal } from '../../composables/useTerminal'
 import { usePanelLayout, isMobileDevice } from '../../composables/usePanelLayout'
+import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useVersionCheck } from '../../composables/useVersionCheck'
 import { readScreenFillingWindow, reserveMacTrafficLightInset as shouldReserveMacTrafficLightInset } from '../../utils/macTrafficLightInset'
 import { isElectronClient } from '../../utils/platform'
@@ -178,8 +179,9 @@ const commandsDrawerVisible = ref(false)
 const inboxDrawerVisible = ref(false)
 
 /**
- * 命令面板宿主动作（技术方案 D4）：9 个回调全部指向 TopNav 既有函数 / ref。
- * 箭头体只存引用不取值，terminalAvailability / handleCommand 的 TDZ 无影响。
+ * 命令面板宿主动作（技术方案 D4）：12 个回调（含批次 29 提案 3 的三个上下文动作转发，
+ * 指向下方 paletteCenterTabs / 既有事件通道），其余指向 TopNav 既有函数 / ref。
+ * 箭头体只存引用不取值，terminalAvailability / handleCommand / paletteCenterTabs 的 TDZ 无影响。
  */
 const commandHost: CommandHostActions = {
   openSearch: () => searchPopoverRef.value?.toggle(),
@@ -196,11 +198,20 @@ const commandHost: CommandHostActions = {
   logout: () => {
     void handleCommand('logout')
   },
-  openShortcutHelp: () => shortcutHelpRef.value?.open()
+  openShortcutHelp: () => shortcutHelpRef.value?.open(),
+  openWorkspaceFiles: () => paletteCenterTabs.openFileManagerTab(),
+  openRunTrace: () => paletteCenterTabs.openTraceTab(),
+  openUsage: () => {
+    // UsageBell 跨组件入口：无 detail 派发只开抽屉不改 Tab（既有容错），即「查看我的用量」
+    window.dispatchEvent(new CustomEvent('open_usage_drawer'))
+  }
 }
 
 const sessionStore = useSessionStore()
 const authStore = useAuthStore()
+// 命令面板上下文动作的既有入口（批次 29 提案 3）：useCenterTabs 工厂内 watch 在组件作用域外
+// 创建会泄漏（永不自停），必须 setup 顶层建一次实例——TopNav 常驻不卸载，无回收问题
+const paletteCenterTabs = useCenterTabs(computed(() => sessionStore.activeSessionId))
 const { isOpen: terminalOpen, togglePanel } = useTerminal()
 const { toggleLeft, toggleRight } = usePanelLayout()
 

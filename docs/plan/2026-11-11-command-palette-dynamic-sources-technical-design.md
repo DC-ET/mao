@@ -15,6 +15,7 @@
 | 上下文动作通道 | 三个入口全部现成：文件管理 Tab（`useCenterTabs.ts:415` `openFileManagerTab` 单例）、运行轨迹 Tab（`:395` `openTraceTab`）、用量抽屉（window 事件 `open_usage_drawer` → `UsageBell.vue:17-27`） | 同左 |
 | 会话路由判定 | 真实会话路由 `name: 'Task'`（`/tasks/:sessionId`）；新建态是 `Home` + `newTask=1` | `router/index.ts:47-48` |
 | 分组机制 | `CommandGroupId` 联合 + `COMMAND_GROUP_LABELS` / `COMMAND_GROUP_ORDER` Record 穷尽渲染 | `useCommandRegistry.ts:8, 39-48` |
+| 新建态导航链覆盖面 | palette push 的三种起点（Task 路由进入 / 已在 newTask 路由换 Agent / 普通 Home 进入）**全部**落到 `applyExplicitNewTaskRoute`：watch 源 `newTaskSignature = JSON.stringify(getRouteNewTaskDefaults())` 含 agentId，query-only 变化必触发第三分支 | `TaskView.vue:1615-1660` watch 三分支、`:1324-1328` signature、`:1321-1325` applyExplicitNewTaskRoute |
 
 即：本方案三块都**只做接线**，不新建会话/轨迹/用量/速查的任何语义。
 
@@ -48,9 +49,9 @@
 | 分组扩展 | `CommandGroupId` 加 `'agents' | 'context' | 'shortcuts'`；`COMMAND_GROUP_ORDER` = `['search', 'agents', 'actions', 'context', 'appearance', 'nav', 'shortcuts', 'help']`，labels：Agent / 当前会话 / 快捷键 | Record 穷尽编译期锁；排序把动态高频组（Agent、上下文）前置、速查贴近帮助殿后 |
 | 头像字段 | `CommandItem` 加可选 `avatarUrl?: string`；palette 条目右侧渲染 `<img>`（24px 圆角、object-fit cover、加载失败隐藏） | 不引 el-avatar 组件依赖；纯展示字段对既有命令零影响 |
 | 快捷键组数据源 | `ShortcutHelpDialog` 的 `SHORTCUT_ROWS` 常量**收编**到新模块 `desktop/src/utils/shortcutRows.ts` 导出，对话框与面板内组共同消费 | 单一数据源；批次 29 提案 4（审批键盘流）落地时在该常量 +1 条即两端同步 |
-| 面板内 `?` 键处理 | `onInputKeydown` 加 `?` 分支：`e.preventDefault()` + `showShortcuts.value = true` + 按 `showShortcuts` 重建 items | 输入框聚焦时 TopNav 全局 `?` 因 `isTypingTarget` 天然不触发，无键冲突；`preventDefault` 防 `?` 混入查询词 |
-| Agent 组截断 | 全量 Agent 进 items（enabled 过滤已在 store 做）；**无关键词时** palette 渲染层对 `agents` 组 `slice(0, 6)` 并追加一条置灰提示命令（`agent:hint`，`enabled: false`，run 空操作） | 截断是展示策略，放渲染层不动过滤语义；有关键词时既有 `filterCommands` 全量过滤 |
-| 面板打开时取数 | `open()` 里 `const agentStore = useAgentStore(); if (!agentStore.agents.length) void agentStore.fetchAgents()` 后取 `agents.value` 快照传入 | 面板本就每次打开重建；store 已加载则零请求，未加载则异步补充（下次打开命中）——首开空组可接受，不为此加 loading 态 |
+| 面板内 `?` 键处理 | `onInputKeydown` 加 `?` 分支（带 `!e.isComposing` 守卫）：`e.preventDefault()` + `showShortcuts.value = true` + 按 `showShortcuts` 重建 items | 输入框聚焦时 TopNav 全局 `?` 因 `isTypingTarget` 天然不触发，无键冲突；`preventDefault` 防 `?` 混入查询词；`isComposing` 防中文 IME 组合态吞字符（全局键无此问题——input 整体被守卫排除，面板内分支必须自带） |
+| Agent 组截断 | 全量 Agent 进 items（enabled 过滤已在 store 做）；**无关键词时** palette 渲染层对 `agents` 组 `slice(0, 6)` 并追加一条置灰提示命令（`agent:hint`，`enabled: false`，`index: -1` 不与真实条目下标碰撞——hover 已被 `enabled` 守卫拦截，index 错位只影响 `aria-selected` 绑定，-1 保证永不高亮），run 空操作 | 截断是展示策略，放渲染层不动过滤语义；有关键词时既有 `filterCommands` 全量过滤 |
+| 面板打开时取数 | `open()` 里 `const agentStore = useAgentStore(); if (!agentStore.agents.length) void agentStore.fetchAgents().then(() => { if (isOpen.value) rebuildItems() })`，后取 `agents.value` 快照传入 | 面板本就每次打开重建；store 已加载则零请求。首开空组的兜底升级：fetch 完成时面板若仍开着就重建一次（不加 loading 态）——Agent 列表是低频资产，登录后首次打开面板是唯一空窗场景，一行 then 消掉它 |
 
 ## 4. 实现步骤
 
@@ -91,18 +92,26 @@
 
 ### 4.4 `TopNav.vue`
 
-1. `commandHost` 补三个实现（§3）：
+1. setup 顶层建一次 `useCenterTabs` 实例（**评审修正：不得在 host 回调里即取即用**——工厂内 `watch(activeSessionId, …, { immediate: true })`（`useCenterTabs.ts:217`）在无组件作用域时创建的 watcher 永不自停，每次点击泄漏一个；TopNav 常驻不卸载，会静默累积。setup 顶层创建与 `ToolCallCard.vue:296` 同款，TopNav 单例常驻无回收问题）：
+
    ```ts
-   openWorkspaceFiles: () => { useCenterTabs(computed(() => sessionStore.activeSessionId)).openFileManagerTab() },
-   openRunTrace: () => { useCenterTabs(computed(() => sessionStore.activeSessionId)).openTraceTab() },
-   openUsage: () => { window.dispatchEvent(new CustomEvent('open_usage_drawer')) }
+   const paletteCenterTabs = useCenterTabs(computed(() => sessionStore.activeSessionId))
    ```
-   （`useCenterTabs` 调用方式与 `ToolCallCard.vue:296` 既有用法同款；实例即取即用。）
+
+2. `commandHost` 补三个实现（§3）：
+
+   ```ts
+   openWorkspaceFiles: () => paletteCenterTabs.openFileManagerTab(),
+   openRunTrace: () => paletteCenterTabs.openTraceTab(),
+   openUsage: () => window.dispatchEvent(new CustomEvent('open_usage_drawer'))
+   ```
+
+   （用量事件不带 detail——`handleOpenUsageDrawer` 对无 detail 派发有既有容错，只开抽屉不改 Tab，行为即「查看我的用量」。）
 
 ### 4.5 测试
 
 1. `command-palette.test.ts` 追加：
-   - 无 `dynamic` 时 28 条逐条不变（既有用例不动，即回归锁）；
+   - 无 `dynamic` 时 28 条逐条不变（**既有断言零改动**，回归锁；但 `makeHost` 工厂须机械补三个新方法的 `vi.fn()`——`CommandHostActions` 接口扩展后缺方法过不了 vue-tsc，属接口联动非行为改动）；
    - `dynamic.agents` 3 个 → Agent 组 3 条，title / id 前缀 / keywords 正确；空数组 → 整组缺失；
    - `inSessionRoute: false` → 无 `ctx:` 条目；true → 恰好 3 条且 run 调 host 对应方法；
    - `showShortcuts: true` → 快捷键组 7 条（与 `SHORTCUT_ROWS` 一致），false → 0 条；
@@ -133,9 +142,10 @@
 | Agent 数量多撑爆面板 | 首屏列表过长 | 无关键词截前 6 条 + 筛选提示；有关键词走既有搜索；导航组（15 条）本已更长 |
 | 上下文动作在新建态 / 设置路由误渲染 | 点了没反应或空 Tab | `inSessionRoute` 严格按 `route.name === 'Task'`，其余路由整组不渲染（组级判定，不做条目级） |
 | 新建会话链路重复实现 | 两套创建语义漂移 | Agent 命令只 `router.push` 既有 `newTask=1&agentId=` 契约，`enterNewTaskMode` 全链零改动 |
-| 快捷键组与全局 `?` 键冲突 | 面板开着时按 `?` 同时开对话框 | 面板输入框聚焦 → `isTypingTarget` 拦截全局分支（既有行为）；面板内 `?` 只走 input keydown 分支 |
+| 快捷键组与全局 `?` 键冲突 | 面板开着时按 `?` 同时开对话框 | 面板输入框聚焦 → `isTypingTarget` 拦截全局分支（既有行为）；面板内 `?` 只走 input keydown 分支。已知既有边缘（不属于本方案改动面）：焦点落在面板条目按钮（非输入元素）时按 `?`，全局分支本就可能触发——批次 25 起即如此，不改 |
 | 头像加载失败破相 | 条目出现破图 | `<img @error>` 隐藏自身；`avatarUrl` 缺省不渲染 img |
-| 静态命令回归 | 28 条漂移 | 缺省参数逐字节一致 + 既有测试不动（结构即锁） |
+| 静态命令回归 | 28 条漂移 | 缺省参数逐字节一致 + 既有断言零改动（结构即锁；`makeHost` 工厂机械补三个 `vi.fn()`，见 §4.5-1） |
+| `useCenterTabs` 实例生命周期 | host 回调内即取即用 → watcher 泄漏累积 | setup 顶层建一次实例（§4.4 评审修正），TopNav 常驻不卸载，无回收问题 |
 
 ## 7. 测试要点
 
@@ -161,4 +171,14 @@
 - 「查看全部 Agent」尾条；面板外任何新快捷键（含全局 `?` 行为改动）。
 - 会话创建 / Agent 管理 / 轨迹 / 用量 / 速查对话框的任何语义改动（全部只转发既有入口）。
 - 上下文组条目级权限 / 模式判定（组级 `Task` 路由判定一种）。
+- 全局 `?` 在焦点落在非输入元素时的既有触发行为（批次 25 起如此，不属本方案）。
 - 后端、admin、agent-cli、数据库迁移的任何改动。
+
+## 10. 评审修订记录（2026-11-12）
+
+1. **`useCenterTabs` 实例化位置修正（关键）**：原稿 §4.4 在 host 回调里即取即用——工厂内 `watch(activeSessionId, …, { immediate: true })`（`useCenterTabs.ts:217`）在组件作用域外创建、永不自停，每次点击泄漏一个 watcher 且 TopNav 常驻静默累积。改为 setup 顶层建一次实例。§4.4/§6。
+2. **新建态导航链补实证**：palette push 的三种起点（Task 路由进入 / newTask 路由换 Agent / 普通 Home 进入）经 `TaskView.vue:1615-1660` watch 三分支逐条验证全部落到 `applyExplicitNewTaskRoute`——`newTaskSignature` 含 agentId，query-only 变化必触发。§1 新增证据行。
+3. **`agent:hint` 补 `index: -1`**：提示条目与真实 filtered 下标碰撞会让 `aria-selected` 错位高亮；hover/click 已被 `enabled` 守卫拦截，仅此项需显式错开。§3。
+4. **`?` 分支补 `!e.isComposing` 守卫**：面板内分支在输入框上，中文 IME 组合态按键会被 `preventDefault` 吞字符（全局键因 `isTypingTarget` 排除整个 input 无此问题）。§3。
+5. **Agent 首开空组的兜底升级**：`fetchAgents().then(() => { if (isOpen) rebuildItems() })`——登录后首次打开面板是唯一空窗场景，一行 then 消掉，不加 loading 态。§3。
+6. **既有测试联动精确化**：`CommandHostActions` 接口扩展后 `makeHost` 工厂须机械补三个 `vi.fn()`（否则 vue-tsc 报缺方法）；28 条断言本身零改动。§4.5-1/§6。
