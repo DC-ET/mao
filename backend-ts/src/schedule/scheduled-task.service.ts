@@ -155,7 +155,16 @@ export type ScheduledLiveExecution = (
 /** Push the final assistant result to a Feishu channel session (no-op for non-Feishu sessions). */
 export type ScheduledFeishuResultPusher = (sessionId: number, text: string) => Promise<void>;
 
-/** Spring cron uses `?` in DOM/DOW; Croner needs `*`. Also trim trailing spaces. */
+/**
+ * croner 解析选项。legacyMode: false 使用 Spring/Quartz 的 DOM+DOW AND 语义；
+ * croner 默认 true 是 POSIX OR（两者同时受限时任一命中即触发）。
+ */
+const CRON_OPTIONS = { timezone: 'Asia/Shanghai', legacyMode: false };
+
+/**
+ * Spring cron uses `?` in DOM/DOW; Croner needs `*`. Also trim trailing spaces.
+ * 配合 CRON_OPTIONS 的 legacyMode: false 才是 Spring 语义。
+ */
 export function normalizeSpringCron(expression: string): string {
   return expression.trim().replace(/\?/g, '*').replace(/\s+/g, ' ');
 }
@@ -272,7 +281,7 @@ export function buildCronPreview(cronExpression: string, count: number = PREVIEW
   }
   const oneShot = isOneShotCron(normalized);
   try {
-    const cron = new Cron(normalized, { timezone: 'Asia/Shanghai' });
+    const cron = new Cron(normalized, { ...CRON_OPTIONS });
     const runs = cron.nextRuns(clampPreviewCount(count));
     if (runs.length === 0) {
       return { valid: false, oneShot, nextFireTimes: [], message: '该表达式没有可计算的下次触发时间' };
@@ -1091,7 +1100,7 @@ export class ScheduledTaskService {
 
   calculateNextFireTime(cronExpression: string): string | null {
     try {
-      const cron = new Cron(normalizeSpringCron(cronExpression), { timezone: 'Asia/Shanghai' });
+      const cron = new Cron(normalizeSpringCron(cronExpression), { ...CRON_OPTIONS });
       const next = cron.nextRun();
       return next ? formatDateTime(next) : null;
     } catch {
@@ -1106,7 +1115,7 @@ export class ScheduledTaskService {
    */
   private cronFiresAt(cronExpression: string, fireTime: string): boolean {
     try {
-      const cron = new Cron(normalizeSpringCron(cronExpression), { timezone: 'Asia/Shanghai' });
+      const cron = new Cron(normalizeSpringCron(cronExpression), { ...CRON_OPTIONS });
       const moment = new Date(`${fireTime.replace(' ', 'T')}+08:00`);
       if (Number.isNaN(moment.getTime())) return true;
       // nextRun 自身是开区间（fireTime 恰为触发点时返回的是再下一档），必须回退 1 秒再查
@@ -1133,7 +1142,7 @@ export class ScheduledTaskService {
   private parseCron(cronExpression: string): void {
     try {
       // eslint-disable-next-line no-new
-      new Cron(normalizeSpringCron(cronExpression), { timezone: 'Asia/Shanghai' });
+      new Cron(normalizeSpringCron(cronExpression), { ...CRON_OPTIONS });
     } catch (e) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, `无效的 cron 表达式: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -1339,7 +1348,7 @@ export class ScheduledTaskService {
       if (task.id == null || task.cronExpression == null || task.nextFireTime == null || task.sessionId == null) continue;
       let cron: Cron;
       try {
-        cron = new Cron(normalizeSpringCron(task.cronExpression), { timezone: 'Asia/Shanghai' });
+        cron = new Cron(normalizeSpringCron(task.cronExpression), { ...CRON_OPTIONS });
       } catch {
         continue;
       }

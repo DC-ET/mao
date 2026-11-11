@@ -36,6 +36,19 @@ export async function ensureHtmlConverter(): Promise<void> {
         strongDelimiter: '**',
       })
       instance.use(gfmMod.gfm)
+      // turndown-plugin-gfm 的 tableCell 原样输出单元格文本，不转义 `|`；GFM 会把它
+      // 当成列分隔符，2 列表格被撑成 3 列。这里覆盖同名规则：addRule 后注册的规则
+      // 在 Rules 数组中排在最前，优先于插件规则命中。
+      instance.addRule('tableCellEscapedPipes', {
+        filter: ['th', 'td'],
+        replacement(content: string, node: Node) {
+          const index = node.parentNode == null
+            ? 0
+            : Array.prototype.indexOf.call(node.parentNode.childNodes, node)
+          const prefix = index === 0 ? '| ' : ' '
+          return prefix + content.replace(/\|/g, '\\|') + ' |'
+        },
+      })
       converter = instance
     })().catch((e) => {
       // 加载失败（网络/构建异常）：粘贴回落现状纯文本兜底；打日志便于定位构建/环境问题

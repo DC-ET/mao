@@ -4,13 +4,23 @@ import path from 'node:path';
 import { resolvePathLenient } from '../sandbox';
 import { asInt } from './params';
 
+/** 匹配用路径统一成 `/`：globToRegExp 以 `/` 作目录分隔符；结果输出仍保留平台形态。 */
+function toPosixPath(filePath: string): string {
+  return path.sep === '/' ? filePath : filePath.split(path.sep).join('/');
+}
+
 function globToRegExp(pattern: string): RegExp {
   const escaped = pattern
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*\*/g, '::DS::')
+    // `**/` 是「零个或多个目录」，必须在 `**` 之前整体替换；否则
+    // `src/**/*.ts` 会编译成 `^src/.*/[^/]*\.ts$`，漏掉 src/ 直下文件。
+    .replace(/\*\*\//g, '::GLOBSTAR_SLASH::')
+    .replace(/\*\*/g, '::GLOBSTAR::')
     .replace(/\*/g, '[^/]*')
-    .replace(/::DS::/g, '.*')
-    .replace(/\?/g, '[^/]');
+    // `?` 必须在展开占位符之前替换，否则会把 `(?:.*/)?` 里的 `?` 一起改掉。
+    .replace(/\?/g, '[^/]')
+    .replace(/::GLOBSTAR_SLASH::/g, '(?:.*/)?')
+    .replace(/::GLOBSTAR::/g, '.*');
   return new RegExp('^' + escaped + '$');
 }
 
@@ -56,7 +66,6 @@ function relativizeRgPath(filePath: string, searchRoot: string): string {
 function globWithNode(pattern: string, scope: SearchScope, headLimit: number): string[] {
   const files: string[] = [];
   const re = globToRegExp(pattern);
-  const reBase = globToRegExp(path.basename(pattern));
   function walk(dir: string): void {
     if (files.length > headLimit) return;
     let entries: fs.Dirent[];
@@ -72,12 +81,18 @@ function globWithNode(pattern: string, scope: SearchScope, headLimit: number): s
       if (entry.isDirectory()) walk(fullPath);
       else if (entry.isFile()) {
         const relative = path.relative(scope.cwd, fullPath);
-        if (re.test(relative) || re.test(entry.name) || reBase.test(entry.name)) files.push(relative);
+        // 路径模式按相对路径匹配；`re.test(entry.name)` 只对可匹配纯文件名的
+        // pattern（如 `*.ts`、`**/*.ts` 的根级文件）生效，带必需目录前缀的
+        // pattern 不会因 basename 而误命中，避免目录前缀被静默丢弃。
+        if (re.test(toPosixPath(relative)) || re.test(entry.name)) files.push(relative);
       }
     }
   }
   if (scope.singleFile) {
     const name = path.basename(scope.singleFile);
+    // 显式单文件作用域保留 basename 兜底：rg 对显式文件目标不做 glob 过滤，
+    // 带目录前缀的 pattern 也至少能命中该文件；目录遍历不做这条兜底（BUG-2）。
+    const reBase = globToRegExp(path.basename(pattern));
     if (re.test(name) || reBase.test(name)) files.push(name);
     return files;
   }
@@ -188,7 +203,8 @@ function grepWithNode(
   }
 
   function consider(filePath: string, rel: string): void {
-    if (truncated || (globRe && !globRe.test(rel) && !globRe.test(path.basename(rel)))) return;
+    const matchRel = toPosixPath(rel);
+    if (truncated || (globRe && !globRe.test(matchRel) && !globRe.test(path.posix.basename(matchRel)))) return;
     let text: string;
     try {
       text = fs.readFileSync(filePath, 'utf8');
