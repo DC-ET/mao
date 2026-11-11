@@ -17,26 +17,32 @@
 按钮 actionId / actionType / 可见性 / 请求成功判定条件是否与后端契约一致，下面「改模板时的注意点」
 里的坑它都能抓到。
 
-## 这个文件有两份数据，但只有一份驱动渲染
+## 这个文件有两份数据，按钮可见性必须用 boolean 变量
 
 `dingtalk-progress-card.json` 顶层有两个字段：
 
 | 字段 | 作用 |
 |------|------|
 | `editorData` | 卡片平台可视化编辑器的 schema（JSON 字符串），**组件树、变量、按钮配置都在这里** |
-| `widgetInfo` | 平台导出时生成的渲染快照（XML 字符串） |
+| `widgetInfo` | 平台导出时生成的渲染快照（XML 字符串），**客户端实际渲染它** |
 
-**导入时客户端渲染以 `editorData` 为准。** `useCustomWidgetInfo` 为 `false` 时平台会按组件树
-重新生成渲染结构，`widgetInfo` 只是上次导出的快照——手改 XML 不会生效。
+**按钮可见性必须用「boolean 变量 + isTrue」。** 曾经把可见性写成
+「变量 `status`（string）`isEqual` `running`」，`editorData` 里条件完整、平台也照原样保留，
+但平台生成的 `widgetInfo` 把条件抹成了空串：
 
-> 曾据「客户端看的是 widgetInfo」这一误判反复修改 XML 里的按钮可见性（把判据从交互卡残留
-> 变量 `submitted` 改到 `cardData.status`），导入后按钮依旧不显示。真正的缺陷在 `editorData`：
-> 取消按钮的 `actionId` 是空 `dynamicString`（点击不上报 actionId，后端路由不到），
-> 重试按钮的 `status` 是 `disabled`（置灰且不响应点击）。**改模板只改 `editorData`。**
+```xml
+visibility="@triple{'' , 'visible', 'gone'}"   <!-- 条件位是空串，恒假，按钮永远 gone -->
+```
 
-按钮可见性在编辑器里的写法：按钮 `visible` 条件选变量 `status`，取消任务绑 `status == running`、
-重试绑 `status == failed`；`actionId` 填字面量 `cancel` / `retry`（不是变量），
-`actionType` 选「回传请求」。
+官方样例模板证明，只有 boolean 变量的 `isTrue` / `isFalse` 才会被渲染成可用的
+`@data{...}` 条件（`@triple{@data{data.cardData.ready}, 'visible', 'gone'}`）。
+所以按钮显隐改用 `canCancel` / `canRetry` 两个 boolean 变量，由后端
+`card-body.ts` 的 `progressCardParams` 按状态下发（`running` → `canCancel=true`，
+`failed` → `canRetry=true`，其余状态都为 `false`）。
+
+> 踩坑过程：最初误判「客户端看 widgetInfo 不看 editorData」，转而只改 XML，无效；
+> 再改 `editorData` 的 `isEqual` 条件，导入后仍被抹成空串，依旧无效。
+> 最终靠平台导出的真实模板 + 官方样例才定位到「字符串比较不被渲染」这一约束。
 
 ## 变量契约（后端 `cardParamMap` 传入）
 
@@ -44,14 +50,18 @@
 |------|------|------|
 | `title` | string | 卡片标题：`正在处理` / `处理完成` / `处理失败` / `任务已取消` |
 | `body` | markdown | 正文，形如 `**状态：处理完成** · 共 3 轮 · 耗时 44 秒` + 空行 + 回复全文 + `**本轮工具**` 列表 |
-| `status` | string | `running` / `completed` / `failed` / `cancelled`，**不渲染成文本**，仅用于按钮可见性条件 |
+| `status` | string | `running` / `completed` / `failed` / `cancelled`，**不渲染成文本**，仅作语义占位 |
+| `canCancel` | boolean | `true` 时显示「取消任务」按钮（仅 `running` 态） |
+| `canRetry` | boolean | `true` 时显示「重试」按钮（仅 `failed` 态） |
 | `tag` | string | 卡片标签（当前后端未传，模板保留占位） |
 
-按钮可见性：取消任务 `status == running`，重试 `status == failed`。终态卡片不带按钮，
-与飞书进度卡「终态 PATCH 不带按钮、随卡片重写自动消失」是同一思路。
+按钮可见性：取消任务 `isTrue(canCancel)`，重试 `isTrue(canRetry)`。终态卡片两个都是 `false`，
+不带按钮，与飞书进度卡「终态 PATCH 不带按钮、随卡片重写自动消失」是同一思路。
+**不要再改回「`status` 字符串 `isEqual` 比较」**——平台不会把它渲染成可用条件。
 
 ## 改模板时的注意点
 
+- **按钮可见性只能用「boolean 变量 + isTrue」**：字符串变量做 `isEqual` 比较时，平台导入后会把 `widgetInfo` 里的条件抹成空串（`@triple{'' , 'visible', 'gone'}`），按钮恒隐藏。要改按钮显隐就改 `canCancel` / `canRetry` 的下发逻辑（后端 `card-body.ts`），不要改条件写法
 - **不要删 `status` 变量**：删了按钮条件会悬空，取消/重试按钮会行为异常（`status` 可以不显示，但必须在变量表里）
 - `body` 是单个 markdown 变量，后端会把状态行、正文、工具列表拼成一个字符串再传，上限 1500 字符
 - **卡片头部不要再放标题**：状态已由 `body` 首行「**状态：正在处理** · 第 1 轮」表达，`Card.cardName` 和 Grid 里的 `${title}` 文本都已删掉，再加回去就是同一信息出现两次

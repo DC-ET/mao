@@ -46,6 +46,17 @@ describe('progressCardParams', () => {
     expect(progressCardParams({ ...base, status: 'failed', detail: 'boom' }).status).toBe('failed');
     expect(progressCardParams({ ...base, status: 'cancelled' }).title).toBe('任务已取消');
   });
+
+  // 按钮可见性回归：钉钉卡片平台只把「boolean 变量 + isTrue」渲染成可用条件，
+  // 字符串 isEqual 比较导入后会被抹成空条件（@triple{'' , 'visible', 'gone'} 恒假），
+  // 导致「取消任务」按钮在 running 态也不显示。
+  it('按钮可见性走 canCancel/canRetry boolean 变量，与状态严格对应', () => {
+    const base = { round: 1, sessionId: 1, senderUserid: 'u' };
+    expect(progressCardParams({ ...base, status: 'running' })).toMatchObject({ canCancel: 'true', canRetry: 'false' });
+    expect(progressCardParams({ ...base, status: 'failed', detail: 'boom' })).toMatchObject({ canCancel: 'false', canRetry: 'true' });
+    expect(progressCardParams({ ...base, status: 'completed', detail: 'ok' })).toMatchObject({ canCancel: 'false', canRetry: 'false' });
+    expect(progressCardParams({ ...base, status: 'cancelled' })).toMatchObject({ canCancel: 'false', canRetry: 'false' });
+  });
 });
 
 describe('queueCardParams', () => {

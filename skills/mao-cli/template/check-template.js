@@ -23,13 +23,18 @@ const path = require('node:path');
 const file = path.join(__dirname, 'dingtalk-progress-card.json');
 
 /** 后端 progressCardParams 实际下发的字段（card-body.ts）。 */
-const REQUIRED_VARS = ['title', 'body', 'status'];
+const REQUIRED_VARS = ['title', 'body', 'status', 'canCancel', 'canRetry'];
 
 /** actionId -> 后端回调成功时回传的 status 值（card-action.service.ts）。 */
 const ACTION_STATUS = { cancel: 'cancelled', retry: 'running' };
 
-/** actionId -> 按钮可见时卡片应处的 status（TITLES 的四种状态）。 */
-const ACTION_VISIBLE = { cancel: 'running', retry: 'failed' };
+/**
+ * actionId -> 控制按钮可见性的 boolean 变量（card-body.ts 的 canCancel/canRetry）。
+ * 必须用 boolean + isTrue：钉钉卡片平台只把这种组合渲染成 @data{...} 条件，
+ * 字符串 isEqual 比较导入后会被抹成空条件（@triple{'' , 'visible', 'gone'} 恒假），
+ * 按钮永远不显示——这是「按钮不出现」的真实根因。
+ */
+const ACTION_VISIBLE = { cancel: 'canCancel', retry: 'canRetry' };
 
 let failures = 0;
 
@@ -137,8 +142,18 @@ function walk(node) {
       if (button.actionType !== 'request') {
         fail(`按钮 ${id} 的 actionType 是 ${JSON.stringify(button.actionType)}，必须为 "request"，否则点击不触发卡片回调`);
       }
-      if (!isEqualCondition(button.visible?.condition, 'status', ACTION_VISIBLE[id])) {
-        fail(`按钮 ${id} 的可见性条件应为 status == ${ACTION_VISIBLE[id]}`);
+      // 可见性必须是 boolean 变量 + isTrue。isEqual 比较字符串 status 时，
+      // 平台导入后会把 widgetInfo 里的条件抹成空串，按钮恒隐藏。
+      const vis = button.visible?.condition;
+      const visCondition = vis?.conditions?.length === 1 ? vis.conditions[0] : null;
+      if (visCondition?.op !== 'isTrue' || visCondition?.variable !== ACTION_VISIBLE[id]) {
+        fail(`按钮 ${id} 的可见性条件应为 isTrue(${ACTION_VISIBLE[id]})；字符串 isEqual 比较会被平台抹成空条件，按钮不显示`);
+      }
+      const declared = editor.variableList?.find((v) => v.name === ACTION_VISIBLE[id]);
+      if (declared == null) {
+        fail(`variableList 缺少 boolean 变量 ${ACTION_VISIBLE[id]}（按钮可见性依赖它）`);
+      } else if (declared.type !== 'boolean') {
+        fail(`变量 ${ACTION_VISIBLE[id]} 的类型是 ${declared.type}，必须为 boolean（平台只渲染 boolean 的 isTrue/isFalse）`);
       }
       // disabled 是编辑态遗留：渲染时按钮置灰且不响应点击，取消/重试都点不动。
       if (button.status === 'disabled') {
