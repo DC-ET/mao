@@ -40,6 +40,7 @@ import { MysqlDingtalkOauthStateRepository } from './oauth.repository.js';
 import { dingtalkAuthorizeUrl, exchangeUserAccessToken, fetchUnionId, fetchUseridByUnionId, oauthConfigured, webOriginOf, type DingtalkOauthConfig } from './oauth-client.js';
 import { MysqlDingtalkPendingBindingRepository } from './pending-binding.repository.js';
 import { MysqlDingtalkProgressCardRepository } from './progress-card.repository.js';
+import { deliverScheduledDingtalkReply } from './scheduled-result.js';
 import { bindingCardParam, fileMessageParam, imageMessageParam, sendDingtalkMarkdown, sendDingtalkMessage, type DingtalkSendTarget as OutboundTarget } from './send.service.js';
 import { DingtalkTokenCache } from './token.js';
 import type { DingtalkBot, DingtalkInboundContext, DingtalkNormalizedMessage } from './types.js';
@@ -69,6 +70,8 @@ export interface DingtalkRuntime {
   drainNextIfPending(sessionId: number): Promise<void>;
   /** 供 WS autoConsume 的跨通道忙检查（同步、无副作用）。 */
   hasRunningSession(sessionId: number): boolean;
+  /** 定时任务 / 无进度卡的恢复终态：把最终回复推回原钉钉会话。非钉钉会话直接返回。 */
+  pushScheduledResult(sessionId: number, text: string): Promise<void>;
 }
 
 type StreamCtor = new (options: { clientId: string; clientSecret: string; keepAlive?: boolean }) => DingtalkStreamClient;
@@ -466,8 +469,43 @@ export function createDingtalkRuntime(deps: {
     },
   };
 
+  async function pushScheduledResult(sessionId: number, text: string): Promise<void> {
+    const session = await deps.sessionService.getSession(sessionId).catch(() => null);
+    if (session == null || !isDingtalkChannelSession(session.projectKey, session.workspace)) return;
+    const target = await resolveSendTarget(sessionId);
+    if (target == null) {
+      console.warn(`定时任务钉钉回复跳过：无法解析发送目标, sessionId=${sessionId}`);
+      return;
+    }
+    const privateKey = session.projectKey?.match(/^dingtalk-(\d+)-private-(\d+)$/);
+    const parsed = parseWorkspace(session.workspace);
+    const botId = privateKey != null ? Number(privateKey[1]) : Number(parsed?.botId);
+    const cred = Number.isFinite(botId) ? await credentialsOf(botId) : null;
+    if (cred == null) {
+      console.warn(`定时任务钉钉回复跳过：机器人不可用, sessionId=${sessionId}`);
+      return;
+    }
+    await deliverScheduledDingtalkReply({
+      fetchImpl,
+      token: () => tokens.getAccessToken(cred.bot.clientId, cred.secret),
+      target,
+      text,
+      sessionId,
+      templateId: templateOf(cred.bot, 'progress'),
+      sessionUrl: await sessionDetailUrl(sessionId),
+      senderUserid: target.userId ?? '',
+      replyMaxLength: deps.config.replyMaxLength,
+    });
+    if (target.chatType === 'group' && target.conversationId != null) {
+      await messageService.recordGroupOutbound(botId, target.conversationId, text).catch((error) => {
+        console.warn(`钉钉群出站摘要写入失败, botId=${botId}`, error);
+      });
+    }
+  }
+
   return {
     mediaSend,
+    pushScheduledResult,
     registerRoutes(app) {
       registerDingtalkBotRoutes(app, {
         repository: bots,

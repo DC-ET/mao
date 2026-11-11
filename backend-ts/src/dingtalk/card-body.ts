@@ -5,8 +5,8 @@ const TITLES = {
   cancelled: '任务已取消',
 } as const;
 
-/** 卡片正文上限：钉钉 markdown 组件超长会被截断，留足余量给状态行与工具列表。 */
-const BODY_MAX = 1500;
+/** 卡片正文上限，与飞书进度卡正文（CARD_TEXT_MAX）同为 6000。状态行、回复、工具列表共用这一段。 */
+const BODY_MAX = 6000;
 
 export type DingtalkProgressStatus = keyof typeof TITLES;
 

@@ -545,6 +545,7 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
     onQueuesDrained: createPlatformQueueRelay({ sessionService: d.sessionService, wsHandler: d.wsHandler }),
   });
   d.dingtalkMediaHolder.current = dingtalk.mediaSend;
+  d.scheduledService.setDingtalkResultPusher((sessionId: number, text: string) => dingtalk.pushScheduledResult(sessionId, text));
   const feishuMonitor = new FeishuMonitorService(cfg.feishu.bot, d.feishuBots, feishuInboundProcessor, async (data: any) => feishuCardActionService.handle(data, ''));
 
   const analyticsService = new AnalyticsService(new AnalyticsDbStore(db));

@@ -32,12 +32,12 @@ describe('progressCardParams', () => {
     expect(params.body).toBe('**状态：正在处理**');
   });
 
-  it('正文超长时截断，避免钉钉 markdown 组件丢内容', () => {
+  it('正文超过 6000 字时截断，与飞书进度卡正文上限一致', () => {
     const params = progressCardParams({
-      status: 'completed', round: 1, detail: 'x'.repeat(4000), sessionId: 1, senderUserid: 'u',
+      status: 'completed', round: 1, detail: 'x'.repeat(8000), sessionId: 1, senderUserid: 'u',
     });
 
-    expect(params.body.length).toBeLessThanOrEqual(1500);
+    expect(params.body.length).toBe(6000);
     expect(params.body.startsWith('**状态：处理完成** · 共 1 轮')).toBe(true);
   });
 

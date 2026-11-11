@@ -155,6 +155,9 @@ export type ScheduledLiveExecution = (
 /** Push the final assistant result to a Feishu channel session (no-op for non-Feishu sessions). */
 export type ScheduledFeishuResultPusher = (sessionId: number, text: string) => Promise<void>;
 
+/** Push the final assistant result to a DingTalk channel session (no-op for non-DingTalk sessions). */
+export type ScheduledDingtalkResultPusher = (sessionId: number, text: string) => Promise<void>;
+
 /**
  * croner 解析选项。legacyMode: false 使用 Spring/Quartz 的 DOM+DOW AND 语义；
  * croner 默认 true 是 POSIX OR（两者同时受限时任一命中即触发）。
@@ -338,6 +341,7 @@ export class ScheduledTaskService {
   /** 入队序号：同一毫秒内递增，重启后以当前时间戳为底，新排队不会排到历史行前面。 */
   private queueTick = 0;
   private feishuResultPusher: ScheduledFeishuResultPusher | null = null;
+  private dingtalkResultPusher: ScheduledDingtalkResultPusher | null = null;
   private runWindowLoader: ((sessionId: number, messageId: number) => Promise<{ costMicros: number | null; wallClockMs: number }>) | null = null;
   private failureNotifier: ((input: { userId: number; taskId: number; taskName: string; sessionId: number | null; failures: number }) => Promise<void>) | null = null;
   /** 微信 24 小时窗口已关时的站内通知回调（可选注入）。 */
@@ -372,6 +376,10 @@ export class ScheduledTaskService {
 
   setFeishuResultPusher(pusher: ScheduledFeishuResultPusher | null): void {
     this.feishuResultPusher = pusher;
+  }
+
+  setDingtalkResultPusher(pusher: ScheduledDingtalkResultPusher | null): void {
+    this.dingtalkResultPusher = pusher;
   }
 
   setSessionBusyCheck(isSessionBusy: ((sessionId: number) => boolean) | null): void {
@@ -755,6 +763,7 @@ export class ScheduledTaskService {
               await this.markTaskResult(task, 'COMPLETED');
               await this.sendWeixinReplyIfApplicable(task.sessionId!, userId);
               await this.sendFeishuReplyIfApplicable(task.sessionId!);
+              await this.sendDingtalkReplyIfApplicable(task.sessionId!);
               countThisRun = true;
             } catch (e) {
               if (e instanceof BusinessException && e.code === ErrorCode.SESSION_NOT_FOUND.code) {
@@ -1055,6 +1064,7 @@ export class ScheduledTaskService {
       if (terminal === 'COMPLETED') {
         await this.sendWeixinReplyIfApplicable(sessionId, ownerId);
         await this.sendFeishuReplyIfApplicable(sessionId);
+        await this.sendDingtalkReplyIfApplicable(sessionId);
       }
     } catch (e) {
       countThisRun = true;
@@ -1312,28 +1322,42 @@ export class ScheduledTaskService {
 
   /** 飞书通道定时任务结果回流：推送最终 ASSISTANT 回复；非飞书会话由 pusher 实现内部判断跳过。 */
   private async sendFeishuReplyIfApplicable(sessionId: number): Promise<void> {
-    const pusher = this.feishuResultPusher;
+    await this.pushChannelResult(sessionId, this.feishuResultPusher, 'Feishu');
+  }
+
+  /** 钉钉通道定时任务结果回流：推送最终 ASSISTANT 回复；非钉钉会话由 pusher 实现内部判断跳过。 */
+  private async sendDingtalkReplyIfApplicable(sessionId: number): Promise<void> {
+    await this.pushChannelResult(sessionId, this.dingtalkResultPusher, 'DingTalk');
+  }
+
+  /**
+   * 渠道不渲染来源区，[^n^] 标记原样推送会像没渲染干净的模板变量。
+   * 推送失败只记日志，不影响任务终态。
+   */
+  private async pushChannelResult(
+    sessionId: number,
+    pusher: ((sessionId: number, text: string) => Promise<void>) | null,
+    channel: string,
+  ): Promise<void> {
     if (pusher == null) return;
     try {
       const messages = await this.sessionService.getMessages(sessionId);
-      // 渠道卡片不渲染来源区，[^n^] 标记原样推送会像没渲染干净的模板变量
       const reply = channelAssistantReply(messages, '抱歉，暂时无法生成回复。');
-      if (!reply || reply.trim() === '') {
-        return;
-      }
+      if (!reply || reply.trim() === '') return;
       await pusher(sessionId, reply);
     } catch (e) {
-      console.error('Error sending Feishu reply for scheduled task', e);
+      console.error(`Error sending ${channel} reply for scheduled task`, e);
     }
   }
 
   /**
-   * 会话终态后把最终 ASSISTANT 回复推到原飞书会话（无渠道卡片映射时的降级推送，
-   * 技术方案 2026-11-06 §4.8）：复用定时任务的结果回流链路，非飞书会话空转。
-   * 推送失败仅记日志（sendFeishuReplyIfApplicable 内部消化），调用方无需处理。
+   * 会话终态后把最终 ASSISTANT 回复推回原渠道会话（无渠道卡片映射时的降级推送，
+   * 技术方案 2026-11-06 §4.8）：复用定时任务的结果回流链路。飞书、钉钉各自的
+   * pusher 对非本渠道会话直接返回。推送失败仅记日志，调用方无需处理。
    */
   async pushFinalReplyIfApplicable(sessionId: number): Promise<void> {
     await this.sendFeishuReplyIfApplicable(sessionId);
+    await this.sendDingtalkReplyIfApplicable(sessionId);
   }
 
   /**

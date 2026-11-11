@@ -63,7 +63,7 @@ visibility="@triple{'' , 'visible', 'gone'}"   <!-- 条件位是空串，恒假�
 
 - **按钮可见性只能用「boolean 变量 + isTrue」**：字符串变量做 `isEqual` 比较时，平台导入后会把 `widgetInfo` 里的条件抹成空串（`@triple{'' , 'visible', 'gone'}`），按钮恒隐藏。要改按钮显隐就改 `canCancel` / `canRetry` 的下发逻辑（后端 `card-body.ts`），不要改条件写法
 - **不要删 `status` 变量**：删了按钮条件会悬空，取消/重试按钮会行为异常（`status` 可以不显示，但必须在变量表里）
-- `body` 是单个 markdown 变量，后端会把状态行、正文、工具列表拼成一个字符串再传，上限 1500 字符
+- `body` 是单个 markdown 变量，后端会把状态行、正文、工具列表拼成一个字符串再传，上限 6000 字符（与飞书进度卡正文相同；状态行和工具列表算在这 6000 里）
 - **卡片头部不要再放标题**：状态已由 `body` 首行「**状态：正在处理** · 第 1 轮」表达，`Card.cardName` 和 Grid 里的 `${title}` 文本都已删掉，再加回去就是同一信息出现两次
 - 卡片回调依赖两个 `actionId`：`cancel`（取消任务）、`retry`（失败重试），改按钮时别改这两个 id
 - **`actionId` 必须填字面量**（`cancel` / `retry`），不能留空也不能绑变量：空 `dynamicString` 时点击不上报 actionId，后端 `parseCardCallback` 取不到值、整个回调分支不会触发（取消按钮曾因此完全无响应）

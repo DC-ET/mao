@@ -328,6 +328,7 @@ describe('ScheduledTaskService', () => {
     // liveExecution swallows errors internally (runExecution catch) and returns normally
     const live = vi.fn(async () => undefined);
     const feishuPusher = vi.fn(async () => undefined);
+    const dingtalkPusher = vi.fn(async () => undefined);
     const weixinSend = { sendText: vi.fn() };
     let ran: Promise<void> | null = null;
     const svc = new ScheduledTaskService(
@@ -338,11 +339,13 @@ describe('ScheduledTaskService', () => {
       live,
     );
     svc.setFeishuResultPusher(feishuPusher);
+    svc.setDingtalkResultPusher(dingtalkPusher);
     await svc.executeTask({ id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'hello', fireCount: 0 });
     await ran;
     expect(live).toHaveBeenCalledTimes(1);
-    // Must NOT push the stale ASSISTANT reply to Feishu
+    // Must NOT push the stale ASSISTANT reply to Feishu or DingTalk
     expect(feishuPusher).not.toHaveBeenCalled();
+    expect(dingtalkPusher).not.toHaveBeenCalled();
     expect(weixinSend.sendText).not.toHaveBeenCalled();
     // Must mark task as FAILED, not COMPLETED
     const persisted = vi.mocked(store.updateById).mock.calls.map(([row]) => row);
@@ -1176,6 +1179,44 @@ describe('ScheduledTaskService 预算 BLOCK 闸门（§5.7）', () => {
     await ran;
     expect(pusher).toHaveBeenCalledWith(11, '截止时间是 11 月 30 日，详见通知。');
   });
+
+  it('钉钉结果回流：剥离 [^n^] 引用标记后再推送，推送失败不把任务标失败', async () => {
+    const stubs = {
+      getSession: vi.fn(async () => ({ id: 11, phase: 'IDLE', projectKey: 'dingtalk-3-private-7' })),
+      updatePhase: vi.fn(),
+      saveMessage: vi.fn(async () => ({ id: 88, content: 'x' })),
+      getMessages: vi.fn(async () => [
+        { role: 'USER', content: '截止时间是几号' },
+        { role: 'ASSISTANT', content: '截止时间是 11 月 30 日[^1^]。' },
+      ]),
+    };
+    const store: ScheduledTaskStore = {
+      insert: vi.fn(async (t) => { t.id = 1; return 1; }),
+      updateById: vi.fn(),
+      deleteById: vi.fn(),
+      selectById: vi.fn(async () => ({
+        id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', status: 'ACTIVE', name: 'daily', prompt: 'hello', fireCount: 0,
+      })),
+      listByUser: vi.fn(async () => []),
+      listAll: vi.fn(async () => ({ records: [], total: 0 })),
+      listDue: vi.fn(async () => []),
+    } as never;
+    const pusher = vi.fn(async () => { throw new Error('send failed'); });
+    let ran: Promise<void> | null = null;
+    const svc = new ScheduledTaskService(
+      store, stubs as never, { enqueue: vi.fn() }, { executeFromEvent: vi.fn(async () => undefined) },
+      { finishExecution: vi.fn() }, { sendText: vi.fn() } as never,
+      { findByUserId: vi.fn(async () => null) } as never,
+      { findByAccountId: vi.fn(async () => []) } as never,
+      (fn) => { ran = Promise.resolve().then(fn); },
+    );
+    svc.setDingtalkResultPusher(pusher);
+    await svc.executeTask({ id: 1, userId: 7, sessionId: 11, cronExpression: '0 0 9 * * *', prompt: 'hello', fireCount: 0 } as never);
+    await ran;
+    expect(pusher).toHaveBeenCalledWith(11, '截止时间是 11 月 30 日。');
+    const persisted = vi.mocked(store.updateById).mock.calls.map(([row]) => row);
+    expect(persisted.some((row) => row.lastExecutionStatus === 'COMPLETED')).toBe(true);
+  });
 });
 
 // 手动「立即执行」（docs/plan/2026-11-03-scheduled-task-run-now-technical-design.md §7.1）。
@@ -1254,6 +1295,20 @@ describe('ScheduledTaskService runNow（手动立即执行）', () => {
       expect(persisted.every((row) => !(key in row))).toBe(true);
     }
     expect(outcome).not.toHaveBeenCalled();
+  });
+
+  it('手动执行成功后把最终回复交给钉钉推送', async () => {
+    const store = runNowStore(ACTIVE_TASK);
+    const { svc, ran, stubs } = runNowService(store, { live: vi.fn(async () => undefined) });
+    stubs.getMessages.mockResolvedValue([
+      { role: 'USER', content: 'hello' },
+      { role: 'ASSISTANT', content: '日报已生成[^1^]。' },
+    ] as never);
+    const pusher = vi.fn(async () => undefined);
+    svc.setDingtalkResultPusher(pusher);
+    await svc.runNow(1, 7);
+    await ran();
+    expect(pusher).toHaveBeenCalledWith(11, '日报已生成。');
   });
 
   it('一次性任务试跑后 finished 仍为 0 且 nextFireTime 逐字符不变（提案点名锁死）', async () => {
