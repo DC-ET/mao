@@ -169,6 +169,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Desktop shell (P2/P3) — main-process notification / badge / prefs / shortcut / tray
   desktopNotify: (payload) => ipcRenderer.invoke('desktop-notify', payload),
+  // 等待审批任务栏闪烁（批次 29 提案 5）：渲染层发沿信号，flashFrame(false) 复位
+  flashFrame: (on) => ipcRenderer.invoke('desktop-flash-frame', on),
   onDesktopNotificationClick: (callback) => onIpc('desktop-notification-click', callback),
   // 桥接就绪后主动拉取主进程积存的点击深链（点击时监听未注册会丢）；收到后 ack 清除
   consumePendingDesktopNotificationClick: () => ipcRenderer.invoke('desktop-notification-click-consume'),

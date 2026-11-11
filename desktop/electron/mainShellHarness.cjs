@@ -68,6 +68,7 @@ async function loadMain(options = {}) {
     updaterHandlers: {},
     loginItemSettings: [],
     sent: [], // sendToRenderer 记录
+    flashCalls: [], // 假窗 flashFrame 调用记录（批次 29 提案 5 审批任务栏闪烁）
     badgeCounts: [],
     appReady: false,
     windows: [],
@@ -124,7 +125,9 @@ async function loadMain(options = {}) {
     hide() { this.visible = false; this.emit('hide') }
     minimize() { this.minimized = true; this.emit('minimize') }
     restore() { this.minimized = false; this.emit('restore') }
-    focus() { this.focused = true }
+    focus() { this.focused = true; this.emit('focus') }
+    /** 批次 29 提案 5：等待审批任务栏闪烁桩（记录到 state.flashCalls） */
+    flashFrame(on) { state.flashCalls.push(!!on) }
     close() {
       const event = { defaultPrevented: false, preventDefault() { this.defaultPrevented = true } }
       this.emit('close', event)

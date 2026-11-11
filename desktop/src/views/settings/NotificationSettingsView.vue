@@ -144,6 +144,19 @@
           aria-label="审批待办收件箱通知"
         />
       </div>
+      <!-- 等待审批任务栏闪烁（批次 29 提案 5）：本机偏好 aw-approval-flash，缺省开；与收件箱通知开关相互独立 -->
+      <div class="inbox-kind-row" v-if="isElectronClient()">
+        <span class="inbox-kind-label">等待审批时闪烁任务栏</span>
+        <span class="inbox-kind-hint">会话等待审批时任务栏图标持续闪烁，切回窗口即停</span>
+        <el-switch
+          v-model="approvalFlash"
+          inline-prompt
+          active-text="开"
+          inactive-text="关"
+          aria-label="等待审批时闪烁任务栏"
+          @change="setApprovalFlashEnabled(approvalFlash)"
+        />
+      </div>
       <div class="inbox-kind-row">
         <span class="inbox-kind-label">子代理完成通知</span>
         <el-switch
@@ -275,6 +288,7 @@ import {
   type YesterdayDigestStatus
 } from '../../api'
 import { isElectronClient } from '../../utils/platform'
+import { isApprovalFlashEnabled, setApprovalFlashEnabled } from '../../utils/approvalFlashPreference'
 import { useAuthStore } from '../../stores/auth'
 
 const authStore = useAuthStore()
@@ -332,6 +346,8 @@ const canSave = computed(() => !form.enabled || Boolean(form.channel && hasUsabl
 
 // ─── 站内收件箱偏好（分区独立保存：不得并入受 canSave 门禁的整页保存） ───
 const inboxSaving = ref(false)
+// 等待审批任务栏闪烁（批次 29 提案 5）：本机偏好即时生效，不走收件箱保存链路
+const approvalFlash = ref(isApprovalFlashEnabled())
 const inboxSaved = reactive<InboxPreference>({
   taskCompletedEnabled: true,
   questionPendingEnabled: true,

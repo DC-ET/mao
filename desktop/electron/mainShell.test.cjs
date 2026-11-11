@@ -364,7 +364,10 @@ test('基线：desktop-prefs-get 回传 packaged 与 platform', async () => {
 test('基线：local-copy-attachment 落点由主进程推导（home + host + sid），恶意名被 sanitize', async () => {
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-harness-home-'))
   const prevHome = process.env.HOME
+  const prevUserProfile = process.env.USERPROFILE
+  // Windows 的 os.homedir() 只认 USERPROFILE（HOME 仅 POSIX），双写才能隔离到临时目录
   process.env.HOME = fakeHome
+  process.env.USERPROFILE = fakeHome
   try {
     const h = await loadMain({})
     const src = path.join(fakeHome, 'src.txt')
@@ -378,6 +381,7 @@ test('基线：local-copy-attachment 落点由主进程推导（home + host + si
     assert.equal(fs.readFileSync(r.absolutePath, 'utf8'), 'hello')
   } finally {
     process.env.HOME = prevHome
+    process.env.USERPROFILE = prevUserProfile
     fs.rmSync(fakeHome, { recursive: true, force: true })
   }
 })
@@ -385,7 +389,10 @@ test('基线：local-copy-attachment 落点由主进程推导（home + host + si
 test('回归：local-write-text-file 回传 { ok, absolutePath }，同名粘贴追加副本且不覆盖', async () => {
   const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-harness-home-'))
   const prevHome = process.env.HOME
+  const prevUserProfile = process.env.USERPROFILE
+  // 同上：Windows os.homedir() 只认 USERPROFILE
   process.env.HOME = fakeHome
+  process.env.USERPROFILE = fakeHome
   try {
     const h = await loadMain({})
     const first = await h.invoke('local-write-text-file', {
@@ -419,6 +426,7 @@ test('回归：local-write-text-file 回传 { ok, absolutePath }，同名粘贴�
     assert.deepEqual(bad, { ok: false, error: '文件名无效' })
   } finally {
     process.env.HOME = prevHome
+    process.env.USERPROFILE = prevUserProfile
     fs.rmSync(fakeHome, { recursive: true, force: true })
   }
 })
@@ -468,4 +476,27 @@ test('窗口销毁后点击：consume 队列与 did-finish-load 补发互斥，�
     h.state.sent.filter((s) => s.channel === 'desktop-notification-click').length, 0,
     '已被 consume 的点击不得再补发'
   )
+})
+
+// ===== 审批任务栏闪烁（批次 29 提案 5）=====
+
+test('闪烁：desktop-flash-frame 沿信号驱动 flashFrame，切回窗口（focus）即停', async () => {
+  const h = await loadMain({})
+  await h.invoke('desktop-flash-frame', true)
+  assert.deepEqual(h.state.flashCalls, [true], 'true 沿应驱动 flashFrame(true)')
+  // focus 复位：flashActive 为真时 flashFrame(false) 并清标记
+  h.win().emit('focus')
+  assert.deepEqual(h.state.flashCalls, [true, false], '切回窗口应复位闪烁')
+  // 标记已清：二次 focus 不重复发 false
+  h.win().emit('focus')
+  assert.deepEqual(h.state.flashCalls, [true, false], 'flashActive 已复位时 focus 不重复发')
+})
+
+test('闪烁：false 沿直接复位；重复 true 沿各驱动一次', async () => {
+  const h = await loadMain({})
+  await h.invoke('desktop-flash-frame', false)
+  assert.deepEqual(h.state.flashCalls, [false], 'false 沿幂等复位')
+  await h.invoke('desktop-flash-frame', true)
+  await h.invoke('desktop-flash-frame', true)
+  assert.deepEqual(h.state.flashCalls, [false, true, true], 'true 沿逐次驱动（状态沿由渲染层保证，主进程透传）')
 })

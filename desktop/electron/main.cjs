@@ -1341,6 +1341,12 @@ function createWindow() {
   mainWindow.on('minimize', refreshTray)
   mainWindow.on('restore', refreshTray)
   mainWindow.on('closed', refreshTray)
+  // 等待审批任务栏闪烁（批次 29 提案 5）：切回窗口即停——flashActive 为真才复位，避免重复发
+  mainWindow.on('focus', () => {
+    if (!flashActive) return
+    flashActive = false
+    try { mainWindow.flashFrame(false) } catch { /* ignore */ }
+  })
 
   // 返回实例：调用方（second-instance / 通知 click 重建路径）需要拿到它来
   // restore/show/focus 或挂加载回调，不能只靠 ready-to-show 兜底
@@ -1487,6 +1493,17 @@ ipcMain.handle('local-write-text-file', async (event, payload) => {
     return { ok: true, absolutePath: result.path }
   }
   return { ok: false, error: result?.error || '写入失败' }
+})
+
+// 等待审批任务栏闪烁（批次 29 提案 5）：渲染层只发沿信号，主进程统一管理闪烁生命周期
+// （Windows 任务栏闪烁直到 focus 复位；macOS dock 弹跳自停，flashFrame(false) 对其是 no-op）
+let flashActive = false
+ipcMain.handle('desktop-flash-frame', (event, on) => {
+  const win = mainWindow
+  if (!win || win.isDestroyed()) return { ok: false }
+  flashActive = !!on
+  try { win.flashFrame(flashActive) } catch { /* 平台不支持时静默 */ }
+  return { ok: true }
 })
 
 ipcMain.handle('desktop-notify', (event, payload) => {

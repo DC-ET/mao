@@ -30,8 +30,10 @@
 | 5 | Web（非 Electron）用户 | 标题态生效；任务栏闪烁无 electronAPI 整体不启用（无降级分支、无报错） |
 | 6 | 用户在消息通知页关闭「等待审批时闪烁任务栏」 | 闪烁不再触发；标题态保留（零成本信息，不受开关控制） |
 | 7 | 登出 | 标题复位 `Mao`；闪烁停止 |
+| 8 | **启动应用时已有会话处于等待审批** | 任务栏闪烁立即启动（immediate 首跑视为进入沿）、标题前缀立即生效；切回窗口即停 |
+| 9 | 关闭「等待审批时闪烁任务栏」开关的瞬间正在闪烁 | 闪烁立即停止（同一期望态沿：pref 翻转 → desired true→false → flash(false)）；标题前缀保留 |
 
-**要做**：上述七条。
+**要做**：上述九条。
 
 **不做**：
 
@@ -46,10 +48,10 @@
 
 | 决策点 | 定案 | 理由 |
 |---|---|---|
-| 状态聚合 | 新增 `desktop/src/composables/useParallelStatus.ts`：导出**纯函数** `deriveParallelStatus(sessions: Session[], getSideTasks: (id: string) => SideTask[]): ParallelStatus` + 包装 `useParallelStatus()`（内部 `computed` 扫 `sessionStore.sessions`，逐会话并扫 `getSideTasks`） | 纯函数可脱离 pinia 在 node 环境直测；聚合口径与侧栏同源（同一 store API、同一 `ACTIVE_PHASES`） |
-| 优先级 | `waiting_approval > failed > running > null`；判定含边路任务（侧栏 `:690-694` 同口径：边路失败计 failed、边路活跃计 running） | 侧栏语义是用户已建立的心智，标题态照抄不发明 |
-| 标题写入 | 新增 `useAppStatusIndicators()`（同一 composable 文件）在 `App.vue` setup 调用：`watch(parallelStatus)` → `document.title = titleWithPrefix(status)`；**`authStore.user` 为空时不写**（登录页 / 飞书回调页的静态标题不被抢） | 全局单写者；登出后 sessions 清空 → status null → 标题 `Mao`，与 `LoginView` 写值一致；前缀格式 `❗ 等待审批 · Mao`（空格 + `·` 分隔） |
-| 状态沿触发 | flash 用 `watch(parallelStatus, (now, prev))` 比较沿：`prev !== 'waiting_approval' && now === 'waiting_approval'` 才 flash(true)；离开该态才 flash(false)。标题 watch 同样只在值变化时写 | 防高频翻转重复闪烁与重复写 title（提案风险表口径） |
+| 状态聚合 | 新增 `desktop/src/composables/useParallelStatus.ts`：导出**纯函数** `deriveParallelStatus(sessions: Session[], getSideTasks: (parentId: string) => SideTaskItem[]): ParallelStatus`（`SideTaskItem.phase` 已归一为 `TaskPhase`，`sideTask.ts:50`）+ 包装 `useParallelStatus()`（内部 `computed` 扫 `sessionStore.sessions`，逐会话并扫 `getSideTasks`） | 纯函数可脱离 pinia 在 node 环境直测；聚合口径与侧栏同源（同一 store API、同一 `ACTIVE_PHASES`；侧栏的 `SIDE_ACTIVE_PHASES` 是组件局部常量且成员与 `ACTIVE_PHASES` 全同——`TaskIndexPanel.vue:1028`，聚合器统一用 `ACTIVE_PHASES`，不复制第二份） |
+| 优先级 | `waiting_approval > failed > running > null`；判定含边路任务（侧栏 `:690-694` 同口径：边路失败计 failed、边路活跃计 running）；**`status === 'ARCHIVED'` 的主会话连同其边路任务整体跳过**（对齐侧栏 `:308`） | 侧栏语义是用户已建立的心智，标题态照抄不发明 |
+| 标题写入 | 新增 `useAppStatusIndicators()`（同一 composable 文件）在 `App.vue` setup 调用：`watch([parallelStatus, () => authStore.user], …)` 双源，**每次触发都写**——`document.title = authStore.user ? titleWithPrefix(status) : 'Mao'` | 全局单写者、登出必复位（否则登出瞬间 status 不变时 watch 不触发，标题残留前缀——评审修正）；「未登录不写」改为此语义：登录页 / 飞书回调页自身不引起 user 变化，其静态标题不被抢；前缀格式 `❗ 等待审批 · Mao`（空格 + `·` 分隔） |
+| flash 触发语义 | **期望态沿检测**：`watch([parallelStatus, approvalFlashEnabled], …, { immediate: true })`，`desired = status === 'waiting_approval' && pref 开 && electronAPI.flashFrame 存在`——`desired` false→true 沿 `flash(true)`，true→false 沿 `flash(false)`；immediate 使「启动应用时已有等待审批」视为进入沿（任务栏立即闪、标题立即带前缀） | 双源单 watch 比状态沿 + 开关 watch 两条链少一半组合状态；启动即闪是核心场景（打开应用发现任务在等裁决），非 immediate 会漏；关开关即时停闪由同一沿检测天然覆盖 |
 | flash 通道 | preload 新增 `flashFrame(on: boolean) => ipcRenderer.invoke('desktop-flash-frame', on)`；main.cjs 注册 handle 调 `win.flashFrame(on)` 并维护模块级 `flashActive` 标记；`BrowserWindow` 的 `focus` 事件里 `flashActive` 为真时 `flashFrame(false)` 复位 | 主进程统一管理闪烁生命周期（切回窗口即停），渲染层只发沿信号；与 `desktop-notify` 同款 handle 模式 |
 | 开关存储 | `localStorage` 键 `aw-approval-flash`（缺省 = 开，`'0'` = 关），读写收进 `utils/approvalFlashPreference.ts`（`isApprovalFlashEnabled()` / `setApprovalFlashEnabled(v)`） | 零后端；`aw-*` 前缀随既有外观偏好族（跨设备不同步可接受，提案已拍板口径） |
 | 开关 UI | `NotificationSettingsView.vue`（消息通知页）新增一行「等待审批时闪烁任务栏」开关，仅 `isElectronClient()` 时渲染 | 闪烁是 Electron 专属行为，放通知页与其余提醒开关同位；Web / 安卓不渲染（无此行为） |
@@ -66,15 +68,21 @@ export type ParallelStatus = 'waiting_approval' | 'failed' | 'running' | null
 /** 纯函数：主会话 + 边路任务的最高优先状态（侧栏 TaskIndexPanel 同口径）。 */
 export function deriveParallelStatus(
   sessions: Session[],
-  getSideTasks: (parentId: string) => Array<{ phase: string }>,
+  getSideTasks: (parentId: string) => SideTaskItem[],
 ): ParallelStatus {
-  for (const s of sessions) if (s.phase === 'WAITING_APPROVAL') return 'waiting_approval'
-  for (const s of sessions) {
-    if (s.status === 'ARCHIVED') continue
-    if (s.phase === 'FAILED') return 'failed'
-    if (getSideTasks(s.id).some(t => t.phase === 'WAITING_APPROVAL')) return 'waiting_approval'
+  // ARCHIVED 先过滤（连带其边路任务整体跳过，对齐侧栏 :308），再按优先级轮次扫描
+  const live = sessions.filter(s => s.status !== 'ARCHIVED')
+  const sidesOf = (s: Session) => getSideTasks(s.id)
+  for (const s of live) {
+    if (s.phase === 'WAITING_APPROVAL' || sidesOf(s).some(t => t.phase === 'WAITING_APPROVAL')) return 'waiting_approval'
   }
-  // ……（完整实现：两轮扫描——先全部会话查 waiting（主 + 边路），再查 failed（主 + 边路），最后查 ACTIVE_PHASES）
+  for (const s of live) {
+    if (s.phase === 'FAILED' || sidesOf(s).some(t => t.phase === 'FAILED')) return 'failed'
+  }
+  for (const s of live) {
+    if (ACTIVE_PHASES.has(s.phase) || sidesOf(s).some(t => ACTIVE_PHASES.has(t.phase))) return 'running'
+  }
+  return null
 }
 
 export function useParallelStatus(): ComputedRef<ParallelStatus> {
@@ -91,12 +99,12 @@ export function titleWithPrefix(status: ParallelStatus, base = 'Mao'): string {
 }
 ```
 
-（实现轮次按「waiting 两轮 → failed 两轮 → running 一轮」保证优先级严格成立；`ARCHIVED` 过滤对齐侧栏 `:308`。）
+（优先级由「三轮独立扫描」保证——waiting 轮不短路到 failed，边缘是同一轮内「主会话 vs 边路」同态时按会话顺序取先命中者，无语义差异。）
 
 ### 4.2 `useParallelStatus.ts` 内挂 `useAppStatusIndicators()`
 
-- `watch(parallelStatus)`：`authStore.user` 非空时 `document.title = titleWithPrefix(v)`；用户登出（user 清空）时写 `titleWithPrefix(null)` 复位。
-- flash 沿 watch（§3）：`now === 'waiting_approval' && prev !== 'waiting_approval'` 且 `isApprovalFlashEnabled()` 且 `electronAPI.flashFrame` 存在 → `flashFrame(true)`；离开态 → `flashFrame(false)`（无条件尝试复位，幂等）。
+- **标题**：`watch([parallelStatus, () => authStore.user], …)` 双源，每次触发都写 `document.title = authStore.user ? titleWithPrefix(status.value) : 'Mao'`（登出必复位，见 §3）。
+- **flash 期望态沿**（§3）：`watch([parallelStatus, approvalFlashEnabled], …, { immediate: true })`——`desired = status === 'waiting_approval' && approvalFlashEnabled.value && !!electronAPI?.flashFrame`；`desired` 由 false→true → `flashFrame(true)`，true→false → `flashFrame(false)`。immediate 首跑即处理「启动时已有等待审批」；关开关即时停闪由同一沿覆盖。
 - `onUnmounted`（App 级实际不卸载，防御性）复位 flash(false)。
 
 ### 4.3 `App.vue`
@@ -120,11 +128,11 @@ export function titleWithPrefix(status: ParallelStatus, base = 'Mao'): string {
 
 2. `createWindow()` 内（既有 `win.on(...)` 注册区）追加：`win.on('focus', () => { if (flashActive) { flashActive = false; try { win.flashFrame(false) } catch {} } })`。
 3. `preload.cjs`（`desktopNotify` 相邻行）追加：`flashFrame: (on) => ipcRenderer.invoke('desktop-flash-frame', on)`。
-4. `mainShellHarness.cjs` 假 BrowserWindow 补两个桩：`flashFrame(on)`（记录调用到 `h.state.flashCalls`）与 `focus` 事件派发（`h.emitWin('focus')` 辅助）。
+4. `mainShellHarness.cjs` 假 BrowserWindow 补两个桩：`flashFrame(on)`（记录调用到 `h.state.flashCalls`）；`focus()` 方法补 `this.emit('focus')`（现状只置标志不派发事件，`mainShellHarness.cjs:127`）。测试里直接 `h.win().emit('focus')`（假窗继承 EventEmitter），无需新辅助。
 
 ### 4.5 开关
 
-1. 新增 `desktop/src/utils/approvalFlashPreference.ts`：`isApprovalFlashEnabled(): boolean`（`localStorage.getItem('aw-approval-flash') !== '0'`，非浏览器环境 true）、`setApprovalFlashEnabled(v: boolean)`（v ? removeItem : setItem('0')——缺省语义即开，键不写 '1'）。关闭瞬间若正在闪烁：`setApprovalFlashEnabled(false)` 时若当前 `parallelStatus === 'waiting_approval'` 立即补发 `flashFrame(false)`（开关内不依赖状态源，由 `useAppStatusIndicators` 的开关 watch 兜底）。
+1. 新增 `desktop/src/utils/approvalFlashPreference.ts`：**模块级响应式 ref + localStorage 双写**——`approvalFlashEnabled = ref<boolean>`（init 读 `localStorage.getItem('aw-approval-flash') !== '0'`，非浏览器环境 true）、`setApprovalFlashEnabled(v)` 同步写 ref 与 localStorage（v ? removeItem : setItem('0')——缺省语义即开，键不写 '1'）、`isApprovalFlashEnabled()` 直读 localStorage 供一次性判定。ref 是 `useAppStatusIndicators` flash 期望态 watch 的源（localStorage 本身无响应性）。
 2. `NotificationSettingsView.vue`：`v-if="isElectronClient()"` 行 + el-switch 绑定本地 ref（init 读偏好，change 写偏好并即时生效）。
 
 ### 4.6 测试
@@ -133,11 +141,12 @@ export function titleWithPrefix(status: ParallelStatus, base = 'Mao'): string {
    - 单会话各 phase（WAITING_APPROVAL / FAILED / RUNNING / RESUMING / CANCELLING / COMPLETED）映射正确；
    - 优先级：waiting 压过 failed 压过 running（无论会话顺序）；
    - 边路任务：side WAITING_APPROVAL → waiting；side FAILED → failed；side 活跃 → running；
-   - ARCHIVED 主会话不参与；空列表 → null；
+   - ARCHIVED 主会话连同其边路任务整体不参与；空列表 → null；
    - `titleWithPrefix` 四态前缀与复位。
 2. `approvalFlashPreference.test.ts`：默认开 / '0' 关 / set 往返。
-3. `mainShell.test.cjs` 追加：`h.invoke('desktop-flash-frame', true)` → 假窗 `flashCalls` 记录 `[true]`；`h.emitWin('focus')` 后再 invoke false 路径——断言 focus 触发 `flashFrame(false)` 且标记复位（二次 focus 不重复发 false）。
-4. 手测矩阵：Electron 多会话并行（另一窗口置前）→ 标题前缀 + 任务栏闪烁 → 切回即停 → 裁决复位；关闭开关后闪烁消失标题保留；Web 浏览器标签页标题态；登出复位。
+3. `mainShell.test.cjs` 追加：`h.invoke('desktop-flash-frame', true)` → 假窗 `flashCalls` 记录 `[true]`；`h.win().emit('focus')` 后断言 focus 触发 `flashFrame(false)` 且标记复位（二次 focus 不重复发 false）。
+4. `useAppStatusIndicators.test.ts`（jsdom，期望态沿接线）：驱动 pinia 投影（standardSessionIds + upsertSessionEntity）+ mock electronAPI.flashFrame——mount 时 status=waiting → 立即 flash(true)（immediate）；status 翻转 → flash(false)；关 pref → flash(false)；登出 → 标题 Mao；Web（无 electronAPI）标题态生效、flash 全程零调用。
+5. 手测矩阵：Electron 多会话并行（另一窗口置前）→ 标题前缀 + 任务栏闪烁 → 切回即停 → 裁决复位；关闭开关后闪烁消失标题保留；Web 浏览器标签页标题态；登出复位。
 
 ## 5. 落地清单
 
@@ -162,7 +171,7 @@ export function titleWithPrefix(status: ParallelStatus, base = 'Mao'): string {
 | 风险 | 对策 |
 |---|---|
 | phase 高频翻转导致标题抖动 / 重复闪烁 | 状态沿触发（值不变不写 title、沿进入才 flash）；`deriveParallelStatus` 是低频 computed（列表 phase 变更才重算） |
-| 与 LoginView / 飞书回调页的标题写入竞态 | `authStore.user` 守卫：未登录不写；两静态页均在无会话态，status 必为 null，即便误写也是 'Mao' 与其语义一致 |
+| 与 LoginView / 飞书回调页的标题写入竞态 | 双源 watch 只在 `parallelStatus` 或 `user` 变化时写：两静态页自身不引起 user 变化，其静态标题不被抢；登录成功（user 置位）后由 watcher 接管，登出（user 清空）写 `'Mao'` 复位 |
 | `document.title` 多写者漂移 | 本方案是唯一动态写者（复核确认现状仅两处静态写）；标题写入收口在 `useAppStatusIndicators` 单点 |
 | 通知 / 闪烁打扰 | ①闪烁默认开但仅「等待审批」一态触发（阻断性），完成 / 失败不闪（失败靠标题 ✗ 与既有收件箱通知）；②切回窗口即停（主进程 focus 复位）；③消息通知页开关可关；④状态沿触发不重复 |
 | flashFrame 在某平台无效 / 报错 | try/catch 静默 + `{ ok: false }` 返回；非 Electron 无桥接直接跳过（无 web 回退分支） |
@@ -195,3 +204,12 @@ export function titleWithPrefix(status: ParallelStatus, base = 'Mao'): string {
 - 声音提示；通知中心收口；跨任务审批抽屉；侧栏排序 / 置顶改动；逐轮进度百分比。
 - 安卓原生推送、移动端布局改动；flashFrame 平台分支封装。
 - 后端、admin、agent-cli、数据库迁移的任何改动。
+
+## 10. 评审修订记录（2026-11-12）
+
+1. **标题 watch 登出复位矛盾修正（关键）**：原稿「`authStore.user` 非空时写 / 登出时写复位」自相矛盾——登出瞬间若 status 恰好不变，watch 不触发，标题残留前缀。改为双源 `watch([parallelStatus, user])` 每次触发都写：`user ? titleWithPrefix(status) : 'Mao'`。§3/§4.2/§6。
+2. **flash 改为期望态沿检测 + immediate**：原稿「状态沿 + 开关兜底」两条链有未定义的启动语义（应用启动时已有等待审批不会闪——恰是核心场景）。改为 `watch([parallelStatus, approvalFlashEnabled], …, { immediate: true })` 的 `desired` 沿检测：启动即闪、关开关即时停闪，一个 watch 覆盖三条路径。§2 新增故事 8/9、§3/§4.2/§4.6。
+3. **偏好模块补响应式**：localStorage 无响应性，flash watch 的 pref 源需要 ref——`approvalFlashPreference.ts` 改为「模块级 ref + localStorage 双写」。§4.5-1。
+4. **deriveParallelStatus 片段收紧**：ARCHIVED 过滤前置（连带边路任务跳过，原片段首轮 waiting 扫描漏过滤）；签名用结构类型 `Array<{ phase: Session['phase'] }>`（= TaskPhase 归一口径，不绑 SideTaskItem 具体类型）；轮次实现由「两轮」改「三轮独立扫描」并写明同态并发的取值口径。§3/§4.1。
+5. **harness 桩精确化**：假窗 `focus()` 现状只置标志不派发事件（`:127`），补 `this.emit('focus')`；测试直接 `h.win().emit('focus')`（假窗是 EventEmitter），删除不存在的 `h.emitWin` 辅助。§4.4-4/§4.6-3。
+6. **`SIDE_ACTIVE_PHASES` 口径说明**：侧栏该常量是组件局部定义且成员与 `ACTIVE_PHASES` 全同，聚合器统一用 store 导出的 `ACTIVE_PHASES`，不复制第二份。§3。

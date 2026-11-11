@@ -6,8 +6,11 @@
 import { onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { dismissSplash, dismissSplashAfterPaint } from './utils/splash'
+import { useAppStatusIndicators } from './composables/useParallelStatus'
 
 const router = useRouter()
+// 多会话并行可见性（批次 29 提案 5）：浏览器标题态 + Electron 等待审批任务栏闪烁
+useAppStatusIndicators()
 
 onMounted(async () => {
   // 兜底：异常情况下最多 10 秒后强制移除 Splash
