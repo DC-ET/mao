@@ -17,6 +17,27 @@
 按钮 actionId / actionType / 可见性 / 请求成功判定条件是否与后端契约一致，下面「改模板时的注意点」
 里的坑它都能抓到。
 
+## 这个文件有两份数据，但只有一份驱动渲染
+
+`dingtalk-progress-card.json` 顶层有两个字段：
+
+| 字段 | 作用 |
+|------|------|
+| `editorData` | 卡片平台可视化编辑器的 schema（JSON 字符串），**组件树、变量、按钮配置都在这里** |
+| `widgetInfo` | 平台导出时生成的渲染快照（XML 字符串） |
+
+**导入时客户端渲染以 `editorData` 为准。** `useCustomWidgetInfo` 为 `false` 时平台会按组件树
+重新生成渲染结构，`widgetInfo` 只是上次导出的快照——手改 XML 不会生效。
+
+> 曾据「客户端看的是 widgetInfo」这一误判反复修改 XML 里的按钮可见性（把判据从交互卡残留
+> 变量 `submitted` 改到 `cardData.status`），导入后按钮依旧不显示。真正的缺陷在 `editorData`：
+> 取消按钮的 `actionId` 是空 `dynamicString`（点击不上报 actionId，后端路由不到），
+> 重试按钮的 `status` 是 `disabled`（置灰且不响应点击）。**改模板只改 `editorData`。**
+
+按钮可见性在编辑器里的写法：按钮 `visible` 条件选变量 `status`，取消任务绑 `status == running`、
+重试绑 `status == failed`；`actionId` 填字面量 `cancel` / `retry`（不是变量），
+`actionType` 选「回传请求」。
+
 ## 变量契约（后端 `cardParamMap` 传入）
 
 | 变量 | 类型 | 说明 |
@@ -35,6 +56,8 @@
 - `body` 是单个 markdown 变量，后端会把状态行、正文、工具列表拼成一个字符串再传，上限 1500 字符
 - **卡片头部不要再放标题**：状态已由 `body` 首行「**状态：正在处理** · 第 1 轮」表达，`Card.cardName` 和 Grid 里的 `${title}` 文本都已删掉，再加回去就是同一信息出现两次
 - 卡片回调依赖两个 `actionId`：`cancel`（取消任务）、`retry`（失败重试），改按钮时别改这两个 id
+- **`actionId` 必须填字面量**（`cancel` / `retry`），不能留空也不能绑变量：空 `dynamicString` 时点击不上报 actionId，后端 `parseCardCallback` 取不到值、整个回调分支不会触发（取消按钮曾因此完全无响应）
+- **按钮 `status` 不能是 `disabled`**：置灰且不响应点击，取消/重试都点不动（重试按钮曾遗留该值）
 - **按钮点击事件类型必须是「回传请求」**：若是「打开链接」，点击只会跳转、不会触发后端回调（重试按钮就曾因此完全失效）
 - **「请求成功判定条件」不能留空**：留空时平台会告警，且成功/失败 Toast 文案都不生效。判定条件要与后端回调契约一致——取消成功时后端回传 `cardParamMap` 把 `status` 置为 `cancelled`，失败路径只回 `tips`、不更新 `status`（仍为 `running`），故 cancel 绑 `status == 'cancelled'`；retry 同理绑 `status == 'running'`
 - **ButtonBlock 要带区块级 `visible`**（恒显示那个）：缺了它整个按钮区块都不渲染，取消/重试两个按钮会一起消失；单个按钮的显隐靠各自按钮里的可见性条件

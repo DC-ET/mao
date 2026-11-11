@@ -12,6 +12,8 @@
  *   5. 按钮可见性与「请求成功判定条件」不能为空，且判定值必须与后端回传的 status 对应
  *   6. 组件树里不得再出现 ${title} 文本节点（与 body 状态行重复，顶部标题已删）
  *   7. ButtonBlock 必须带区块级 visible（缺失时整个按钮区块不渲染）
+ *   8. 按钮的 status 不得为 disabled（disabled 按钮不可点击，取消/重试都点不动）
+ *   9. 按钮 actionId 必须是字面量 cancel / retry（dynamicString 空 content 时点击无 actionId 上报）
  */
 'use strict';
 
@@ -138,6 +140,15 @@ function walk(node) {
       if (!isEqualCondition(button.visible?.condition, 'status', ACTION_VISIBLE[id])) {
         fail(`按钮 ${id} 的可见性条件应为 status == ${ACTION_VISIBLE[id]}`);
       }
+      // disabled 是编辑态遗留：渲染时按钮置灰且不响应点击，取消/重试都点不动。
+      if (button.status === 'disabled') {
+        fail(`按钮 ${id} 的 status 是 disabled：按钮置灰且不响应点击，应改为 normal`);
+      }
+      // actionId 必须是字面量；dynamicString 空 content 时点击不上报 actionId，后端无法路由。
+      const actionId = textOf(button.actionId);
+      if (actionId !== id) {
+        fail(`按钮 ${id} 的 actionId 是 ${JSON.stringify(actionId)}，必须是字面量 "${id}"，否则点击不上报该 actionId`);
+      }
       if (!isEqualCondition(button.successCondition, 'status', ACTION_STATUS[id])) {
         fail(`按钮 ${id} 的「请求成功判定条件」应为 status == ${ACTION_STATUS[id]}（留空则平台告警且 Toast 不生效）`);
       }
@@ -181,6 +192,10 @@ for (const id of Object.keys(ACTION_STATUS)) {
   if (!seenActions.includes(id)) fail(`缺少 ${id} 按钮`);
 }
 if (failures === 0) ok(`按钮契约完整：${seenActions.join(', ')}`);
+
+// 说明：widgetInfo（XML）只是平台导出时生成的渲染快照，导入时平台按 useCustomWidgetInfo
+// 决定是否复用它；本模板该标志为 false，客户端渲染以 editorData 的组件树与变量条件为准。
+// 因此这里不校验 XML 文本——手改 XML 不生效（曾据误判改 XML，按钮依旧不显示）。
 
 if (failures > 0) {
   console.error('\n自检未通过：上面的问题会让卡片行为不符合预期，改完再导入。');
