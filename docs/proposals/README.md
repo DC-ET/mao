@@ -32,7 +32,6 @@ _当前无待评审提案。_
 
 | 提案 | 批次 | 说明 |
 |---|---|---|
-| [多会话并行状态可见性](2026-11-11-parallel-session-glanceability.md) | 29 | 技术方案：[docs/plan/2026-11-11-parallel-session-glanceability-technical-design.md](../plan/2026-11-11-parallel-session-glanceability-technical-design.md)（Tab 角标砍掉；标题态 + 任务栏闪烁，通知复用既有收件箱体系不新增通道） |
 | [中心 Tab 效率补完](2026-11-08-center-tab-efficiency.md) | 25 | 技术方案：[docs/plan/2026-11-08-center-tab-efficiency-technical-design.md](../plan/2026-11-08-center-tab-efficiency-technical-design.md) |
 | [消息代码块折叠与换行](2026-11-08-message-code-block-polish.md) | 26 | 技术方案：[docs/plan/2026-11-08-message-code-block-polish-technical-design.md](../plan/2026-11-08-message-code-block-polish-technical-design.md) |
 | [外观个性化与视觉令牌收编](2026-11-08-appearance-personalization.md) | 27 | 技术方案：[docs/plan/2026-11-08-appearance-personalization-technical-design.md](../plan/2026-11-08-appearance-personalization-technical-design.md)（密度档与暗色收编随方案取消，见其 §3.2 勘误） |
@@ -42,6 +41,7 @@ _当前无待评审提案。_
 | [Markdown 渲染补完](2026-11-11-markdown-render-polish.md) | 29 | 0.0.520 |
 | [命令面板动态组](2026-11-11-command-palette-dynamic-sources.md) | 29 | 0.0.520 |
 | [审批键盘流](2026-11-11-approval-keyboard-flow.md) | 29 | 0.0.520 |
+| [多会话并行状态可见性](2026-11-11-parallel-session-glanceability.md) | 29 | 0.0.520 |
 
 ## 已落地
 
