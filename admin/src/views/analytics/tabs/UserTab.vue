@@ -51,12 +51,8 @@
             </button>
           </template>
         </el-table-column>
-        <el-table-column prop="username" label="账号" width="120" class-name="hide-on-mobile" />
         <el-table-column label="会话" width="80" align="right">
           <template #default="{ row }">{{ formatNumber(row.sessionCount) }}</template>
-        </el-table-column>
-        <el-table-column label="消息" width="90" align="right">
-          <template #default="{ row }">{{ formatNumber(row.messageCount) }}</template>
         </el-table-column>
         <el-table-column label="Token" width="120" align="right">
           <template #default="{ row }">
@@ -72,13 +68,12 @@
         <el-table-column label="成本" width="100" align="right" class-name="hide-on-mobile">
           <template #default="{ row }">{{ formatCost(row.cost) }}</template>
         </el-table-column>
-        <el-table-column label="最后登录" width="170" class-name="hide-on-mobile">
-          <template #default="{ row }">{{ formatDateTime(row.lastLoginAt) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="150" class-name="hide-on-mobile">
+        <el-table-column label="操作" width="180" class-name="hide-on-mobile">
           <template #default="{ row }">
-            <button class="linkish" type="button" @click="go(`/llm-calls?userId=${row.userId}`)">调用流水</button>
-            <button class="linkish" type="button" @click="go(`/users?detail=${row.userId}&tab=usage`)">用量详情</button>
+            <div class="row-actions">
+              <button class="linkish" type="button" @click="go(`/llm-calls?userId=${row.userId}`)">调用流水</button>
+              <button class="linkish" type="button" @click="go(`/users?detail=${row.userId}&tab=usage`)">用量详情</button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -93,7 +88,6 @@ import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE } from '../../../utils/echarts'
 import { formatCost, formatNumber, formatTokens, rankBarOption, type RankItem } from '../chart-options'
 import { exportCsv } from '../utils/csv'
-import { formatDateTime } from '../../../utils/datetime'
 import type { UsersPayload } from '../types'
 
 const props = defineProps<{ payload: UsersPayload | null; loading?: boolean }>()
@@ -130,17 +124,14 @@ function go(path: string) {
 function exportRows() {
   exportCsv(
     `analytics-users-${new Date().toISOString().slice(0, 10)}.csv`,
-    ['用户', '账号', '会话', '消息', 'Token', '调用', '失败调用', '成本', '最后登录'],
+    ['用户', '会话', 'Token', '调用', '失败调用', '成本'],
     userRows.value.map((row) => [
       row.displayName || row.username || '未知',
-      row.username,
       row.sessionCount,
-      row.messageCount,
       row.totalTokens,
       row.callCount ?? 0,
       row.callFailCount ?? 0,
-      row.cost ?? '',
-      row.lastLoginAt ? formatDateTime(row.lastLoginAt) : ''
+      row.cost ?? ''
     ])
   )
 }
@@ -182,6 +173,13 @@ export default { name: 'UserTab' }
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
 }
 
 .linkish {
