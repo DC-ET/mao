@@ -1477,8 +1477,16 @@ ipcMain.handle('local-copy-attachment', async (event, payload) => {
 })
 
 ipcMain.handle('local-write-text-file', async (event, payload) => {
-  // 备用入口（渲染层直接写本机文本；粘贴转出的附件也走这里）：同名避重，不覆盖已有附件。
-  return handleLocalWriteTextFile(payload, payload?.sessionId, true)
+  // 渲染层粘贴附件入口：同名避重，不覆盖已有附件。
+  // handleLocalWriteTextFile 回的是工具协议 { success, path, bytes_written } / { error }，
+  // 渲染层与 local-copy-attachment 对齐，只认 { ok, absolutePath, error }。
+  // 直接把工具形态透传出去时，写盘成功也会被当成失败（error 为空 → 「写入失败」），
+  // 粘贴超长文本发送会被整单取消。
+  const result = await handleLocalWriteTextFile(payload, payload?.sessionId, true)
+  if (result?.success && result.path) {
+    return { ok: true, absolutePath: result.path }
+  }
+  return { ok: false, error: result?.error || '写入失败' }
 })
 
 ipcMain.handle('desktop-notify', (event, payload) => {

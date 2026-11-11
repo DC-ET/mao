@@ -382,6 +382,47 @@ test('基线：local-copy-attachment 落点由主进程推导（home + host + si
   }
 })
 
+test('回归：local-write-text-file 回传 { ok, absolutePath }，同名粘贴追加副本且不覆盖', async () => {
+  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-harness-home-'))
+  const prevHome = process.env.HOME
+  process.env.HOME = fakeHome
+  try {
+    const h = await loadMain({})
+    const first = await h.invoke('local-write-text-file', {
+      fileName: 'pasted-text-1.txt',
+      content: '第一批 14084181',
+      sessionId: 9,
+      maxSizeMb: 10,
+    })
+    assert.equal(first.ok, true, JSON.stringify(first))
+    assert.equal(first.success, undefined, '渲染层契约不应混入工具协议的 success')
+    assert.equal(path.basename(first.absolutePath), 'pasted-text-1.txt')
+    assert.ok(
+      first.absolutePath.startsWith(fs.realpathSync(fakeHome) + path.sep + '.mao' + path.sep + 'attachments' + path.sep),
+      first.absolutePath
+    )
+    assert.equal(fs.readFileSync(first.absolutePath, 'utf8'), '第一批 14084181')
+
+    const second = await h.invoke('local-write-text-file', {
+      fileName: 'pasted-text-1.txt',
+      content: '第二批 14090001',
+      sessionId: 9,
+      maxSizeMb: 10,
+    })
+    assert.equal(second.ok, true, JSON.stringify(second))
+    assert.equal(path.basename(second.absolutePath), 'pasted-text-1-1.txt')
+    assert.notEqual(second.absolutePath, first.absolutePath)
+    assert.equal(fs.readFileSync(first.absolutePath, 'utf8'), '第一批 14084181', '已有附件不得被后一次粘贴覆盖')
+    assert.equal(fs.readFileSync(second.absolutePath, 'utf8'), '第二批 14090001')
+
+    const bad = await h.invoke('local-write-text-file', { fileName: '', content: 'x', sessionId: 9 })
+    assert.deepEqual(bad, { ok: false, error: '文件名无效' })
+  } finally {
+    process.env.HOME = prevHome
+    fs.rmSync(fakeHome, { recursive: true, force: true })
+  }
+})
+
 // ─── 通知点击深链的待派发队列（P2 修复：点击早于渲染层监听注册时跳转丢失） ───
 
 test('通知点击入待派发队列：窗口存活立即派发，consume 可取到，ack 后清空', async () => {
