@@ -33,9 +33,11 @@
 
 - **不要删 `status` 变量**：删了按钮条件会悬空，取消/重试按钮会行为异常（`status` 可以不显示，但必须在变量表里）
 - `body` 是单个 markdown 变量，后端会把状态行、正文、工具列表拼成一个字符串再传，上限 1500 字符
+- **卡片头部不要再放标题**：状态已由 `body` 首行「**状态：正在处理** · 第 1 轮」表达，`Card.cardName` 和 Grid 里的 `${title}` 文本都已删掉，再加回去就是同一信息出现两次
 - 卡片回调依赖两个 `actionId`：`cancel`（取消任务）、`retry`（失败重试），改按钮时别改这两个 id
 - **按钮点击事件类型必须是「回传请求」**：若是「打开链接」，点击只会跳转、不会触发后端回调（重试按钮就曾因此完全失效）
 - **「请求成功判定条件」不能留空**：留空时平台会告警，且成功/失败 Toast 文案都不生效。判定条件要与后端回调契约一致——取消成功时后端回传 `cardParamMap` 把 `status` 置为 `cancelled`，失败路径只回 `tips`、不更新 `status`（仍为 `running`），故 cancel 绑 `status == 'cancelled'`；retry 同理绑 `status == 'running'`
+- **ButtonBlock 要带区块级 `visible`**（恒显示那个）：缺了它整个按钮区块都不渲染，取消/重试两个按钮会一起消失；单个按钮的显隐靠各自按钮里的可见性条件
 - 排队卡是另一个模板（`queueCardParams`：`title` / `preview` / `status` / `queueId` / `senderUserid`），不要与进度卡混用
 
 ## 相关代码

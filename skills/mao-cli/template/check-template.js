@@ -10,6 +10,8 @@
  *   3. 按钮 actionId 必须是 cancel / retry
  *   4. 按钮 actionType 必须是 request，否则点击不触发卡片回调
  *   5. 按钮可见性与「请求成功判定条件」不能为空，且判定值必须与后端回传的 status 对应
+ *   6. 组件树里不得再出现 ${title} 文本节点（与 body 状态行重复，顶部标题已删）
+ *   7. ButtonBlock 必须带区块级 visible（缺失时整个按钮区块不渲染）
  */
 'use strict';
 
@@ -83,8 +85,24 @@ if (failures === 0) ok(`variableList 声明完整：${vars.join(', ')}`);
 
 // 2. Markdown 组件绑定 body
 let markdownBound = false;
-// 3~5. 按钮契约
+// 3~7. 按钮契约 / 顶部标题冗余 / 按钮区块可见性
 const seenActions = [];
+/** 残留的 ${title} 文本节点位置，用于报出具体 id。 */
+const titleNodes = [];
+/** 缺区块级 visible 的 ButtonBlock。 */
+let buttonBlockMissingVisible = 0;
+
+function textOf(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') {
+    if (typeof value.content === 'string') return value.content;
+    const zh = value.zh_Hans;
+    if (typeof zh === 'string') return zh;
+    if (zh && typeof zh.content === 'string') return zh.content;
+  }
+  return '';
+}
 
 function walk(node) {
   if (Array.isArray(node)) {
@@ -99,7 +117,14 @@ function walk(node) {
   }
 
   if (node.componentName === 'ButtonBlock') {
-    for (const button of node.props?.buttons ?? []) {
+    // 只检查组件树里的真实按钮区块；schema.componentsMap 里的组件定义条目没有 buttons。
+    const buttons = node.props?.buttons;
+    if (!Array.isArray(buttons) || buttons.length === 0) {
+      for (const value of Object.values(node)) walk(value);
+      return;
+    }
+    if (node.props?.visible == null) buttonBlockMissingVisible += 1;
+    for (const button of buttons) {
       const id = button.id;
       seenActions.push(id);
 
@@ -122,6 +147,16 @@ function walk(node) {
     }
   }
 
+  // 顶部标题冗余：Card.cardName 与 BaseText 都不该再渲染 ${title}，
+  // 状态已由 body 首行「**状态：xxx** · 第 N 轮」表达。
+  if (node.componentName === 'BaseText') {
+    const text = textOf(node.props?.text);
+    if (text.includes('${title}')) titleNodes.push(node.id ?? 'BaseText');
+  }
+  if (node.componentName === 'Card') {
+    if (textOf(node.props?.cardName).includes('${title}')) titleNodes.push(`Card(${node.id ?? ''}).cardName`);
+  }
+
   for (const value of Object.values(node)) walk(value);
 }
 
@@ -129,6 +164,18 @@ walk(editor);
 
 if (!markdownBound) fail('没有 Markdown 组件绑定 body 变量，卡片正文会一直为空');
 else ok('Markdown 组件绑定 body');
+
+if (titleNodes.length > 0) {
+  fail(`仍有 ${titleNodes.length} 处渲染 \${title}（${titleNodes.join('、')}）：与 body 状态行重复，顶部标题应删掉`);
+} else {
+  ok('无冗余的 ${title} 文本节点');
+}
+
+if (buttonBlockMissingVisible > 0) {
+  fail(`有 ${buttonBlockMissingVisible} 个 ButtonBlock 缺少区块级 visible：整个按钮区块不会渲染（取消/重试都不显示）`);
+} else {
+  ok('ButtonBlock 区块级 visible 已配置');
+}
 
 for (const id of Object.keys(ACTION_STATUS)) {
   if (!seenActions.includes(id)) fail(`缺少 ${id} 按钮`);
