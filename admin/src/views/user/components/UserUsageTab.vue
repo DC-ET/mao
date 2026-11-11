@@ -80,7 +80,7 @@
         <BaseChart :option="trendOption" :empty="!hasCalls" empty-text="该周期内无 LLM 调用" :height="240" />
       </el-card>
 
-      <el-row :gutter="16" class="dist-row">
+      <el-row :gutter="12" class="dist-row">
         <el-col :xs="24" :md="8">
           <el-card shadow="never" class="block">
             <template #header><div class="card-header"><span class="block-title">按模型</span></div></template>
@@ -404,10 +404,17 @@ onMounted(() => {
   margin: 4px 0;
 }
 
+.usage-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .stat-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 16px;
+  column-gap: 12px;
+  row-gap: 16px;
 }
 
 .stat-card {
@@ -460,6 +467,10 @@ onMounted(() => {
 .block-hint {
   font-size: 12px;
   color: var(--mao-muted);
+}
+
+.dist-row {
+  row-gap: 16px;
 }
 
 .dist-row :deep(.el-card__body) {
