@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { nextTick, h, ref } from 'vue'
+import { computed, nextTick, h, ref } from 'vue'
 import { createApp } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -18,6 +18,8 @@ vi.mock('../../utils/monaco-colorize', () => ({
 
 import ToolCallCard from './ToolCallCard.vue'
 import { setToolResultView } from '../../utils/tool-result-table'
+import { useSessionStore, type Session } from '../../stores/session'
+import { useCenterTabs } from '../../composables/useCenterTabs'
 import type { ToolCall } from '../../composables/useChat'
 
 function mountCard(toolCall: ToolCall) {
@@ -984,5 +986,93 @@ describe('ToolCallCard 结果表格化视图', () => {
     }))
     await nextTick()
     expect(document.querySelector('.result-view-switch')).toBeNull()
+  })
+})
+
+describe('ToolCallCard 文件工具路径行', () => {
+  let mounted: ReturnType<typeof mountCard> | null = null
+  afterEach(() => { mounted?.destroy() })
+
+  /** 播种一个 CLOUD 可打开会话（workspace + activeSessionId），供 canOpenToolFile 放行 */
+  function seedOpenableSession(id: string, overrides: Partial<Session> = {}) {
+    const sessionStore = useSessionStore()
+    sessionStore.upsertSessionEntity({
+      id,
+      title: 't',
+      workspace: '/ws',
+      executionMode: 'CLOUD',
+      status: 'ACTIVE',
+      phase: 'COMPLETED',
+      ...overrides,
+    } as unknown as Session)
+    sessionStore.setActiveSession(id)
+  }
+
+  it('read/write/edit 三卡渲染 .tool-path-row 且文本 = 输入 path', async () => {
+    for (const call of [makeReadCall(), makeWriteCall(), makeEditCall()]) {
+      mounted = mountCard(call)
+      await nextTick()
+      // 未播种会话：守卫先行，不渲染
+      expect(document.querySelector('.tool-path-row')).toBeNull()
+
+      seedOpenableSession(`path-row-${call.id}`)
+      await nextTick()
+      const row = document.querySelector('.tool-path-row')
+      expect(row?.textContent?.trim()).toBe('/ws/src/a.ts')
+
+      mounted.destroy()
+      mounted = null
+    }
+  })
+
+  it('点击路径行 → 中心 Tab 打开文件（filePath / title / workspaceRoot 三元组）', async () => {
+    mounted = mountCard(makeReadCall())
+    await nextTick()
+    seedOpenableSession('path-row-click')
+    await nextTick()
+
+    const row = document.querySelector('.tool-path-row') as HTMLButtonElement
+    expect(row).toBeTruthy()
+    row.click()
+    await nextTick()
+
+    const sessionStore = useSessionStore()
+    const tabs = useCenterTabs(computed(() => sessionStore.activeSessionId))
+    const fileTab = tabs.tabs.value.find(t => t.type === 'file')
+    expect(fileTab?.filePath).toBe('/ws/src/a.ts')
+    expect(fileTab?.title).toBe('a.ts')
+    expect(fileTab?.workspaceRoot).toBe('/ws')
+  })
+
+  it('LOCAL 无 workspace：路径行不渲染', async () => {
+    mounted = mountCard(makeReadCall())
+    await nextTick()
+    seedOpenableSession('path-row-local', { executionMode: 'LOCAL', workspace: '' })
+    await nextTick()
+    expect(document.querySelector('.tool-path-row')).toBeNull()
+  })
+
+  it('read_file 失败态（error 结果）：路径行照常渲染', async () => {
+    mounted = mountCard(makeReadCall({ result: JSON.stringify({ error: '文件不存在' }) }))
+    await nextTick()
+    seedOpenableSession('path-row-error')
+    await nextTick()
+    expect(document.querySelector('.tool-path-row')?.textContent?.trim()).toBe('/ws/src/a.ts')
+  })
+
+  it('输入无 path：路径行不渲染', async () => {
+    mounted = mountCard(makeReadCall({ input: {} }))
+    await nextTick()
+    seedOpenableSession('path-row-nopath')
+    await nextTick()
+    expect(document.querySelector('.tool-path-row')).toBeNull()
+  })
+
+  it('shell 卡不渲染路径行（路径行走 glob/grep 既有通道之外的新行仅限文件工具）', async () => {
+    mounted = mountCard(makeShellCall())
+    await nextTick()
+    seedOpenableSession('path-row-shell')
+    await nextTick()
+    expect(document.querySelector('.tool-path-row')).toBeNull()
   })
 })

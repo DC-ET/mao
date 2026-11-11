@@ -7,6 +7,10 @@
         <span class="cmd-prompt">{{ label === '命令' ? '$' : '›' }}</span>
         <span v-if="label !== '命令'" class="cmd-tag">{{ label }}</span>
         <span class="cmd-text">{{ command }}</span>
+        <!-- 复制命令与右上角输出复制并存：本按钮复制命令原文，输出复制只绑 output/error -->
+        <button class="cmd-copy-btn" title="复制命令" aria-label="复制命令" @click="copy(command)">
+          <el-icon :size="12"><CopyDocument /></el-icon>
+        </button>
       </div>
       <div v-if="output || error" class="cmd-divider" />
       <pre v-if="error" class="cmd-output cmd-error">{{ error }}</pre>
@@ -102,6 +106,41 @@ async function copy(text: string) {
   height: 1px;
   margin: 6px 0;
   background: var(--aw-divider-soft);
+}
+
+/* 复制命令按钮：cmd-line 行内末端（不与右上角输出复制叠放），显隐与既有 copy-btn 同款 */
+.cmd-copy-btn {
+  flex-shrink: 0;
+  align-self: flex-start;
+  width: 20px;
+  height: 20px;
+  margin-left: 6px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--aw-radius-sm);
+  background: var(--aw-surface-glass);
+  color: var(--aw-ink-muted-48);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.tool-shell:hover .cmd-copy-btn {
+  opacity: 1;
+}
+
+.cmd-copy-btn:hover {
+  color: var(--aw-ink);
+}
+
+/* 悬停显隐按钮键盘聚焦时必须可见（0.0.471 焦点可见体系，style.css mermaid-expand-btn 同款） */
+.cmd-copy-btn:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--aw-primary);
+  outline-offset: 1px;
 }
 
 .cmd-output {

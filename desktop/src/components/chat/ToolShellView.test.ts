@@ -3,8 +3,14 @@
  */
 import { nextTick, h } from 'vue'
 import { createApp } from 'vue'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { copyText } from '../../utils/clipboard'
 import ToolShellView from './ToolShellView.vue'
+
+// 复制链路 mock：断言按钮点击传参（命令原文 vs 输出原文），不真走剪贴板
+vi.mock('../../utils/clipboard', () => ({
+  copyText: vi.fn(async () => true),
+}))
 
 interface ShellProps {
   command: string
@@ -81,6 +87,55 @@ describe('ToolShellView', () => {
     await nextTick()
 
     expect(document.querySelector('.copy-btn')).toBeTruthy()
+    mounted.destroy()
+  })
+})
+
+describe('ToolShellView 复制命令按钮', () => {
+  beforeEach(() => {
+    vi.mocked(copyText).mockClear()
+  })
+
+  /** 点击后等异步 copy 链路落定（copyText mock 为已决 promise，两拍微任务足够） */
+  async function flushCopy() {
+    await Promise.resolve()
+    await Promise.resolve()
+  }
+
+  it('渲染复制命令按钮（aria-label + title），点击复制命令原文', async () => {
+    const mounted = mount({ ...base, output: 'done' })
+    await nextTick()
+
+    const btn = document.querySelector('.cmd-copy-btn') as HTMLButtonElement | null
+    expect(btn).toBeTruthy()
+    expect(btn?.getAttribute('aria-label')).toBe('复制命令')
+    expect(btn?.getAttribute('title')).toBe('复制命令')
+
+    btn?.click()
+    await flushCopy()
+    expect(vi.mocked(copyText)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(copyText)).toHaveBeenCalledWith('npm run build')
+    mounted.destroy()
+  })
+
+  it('输出复制按钮仍复制 output/error，两个按钮互不串扰', async () => {
+    const mounted = mount({ ...base, output: 'build done' })
+    await nextTick()
+
+    const outBtn = document.querySelector('.copy-btn') as HTMLButtonElement | null
+    expect(outBtn).toBeTruthy()
+    outBtn?.click()
+    await flushCopy()
+    expect(vi.mocked(copyText)).toHaveBeenCalledWith('build done')
+    mounted.destroy()
+  })
+
+  it('无命令（cmd-line 不渲染）时复制命令按钮不存在', async () => {
+    const mounted = mount({ ...base, command: '', output: 'x' })
+    await nextTick()
+
+    expect(document.querySelector('.cmd-line')).toBeNull()
+    expect(document.querySelector('.cmd-copy-btn')).toBeNull()
     mounted.destroy()
   })
 })

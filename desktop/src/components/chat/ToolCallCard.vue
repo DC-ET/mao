@@ -46,6 +46,14 @@
     <div v-if="isExpanded && hasExpandableBody" class="tool-body">
       <div v-if="formattedInput" class="tool-result">
         <template v-if="richView">
+          <!-- 三个文件工具（edit/read/write）的路径行：点击在中心 Tab 打开文件；
+               新建态 / 无 workspace 时 canOpenToolFile 为 false，整行不渲染 -->
+          <button
+            v-if="fileToolPathRow"
+            class="tool-path-row"
+            :title="fileToolPathRow"
+            @click="handleOpenToolFile(fileToolPathRow)"
+          >{{ fileToolPathRow }}</button>
           <!-- 富视图骨架（edit_file / shell / read_file）：默认只渲染自然形态，原始输入/输出
                 JSON 收起在同一个开关后，避免转义噪音盖住命令、输出与文件内容本身 -->
           <ToolCallDiffView v-if="editDiffView" :blocks="editDiffView.blocks" />
@@ -291,18 +299,21 @@ const props = withDefaults(defineProps<{
 
 const sessionStore = useSessionStore()
 const openSubagent = inject<(payload: { childSessionId: number; title?: string }) => void>('openSubagent', () => {})
-/** 工具卡片里的文件路径（glob/grep 结果、open_web_page 完整内容文件）点击后在中心区打开，
- *  CLOUD/LOCAL 分支与 FileChangePanel.handleFileClick 同口径。 */
+/** 工具卡片里的文件路径（glob/grep 结果、open_web_page 完整内容文件、read/write/edit 路径行）
+ *  点击后在中心区打开，CLOUD/LOCAL 分支与 FileChangePanel.handleFileClick 同口径。 */
 const { openFileTab } = useCenterTabs(computed(() => sessionStore.activeSessionId))
 
+/** 文件能否从工具卡打开：CLOUD 需有活跃会话，LOCAL 需有 workspace。渲染（路径行显隐）与点击共用同一口径。 */
+const canOpenToolFile = computed(() => {
+  const session = sessionStore.activeSession
+  if (!session) return false
+  return session.executionMode === 'CLOUD' ? !!sessionStore.activeSessionId : !!session.workspace
+})
+
 function handleOpenToolFile(path: string) {
-  if (!path) return
+  if (!path || !canOpenToolFile.value) return
   const session = sessionStore.activeSession
   if (!session) return
-  const canOpen = session.executionMode === 'CLOUD'
-    ? !!sessionStore.activeSessionId
-    : !!session.workspace
-  if (!canOpen) return
   const title = path.split(/[/\\]/).pop() || path
   openFileTab(path, title, session.workspace || undefined)
 }
@@ -424,7 +435,7 @@ const editDiffView = computed(() => {
   if (oldStr === '' && newStr === '') return null
   const diff = buildEditDiff(oldStr, newStr)
   if (diff.blocks.length === 0) return null
-  return { ...diff, summary: readEditSummary(props.toolCall.result, diff) }
+  return { ...diff, path: textOf(input.path) || textOf(input.file_path), summary: readEditSummary(props.toolCall.result, diff) }
 })
 
 /**
@@ -530,6 +541,16 @@ const writeView = computed(() => {
     path,
     summary: parts.join(' · '),
   }
+})
+
+/**
+ * 三个文件工具（edit/read/write）富视图的路径行：path 非空且可打开才渲染，点击经
+ * handleOpenToolFile 在中心 Tab 打开（glob/grep/web_page 的文件名链接是既有通道，不走本行）。
+ */
+const fileToolPathRow = computed(() => {
+  const view = editDiffView.value ?? fileView.value ?? writeView.value
+  if (!view?.path || !canOpenToolFile.value) return null
+  return view.path
 })
 
 /** glob_search 富视图：文件路径列表，路径相对搜索根目录，点击可在中心区打开。 */
@@ -1004,6 +1025,34 @@ function toggleExpand() {
   margin-bottom: 4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+/* 三个文件工具富视图的路径行：链接态走 --aw-primary，单行省略（超长路径 title 兜底全文），
+   键盘聚焦 outline 沿 0.0.471 焦点可见体系 */
+.tool-path-row {
+  display: block;
+  max-width: 100%;
+  margin-bottom: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-fine);
+  color: var(--aw-primary);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.tool-path-row:hover {
+  text-decoration: underline;
+}
+
+.tool-path-row:focus-visible {
+  outline: 2px solid var(--aw-primary);
+  outline-offset: 1px;
 }
 
 .result-expand-row {
