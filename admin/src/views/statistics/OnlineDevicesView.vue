@@ -56,12 +56,14 @@
         <el-table-column label="平台" width="100">
           <template #default="{ row }">{{ row.device?.platform || '-' }}</template>
         </el-table-column>
-        <el-table-column label="设备 ID" width="170" show-overflow-tooltip>
+        <el-table-column label="设备 ID" min-width="180" class-name="device-id-col">
           <template #default="{ row }">
-            <template v-if="row.device">
-              <span class="device-id">{{ row.device.id }}</span>
-              <el-button type="primary" link size="small" aria-label="复制设备 ID" title="复制设备 ID" @click="copyDeviceId(row.device.id)">复制</el-button>
-            </template>
+            <div v-if="row.device" class="device-id-cell">
+              <el-tooltip :content="row.device.id" placement="top" :show-after="300" :enterable="false">
+                <button type="button" class="device-id" title="点击复制设备 ID" @click="copyDeviceId(row.device.id)">{{ row.device.id }}</button>
+              </el-tooltip>
+              <el-button class="device-id-copy" type="primary" link size="small" aria-label="复制设备 ID" title="复制设备 ID" @click.stop="copyDeviceId(row.device.id)">复制</el-button>
+            </div>
             <span v-else class="muted">-</span>
           </template>
         </el-table-column>
@@ -185,8 +187,35 @@ async function fetchVo() {
   }
 }
 
-function copyDeviceId(id: string) {
-  void navigator.clipboard.writeText(id).then(() => ElMessage.success('设备 ID 已复制'))
+async function copyDeviceId(id: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(id)
+    } else {
+      copyByExecCommand(id)
+    }
+    ElMessage.success('设备 ID 已复制')
+  } catch {
+    try {
+      copyByExecCommand(id)
+      ElMessage.success('设备 ID 已复制')
+    } catch {
+      ElMessage.error('复制失败，请手动选择复制')
+    }
+  }
+}
+
+/** clipboard API 不可用或被拒绝时的兜底（参照会话详情复制工作区路径）。 */
+function copyByExecCommand(text: string) {
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.style.position = 'fixed'
+  textarea.style.top = '-9999px'
+  document.body.appendChild(textarea)
+  textarea.select()
+  const ok = document.execCommand('copy')
+  document.body.removeChild(textarea)
+  if (!ok) throw new Error('copy failed')
 }
 
 function startTimer() {
@@ -271,9 +300,48 @@ onBeforeUnmount(stopTimer)
   align-items: center;
 }
 
+:deep(.device-id-col .cell) {
+  overflow: hidden;
+}
+
+.device-id-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.device-id-cell :deep(.el-tooltip__trigger) {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
 .device-id {
-  font-family: monospace;
-  margin-right: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.device-id:hover {
+  color: var(--el-color-primary);
+}
+
+.device-id-copy {
+  flex: none;
 }
 
 .muted {

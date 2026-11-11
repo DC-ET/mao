@@ -45,8 +45,8 @@
       <div class="stat-cards">
         <div class="stat-card">
           <div class="stat-label">总 Token</div>
-          <div class="stat-value">{{ formatNumber(totals.totalTokens) }}</div>
-          <div class="stat-sub">输入 {{ formatNumber(totals.promptTokens) }} · 输出 {{ formatNumber(totals.completionTokens) }} · 缓存 {{ formatNumber(totals.cachedTokens) }}</div>
+          <div class="stat-value">{{ formatTokens(totals.totalTokens) }}</div>
+          <div class="stat-sub">输入 {{ formatTokens(totals.promptTokens) }} · 输出 {{ formatTokens(totals.completionTokens) }} · 缓存 {{ formatTokens(totals.cachedTokens) }}</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">
@@ -80,7 +80,7 @@
         <BaseChart :option="trendOption" :empty="!hasCalls" empty-text="该周期内无 LLM 调用" :height="240" />
       </el-card>
 
-      <el-row :gutter="12" class="dist-row">
+      <el-row :gutter="16" class="dist-row">
         <el-col :xs="24" :md="8">
           <el-card shadow="never" class="block">
             <template #header><div class="card-header"><span class="block-title">按模型</span></div></template>
@@ -158,6 +158,7 @@ import {
   formatCompact,
   formatCost,
   formatNumber,
+  formatTokens,
   trendDataZoom,
   trendLegend,
 } from '../../analytics/chart-options'
@@ -406,7 +407,7 @@ onMounted(() => {
 .stat-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
+  gap: 16px;
 }
 
 .stat-card {
