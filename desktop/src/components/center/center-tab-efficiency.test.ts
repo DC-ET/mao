@@ -184,6 +184,7 @@ const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8'
 const tabBarSrc = read('./CenterTabBar.vue')
 const taskViewSrc = read('../../views/task/TaskView.vue')
 const topNavSrc = read('../common/TopNav.vue')
+const approvalStackSrc = read('../chat/ApprovalStack.vue')
 
 /** 取从 `startMarker` 起到函数体闭合（行首 `}`）为止的源码片段。 */
 function functionBody(src: string, startMarker: string): string {
@@ -293,8 +294,8 @@ describe('TaskView / TopNav 源码级断言', () => {
     expect(typingAt).toBeLessThan(keydown.indexOf('preventDefault()'))
   })
 
-  it('isTypingTarget 口径一致锁：TaskView 与 TopNav 两处均含 TEXTAREA 与 isContentEditable', () => {
-    for (const [name, src] of [['TaskView', taskViewSrc], ['TopNav', topNavSrc]] as const) {
+  it('isTypingTarget 口径一致锁：TaskView / TopNav / ApprovalStack 三处均含 TEXTAREA 与 isContentEditable（批次 29 提案 4 扩入）', () => {
+    for (const [name, src] of [['TaskView', taskViewSrc], ['TopNav', topNavSrc], ['ApprovalStack', approvalStackSrc]] as const) {
       const body = functionBody(src, 'function isTypingTarget')
       expect(body, `${name} isTypingTarget 缺 TEXTAREA`).toContain("'TEXTAREA'")
       expect(body, `${name} isTypingTarget 缺 isContentEditable`).toContain('isContentEditable')

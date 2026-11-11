@@ -1,5 +1,5 @@
 <template>
-  <div v-if="items.length > 0" class="approval-stack">
+  <div v-if="items.length > 0" ref="rootRef" class="approval-stack">
     <div class="stack-cards">
       <div
         v-for="(item, index) in items"
@@ -48,6 +48,7 @@
             <button
               class="action-btn reject"
               :disabled="handledIds.has(item.requestId)"
+              title="快捷键 N"
               @click="confirm(item.requestId, false, false)"
             >拒绝</button>
             <button
@@ -60,6 +61,7 @@
             <button
               class="action-btn approve"
               :disabled="handledIds.has(item.requestId)"
+              title="快捷键 Y"
               @click="confirm(item.requestId, true, false)"
             >执行</button>
           </div>
@@ -70,7 +72,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { WarningFilled } from '@element-plus/icons-vue'
 import { copyText as copyToClipboard } from '../../utils/clipboard'
@@ -96,6 +98,8 @@ const threshold = 120
 const props = defineProps<{
   items: ApprovalItem[]
 }>()
+
+const rootRef = ref<HTMLElement | null>(null)
 
 const emit = defineEmits<{
   confirm: [requestId: string, approved: boolean, alwaysAllow: boolean]
@@ -128,6 +132,36 @@ function confirm(requestId: string, approved: boolean, alwaysAllow: boolean) {
   handledIds.value = new Set([...handledIds.value, requestId])
   emit('confirm', requestId, approved, alwaysAllow)
 }
+
+// ===== 审批键盘流（批次 29 提案 4）：Y=执行 / N=拒绝，与按钮点击走同一 confirm() / handledIds =====
+
+/** 文本输入焦点守卫：与 TopNav / TaskView 同款三行（口径由 center-tab-efficiency.test.ts 锁定） */
+function isTypingTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement
+    && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+}
+
+function handleApprovalKeydown(e: KeyboardEvent) {
+  if (e.isComposing || e.repeat) return
+  // 修饰键组合不触发：Ctrl+Y 是本应用菜单的 redo 加速器（renderer 拦不住），且组合键无审批意图
+  if (e.ctrlKey || e.metaKey || e.altKey) return
+  if (!isTypingTarget(e.target)) {
+    const key = e.key.toLowerCase()
+    if (key === 'y' || key === 'n') {
+      // KeepAlive 停活的栈不在文档中：后台 Tab 的卡片不响应（活跃 Tab 归属的结构性判定）
+      const top = props.items[props.items.length - 1]
+      if (!rootRef.value?.isConnected || !top || handledIds.value.has(top.requestId)) return
+      // 全屏浮层打开时用户在别的交互面上：el-dialog / el-drawer（.el-overlay 统一根类）、
+      // 正文图片查看器（el-image-viewer）、mermaid 全屏层（mermaid-viewer，自绘 append 到 body）
+      if ((e.target as HTMLElement | null)?.closest?.('.el-overlay, .el-image-viewer__wrapper, .mermaid-viewer')) return
+      e.preventDefault()
+      confirm(top.requestId, key === 'y', false)
+    }
+  }
+}
+
+onMounted(() => document.addEventListener('keydown', handleApprovalKeydown))
+onUnmounted(() => document.removeEventListener('keydown', handleApprovalKeydown))
 
 const expandedSet = ref(new Set<string>())
 
@@ -380,5 +414,21 @@ async function copyText(text: string) {
 
 .action-btn.always-allow:hover {
   background: color-mix(in srgb, var(--aw-success) 14%, transparent);
+}
+
+/* 审批键盘流（批次 29 提案 4）：键盘聚焦可见轮廓，色走各按钮既有令牌 */
+.action-btn.approve:focus-visible {
+  outline: 2px solid var(--aw-primary);
+  outline-offset: 1px;
+}
+
+.action-btn.reject:focus-visible {
+  outline: 2px solid var(--aw-danger);
+  outline-offset: 1px;
+}
+
+.action-btn.always-allow:focus-visible {
+  outline: 2px solid var(--aw-success);
+  outline-offset: 1px;
 }
 </style>

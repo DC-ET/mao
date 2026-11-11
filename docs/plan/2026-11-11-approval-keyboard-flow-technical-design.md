@@ -49,18 +49,18 @@
 | 键流宿主 | **`ApprovalStack` 组件自身**注册 `document.addEventListener('keydown')`（onMounted 挂 / onUnmounted 卸），不放 ChatPanel / TaskView | 栈自己持有 `items` 与 `confirm`，Y/N 直接调内部 `confirm()`——与按钮点击调同一函数、同一 `handledIds` 防重，语义单点；放外层反而要把 confirm 回调往回传 |
 | 活跃 Tab 归属 | 守卫 `rootRef.value?.isConnected`：KeepAlive 停活的栈 DOM 已脱离文档，守卫为 false 即不响应 | 结构性解决（§1 关键事实），零 tab-id 传递；比「注册表 + activeTabId 比对」少一条状态同步链 |
 | 只响应栈顶 | `const top = props.items[props.items.length - 1]`，空栈 / `handledIds.has(top.requestId)` 早退 | 与 interactive 卡渲染判定（`index === items.length - 1`）同口径 |
-| 守卫链 | 顺序：`e.isComposing` → `e.repeat` → `isTypingTarget(e.target)` → `e.target.closest('.el-overlay')` → `isConnected` → 栈顶存在且未处理 | 输入法组合键、连按、输入焦点、浮层、后台 Tab 五类误触全覆盖；`.el-overlay` 是 element-plus dialog/drawer 统一根类，一查覆盖全部浮层 |
+| 守卫链 | `e.isComposing` → 修饰键排除（Ctrl/Cmd/Alt，Ctrl+Y 是本应用 redo 菜单加速器）→ `e.repeat` → `isTypingTarget(e.target)` → 全屏浮层（`.el-overlay, .el-image-viewer__wrapper, .mermaid-viewer`）→ `isConnected` → 栈顶存在且未处理；各守卫均为纯早退，语义等价，**实现以 §4.1 片段顺序为准** | 输入法组合键、连按、输入焦点、修饰键组合、浮层、后台 Tab 六类误触全覆盖；`.el-overlay` 覆盖 dialog/drawer 家族，`el-image-viewer__wrapper` / `mermaid-viewer` 覆盖两个不挂在 .el-overlay 下的自绘/独立全屏层（评审发现，§10-6） |
 | 键位识别 | `e.key.toLowerCase()` 取 `'y'` / `'n'`（大写、CapsLock 天然归一） | 不引入修饰键组合；`Y`/`N` 在非输入场景无浏览器默认绑定 |
 | isTypingTarget 来源 | **第三份刻意重复**（与 TopNav / TaskView 同款 3 行 + 同款注释），不抽公共 util | `center-tab-efficiency.test.ts:296` 已把「两处均含 TEXTAREA 与 isContentEditable」锁成口径基准；抽 util 要连带改锁测试与两处既有实现，收益为零风险为正 |
 | 焦点可见性 | 按钮 title 补「快捷键 Y / N」；`.action-btn:focus-visible` 加 outline（`--aw-primary`，拒绝钮用 `--aw-danger`） | 不自动 focus（拍板）；outline 走既有令牌零新增色值 |
-| 速查表数据源 | 新条目 `Y/N 审批（待审批卡片出现时）` 加到 `utils/shortcutRows.ts` 的 `SHORTCUT_ROWS`（提案 3 收编后的单一数据源），对话框与面板内组同步 +1 | 若提案 3 未落地，本提案先执行该收编迁移（迁移内容 = 提案 3 §4.1），落地顺序建议 3 → 4 |
+| 速查表数据源 | 新条目 `{ keys: 'Y / N', action: '审批待决卡片（执行 / 拒绝）' }` 追加到 `utils/shortcutRows.ts` 的 `SHORTCUT_ROWS` 末位（提案 3 已落地的单一数据源），对话框与面板内组自动同步 | 收编迁移已由提案 3 完成；**联动面**：`shortcutRows.test.ts` 的 toEqual 清单与 `command-palette.test.ts:301` 的 `keys: '` 计数断言 7 → 8 必须同任务更新（见 §4.2/§5） |
 | Y/N 与多端升级竞态 | 无新增面：键流调用与按钮点击**同一** `confirm()`，服务端投票 / 回声 / 重发链路逐字节复用 | 提案风险表的既有结论，靠「同一函数」结构性保证 |
 
 ## 4. 实现步骤
 
 ### 4.1 `ApprovalStack.vue`：键流与焦点
 
-1. 模板根 `.approval-stack` 加 `ref="rootRef"`；执行 / 拒绝按钮补 `title`（执行钮注意保留无 title 现状 → 改为 `title="快捷键 Y"`；拒绝钮 `title="快捷键 N"`；总是允许钮 title 保持既有 `item.approvalHint.label` 不动）。
+1. 模板根 `.approval-stack` 加 `ref="rootRef"`（script 补 `const rootRef = ref<HTMLElement | null>(null)`，vue import 追加 `onMounted, onUnmounted`）；执行 / 拒绝按钮补 `title`（执行钮注意保留无 title 现状 → 改为 `title="快捷键 Y"`；拒绝钮 `title="快捷键 N"`；总是允许钮 title 保持既有 `item.approvalHint.label` 不动）。
 2. script 追加（setup 内）：
 
    ```ts
@@ -92,9 +92,13 @@
    守卫顺序按 §3；`closest` 对非 HTMLElement target（如 document）走可选链兜空。
 3. 样式追加：`.action-btn.approve:focus-visible`、`.action-btn.reject:focus-visible`、`.action-btn.always-allow:focus-visible` 各加 `outline: 2px solid <对应令牌色>`（approve → `--aw-primary`，reject/always-allow → 各自既有色令牌），`outline-offset: 1px`。
 
-### 4.2 速查表 +1
+### 4.2 速查表 +1（含计数断言联动）
 
-- `utils/shortcutRows.ts` `SHORTCUT_ROWS` 追加 `{ keys: 'Y / N', action: '审批待决卡片（执行 / 拒绝）' }`（位置殿后）。`ShortcutHelpDialog` 与命令面板快捷键组自动同步（若提案 3 未落地，此处为先建该模块并让对话框消费的迁移步骤，见 §3 数据源行）。
+- `utils/shortcutRows.ts` `SHORTCUT_ROWS` 追加 `{ keys: 'Y / N', action: '审批待决卡片（执行 / 拒绝）' }`（位置殿后）。`ShortcutHelpDialog` 与命令面板快捷键组自动同步（提案 3 已完成收编，无迁移步骤）。
+- **计数断言联动（评审补充，缺了会红）**：
+  1. `desktop/src/utils/shortcutRows.test.ts` 迁移锁定用例的 `toEqual([...])` 清单追加第 8 条；
+  2. `desktop/src/components/palette/command-palette.test.ts:301` 的 `expect(shortcutRowsSrc.match(/keys: '/g)).toHaveLength(7)` → `8`，测试名「快捷键速查 7 条…」同步改措辞（如「快捷键速查落在单一数据源」），文件头注释「速查表 7 条」一并更新；
+  3. 命令面板动态组测试的 `SHORTCUT_ROWS.length` 断言是数据驱动的，自动适配，不动。
 
 ### 4.3 测试
 
@@ -112,9 +116,11 @@
 | 类型 | 文件 | 内容 |
 |---|---|---|
 | 修改 | desktop/src/components/chat/ApprovalStack.vue | document keydown + 守卫链 + isConnected 归属；按钮 title；focus-visible 样式 |
-| 修改 | desktop/src/utils/shortcutRows.ts | SHORTCUT_ROWS +1 条（提案 3 未落地时含收编迁移） |
+| 修改 | desktop/src/utils/shortcutRows.ts | SHORTCUT_ROWS +1 条（收编已由提案 3 完成，直接追加） |
+| 修改 | desktop/src/utils/shortcutRows.test.ts | toEqual 清单追加第 8 条（§4.2 联动） |
+| 修改 | desktop/src/components/palette/command-palette.test.ts | `keys: '` 计数断言 7 → 8 + 措辞（§4.2 联动） |
 | 新增 | desktop/src/components/chat/ApprovalStack.test.ts | 键流 / 守卫 / 归属 / title 用例 |
-| 修改 | desktop/src/components/center/center-tab-efficiency.test.ts | 口径锁从「两处」扩为「三处」（TopNav / TaskView / ApprovalStack 同款守卫） |
+| 修改 | desktop/src/components/center/center-tab-efficiency.test.ts | 口径锁从「两处」扩为「三处」（:296 数组迭代式，追加 `['ApprovalStack', …]` 一项即可） |
 | CHANGELOG | 根 CHANGELOG.md | 前端（桌面 / Web）小节，版本随发版批次 |
 | backend-ts / admin / agent-cli | — | **无改动**（审批协议与升级链路零变化） |
 | android | — | **无改动**：无硬件键盘不触发（守卫天然覆盖），按钮点击路径不变 |
@@ -130,7 +136,8 @@
 | Y/N 与浏览器 / IME 冲突 | `isTypingTarget`（input/textarea/contentEditable 全覆盖）+ `.el-overlay` 浮层守卫 + `isComposing`；Y/N 无浏览器默认绑定 |
 | 键盘流与多端升级竞态 | 同一 `confirm()` 函数、同一 `handledIds`，无新增竞态面 |
 | 焦点序改动影响既有 Tab 流 | 不做任何 tabindex 重排（拍板收窄），DOM 顺序与 Tab 序零变化 |
-| 锁测试漂移 | `center-tab-efficiency.test.ts` 口径锁同步扩三处，防止未来有人只改两处守卫 |
+| 焦点落在其他非输入面板（如 QuestionPanel 选项按钮）时按 Y | Y/N 语义是「非输入、非浮层即审批」——QuestionPanel 无 Y 键位语义，此处按 Y 恰是用户想要的审批动作，不单独设防（已知边缘，评审确认） |
+| 锁测试漂移 | `center-tab-efficiency.test.ts` 口径锁同步扩三处（数组迭代式追加一项），防止未来有人只改两处守卫 |
 
 ## 7. 测试要点
 
@@ -157,3 +164,12 @@
 - 审批语义改动（升级链路 / 规则 / 多端广播 / 超时）；跨任务审批收口；审批历史 UI。
 - 移动端长按手势；安卓布局改动。
 - 后端、admin、agent-cli、数据库迁移的任何改动。
+
+## 10. 评审修订记录（2026-11-12）
+
+1. **速查表 +1 的计数断言联动补齐（关键）**：提案 3 落地后 `SHORTCUT_ROWS` 已在 `utils/shortcutRows.ts`，但两处断言硬编码 7——`command-palette.test.ts:301` 的 `keys: '` 计数与 `shortcutRows.test.ts` 的 toEqual 清单，+1 条不同步更新即红。§3/§4.2/§5 已补联动清单；「提案 3 未落地则本提案先行迁移」的过时口径删除。
+2. **口径锁扩展方式精确化**：`center-tab-efficiency.test.ts:296` 是数组迭代式（`[['TaskView', …], ['TopNav', …]]`），扩三处 = 追加 `['ApprovalStack', …]` 一项，不是重写断言。§5。
+3. **§4.1 片段补 `rootRef` 声明与 vue import 变更**（原片段引用了未声明的 rootRef）。
+4. **QuestionPanel 焦点边缘确认**：焦点在问答回答按钮上按 Y 仍会审批——Y/N 语义「非输入非浮层即审批」下这是预期行为（问答无 Y 键位语义），§6 记录为已知边缘不设防。
+5. **挂载点复核**：`ToolSubagentProgressView` / `useChat.ts` 对 ApprovalStack 仅类型/注释引用，非渲染挂载——三处挂载点结论维持。
+6. **实现轮 review 采纳 5 项**：①修饰键排除（Ctrl+Y = 本应用菜单 redo 加速器，renderer preventDefault 拦不住，组合键也无审批意图）；②全屏浮层守卫从 `.el-overlay` 扩为三选择器——el-image-viewer（正文图片查看器）与 mermaid-viewer（自绘全屏层）不挂 .el-overlay，原守卫漏防且未记录；③守卫测试补 textarea 用例、KeyboardEventInit 直传（repeat/isComposing 本就是标准成员，原 defineProperty 理由不实）、正向对照；④动态组测试名残留「7 条」清理；⑤§3 守卫链顺序注记（文档与 §4.1 实现顺序差异，语义等价）。

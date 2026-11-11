@@ -8,7 +8,7 @@
 //   - filterCommands 大小写不敏感、keywords 命中、空关键词全量
 //   - TopNav 快捷键分支 / isTypingTarget 守卫 / aria-label
 //   - registry 设置路径与 router/index.ts 一致（防手写漂移）
-//   - 浮层 a11y 语义与速查表 7 条
+//   - 浮层 a11y 语义与快捷键速查表
 import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -294,11 +294,11 @@ describe('源码级回归（readFileSync，仿 chat-a11y.test.ts）', () => {
     expect(paletteSrc).toContain('aria-label="关闭命令面板"')
   })
 
-  it('快捷键速查 7 条落在单一数据源 shortcutRows.ts，对话框改为消费该常量（批次 29 提案 3 迁出）', () => {
-    for (const combo of ['Ctrl/Cmd+K', 'Ctrl/Cmd+`', 'Ctrl/Cmd+Shift+P', '/', 'Enter', 'Shift+Enter', 'Esc']) {
+  it('快捷键速查落在单一数据源 shortcutRows.ts，对话框改为消费该常量（批次 29 提案 3 迁出；提案 4 +1 条）', () => {
+    for (const combo of ['Ctrl/Cmd+K', 'Ctrl/Cmd+`', 'Ctrl/Cmd+Shift+P', '/', 'Enter', 'Shift+Enter', 'Esc', 'Y / N']) {
       expect(shortcutRowsSrc, `缺快捷键 ${combo}`).toContain(`keys: '${combo}'`)
     }
-    expect(shortcutRowsSrc.match(/keys: '/g)).toHaveLength(7)
+    expect(shortcutRowsSrc.match(/keys: '/g)).toHaveLength(8)
     expect(helpSrc).toContain("from '../../utils/shortcutRows'")
     expect(helpSrc).not.toContain("keys: '")
   })
@@ -359,7 +359,7 @@ describe('buildCommands 动态组（批次 29 提案 3）', () => {
     expect(host.openUsage).toHaveBeenCalledOnce()
   })
 
-  it('快捷键组：showShortcuts true 时 7 条与 SHORTCUT_ROWS 逐条一致；false 0 条', () => {
+  it('快捷键组：showShortcuts true 时条数与 SHORTCUT_ROWS 逐条一致；false 0 条', () => {
     const on = buildCommands(makeHost(), { agents: [], inSessionRoute: false, showShortcuts: true })
     const sc = on.filter(c => c.group === 'shortcuts')
     expect(sc.length).toBe(SHORTCUT_ROWS.length)

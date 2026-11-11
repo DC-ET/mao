@@ -17,5 +17,6 @@ export const SHORTCUT_ROWS: ReadonlyArray<ShortcutRow> = [
   { keys: '/', action: '输入框快捷指令' },
   { keys: 'Enter', action: '发送' },
   { keys: 'Shift+Enter', action: '换行' },
-  { keys: 'Esc', action: '关闭浮层' }
+  { keys: 'Esc', action: '关闭浮层' },
+  { keys: 'Y / N', action: '审批待决卡片（执行 / 拒绝）' }
 ]

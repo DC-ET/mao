@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { SHORTCUT_ROWS } from './shortcutRows'
 
 describe('SHORTCUT_ROWS 迁移锁定', () => {
-  it('7 条键位与动作与迁移前逐条一致', () => {
+  it('键位与动作与迁移基线逐条一致（第 8 条为批次 29 提案 4 审批键盘流新增）', () => {
     expect(SHORTCUT_ROWS).toEqual([
       { keys: 'Ctrl/Cmd+K', action: '搜索会话' },
       { keys: 'Ctrl/Cmd+`', action: '打开/关闭终端' },
@@ -12,7 +12,8 @@ describe('SHORTCUT_ROWS 迁移锁定', () => {
       { keys: '/', action: '输入框快捷指令' },
       { keys: 'Enter', action: '发送' },
       { keys: 'Shift+Enter', action: '换行' },
-      { keys: 'Esc', action: '关闭浮层' }
+      { keys: 'Esc', action: '关闭浮层' },
+      { keys: 'Y / N', action: '审批待决卡片（执行 / 拒绝）' }
     ])
   })
 })
