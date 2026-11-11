@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { chmodSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
@@ -428,7 +429,10 @@ describe('workspace write service', () => {
     `;
     const scriptPath = join(workspace, 'run.mts');
     writeFileSync(scriptPath, script);
-    const child = spawn(join(process.cwd(), 'node_modules/.bin/tsx'), [scriptPath, workspace], {
+    // 不直接 spawn node_modules/.bin/tsx：那是无扩展名 sh 脚本，Windows 无法直接执行（ENOENT）。
+    // 用 node + tsx CLI 入口（exports: ./cli）跨平台等价。
+    const tsxCli = createRequire(import.meta.url).resolve('tsx/cli');
+    const child = spawn(process.execPath, [tsxCli, scriptPath, workspace], {
       cwd: process.cwd(),
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
