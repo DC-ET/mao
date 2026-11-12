@@ -13,6 +13,7 @@ import type {
   MemoryListQuery,
   MemoryPageVO,
   MemoryScope,
+  MemorySource,
   MemoryStatus,
   SessionProjectKeyRow,
 } from './types.js';
@@ -75,16 +76,33 @@ export class MemoryService {
   ) {}
 
   async list(userId: number, query: MemoryListQuery): Promise<MemoryPageVO> {
+    return this.pageInternal({ ...query, userId });
+  }
+
+  /**
+   * 管理后台：单用户 / 跨用户列表（userId 为空=跨用户，技术方案 D5 的强制过滤
+   * 由 admin.routes 裁决；admin.routes 侧已做 memory:read 权限校验）。
+   */
+  async listForAdmin(query: MemoryListQuery): Promise<MemoryPageVO> {
+    return this.pageInternal(query);
+  }
+
+  private async pageInternal(query: MemoryListQuery): Promise<MemoryPageVO> {
     const filter = {
-      userId,
+      userId: query.userId ?? null,
       scope: query.scope ?? null,
       projectKey: query.projectKey ?? null,
       status: query.status ?? null,
       keyword: query.keyword ?? null,
+      source: query.source ?? null,
+      updatedFrom: query.updatedFrom ?? null,
+      updatedTo: query.updatedTo ?? null,
+      page: query.page,
+      pageSize: query.pageSize,
     };
     const [rows, total] = await Promise.all([
-      this.memoryRepo.page({ ...filter, page: query.page, pageSize: query.pageSize }),
-      this.memoryRepo.count({ ...filter, page: query.page, pageSize: query.pageSize }),
+      this.memoryRepo.page(filter),
+      this.memoryRepo.count(filter),
     ]);
     return {
       records: rows.map(toMemoryVO),
@@ -94,12 +112,48 @@ export class MemoryService {
     };
   }
 
-  /** 管理后台只读审计：跨用户按 userId 查询（admin.routes 侧已做 memory:read 权限校验）。 */
-  async listForAdmin(userId: number, query: MemoryListQuery): Promise<MemoryPageVO> {
-    return this.list(userId, query);
+  async create(userId: number, input: { scope: string; content: string; projectKey?: string | null }): Promise<MemoryItemVO> {
+    return this.createInternal(userId, input, 'MANUAL');
   }
 
-  async create(userId: number, input: { scope: string; content: string; projectKey?: string | null }): Promise<MemoryItemVO> {
+  /**
+   * 编辑/切换状态（技术方案 D12）：编辑 content 只改内容并重算 dedup_hash，不改 status；
+   * DISMISSED → ACTIVE 恢复须显式传 status。
+   */
+  async update(userId: number, id: number, input: { content?: string | null; status?: string | null }): Promise<MemoryItemVO> {
+    const row = await this.requireOwnedRow(userId, id);
+    return this.applyUpdate(row, input);
+  }
+
+  async remove(userId: number, id: number): Promise<void> {
+    const row = await this.requireOwnedRow(userId, id);
+    await this.memoryRepo.deleteById(row.id!);
+  }
+
+  // ── 管理后台方法族（技术方案 §4.2）：复用与用户域完全相同的校验，仅归属校验分歧（D3/D4） ──
+
+  /** 管理后台：跨用户编辑内容 / 切换状态。id 不存在即 MEMORY_ITEM_NOT_FOUND；不做归属校验（D3：目标用户由记忆 id 反查）。 */
+  async updateForAdmin(id: number, input: { content?: string | null; status?: string | null }): Promise<MemoryItemVO> {
+    const row = await this.requireRow(id);
+    return this.applyUpdate(row, input);
+  }
+
+  /** 管理后台：跨用户物理删除。 */
+  async removeForAdmin(id: number): Promise<void> {
+    const row = await this.requireRow(id);
+    await this.memoryRepo.deleteById(row.id!);
+  }
+
+  /** 管理后台：代建。source 固定 MANUAL，与用户手写同口径（D2），不享受任何校验豁免。 */
+  async createForAdmin(userId: number, input: { scope: string; content: string; projectKey?: string | null }): Promise<MemoryItemVO> {
+    return this.createInternal(userId, input, 'MANUAL');
+  }
+
+  private async createInternal(
+    userId: number,
+    input: { scope: string; content: string; projectKey?: string | null },
+    source: MemorySource,
+  ): Promise<MemoryItemVO> {
     const scope = this.parseScope(input.scope);
     const projectKey = scope === 'PROJECT' ? this.parseProjectKey(input.projectKey) : '';
     const content = normalizeMemoryContent(input.content);
@@ -117,7 +171,7 @@ export class MemoryService {
         scope,
         projectKey,
         content,
-        source: 'MANUAL',
+        source,
         status: 'ACTIVE',
         dedupHash,
         originSessionId: null,
@@ -131,19 +185,15 @@ export class MemoryService {
     return toMemoryVO(row!);
   }
 
-  /**
-   * 编辑/切换状态（技术方案 D12）：编辑 content 只改内容并重算 dedup_hash，不改 status；
-   * DISMISSED → ACTIVE 恢复须显式传 status。
-   */
-  async update(userId: number, id: number, input: { content?: string | null; status?: string | null }): Promise<MemoryItemVO> {
-    const row = await this.requireOwnedRow(userId, id);
+  /** create/update 共用的更新躯体：内容规范化/校验、dedup 重算与冲突、status 解析、DISMISSED→ACTIVE 限额、事务两步写。 */
+  private async applyUpdate(row: MemoryItemRow, input: { content?: string | null; status?: string | null }): Promise<MemoryItemVO> {
     let content = row.content ?? '';
     let dedupHash = row.dedupHash ?? '';
     if (input.content != null) {
       content = normalizeMemoryContent(input.content);
       this.assertContent(content);
       dedupHash = computeDedupHash(scopeOf(row), row.projectKey, content);
-      const existing = await this.memoryRepo.findByHash(userId, dedupHash);
+      const existing = await this.memoryRepo.findByHash(row.userId!, dedupHash);
       if (existing && existing.id !== row.id) {
         throw new BusinessException(ErrorCode.MEMORY_CONTENT_DUPLICATE);
       }
@@ -155,7 +205,7 @@ export class MemoryService {
     }
     // DISMISSED → ACTIVE 恢复同样受 200 条 ACTIVE 总量上限约束（D7），否则极端操作序列可突破限额
     if (statusChanged === 'ACTIVE' && row.status === 'DISMISSED') {
-      await this.assertActiveLimit(userId);
+      await this.assertActiveLimit(row.userId!);
     }
     if (input.content != null || statusChanged != null) {
       // 内容与状态两步写在同一事务，避免部分成功（如状态已切、内容写入失败）
@@ -176,11 +226,6 @@ export class MemoryService {
     }
     const updated = await this.memoryRepo.findById(row.id!);
     return toMemoryVO(updated!);
-  }
-
-  async remove(userId: number, id: number): Promise<void> {
-    const row = await this.requireOwnedRow(userId, id);
-    await this.memoryRepo.deleteById(row.id!);
   }
 
   /** 自动收集开关：默认关闭（无偏好行视为关闭），关闭时只停自动抽取，注入与手工管理不受影响。 */
@@ -243,13 +288,21 @@ export class MemoryService {
     return hints;
   }
 
-  private async requireOwnedRow(userId: number, id: number): Promise<MemoryItemRow> {
+  private async requireRow(id: number): Promise<MemoryItemRow> {
     if (!Number.isSafeInteger(id) || id <= 0) {
       throw new BusinessException(ErrorCode.MEMORY_ITEM_NOT_FOUND);
     }
     const row = await this.memoryRepo.findById(id);
+    if (row == null) {
+      throw new BusinessException(ErrorCode.MEMORY_ITEM_NOT_FOUND);
+    }
+    return row;
+  }
+
+  private async requireOwnedRow(userId: number, id: number): Promise<MemoryItemRow> {
+    const row = await this.requireRow(id);
     // 归属校验 user_id = 当前登录用户，越权与不存在一律按不存在处理
-    if (row == null || row.userId !== userId) {
+    if (row.userId !== userId) {
       throw new BusinessException(ErrorCode.MEMORY_ITEM_NOT_FOUND);
     }
     return row;

@@ -20,7 +20,7 @@ export class MemoryRepository {
     return this.db.transaction(fn);
   }
 
-  async page(query: MemoryListQuery & { userId: number }): Promise<MemoryItemRow[]> {
+  async page(query: MemoryListQuery): Promise<MemoryItemRow[]> {
     const { where, params } = this.buildFilter(query);
     const offset = (query.page - 1) * query.pageSize;
     return this.db.query<MemoryItemRow>(
@@ -29,7 +29,7 @@ export class MemoryRepository {
     );
   }
 
-  async count(query: MemoryListQuery & { userId: number }): Promise<number> {
+  async count(query: MemoryListQuery): Promise<number> {
     const { where, params } = this.buildFilter(query);
     const row = await this.db.queryOne<{ total: number }>(
       `SELECT COUNT(*) AS total FROM \`memory_item\` WHERE ${where}`,
@@ -180,12 +180,24 @@ export class MemoryRepository {
     );
   }
 
-  private buildFilter(query: MemoryListQuery & { userId: number }): { where: string; params: unknown[] } {
-    const conditions = ['user_id = ?'];
-    const params: unknown[] = [query.userId];
+  /**
+   * 列表过滤条件。user_id 条件仅当 userId 为正整数时追加（跨用户列表是 admin 专属能力，
+   * D5 的「跨用户必须至少一个过滤条件」由路由层裁决，仓库层不重复把关）。
+   */
+  private buildFilter(query: MemoryListQuery): { where: string; params: unknown[] } {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (Number.isSafeInteger(query.userId) && (query.userId as number) > 0) {
+      conditions.push('user_id = ?');
+      params.push(query.userId);
+    }
     if (query.scope) {
       conditions.push('scope = ?');
       params.push(query.scope);
+    }
+    if (query.source) {
+      conditions.push('source = ?');
+      params.push(query.source);
     }
     if (query.projectKey) {
       conditions.push('project_key = ?');
@@ -195,13 +207,22 @@ export class MemoryRepository {
       conditions.push('status = ?');
       params.push(query.status);
     }
+    if (query.updatedFrom) {
+      conditions.push('updated_at >= ?');
+      params.push(query.updatedFrom);
+    }
+    if (query.updatedTo) {
+      conditions.push('updated_at <= ?');
+      params.push(query.updatedTo);
+    }
     const keyword = typeof query.keyword === 'string' && query.keyword.trim() !== '' ? query.keyword.trim() : null;
     if (keyword != null) {
-      // 关键词对 content / project_key 做包含匹配；通配符转义按字面匹配，强制走 user_id 索引（单用户 ACTIVE 上限 200）
+      // 关键词对 content / project_key 做包含匹配；通配符转义按字面匹配（跨用户无索引兜底时靠 D5 过滤裁剪扫描面）
       conditions.push("(content LIKE CONCAT('%', ?, '%') ESCAPE '\\\\' OR project_key LIKE CONCAT('%', ?, '%') ESCAPE '\\\\')");
       const escaped = escapeLike(keyword);
       params.push(escaped, escaped);
     }
-    return { where: conditions.join(' AND '), params };
+    // 兜底：调用方未给任何条件时按恒真拼接（admin 路由已保证跨用户必有过滤），避免拼出 WHERE 后缀为空
+    return { where: conditions.length > 0 ? conditions.join(' AND ') : '1 = 1', params };
   }
 }

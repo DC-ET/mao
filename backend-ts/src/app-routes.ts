@@ -674,6 +674,13 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
           username: u.username,
           displayName: u.displayName,
         })),
+        // 记忆页用户选择器（技术方案 D6）：listUsers 默认按 created_at DESC（注册时间倒序），keyword 模糊命中 username/displayName/email
+        search: async (keyword: string, pageSize: number) =>
+          (await userService.listUsers(1, pageSize, keyword || undefined)).records.map((u) => ({
+            id: u.id!,
+            username: u.username,
+            displayName: u.displayName,
+          })),
       },
     };
     registerAdminAnalyticsRoutes(api, adminDeps);
