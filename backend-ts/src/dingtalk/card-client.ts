@@ -28,7 +28,9 @@ export async function createAndDeliverCard(
     outTrackId,
     callbackType: 'STREAM',
     userIdType: 1,
-    cardData: { cardParamMap: target.cardParamMap },
+    // 宽屏自适应不靠组件宽度。模板声明对象变量 config.autoLayout，
+    // 投放时用 sys_full_json_obj 传入布尔 true（cardParamMap 的普通字段只能是字符串）。
+    cardData: { cardParamMap: withAutoLayout(target.cardParamMap) },
     openSpaceId,
   };
   // 场域模型（*OpenSpaceModel）与投放模型（*OpenDeliverModel）必须成对传：
@@ -52,6 +54,30 @@ export async function createAndDeliverCard(
   const deliverError = deliverFailureOf(raw);
   if (deliverError != null) throw new Error(`钉钉卡片投放失败: ${deliverError}`);
   return outTrackId;
+}
+
+/**
+ * PC 宽屏自适应：把 `{ config: { autoLayout: true } }` 并进 `sys_full_json_obj`。
+ * 已有该字段时只补 `autoLayout`，其它键保留。增量更新不重复传，创建时写入后保留。
+ */
+function withAutoLayout(cardParamMap: Record<string, string>): Record<string, string> {
+  let base: Record<string, unknown> = {};
+  const raw = cardParamMap.sys_full_json_obj;
+  if (raw != null && raw !== '') {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed != null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        base = { ...(parsed as Record<string, unknown>) };
+      }
+    } catch {
+      base = {};
+    }
+  }
+  const prev = base.config;
+  const config = prev != null && typeof prev === 'object' && !Array.isArray(prev)
+    ? { ...(prev as Record<string, unknown>), autoLayout: true }
+    : { autoLayout: true };
+  return { ...cardParamMap, sys_full_json_obj: JSON.stringify({ ...base, config }) };
 }
 
 /** 从成功响应体里提取场域级投放失败原因；投放全部成功或响应异常时返回 null。 */

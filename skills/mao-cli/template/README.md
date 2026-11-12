@@ -1,7 +1,7 @@
 # 钉钉互动卡片模板（排队 / 进度 / 终态一卡到底）
 
 `dingtalk-card.json` 是 Mao 钉钉机器人互动卡片在钉钉开放平台卡片编辑器的导入文件（V192 起排队与进度合并为单一模板，一卡到底）。
-排版与飞书进度卡同构：状态行 + 完整回复正文 + 本轮工具列表；排队态显示「立即发送 / 取消排队」，执行中显示「取消任务」，终态隐藏取消 / 重试等操作按钮、保留「会话详情」（completed 态另有「👎 不满意」点踩）。
+排版与飞书进度卡同构：状态行 + 完整回复正文 + 本轮工具列表；排队态显示「立即发送 / 取消排队」，执行中显示「取消任务」，终态隐藏取消 / 重试等操作按钮、保留「会话详情」（completed 态另有「👎 不满意」点踩）。同时出现的按钮排在同一行（横排 ButtonList，与官方审批模板的「拒绝 / 同意」相同）。
 
 ## 怎么用
 
@@ -62,6 +62,7 @@ visibility="@triple{'' , 'visible', 'gone'}"   <!-- 条件位是空串，恒假�
 | `queueId` | string | 队列行 ID（排队态回调定位） |
 | `sessionId` | string | 会话 ID |
 | `tag` | string | 卡片标签（当前后端未传，模板保留占位） |
+| `config` | object | 卡片配置。子字段 `autoLayout`（boolean）为 `true` 时 PC 端按内容自适应宽度。投放走 `sys_full_json_obj`，不作为普通字符串字段传入 |
 
 状态 `status` 取值并集：排队 `queued` / 已插队 `started` / 已取消 `cancelled` / 执行中 `running` / 完成 `completed` / 失败 `failed`。
 
@@ -80,7 +81,8 @@ visibility="@triple{'' , 'visible', 'gone'}"   <!-- 条件位是空串，恒假�
 - **按钮 `status` 不能是 `disabled`**：置灰且不响应点击，取消/重试都点不动（重试按钮曾遗留该值）
 - **按钮点击事件类型必须是「回传请求」**：若是「打开链接」，点击只会跳转、不会触发后端回调（重试按钮就曾因此完全失效）
 - **「请求成功判定条件」不能留空**：留空时平台会告警，且成功/失败 Toast 文案都不生效。判定条件要与后端回调契约一致——取消成功时后端回传 `cardParamMap` 把 `status` 置为 `cancelled`，失败路径只回 `tips`、不更新 `status`（仍为 `running`），故 cancel 绑 `status == 'cancelled'`；retry 同理绑 `status == 'running'`
-- **ButtonBlock 要带区块级 `visible`**（恒显示那个）：缺了它整个按钮区块都不渲染，取消/重试两个按钮会一起消失；单个按钮的显隐靠各自按钮里的可见性条件
+- **按钮用横排 ButtonList（`direction: horizontal`），并带区块级 `visible`**（恒显示那个）：这是官方审批模板里「拒绝 / 同意」那一排的组件，窄屏也保持同一行（卡片宽度 ≤ 360 时两颗按钮均分，更宽时按文字宽度横排）。不要改回 ButtonBlock——它在非 PC、或卡片宽度 < 440 时会强制改成竖排，手机上「不满意」和「会话详情」就会叠成两行。区块级 `visible` 缺了的话整个按钮区块都不渲染，取消/重试会一起消失；单个按钮的显隐仍靠各自按钮里的可见性条件。按钮图标留空，点踩的 👎 来自 `dislikeText` 文案，不要套审批模板的拒绝/同意图标
+- **PC 宽屏自适应靠 `config.autoLayout`，投放时传入布尔 `true`**：在变量表声明对象变量 `config`，下面加 boolean 子字段 `autoLayout`。开放接口的 `cardParamMap` 普通值只能是字符串，布尔值要放进 `sys_full_json_obj`：`{"config":{"autoLayout":true}}`。放在 `cardData` 下与 `cardParamMap` 平级、或只把组件宽度改成 `match_parent`，PC 端都不会变宽。创建时写入即可，之后的增量更新会保留。模板重新导入并发布后，新投放的卡片才生效
 - **`preview` 变量已删除**：V192 起排队态正文也走 `body`（`queueCardParams` 拼状态行 + 消息摘要），不要在变量表里再加回 `preview`
 - 一卡到底链路：排队卡实例在消息被消费时**就地升级**为进度卡（`updateCard` 增量刷新，不新建卡片），升级后同一张卡走完整生命周期（技术方案 2026-11-11-dingtalk-card-single-card §4）
 - **点踩汇入与桌面/飞书同一张统计表**（source=`dingtalk`，固定 NO_REASON）；重复点击 toggle 取消

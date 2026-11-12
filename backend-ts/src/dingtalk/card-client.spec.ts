@@ -26,6 +26,31 @@ describe('createAndDeliverCard', () => {
     expect(sent.imRobotOpenSpaceModel).toEqual({ supportForward: false });
     expect(sent.imRobotOpenDeliverModel).toEqual({ spaceType: 'IM_ROBOT' });
     expect(sent.openSpaceId).toBe('dtv1.card//IM_ROBOT.02610521142223');
+    const params = (sent.cardData as { cardParamMap: Record<string, string> }).cardParamMap;
+    expect(JSON.parse(params.sys_full_json_obj ?? '')).toEqual({ config: { autoLayout: true } });
+    expect(params.title).toBe('正在处理');
+  });
+
+  it('已有 sys_full_json_obj 时只补 config.autoLayout，不丢掉其它字段', async () => {
+    let sent: Record<string, unknown> = {};
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      sent = JSON.parse(String(init.body)) as Record<string, unknown>;
+      return { ok: true, status: 200, text: async () => JSON.stringify({ result: { deliverResults: [{ success: true }] } }) };
+    }) as unknown as typeof fetch;
+
+    await createAndDeliverCard(fetchImpl, 'token', {
+      ...BASE,
+      cardParamMap: {
+        title: '正在处理',
+        sys_full_json_obj: JSON.stringify({ config: { enableForward: false }, extra: 1 }),
+      },
+    });
+
+    const params = (sent.cardData as { cardParamMap: Record<string, string> }).cardParamMap;
+    expect(JSON.parse(params.sys_full_json_obj ?? '')).toEqual({
+      config: { enableForward: false, autoLayout: true },
+      extra: 1,
+    });
   });
 
   it('群聊投放带上机器人编码，否则钉钉报 chatbot not exist', async () => {

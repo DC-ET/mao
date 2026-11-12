@@ -12,7 +12,8 @@
  *   4. 按钮 actionType 必须是 request，否则点击不触发卡片回调
  *   5. 按钮可见性与「请求成功判定条件」不能为空，且判定值必须与后端回传的 status 对应
  *   6. 组件树里不得再出现 ${title} 文本节点（与 body 状态行重复，顶部标题已删）
- *   7. ButtonBlock 必须带区块级 visible（缺失时整个按钮区块不渲染）
+ *   7. 按钮区块（ButtonList / ButtonBlock）必须带区块级 visible（缺失时整个按钮区块不渲染）
+ *   7b. 按钮必须是横排 ButtonList（direction=horizontal）。ButtonBlock 在非 PC 或宽度 < 440 时强制竖排
  *   8. 按钮的 status 不得为 disabled（disabled 按钮不可点击，取消/重试都点不动）
  *   9. 按钮 actionId 必须是字面量 cancel / retry（dynamicString 空 content 时点击无 actionId 上报）
  */
@@ -95,14 +96,32 @@ for (const name of REQUIRED_VARS) {
 if (vars.includes('preview')) fail('variableList 仍声明 preview：V192 起排队/进度正文已与 body 合一，preview 变量必须删除');
 if (failures === 0) ok(`variableList 声明完整：${vars.join(', ')}`);
 
+// PC 宽屏自适应：模板声明对象变量 config，子字段 autoLayout 为 boolean。
+// 投放时由 card-client 用 sys_full_json_obj 传入 true。只改组件宽度不会触发。
+const configVar = (editor.variableList ?? []).find((v) => v.name === 'config');
+if (configVar == null) {
+  fail('variableList 缺少对象变量 config（PC 宽屏自适应）');
+} else if (configVar.type !== 'object') {
+  fail(`变量 config 的类型是 ${configVar.type}，必须为 object，且包含 boolean 子字段 autoLayout`);
+} else {
+  const autoLayout = (configVar.schema ?? []).find((field) => field.name === 'autoLayout');
+  if (autoLayout?.type !== 'boolean') {
+    fail('变量 config 必须包含 boolean 子字段 autoLayout（投放时传入 true 才会在 PC 端自适应宽度）');
+  } else {
+    ok('config.autoLayout 已声明');
+  }
+}
+
 // 2. Markdown 组件绑定 body
 let markdownBound = false;
 // 3~7. 按钮契约 / 顶部标题冗余 / 按钮区块可见性
 const seenActions = [];
 /** 残留的 ${title} 文本节点位置，用于报出具体 id。 */
 const titleNodes = [];
-/** 缺区块级 visible 的 ButtonBlock。 */
+/** 缺区块级 visible 的按钮区块（ButtonList / ButtonBlock）。 */
 let buttonBlockMissingVisible = 0;
+/** 是否存在横排 ButtonList。ButtonBlock 在手机端会把同时出现的按钮排成多行。 */
+let sawHorizontalButtonList = false;
 
 function textOf(value) {
   if (value == null) return '';
@@ -128,14 +147,19 @@ function walk(node) {
     if (content?.variable === 'body') markdownBound = true;
   }
 
-  if (node.componentName === 'ButtonBlock') {
+  if (node.componentName === 'ButtonBlock' || node.componentName === 'ButtonList') {
     // 只检查组件树里的真实按钮区块；schema.componentsMap 里的组件定义条目没有 buttons。
-    const buttons = node.props?.buttons;
+    // ButtonList 的 buttons 是 { type: 'button', list: [...] }，ButtonBlock 是数组。
+    const rawButtons = node.props?.buttons;
+    const buttons = Array.isArray(rawButtons) ? rawButtons : rawButtons?.list;
     if (!Array.isArray(buttons) || buttons.length === 0) {
       for (const value of Object.values(node)) walk(value);
       return;
     }
     if (node.props?.visible == null) buttonBlockMissingVisible += 1;
+    if (node.componentName === 'ButtonList' && node.props?.direction === 'horizontal') {
+      sawHorizontalButtonList = true;
+    }
     for (const button of buttons) {
       const id = button.id;
       seenActions.push(id);
@@ -227,9 +251,15 @@ if (titleNodes.length > 0) {
 }
 
 if (buttonBlockMissingVisible > 0) {
-  fail(`有 ${buttonBlockMissingVisible} 个 ButtonBlock 缺少区块级 visible：整个按钮区块不会渲染（取消/重试都不显示）`);
+  fail(`有 ${buttonBlockMissingVisible} 个按钮区块缺少区块级 visible：整个按钮区块不会渲染（取消/重试都不显示）`);
 } else {
-  ok('ButtonBlock 区块级 visible 已配置');
+  ok('按钮区块 visible 已配置');
+}
+
+if (!sawHorizontalButtonList) {
+  fail('按钮区块应为横排 ButtonList（direction=horizontal）。ButtonBlock 在非 PC 或宽度 < 440 时会把按钮排成多行');
+} else {
+  ok('按钮为横排 ButtonList');
 }
 
 for (const id of Object.keys(ACTION_STATUS)) {
