@@ -51,6 +51,7 @@ reference/
   mao-agent.md        终端对话 CLI
   troubleshooting.md  常见问题
   mcp.md              MCP REST CLI
+  env.md              三级 Shell 环境变量
   signal-watcher.md   信号哨兵
   http-tool.md         自定义 HTTP 工具
   …                   各 REST 模块 CLI 说明

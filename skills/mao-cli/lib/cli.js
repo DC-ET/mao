@@ -15,6 +15,7 @@ const file = require('./commands/file');
 const oss = require('./commands/oss');
 const pref = require('./commands/pref');
 const git = require('./commands/git');
+const env = require('./commands/env');
 const tool = require('./commands/tool');
 const todo = require('./commands/todo');
 const scheduledTask = require('./commands/scheduled-task');
@@ -64,6 +65,7 @@ const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
   signal-watcher  信号哨兵：探测外部接口、变化触发 Agent（本人 CRUD / 启停 / 轮询记录 / 试运行；admin-list 为只读清单，需 signal:read）
   weixin          微信 Bot 绑定与二维码状态
   git             Git 凭证
+  env             三级 Shell 环境变量：用户 / 工作区（本人），系统全局与他人只读（管理员）
   tool            内置工具查询
   mcp             MCP 偏好与用户级 / 全局服务器
 
@@ -138,6 +140,7 @@ const MODULES = {
   open,
   weixin,
   git,
+  env,
   tool,
   user,
   role,

@@ -2,6 +2,8 @@
 
 部署与开发共用的配置说明。本地安装步骤见 [install.md](install.md)；生产 `.env` 示例见 [deploy.md](deploy.md)。
 
+云端 Agent Shell / 云端终端注入的三级变量（系统全局 / 用户 / 工作区）不是本页的进程环境变量，用 `mao env` 管理，见 [env.md](env.md)。
+
 ## 站点域名
 
 文档与命令示例统一用 `https://mao.example.com` 表示**你部署后的对外站点**（把主机名换成自己的域名）。路径约定见 [deploy.md](deploy.md)：桌面 `/`、管理后台 `/admin/`、API `/api/`、上传 `/uploads/`。

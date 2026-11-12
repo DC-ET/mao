@@ -17,6 +17,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 | 双域名合并为单域名 / 改 Nginx | 仓库 [docs/guides/single-domain-nginx-migration.md](../../docs/guides/single-domain-nginx-migration.md) |
 | 工作区规则（AGENTS.md）会话级冻结：改了不生效 / 前缀缓存塌陷 / 强制刷新 | 仓库 [docs/guides/workspace-rules-snapshot.md](../../docs/guides/workspace-rules-snapshot.md) |
 | 环境变量、数据目录、默认账号、认证方式 | [reference/config.md](reference/config.md) |
+| 三级 Shell 环境变量（系统 / 用户 / 工作区） | [reference/env.md](reference/env.md) |
 | 管理后台怎么用 / Agent 头像与分组编辑 / 提示词版本与回滚 | [reference/admin.md](reference/admin.md) |
 | 桌面 Web 端（任务、工作区、终端、通知、渠道绑定、我的用量抽屉等） | [reference/desktop.md](reference/desktop.md) |
 | 长期记忆（跨会话记忆的查看与维护） | [reference/memory.md](reference/memory.md) |
@@ -47,6 +48,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 - 管理信号哨兵：定时探测外部接口、变化触发 Agent 的 CRUD / 启停 / 轮询记录 / 试运行，以及管理端只读清单 `admin-list`（需 `signal:read`，见 [reference/signal-watcher.md](reference/signal-watcher.md)）
 - 管理自定义 HTTP 工具：清单 / 新建 / 编辑 / 启停 / 删除 / 试运行与调用统计（需 `http_tool:read` / `http_tool:write`，见 [reference/http-tool.md](reference/http-tool.md)）
 - 管理用量预算：全局 / 用户 / Agent 月度预算，金额或 token 口径，超额提醒或拦截（见 [reference/budget.md](reference/budget.md)）
+- 管理三级 Shell 环境变量：用户 `env user`、工作区 `env workspace`、系统全局 `env system`（见 [reference/env.md](reference/env.md)）
 - 脚本或 Agent 流程中以 JSON 消费上述 API
 
 ## REST CLI 何时不要使用
@@ -111,6 +113,7 @@ mao auth login --username <用户名> --password <密码>
 6. `mao-admin session` / `skill` 自动映射到 `admin-session` / `skill-docs`
 7. 跨模块流程 → [business_process.md](business_process.md)
 8. 问"这个月谁花了多少钱 / 要不要给某用户或 Agent 装费用闸门" → 先 `model get` 看价格有没有配，再 `analytics` 看成本、`budget` 设上限（见 [budget.md](reference/budget.md)、[analytics.md](reference/analytics.md)）
+9. 配云端 Shell 环境变量 → `env`（用户 `env user`、工作区 `env workspace`、系统全局 `env system`；见 [env.md](reference/env.md)）
 
 ## REST 模块文档索引
 
@@ -135,6 +138,7 @@ mao auth login --username <用户名> --password <密码>
 | 跨会话长期记忆 | [reference/memory.md](reference/memory.md) |
 | 任务收件箱（站内通知） | [reference/inbox.md](reference/inbox.md) |
 | Git 凭证 | [reference/git.md](reference/git.md) |
+| 三级 Shell 环境变量（系统 / 用户 / 工作区） | [reference/env.md](reference/env.md) |
 | 内置工具查询 | [reference/tool.md](reference/tool.md) |
 | 微信 Bot | [reference/weixin.md](reference/weixin.md) |
 | 运行监控 | [reference/runtime.md](reference/runtime.md) |
