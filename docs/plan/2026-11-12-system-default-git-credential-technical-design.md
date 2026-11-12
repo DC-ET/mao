@@ -1,8 +1,8 @@
 # 系统默认 Git 凭据（管理员默认 Token 兜底）技术方案
 
-> **文档版本**：v1.0
+> **文档版本**：v1.1
 > **日期**：2026-11-12
-> **状态**：待评审
+> **状态**：已评审（同日评审结论：需求与方案均可行；v1.1 修正迁移号冲突（V193 已被同日 admin-memory-manage 占用，本期改用 V194）与 CHANGELOG 条目口径，其余为评审补充，标注「评审补充」）
 > **关联文档**：
 > - `docs/plan/2026-11-06-agent-git-credential-scope-technical-design.md`（Agent 级 Git 凭据域收敛：白名单 + 全局策略）
 > - `docs/plan/design/user-git-credential-design.md`（用户级 Git Token 原始设计）
@@ -78,7 +78,7 @@
 - Agent 表单「允许域」候选：`admin/src/views/agent/AgentFormDialog.vue` 通过 `GET /user/git-credentials` 取**当前管理员自己**的凭证域名（2026-11-06 D4「不做全站枚举接口，避免横向枚举面」），加载失败可手工输入域名。
 - 系统设置 secret 行机制（`system_setting.is_secret` + AES-GCM + `SECRET_MASK`）存在，但一条 key 只能承载一个值，多域名需管理员手写 JSON、且无按行增删改的 UI——不适合作为多域凭据的托管形态。
 - 错误码：`GIT_CREDENTIAL_NOT_FOUND`(3021)、`GIT_CREDENTIAL_DOMAIN_DUPLICATE`(3022)、`PARAM_INVALID` 可复用。
-- 最新迁移版本：`V192`；本期新迁移为 `V193`。
+- 最新迁移版本：`V193`（`V193__memory_admin_manage.sql`，2026-11-12 管理后台记忆管理任务已占用）；**本期新迁移为 `V194`**（v1.0 误写 V193，Flyway 重复版本号会导致启动失败）。
 
 ## 4. 设计决策（对话结论）
 
@@ -111,9 +111,9 @@
 
 合并顺序：**默认在前、用户在后**（`{...defaults, ...user}`），同域用户 Token 覆盖默认；合并发生在白名单过滤之后，默认凭据只按白名单域查询（不做全量解密）。
 
-### 5.2 数据模型：`system_git_credential`（V193）
+### 5.2 数据模型：`system_git_credential`（V194）
 
-新增迁移 `backend-ts/db/migration/V193__system_git_credential.sql`：
+新增迁移 `backend-ts/db/migration/V194__system_git_credential.sql`：
 
 ```sql
 CREATE TABLE IF NOT EXISTS `system_git_credential` (
@@ -140,13 +140,13 @@ CREATE TABLE IF NOT EXISTS `system_git_credential` (
 |---|---|
 | `list(): Promise<SystemGitCredential[]>` | 全量列表（供管理面板，token 由路由层脱敏） |
 | `create(domain, accessToken, description?)` | 域名规范化 + 格式校验；重复域抛 `GIT_CREDENTIAL_DOMAIN_DUPLICATE`；空 Token 抛 `PARAM_INVALID` |
-| `update(id, accessToken?, description?)` | Token 留空（`null/undefined/空串`）不修改；备注可清空 |
+| `update(id, accessToken?, description?)` | Token 留空（`null/undefined/空串`）不修改；备注口径与 `GitCredentialService.update` 一致（评审补充）：`description` 缺省/null 不改，传空串清空 |
 | `delete(id)` | 不存在抛 `GIT_CREDENTIAL_NOT_FOUND` |
 | `getTokenMap(): Promise<Map<string, string>>` | 全量解密（lenient 无白名单路径使用） |
 | `getTokenMapFiltered(domains: string[]): Promise<Map<string, string>>` | `WHERE domain IN (...)`；空数组直接返回空 Map（防 `IN ()` 非法 SQL） |
 | `listDomains(): Promise<string[]>` | `SELECT DISTINCT domain ... ORDER BY domain`（供全站域枚举与用户端提示） |
 
-解密失败口径：**逐行跳过 + warn 日志（只记域名，不记密文/明文）**，不因单行脏数据拖垮整张表——与 `EnvVariableService` 的解密失败处理一致。用户凭据侧维持现状（`getTokenMapByUser` 抛错由 resolver 外层兜底为空集）。
+解密失败口径：**逐行跳过 + warn 日志（只记域名，不记密文/明文）**，不因单行脏数据拖垮整张表——与 `EnvVariableService` 的解密失败处理一致（`src/env/env-variable.service.ts`，评审核对）。用户凭据侧维持现状（`getTokenMapByUser` 抛错由 resolver 外层兜底为空集）。
 
 ### 5.4 后端 API
 
@@ -162,6 +162,8 @@ CREATE TABLE IF NOT EXISTS `system_git_credential` (
 | GET | `/v1/user/git-default-credentials` | 仅登录 | `[{domain, description}]`，**不含 Token**；供桌面端灰色行展示 |
 
 - 管理端接口全部走 `requirePermission`；响应恒为 `sendOk`（`Result<T>` code=0）。
+- 列表脱敏恒为 `****`（评审补充：对齐用户端 `toVO` 的常量掩码口径；`GitCredentialService.maskToken` 的「首尾 4 位回显」不用于本面板——settings:read 持有者不应获得 Token 前后缀线索）。
+- 审计零代码（评审补充）：五个 `/v1/admin` 路由均命中审计拦截器 `AUDITED_PREFIXES`（`audit.interceptor.ts`），增删改自动全量留痕；`/v1/user/git-default-credentials` 为登录态只读，无需审计。
 - 管理面板入口归属「系统设置」，因此权限码沿用 `settings:read/write`（与设置页其它面板一致），不新造权限点。
 - 全站域枚举为 Administrator 能力，`agent:read` 与「编辑 Agent」页面权限一致；返回值仅域名，横向枚举风险可接受（D4）。
 
@@ -178,7 +180,7 @@ systemGitCredentialService: {
 };
 ```
 
-2. `resolveForAgent` 三条路径：
+2. `resolveForAgent` 三条路径（`safeDefaultMap` 返回 `Record<string, string>`，评审补充：内部先 `toRecord` 再返回，下方合并写法才能成立——不能把 `Map` 直接展开）：
 
 ```ts
 // ① 无 Agent 上下文 / NULL 白名单 + lenient：用户全量 ∪ 默认全量（用户优先）
@@ -264,14 +266,15 @@ return { ...defaults, ...user };
 
 | 文件 | 类型 | 说明 |
 |---|---|---|
-| `db/migration/V193__system_git_credential.sql` | 新增 | §5.2 建表 |
+| `db/migration/V194__system_git_credential.sql` | 新增 | §5.2 建表 |
 | `src/user/system-git-credential.service.ts` | 新增 | §5.3 服务 |
 | `src/user/system-git-credential.routes.ts` | 新增 | §5.4 全部新接口 |
+| `src/user/system-git-credential.routes.spec.ts` | 新增 | §10.3 路由层用例（评审补充：v1.0 测试计划有路由层断言但改动清单漏列该文件） |
 | `src/user/git-token-resolver.ts` | 修改 | deps + 合并逻辑 + `safeDefaultMap` + 日志 |
 | `src/create-app.ts` | 修改 | 实例化 service、注入 resolver、透传路由 |
 | `src/app-routes.ts` | 修改 | 注册新路由 |
 | `src/user/system-git-credential.service.spec.ts` | 新增 | 单测 |
-| `src/user/git-token-resolver.spec.ts` | 修改 | 新增矩阵用例 |
+| `src/user/git-token-resolver.spec.ts` | 修改 | 新增矩阵用例（评审补充：既有用例的 fake deps 需同步补 `systemGitCredentialService` 最小实现） |
 
 ### 管理后台（admin）
 
@@ -292,7 +295,7 @@ return { ...defaults, ...user };
 | 文件 | 类型 |
 |---|---|
 | 本方案文档 | 新增 |
-| `CHANGELOG.md` | 实施时新增条目（顶部 `## x.y.z (日期)`） |
+| `changelog/unreleased/2026-11-12-system-git-credential.md` | 实施时新增碎片（评审更正：v1.0 误写「根 CHANGELOG.md 顶部加版本条目」——根 `CHANGELOG.md` 只是索引，不得手改；本需求跨后端/管理后台/桌面三端，按 `changelog/unreleased/README.md` 口径写一个碎片，含「后端」「管理后台」「前端（桌面 / Web / 安卓）」三个小节） |
 
 ## 10. 测试计划
 
@@ -306,7 +309,7 @@ return { ...defaults, ...user };
    - 默认查询异常：降级为用户 Token（不为 `{}`）、仍不抛出；
    - 默认为空表：等价现状。
 2. `system-git-credential.service.spec.ts`：域名规范化/重复域/空 Token 校验；加解密往返；`getTokenMapFiltered` 空数组短路不查库；解密失败行跳过。
-3. 路由层：写接口权限断言（无 `settings:write` → 403）；列表响应恒 `****`；`/v1/user/git-default-credentials` 不含 token 字段。
+3. 路由层：写接口权限断言（无 `settings:write` → 403）；列表响应恒 `****`；`/v1/user/git-default-credentials` 不含 token 字段；`/v1/admin/git-domains` 为用户域 ∪ 系统默认域的去重排序并集、不含 Token 与用户归属、无 `agent:read` → 403（评审补充）。
 
 **构建与手工验证**
 
@@ -321,7 +324,7 @@ return { ...defaults, ...user };
 
 ## 11. 实施顺序
 
-1. 迁移 V193 + `SystemGitCredentialService` + 单测；
+1. 迁移 V194 + `SystemGitCredentialService` + 单测；
 2. resolver 改造 + 单测 + `create-app` / `app-routes` 装配；
 3. 后端新路由 + 权限断言；
 4. 管理后台面板（`GitDefaultCredentialsPanel` + SystemSettingsView 挂载）+ Agent 表单候选切换；

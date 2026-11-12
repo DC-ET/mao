@@ -747,15 +747,12 @@ async function loadOptions() {
     failed.push('模型')
   }
   try {
-    // 候选来源：当前管理员自己配置的 Git 凭据域（D4：不做全站枚举接口，避免横向枚举面）；
+    // 候选来源：全站域枚举 = 用户凭据域 ∪ 系统默认域（技术方案 2026-11-12 D4，替代
+    // 2026-11-06 的「当前管理员个人凭证域」口径）；接口由 agent:read 守门、仅回域名。
     // 加载失败不提示也不阻塞表单——仍可手工输入域名。
-    const { data: credentialData } = await api.get('/user/git-credentials')
-    gitDomainOptions.value = Array.isArray(credentialData)
-      ? [...new Set(
-          credentialData
-            .map((item: any) => String(item?.domain ?? '').trim())
-            .filter((domain: string) => domain !== ''),
-        )]
+    const { data: domainData } = await api.get('/admin/git-domains')
+    gitDomainOptions.value = Array.isArray(domainData?.domains)
+      ? domainData.domains.map((domain: unknown) => String(domain ?? '').trim()).filter((domain: string) => domain !== '')
       : []
   } catch {
     gitDomainOptions.value = []

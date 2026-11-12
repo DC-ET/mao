@@ -41,6 +41,15 @@ export class GitCredentialService {
     );
   }
 
+  /** 全站用户凭据域去重清单（/v1/admin/git-domains 并集的用户侧，技术方案 2026-11-12 §5.4）。 */
+  async listAllDomains(): Promise<string[]> {
+    const rows = await this.db.query<{ domain: string }>(
+      'SELECT DISTINCT domain FROM user_git_credential ORDER BY domain ASC',
+      [],
+    );
+    return rows.map((r) => r.domain);
+  }
+
   /** 管理端：删除指定用户的凭证（不校验归属，调用方负责权限）。 */
   async deleteByAdmin(id: number, userId: number): Promise<void> {
     const credential = await this.db.queryOne<GitCredential>(
