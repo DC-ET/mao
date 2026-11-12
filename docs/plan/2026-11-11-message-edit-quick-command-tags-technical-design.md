@@ -33,7 +33,7 @@
 | 2 | 标签作为原子节点可整块删除（Backspace），其余文本照常增删改 | 必做 |
 | 3 | 确认后发出/落库的内容与今天逐字节一致——基准是**今天的 payload = `userVisibleText(content)` 口径**（含 `[图片 N]` 注入行的消息回填时注入行已被剥离，见 §4.4-b），而非原始 content；`confirmEdit`/`editAndResend`/后端零改动 | 必做 |
 | 4 | 图片附件编辑能力（缩略可见、可标记移除，`MessageBubble.vue:83-111`）与 Esc 取消、Ctrl/Cmd+Enter 确认、IME 组合态守卫保持现状 | 回归 |
-| 5 | 编辑态内通过面板插入新标签、手动敲入的标记自动变标签 | 二期（与主输入框现有行为对齐，见 §3 决策 3） |
+| 5 | 编辑态内通过面板插入新标签 | 二期已落地（见 §3 决策 3 与 2026-11-12 方案）；手动敲入的标记自动变标签（input rule）仍不做 |
 
 ## 3. 技术选型与决策
 
@@ -43,7 +43,7 @@
 | 是否嵌整个 ChatInput | **不嵌** | ChatInput ~1500 行，耦合 session store、待发附件、面板、WS、拖拽；整嵌会把巨大的 props/事件面与回归面拖进气泡 |
 | 共享转换函数 | `escapeHtml` + `markedTextToEditorHtml` 从 ChatInput 私有函数**原样搬到** `utils/editor-tags.ts`，撤回回填与气泡编辑共用 | 转换规则单一来源，避免双份漂移；与 `markedTextToEditorHtml` 注释声明的「与 handlePaste 的解析规则一致」口径合一 |
 | 确认出口 | emit `getText({ blockSeparator: '\n' })` 得到的标记文本，**`confirmEdit(content, images)` 签名与 payload 不变** | `QuickCommandNode.renderText`/`FileReferenceNode.renderText` 保证还原标记；`ChatPanel.vue:678-684` → `useChat.ts:739 editAndResend`（乐观截断、失败回滚、WS `edit_and_resend`）全部零改动 |
-| 面板与 input rule | **一期不做** | 主输入框也没有 input rule——chips 只来自面板选择/粘贴/setContent；手动敲入的 `#{xx}#` 保持纯文本，发送后仍按标记被后端解析，语义不受影响 |
+| 面板与 input rule | **面板二期已落地**（[2026-11-12-message-edit-quick-command-panels-technical-design.md](./2026-11-12-message-edit-quick-command-panels-technical-design.md)：编辑态 `/` 与 `@` 面板，共享 composable）；input rule 维持不做 | 主输入框也没有 input rule——chips 来自面板选择/粘贴/setContent；手动敲入的 `#{xx}#` 保持纯文本，发送后仍按标记被后端解析，语义不受影响 |
 | 样式复用 | 新组件容器挂 `.rich-editor` 类直接复用 `chat-input.css:163-183` 的 ProseMirror 基础样式与 `:193-217` 的 `.editor-tag` 系列；组件内 import 同一 css | `chat-input.css` 全部规则带 `.chat-input-card`/`.rich-editor` 前缀，新容器命中即生效，无全局污染；零新增 CSS 变量 |
 | 持久化 | 编辑器内容仅驻内存；入库/发送仍是原始标记文本 | 与主输入框一致（发送前才 `getText`） |
 
@@ -139,13 +139,13 @@ const editor = useEditor({
 
 1. 编辑态做**真编辑器**，不做「textarea + 预览条」半成品——转换基础设施现成，一步到位。
 2. 不嵌整个 ChatInput，用「最小编辑器 + 共享转换函数」收敛边界。
-3. 一期不含面板/input rule/指令内容 tooltip：与主输入框现有行为对齐，发送语义不受影响；展示态 `QuickCommandTag` 的 tooltip（`MessageBubble.vue:62` `getCommandContent`）是编辑态后续增强的参照。
+3. 一期不含面板/input rule/指令内容 tooltip：与主输入框现有行为对齐，发送语义不受影响；展示态 `QuickCommandTag` 的 tooltip（`MessageBubble.vue:62` `getCommandContent`）是编辑态后续增强的参照。**面板已于二期落地**（2026-11-12 方案：共享 composable + 编辑态挂载）；input rule 与 tooltip 仍不做。
 4. `confirmEdit(content, images)` 签名与 payload 逐字节不变：后端、WS、乐观截断、失败回滚全部零改动——这是本方案能把回归面压到最小的根本原因。
 5. 引用型文件后缀的 chip+文本呈现（§4.5）为已知取舍：保 round-trip 恒等优先于后缀视觉吸收。
 
 ## 9. 明确不做的（汇总）
 
-- 编辑态内新增标签的面板/自动补全/input rule；指令/技能内容 tooltip；标签重命名或排序。
+- 编辑态内新增标签的 input rule（手动敲标记不变 chip）；裸词自动补全（编辑态惊吓大于帮助，2026-11-12 方案 §9）；指令/技能内容 tooltip；标签重命名或排序。~~编辑态内新增标签的面板~~ → 二期已落地（2026-11-12 方案）。
 - 引用型 `@{path}@ 第 x 行：…` 后缀的吸收渲染（`absorbFileRangeSuffix` 接入编辑态）。
 - 气泡编辑态的草稿持久化（编辑器内容仅驻内存，不落库）。
 - 后端接口/字段/WS 协议任何改动；数据库迁移。

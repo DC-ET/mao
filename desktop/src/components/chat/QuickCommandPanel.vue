@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="quick-command-panel" @mousedown.prevent>
+  <div v-if="visible" ref="rootRef" class="quick-command-panel" :class="{ 'is-placement-bottom': placement === 'bottom' }" @mousedown.prevent>
     <div v-if="filteredItems.length === 0" class="panel-empty">
       未找到匹配的指令
     </div>
@@ -63,6 +63,8 @@ const props = defineProps<{
   skills: QuickCommand[]
   commands: QuickCommand[]
   filter: string
+  /** 弹出方向（技术方案 2026-11-12 §4.2）：默认向上；编辑态短会话翻转向下 */
+  placement?: 'top' | 'bottom'
 }>()
 
 const emit = defineEmits<{
@@ -71,6 +73,9 @@ const emit = defineEmits<{
 }>()
 
 const selectedIndex = ref(0)
+// 用自身根节点滚动选中项：编辑态与主输入框的面板可能同时挂载，
+// document.querySelector 会串台滚错元素（技术方案 2026-11-12 §4.2-3 修复）
+const rootRef = ref<HTMLElement | null>(null)
 
 const filteredSkills = computed(() => {
   if (!props.filter) return props.skills
@@ -131,7 +136,7 @@ function confirmSelection() {
 
 function scrollToSelected() {
   nextTick(() => {
-    const panel = document.querySelector('.quick-command-panel')
+    const panel = rootRef.value
     const active = panel?.querySelector('.panel-item.active')
     if (active) {
       active.scrollIntoView({ block: 'nearest' })
@@ -160,6 +165,14 @@ defineExpose({ moveUp, moveDown, confirmSelection })
 
 [data-theme="dark"] .quick-command-panel {
   background: var(--aw-canvas-parchment);
+}
+
+/* 翻转向下（技术方案 2026-11-12 §4.2）：编辑态短会话向上弹出会被 .messages 滚动容器裁掉 */
+.quick-command-panel.is-placement-bottom {
+  bottom: auto;
+  top: 100%;
+  margin-bottom: 0;
+  margin-top: 4px;
 }
 
 .panel-empty {
