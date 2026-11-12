@@ -144,7 +144,7 @@ describe('FeedbackService', () => {
     expect(summary.byReason.map((r) => r.label)).toEqual(Object.values(REASON_LABELS));
     expect(summary.byReason.find((r) => r.reason === 'WRONG_RESULT')?.count).toBe(3);
     expect(summary.byReason.find((r) => r.reason === 'SLOW_RESPONSE')?.count).toBe(0);
-    expect(summary.byReason.find((r) => r.reason === 'NO_REASON')?.label).toBe('未选择原因（飞书）');
+    expect(summary.byReason.find((r) => r.reason === 'NO_REASON')?.label).toBe('未选择原因');
     expect(summary.byDay).toEqual([{ date: '2026-09-27', count: 4 }]);
   });
 
@@ -361,7 +361,7 @@ describe('FeedbackService 待处理视角', () => {
     expect(summary.pendingCount).toBe(5);
     expect(summary.pendingMatrix).toEqual([
       { agentId: 2, agentName: 'Coder', reason: 'WRONG_RESULT', reasonLabel: '结果错误', count: 3 },
-      { agentId: 2, agentName: 'Coder', reason: 'NO_REASON', reasonLabel: '未选择原因（飞书）', count: 1 },
+      { agentId: 2, agentName: 'Coder', reason: 'NO_REASON', reasonLabel: '未选择原因', count: 1 },
       { agentId: null, agentName: null, reason: 'OTHER', reasonLabel: '其他', count: 1 },
     ]);
     // 待处理口径不带日期筛选：与明细 status=PENDING 的筛选结果一致

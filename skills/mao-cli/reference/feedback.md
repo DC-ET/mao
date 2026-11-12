@@ -16,9 +16,9 @@
 
 校验：消息须存在、role=ASSISTANT、所属会话属于当前用户；非本人消息返回 code 3031，消息不存在返回 3030，无效原因返回 2001。每条消息最多 1 条点踩记录，重复 PUT 覆盖原因。
 
-**点踩来源（`source`）**：`desktop`（桌面/Web/安卓端，默认）/ `feishu`（飞书任务完成卡片点踩按钮）。存量记录均为 `desktop`。
+**点踩来源（`source`）**：`desktop`（桌面/Web/安卓端，默认）/ `feishu`（飞书任务完成卡片点踩按钮）/ `dingtalk`（钉钉任务完成卡片点踩按钮）。存量记录均为 `desktop`。
 
-**飞书专属原因 `NO_REASON`**：飞书进度卡点踩不弹原因选项，固定写入 `NO_REASON`，后台展示为「未选择原因（飞书）」。服务端放行该值，桌面端原因选项列表不含它。
+**卡片点踩原因 `NO_REASON`**：飞书 / 钉钉完成卡点踩不弹原因选项，固定写入 `NO_REASON`，后台展示为「未选择原因」。服务端放行该值，桌面端原因选项列表不含它。
 
 **飞书点踩按卡归属**：飞书点踩记录落在**被点那张完成卡对应的** ASSISTANT 消息上（不再固定取会话最后一条）——卡片身份取自回调事件的 `open_message_id`，经 `feishu_card_snapshot` 快照表解析到该卡终态时刻的最后一条 ASSISTANT 消息；同一张卡重复点击即 toggle 该消息的记录，点旧卡不影响最新消息的反馈记录与其它卡片。卡片重绘按「内存按卡句柄 → 持久化快照重建 → 会话级兜底」三级降级，兜底仅命中改造前发出的存量卡（无快照行）。被点卡片对应的消息已被清理时，与桌面端口径一致返回「未找到可反馈的任务结果」。桌面/Web/安卓端点踩链路（按 messageId）不变。
 
@@ -27,9 +27,9 @@
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/feedback/admin/summary?startDate=&endDate=` | 汇总：`{total, byReason:[{reason,label,count}], byDay:[{date,count}], pendingCount, pendingMatrix:[{agentId,agentName,reason,reasonLabel,count}]}`；日期可选。`pendingCount` 为待处理数（`status=PENDING`，不带日期筛选），`pendingMatrix` 为 Agent × 原因的待处理矩阵（按 `agent_id` 快照口径分组，`agentId` 为 null 即飞书点踩的无 Agent 行） |
-| GET | `/feedback/admin/list?reason=&status=&agentId=&startDate=&endDate=&page=&pageSize=` | 分页明细：`{total, items[]}`，单条含 `createdAt/userId/username/displayName/sessionId/agentId/agentName/reason/reasonLabel/source/status/handledBy/handledByName/handledAt/experienceId/sameGroupCount/contentPreview`；`contentPreview` 为消息内容前 100 字摘要（已剥离内部标记），消息已删除时为 null。`source` 为点踩来源：`desktop` / `feishu`。`status` 为处理态：`PENDING` / `CONVERTED` / `DISMISSED`（后两者为终态）；`sameGroupCount` 为同 Agent 同原因的待处理条数（聚集口径）；`agentId` 传具体 id 筛选，缺省不筛选 |
+| GET | `/feedback/admin/list?reason=&status=&agentId=&startDate=&endDate=&page=&pageSize=` | 分页明细：`{total, items[]}`，单条含 `createdAt/userId/username/displayName/sessionId/agentId/agentName/reason/reasonLabel/source/status/handledBy/handledByName/handledAt/experienceId/sameGroupCount/contentPreview`；`contentPreview` 为消息内容前 100 字摘要（已剥离内部标记），消息已删除时为 null。`source` 为点踩来源：`desktop` / `feishu` / `dingtalk`。`status` 为处理态：`PENDING` / `CONVERTED` / `DISMISSED`（后两者为终态）；`sameGroupCount` 为同 Agent 同原因的待处理条数（聚集口径）；`agentId` 传具体 id 筛选，缺省不筛选 |
 
-原因筛选项可用值：`WRONG_RESULT` / `SLOW_RESPONSE` / `NOT_SOLVED` / `OTHER` / `NO_REASON`（飞书）。
+原因筛选项可用值：`WRONG_RESULT` / `SLOW_RESPONSE` / `NOT_SOLVED` / `OTHER` / `NO_REASON`（飞书 / 钉钉卡片，后台展示「未选择原因」）。
 
 ### 管理端写入（需 `feedback:write`，默认仅系统管理员）
 
