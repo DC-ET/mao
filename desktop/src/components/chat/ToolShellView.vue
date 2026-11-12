@@ -63,7 +63,7 @@ async function copy(text: string) {
   overflow: auto;
   padding: 8px 12px;
   font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-caption);
+  font-size: var(--aw-text-fine);
   line-height: 1.5;
 }
 

@@ -74,7 +74,7 @@ watch([() => props.content, () => props.filePath, () => props.numbered, isDark],
   overflow: auto;
   max-height: 320px;
   font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-caption);
+  font-size: var(--aw-text-fine);
   line-height: 1.5;
 }
 
@@ -128,7 +128,7 @@ watch([() => props.content, () => props.filePath, () => props.numbered, isDark],
 
 .file-plain code {
   font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-caption);
+  font-size: var(--aw-text-fine);
   color: var(--aw-text-code);
   background: none;
   padding: 0;

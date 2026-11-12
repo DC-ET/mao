@@ -60,7 +60,7 @@ function dirOf(file: string): string {
   min-width: 0;
   margin-bottom: 4px;
   font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-caption);
+  font-size: var(--aw-text-fine);
 }
 
 /* 查询词不用主色（蓝）：与 shell 命令同口径取墨色，蓝色只留给交互态底纹 */
@@ -90,7 +90,7 @@ function dirOf(file: string): string {
   display: flex;
   padding: 1px 12px;
   font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-caption);
+  font-size: var(--aw-text-fine);
   color: var(--aw-text-code);
   white-space: pre;
   cursor: pointer;
