@@ -1,22 +1,25 @@
 <template>
-  <!-- 多根模板（viewer 与宿主 div 平级）：fallthrough 失效，attrs（如 ToolWebPageView 的
-       class="page-body"）由脚本 v-bind 到宿主 div 上，透传行为与单根时代逐字节一致 -->
-  <div ref="root" :class="bodyClass" v-bind="attrs" v-html="html" @click="onBodyClick"></div>
-  <!-- 正文图片点击放大（utils/markdownZoom）。teleported 必须显式：默认 false 原地渲染，
-       fixed 定位会被 overflow/transform 祖先裁剪（ToolCallCard el-image preview-teleported 同口径）；
-       hide-on-click-modal 显式开（element-plus 默认 false），全屏查看器点遮罩即退出是方案验收口径；
-       teleport 到 body 后 viewer 内点击不再冒泡回 root，委托零误开 -->
-  <el-image-viewer
-    v-if="previewUrl"
-    :url-list="previewList"
-    teleported
-    hide-on-click-modal
-    @close="closePreview"
-  />
+  <!-- 必须保持单根。父组件 scoped 排版（MessageBubble 的 .assistant-text / .markdown-body、
+       文件预览、网页工具卡、技能详情）只打在子组件唯一根元素上；一旦再拆成与查看器平级的
+       两个根，data-v 标记挂不上，字号会掉回 body 的 17px，表格回到浏览器默认的居中加粗。
+       查看器放在根内且 teleported：不占第二个根，fixed 层也不会被裁剪，点击不冒泡回正文。 -->
+  <div :class="bodyClass" @click="onBodyClick">
+    <div ref="root" v-html="html"></div>
+    <!-- teleported 必须显式：默认 false 原地渲染，fixed 定位会被 overflow/transform 祖先裁剪
+         （ToolCallCard el-image preview-teleported 同口径）；hide-on-click-modal 显式开
+         （element-plus 默认 false），全屏查看器点遮罩即退出是方案验收口径 -->
+    <el-image-viewer
+      v-if="previewUrl"
+      :url-list="previewList"
+      teleported
+      hide-on-click-modal
+      @close="closePreview"
+    />
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, useAttrs } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { renderMarkdown } from '../../composables/useMarkdown'
 import { insertMermaidDiagrams } from '../../utils/mermaid-renderer'
 import { enhanceCodeBlocks, ensureCodeBlockDelegation } from '../../utils/codeBlockCollapse'
@@ -39,7 +42,6 @@ const props = withDefaults(defineProps<{
 })
 
 const { isDark } = useTheme()
-const attrs = useAttrs()
 const html = ref('')
 const root = ref<HTMLElement | null>(null)
 // 渲染代际序号：流式高频触发 + 异步 renderMarkdown（Monaco 高亮较慢），

@@ -236,7 +236,6 @@
   font-size: var(--aw-text-micro);
   font-weight: 500;
   color: var(--aw-ink-muted-48);
-  text-transform: uppercase;
   letter-spacing: 0.5px;
   padding: 4px 4px;
   display: flex;
