@@ -1,160 +1,63 @@
-[![CI](https://github.com/DC-ET/mao/actions/workflows/ci.yml/badge.svg)](https://github.com/DC-ET/mao/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
 <p align="center">
-  <img src="docs/assets/logo.png" alt="Mao Logo" width="96" />
+  <img src="docs/assets/logo.png" alt="Mao" width="80" />
 </p>
 
 <h1 align="center">Mao</h1>
 
 <p align="center">
-  <strong>Self-hosted AI Agent runtime for individuals and teams.</strong><br/>
-  把能做事的 Agent 放进你自己的环境：双执行边界、RBAC、审计，以及真正的 Think-Act-Observe 引擎。
+  <strong>团队级 AI Agent 自托管平台</strong><br/>
+  一次部署，全员共用。按岗位构建智能体，在任意终端与办公软件中直接工作。
+</p>
+
+<p align="center">
+  <a href="https://github.com/DC-ET/mao/actions/workflows/ci.yml"><img src="https://github.com/DC-ET/mao/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-black.svg" alt="License: MIT" /></a>
 </p>
 
 <p align="center">
   <a href="#快速开始">快速开始</a> ·
-  <a href="skills/mao-cli/reference/project.md">项目说明</a> ·
-  <a href="USER_GUIDE.md">用户手册</a> ·
-  <a href="skills/mao-cli/reference/deploy.md">自托管部署</a> ·
-  <a href="#参与贡献">参与贡献</a>
+  <a href="#多端接入">多端接入</a> ·
+  <a href="skills/mao-cli/reference/project.md">架构与特性</a> ·
+  <a href="USER_GUIDE.md">文档</a> ·
+  <a href="skills/mao-cli/reference/deploy.md">私有化部署</a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/client.png" alt="Mao 工作台" width="960" />
 </p>
 
 ---
 
-> **适用边界**：尚未经过企业级生产环境充分验证。MIT 开源，只提供源码与自部署文档，没有官方 SaaS。LLM 需在管理后台自行配置 API Key；界面目前为中文。
+大多数 Agent 工具是为个人设计的：装在各自电脑上，密钥散落，换台设备或换个人就得从头配起。
 
-## 它是什么
+**Mao 将 Agent 作为团队基础设施来构建。** 在服务端集中配置模型、工具与岗位智能体，团队成员无需安装运行环境，打开浏览器、手机、终端、飞书、钉钉、微信或内部业务系统即可直接调用。所有会话、操作与成本全量落库，经验随岗位沉淀。
 
-Mao 不是又一个 ChatGPT 套壳，也不是 Dify / n8n 那样的低代码工作流。它是一套**可私有化部署的 Agent 工作台**：集中管理多个 Agent、模型和权限，用内置 Harness 跑 Think-Act-Observe 循环，让模型真正去读文件、跑命令、搜网页、拆子任务。
+## 为什么用 Mao
 
-三件事构成产品内核：
+- **一次部署，全员共用** — 统一管理模型 API Key、账号与 RBAC 权限。成员开箱即用，对本地电脑零配置要求。
+- **按岗位定义智能体** — 为研发、运维、客服、数据分析分别构建智能体，独立绑定系统提示词（支持版本回滚）、[Skill 技能包](skills/mao-cli/reference/skill.md)、[MCP](skills/mao-cli/reference/mcp.md) 与 [HTTP 工具](skills/mao-cli/reference/http-tool.md)。
+- **全终端与 IM 原生触达** — 同一批智能体同时接入 Web、桌面端、移动端、CLI、飞书、钉钉、微信及内部网页浮窗。
+- **容器级运行隔离** — 支持开启 [Docker 容器运行时](skills/mao-cli/reference/deploy.md#容器隔离运行时v0295)，将云端 Shell、文件读写与进程隔离在独立容器中，严格划分用户与 Agent 的数据边界。
+- **岗位级经验沉淀** — 内置[团队经验库](skills/mao-cli/reference/agent.md#团队经验库experience-library00342-起)。智能体在解决复杂问题后自动归档排障路径与领域知识，后续任务先检索再执行，人员流动不带走岗位经验。
+- **全量留痕与成本治理** — 完整记录会话轨迹、[模型调用流水](skills/mao-cli/reference/llm-call.md)与[管理审计日志](skills/mao-cli/reference/audit.md)。支持多维度[成本核算](skills/mao-cli/reference/analytics.md)与全局 / 用户 / Agent [月度预算拦截](skills/mao-cli/reference/budget.md)。
+- **云端与本机双执行边界** — 日常任务在服务端 `CLOUD` 环境即开即用；需要直接读写本机代码库或执行本地工具链时，可切换至 `LOCAL` 模式（Electron 桌面端或 `mao-agent --local`），配套五档权限控制与高危操作审批。
+- **主动触发与系统集成** — 除交互式对话外，支持 [Cron 定时任务](skills/mao-cli/reference/scheduled-task.md)、监听外部接口异动的[信号哨兵](skills/mao-cli/reference/signal-watcher.md)，以及 [Open API 与 Webhook](skills/mao-cli/reference/open-api.md)。
 
-1. **数据与密钥留在你这边** — 自托管，工作区、会话、模型 Key 不出内网。
-2. **执行边界可切换** — **CLOUD** 在服务器工作区干活；**LOCAL** 在本机目录干活，并走权限档位与工具审批。
-3. **Agent 是一等公民** — 多 Agent、Skill、MCP、提示词版本、用量与审计；对话只是入口，治理才是平台。
+## 多端接入
 
-适合：需要私有化、自选模型、服务端与本地工具边界可切换的个人与团队。  
-不适合：想要开箱 SaaS、低代码画布，或英文界面。
+一套服务端，按场景选择入口：
 
-<p align="center">
-  <img src="docs/assets/client.png" alt="Mao 桌面客户端：任务、对话、文件变更与边路任务" width="960" />
-</p>
+| 入口 | 适用场景 | 客户端要求 |
+|------|----------|------------|
+| [Web 工作台](skills/mao-cli/reference/desktop.md) | 日常任务、云端工作区、文件预览编辑、在线终端与 Git | 浏览器 |
+| [飞书](skills/mao-cli/reference/feishu-bot.md) / [钉钉](skills/mao-cli/reference/dingtalk-bot.md) / [微信](skills/mao-cli/reference/weixin.md) | 群聊 `@` 协同或私聊交办，支持流式进度卡片 | 免安装 |
+| [Embed SDK](skills/mao-cli/reference/embed-sdk.md) | 嵌入内部后台的对话浮窗，可读取与操作宿主页面上下文 | 宿主页面引入一行脚本 |
+| [mao-agent CLI](skills/mao-cli/reference/mao-agent.md) | 终端交互式 REPL、CI/CD 流水线集成、本机目录直连 | Node.js CLI |
+| [Android](skills/mao-cli/reference/android.md) | 移动办公、审批与任务跟进 | APK（支持应用内 OTA） |
+| [Electron 桌面端](skills/mao-cli/reference/electron.md) | 本机文件读写、图形化工具审批、全局快捷键与系统通知 | 桌面客户端 |
+| [管理后台](skills/mao-cli/reference/admin.md) | 模型、智能体、权限、经验库、审计、成本与运行环境配置 | 浏览器 |
 
-## 核心能力
-
-Mao 围绕「**让 Agent 真正下场干活，同时在团队内可管可控**」构建了四层核心能力：
-
-### 1. 真正的 Agent Harness，而非聊天壳
-- **自主执行循环**：内置 Think-Act-Observe 引擎，原生配备 Shell、文件读写、联网搜索（带服务端白名单校验的网页引用溯源）、文生图/改图等工具。
-- **多任务并发拆解**：主对话之外可随时拉起**边路任务（Side Task）**，或委派后台**子代理**（`explorer` / `worker` / `reviewer`）并行调研、写码与审查。
-- **全链路白盒可观测**：自动上下文压缩与崩溃恢复；随时透视下一轮请求的上下文 Token 构成，或按轮次查看模型耗时、首字延迟、成本与工具调用的[运行轨迹](skills/mao-cli/reference/desktop.md#运行轨迹)。
-
-### 2. 双执行边界：CLOUD ⇄ LOCAL
-- **CLOUD（云端工作区）**：打开浏览器、手机或 IM 即可使用。支持工作区文件预览编辑、服务端交互式终端与可视化 [Git 管理器](skills/mao-cli/reference/git.md)；可选开启[每用户 Docker 容器隔离](skills/mao-cli/reference/runtime.md)，确保多租户数据与凭据边界安全。
-- **LOCAL（本机直连）**：通过 [Electron 桌面端](skills/mao-cli/reference/electron.md)或 [`mao-agent --local`](skills/mao-cli/reference/mao-agent.md) 直接读写本机目录、调用本地工具链，配备从「只读」到「完全权限」五档控制与高危操作审批。
-
-### 3. 活的记忆与能力组装
-- **双层经验沉淀**：既有跨会话自动提取偏好与项目事实的[个人长期记忆](skills/mao-cli/reference/memory.md)，也有按 Agent 跨成员共享、攻克难题后自动归档的[团队经验库](skills/mao-cli/reference/agent.md#团队经验库experience-library00342-起)。
-- **按需扩展边界**：每个 Agent 独立绑定提示词（支持版本化与回滚）、[Skill 技能包](skills/mao-cli/reference/skill.md)、全局/个人 [MCP 服务](skills/mao-cli/reference/mcp.md)与[自定义 HTTP 工具](skills/mao-cli/reference/http-tool.md)，配合系统/用户/工作区三级加密环境变量注入运行时。
-
-### 4. 自动化触发与团队治理
-- **主动干活与外部联动**：除交互对话外，支持 Cron [定时任务](skills/mao-cli/reference/scheduled-task.md)、监控外部接口异动自动拉起会话的[信号哨兵](skills/mao-cli/reference/signal-watcher.md)，以及供 CI/业务系统调用的[开放 API、入站 Webhook 与出站事件订阅](skills/mao-cli/reference/open-api.md)。任务结果、待审批项与每日运营摘要统一汇入[任务收件箱](skills/mao-cli/reference/inbox.md)。
-- **平台级治理**：支持任意 [OpenAI 兼容模型](skills/mao-cli/reference/model.md)；内建本地账号 / LDAP / 飞书登录、RBAC 角色权限、管理操作审计、[调用流水](skills/mao-cli/reference/llm-call.md)、[用量与成本分析](skills/mao-cli/reference/analytics.md)及[月度预算拦截](skills/mao-cli/reference/budget.md)；管理后台「在线设备」页实时展示当前 WS 在线端（桌面客户端 / Web / 安卓 App / 终端 CLI）的连接数与按用户设备列表；还可按部署场景隐藏不用的功能菜单（部署级全局生效，隐藏不影响访问权限）。
-
-> 对比选型：若你需要低代码画布编排或托管 SaaS，建议看 Dify、n8n；若你想对齐 Codex 类 Agent 能力且要求私有化与团队治理，可参考 [与 OpenAI Codex 的对比](skills/mao-cli/reference/project.md#与-openai-codex-对比)。
-
-## 架构
-
-<p align="center">
-  <img src="docs/assets/mao-architecture-tech.jpeg" alt="Mao 技术架构：客户端经 REST / WebSocket 进入 NestJS 后端与 Agent Harness，工具在 CLOUD 或 LOCAL 执行边界上落地" width="960" />
-</p>
-
-生产环境单域名分流：桌面 `/`、管理后台 `/admin/`、API `/api/`、上传 `/uploads/`。
-
-## 怎么用
-
-```
-管理员：配模型与预算 → 组装 Agent（提示词 / Skill / MCP / HTTP 工具） → 开账号与角色权限
-用  户：选 Agent → 选 CLOUD 或 LOCAL → 选工作区 → 交办目标（对话 / 定时 / 哨兵 / API）
-```
-
-日常就三种核心工作方式：
-
-1. **交互式攻坚**：云端任务在浏览器 / 手机 / IM 直接跑，本地代码库用 Electron 或 `mao-agent --local` 跑；复杂任务随时拆边路任务或交由子代理并行处理。
-2. **例行巡检与事件驱动**：用[定时任务](skills/mao-cli/reference/scheduled-task.md)处理日报与巡检，用[信号哨兵](skills/mao-cli/reference/signal-watcher.md)盯住外部接口变化自动触发 Agent；结果通过站内[任务收件箱](skills/mao-cli/reference/inbox.md)或飞书 / 钉钉 / 微信 / 邮件送达。
-3. **嵌入业务系统**：通过[开放接口与 Webhook](skills/mao-cli/reference/open-api.md) 把 Agent 编入 CI 或工单流，或用几行代码通过 [Embed SDK](skills/mao-cli/reference/embed-sdk.md) 把可操作宿主页面的助手浮窗嵌进内部后台。
-
-完整功能手册见 [USER_GUIDE.md](USER_GUIDE.md)，首次上线检查清单见 [business_process.md](skills/mao-cli/business_process.md)。
-
-## 快速开始
-
-先把服务跑起来，再打开网页。两条路：
-
-| | 怎么跑 | 跑起来之后打开 |
-|---|--------|----------------|
-| **本地** | Node.js 22+、MySQL 8、起 backend / admin / desktop | 工作台 `http://localhost:5201` · 管理后台 `http://localhost:5200/admin/` |
-| **服务器** | Linux + Nginx + HTTPS，仓库 `/opt/mao`，数据 `/opt/mao-data` | 工作台 `https://your-mao.example.com/` · 管理后台 `https://your-mao.example.com/admin/` |
-
-### 1. 本地运行
-
-需要 Node.js 22+、MySQL 8.x，以及编译 `node-pty` 的 C/C++ 工具链。逐步说明见 [install.md](skills/mao-cli/reference/install.md)。
-
-```bash
-git clone https://github.com/DC-ET/mao.git
-cd mao
-mysql -e "CREATE DATABASE mao CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-
-cd backend-ts && npm install && npm run start:dev   # :9080
-cd admin && npm install && npm run dev              # 管理后台
-cd desktop && npm install && npm run dev            # 工作台
-```
-
-Electron LOCAL（本机目录与工具审批）：`cd desktop && npm run dev:electron`。
-
-### 2. 服务器部署
-
-1. 准备 Linux、Node 22+、Nginx、MySQL 8，克隆到 `/opt/mao`，创建 `/opt/mao-data`
-2. 构建 backend、admin、desktop，写好 `backend-ts/.env`（JWT、数据库、数据目录）
-3. 启动后端，配置 Nginx + HTTPS（桌面 `/`、管理后台 `/admin/`、API `/api/`）
-4. 登录管理后台，**立刻改掉默认密码**，再配真实模型 Key——顶栏的就绪横幅会逐项提醒这三步，全绿即就绪
-
-完整步骤与升级见 [deploy.md](skills/mao-cli/reference/deploy.md)，环境变量见 [config.md](skills/mao-cli/reference/config.md)。
-
-### 3. 打开网页
-
-| 入口 | 本地 | 服务器 |
-|------|------|--------|
-| 工作台（对话、任务、工作区） | http://localhost:5201 | `https://your-mao.example.com/` |
-| 管理后台（模型、Agent、用户） | http://localhost:5200/admin/ | `https://your-mao.example.com/admin/` |
-
-默认管理员 `admin` / `admin123`（对外暴露后立刻改密）。先到管理后台 **模型管理** 换成真实 API Key，否则无法对话；然后在工作台选 Agent、建任务、描述目标。CLOUD 任务在浏览器里就能跑，用法见 [桌面端手册](skills/mao-cli/reference/desktop.md)。
-
-### REST 运维（可选）
-
-```bash
-cd skills/mao-cli && npm install . -g
-mao auth login --username admin --password '<your-password>'
-mao agent list
-```
-
-`mao` 管配置与元数据，不负责对话。日常使用请打开工作台网页。
-
-## 客户端与通道
-
-| 入口 | 用途 |
-|------|------|
-| [管理后台](skills/mao-cli/reference/admin.md) | 模型、Agent、用户角色、Skill、MCP、审计、用量、预算 |
-| [桌面 Web](skills/mao-cli/reference/desktop.md) | 日常任务与对话（CLOUD） |
-| [Electron](skills/mao-cli/reference/electron.md) | LOCAL 本机工具、图形审批、LOCAL 附件、托盘 / 系统通知 / 全局快捷键（需自行打包，无官方签名安装包） |
-| [安卓](skills/mao-cli/reference/android.md) | Capacitor 壳远程加载 Web，仅 CLOUD |
-| [mao-agent](skills/mao-cli/reference/mao-agent.md) | 终端 REPL / CI（`-p`） |
-| [飞书机器人](skills/mao-cli/reference/feishu-bot.md) | 私聊或群里 @ 机器人 |
-| [钉钉机器人](skills/mao-cli/reference/dingtalk-bot.md) | 私聊或群里 @ 机器人 |
-| [微信 Bot](skills/mao-cli/reference/weixin.md) | 扫码绑定后在微信里对话 |
-| [Embed SDK](skills/mao-cli/reference/embed-sdk.md) | 内部网页嵌入对话浮窗，可操作当前页面 |
-
-页面嵌入最小例子（把域名换成你的站点）：
+**内部系统嵌入示例（Embed SDK）：**
 
 ```html
 <script src="https://mao.example.com/embed/mao-chat.js"></script>
@@ -168,23 +71,63 @@ mao agent list
 </script>
 ```
 
-公司 SSO、页面操作授权与安全边界见 [embed-sdk.md](skills/mao-cli/reference/embed-sdk.md)，不要把 `agentId` 当成权限控制。
+完整的 SSO 对接、宿主页面工具注册与安全边界说明见 [Embed SDK 文档](skills/mao-cli/reference/embed-sdk.md)。
 
-## 文档
+## 架构概览
 
-产品说明的正文在可独立分发的 [`skills/mao-cli/`](skills/mao-cli/SKILL.md)：
+<p align="center">
+  <img src="docs/assets/mao-architecture-tech.jpeg" alt="Mao Architecture" width="960" />
+</p>
 
-| 文档 | 说明 |
-|------|------|
-| [project.md](skills/mao-cli/reference/project.md) | 定位、架构、特性、与 Codex 对比 |
-| [install.md](skills/mao-cli/reference/install.md) / [deploy.md](skills/mao-cli/reference/deploy.md) | 本地开发 / 生产部署 |
-| [config.md](skills/mao-cli/reference/config.md) | 环境变量、数据目录、默认账号 |
-| [USER_GUIDE.md](USER_GUIDE.md) | 各端使用手册索引 |
-| [troubleshooting.md](skills/mao-cli/reference/troubleshooting.md) | 排障 |
-| [CHANGELOG.md](CHANGELOG.md) | 发版说明索引（正文在 `changelog/YYYY/MM.md`） |
-| [docs/plan/2026-05-20-technical-design.md](docs/plan/2026-05-20-technical-design.md) | 早期技术方案（部分已过时，以源码与 mao-cli 为准） |
+生产环境采用单域名分流：工作台 `/`、管理后台 `/admin/`、接口 `/api/`、静态资源 `/uploads/`。内核基于自研 Think-Act-Observe Agent Harness，支持自动上下文压缩、边路任务（Side Task）与后台子代理（`explorer` / `worker` / `reviewer`）并发协作。详见 [项目说明](skills/mao-cli/reference/project.md)。
 
-## 开发
+## 快速开始
+
+### 本地开发
+
+环境要求：Node.js 22+、MySQL 8.x，以及编译 `node-pty` 所需的 C/C++ 工具链。详细步骤见 [安装指南](skills/mao-cli/reference/install.md)。
+
+```bash
+git clone https://github.com/DC-ET/mao.git
+cd mao
+mysql -e "CREATE DATABASE mao CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+
+cd backend-ts && npm install && npm run start:dev   # API & WS (:9080)
+cd admin && npm install && npm run dev              # 管理后台 (:5200/admin/)
+cd desktop && npm install && npm run dev            # 工作台 (:5201)
+```
+
+如需调试本机目录直连（LOCAL 模式）：`cd desktop && npm run dev:electron`。
+
+### 生产部署
+
+1. 准备 Linux、Node.js 22+、Nginx、MySQL 8（如需容器隔离，另需安装 Docker 并构建 `mao-runtime` 镜像）。
+2. 构建 `backend-ts`、`admin`、`desktop`，配置 `backend-ts/.env`。
+3. 启动后端服务，配置 Nginx 反向代理与 HTTPS。
+4. 访问 `/admin/`（初始账号 `admin` / `admin123`），按顶栏向导完成**修改管理员密码**与**配置模型 API Key**。
+
+完整生产部署、Docker 容器隔离与版本升级流程见 [部署手册](skills/mao-cli/reference/deploy.md)，环境变量说明见 [配置参考](skills/mao-cli/reference/config.md)。
+
+### 运维 CLI（可选）
+
+平台提供 [`mao-cli`](skills/mao-cli/SKILL.md) 用于通过命令行或脚本管理平台资源（用户、智能体、模型、技能、预算、定时任务等）：
+
+```bash
+cd skills/mao-cli && npm install . -g
+mao auth login --username admin --password '<your-password>'
+mao agent list
+```
+
+## 文档索引
+
+完整文档内置于 [`skills/mao-cli/`](skills/mao-cli/SKILL.md)，支持作为 Agent Skill 独立分发：
+
+- [架构与特性说明](skills/mao-cli/reference/project.md)（含与 OpenAI Codex 对比）
+- [用户手册总览](USER_GUIDE.md) · [首次上线检查清单](skills/mao-cli/business_process.md)
+- [本地安装](skills/mao-cli/reference/install.md) · [生产部署](skills/mao-cli/reference/deploy.md) · [环境变量配置](skills/mao-cli/reference/config.md)
+- [常见问题与排障](skills/mao-cli/reference/troubleshooting.md) · [版本变更记录](CHANGELOG.md)
+
+## 验证与测试
 
 ```bash
 cd backend-ts && npm test && npm run build
@@ -194,17 +137,14 @@ cd agent-cli && npm test
 cd sdk/embed && npm test && npm run build
 ```
 
-根目录 `npm test` 为 Playwright E2E。首次运行前执行 `bash scripts/e2e-setup.sh` 搭建隔离环境（本地 MySQL 建 `mao_e2e` 库 + 迁移 + 种子数据）；之后测试会自动拉起隔离后端(:9180)与 admin/desktop dev server，跑完自动退出，不会触碰线上 9080。贡献方式见 [CONTRIBUTING.md](CONTRIBUTING.md)；AI 辅助开发见 [AGENTS.md](AGENTS.md)。
+端到端测试（Playwright）：首次运行执行 `bash scripts/e2e-setup.sh` 初始化隔离数据库 `mao_e2e`，随后在根目录执行 `npm test`。
 
 ## 参与贡献
 
-欢迎 Issue 与 PR。开始前请读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+欢迎提交 [Issue](https://github.com/DC-ET/mao/issues) 与 Pull Request。提交代码前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)；安全问题请参照 [SECURITY.md](SECURITY.md) 私密报告。
 
-- Bug / 功能 — [GitHub Issues](https://github.com/DC-ET/mao/issues)
-- 安全漏洞 — [SECURITY.md](SECURITY.md)，请勿公开披露
-
-暂不接受：官方托管 / SaaS 化、界面国际化、官方签名 Electron 包分发。
+> 说明：本项目采用 MIT 协议开源，仅提供源码与自托管文档，不提供官方 SaaS 托管服务。生产环境部署前请充分评估安全与合规边界。
 
 ## 许可证
 
-[MIT License](LICENSE) — Copyright (c) 2026 Mao Contributors
+[MIT License](LICENSE) © 2026 Mao Contributors
