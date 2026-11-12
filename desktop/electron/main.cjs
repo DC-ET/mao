@@ -9,6 +9,7 @@ const { TerminalManager } = require('./terminalManager.cjs')
 const { createLocalShellRuntime, resolveShellProtocol } = require('./localShell.cjs')
 const promptImageResizer = require('./promptImageResizer.cjs')
 const serverConfigLib = require('./serverConfig.cjs')
+const authStoreLib = require('./authStore.cjs')
 const { resolveShellMaoBaseUrl } = require('./shellEnv.cjs')
 const chatAttachment = require('./chatAttachment.cjs')
 const desktopPrefsLib = require('./desktopPrefs.cjs')
@@ -1182,7 +1183,8 @@ async function cleanupSiteScopedResources() {
 }
 
 /**
- * 切换服务器：校验 → 可选探测 → host 变化时清 auth/本地资源 → 写配置 → 加载目标站。
+ * 切换服务器：校验 → 可选探测 → host 变化时关掉本机终端/MCP/Shell → 写配置 → 加载目标站。
+ * 登录按 host 分槽保留，这里不清 auth.json。
  * @param {{ serverBaseUrl: string, updateFeedMode?: string, allowHttp?: boolean, skipProbe?: boolean }} payload
  */
 async function applyServerConfig(payload = {}) {
@@ -1206,7 +1208,6 @@ async function applyServerConfig(payload = {}) {
   }
 
   if (hostChanged) {
-    writeAuthStore({ token: null, refreshToken: null })
     await cleanupSiteScopedResources()
   }
 
@@ -1682,55 +1683,54 @@ app.on('before-quit', () => {
 })
 
 // ========== Auth token persistence (file:// localStorage is not reliable) ==========
-
-function getAuthStorePath() {
-  return path.join(app.getPath('userData'), 'auth.json')
-}
+// 按服务器 host 分槽。渲染进程在 preload 里钉死本次文档的 host，
+// 避免切换过程中把旧页面刷出的新票写进新站的槽。
 
 function readAuthStore() {
   try {
-    const authPath = getAuthStorePath()
-    if (fs.existsSync(authPath)) {
-      const data = JSON.parse(fs.readFileSync(authPath, 'utf8'))
-      // 服务端 host 变化后旧 token 不可用，避免串站
-      const currentHost = getServerHostKey()
-      if (data.serverHost && data.serverHost !== currentHost) {
-        return { token: null, refreshToken: null }
-      }
-      return {
-        token: data.token || null,
-        refreshToken: data.refreshToken || null
-      }
-    }
+    return authStoreLib.readAuthTokens(app.getPath('userData'), getServerHostKey())
   } catch (e) {
     console.error('[auth] Failed to read auth store:', e.message)
+    return { token: null, refreshToken: null }
   }
-  return { token: null, refreshToken: null }
 }
 
-function writeAuthStore(data) {
+function hostFromAuthPayload(payload) {
+  const host = payload && typeof payload.serverHost === 'string' ? payload.serverHost : ''
+  if (authStoreLib.isHostKey(host)) return host
+  return getServerHostKey()
+}
+
+ipcMain.on('auth-current-host', (event) => {
+  event.returnValue = getServerHostKey()
+})
+
+ipcMain.handle('auth-get-tokens', (_event, payload) => {
   try {
-    const authPath = getAuthStorePath()
-    fs.mkdirSync(path.dirname(authPath), { recursive: true })
-    const payload = {
-      token: data.token || null,
-      refreshToken: data.refreshToken || null,
-      serverHost: data.token || data.refreshToken ? getServerHostKey() : null,
-    }
-    fs.writeFileSync(authPath, JSON.stringify(payload), 'utf8')
+    return authStoreLib.readAuthTokens(app.getPath('userData'), hostFromAuthPayload(payload))
+  } catch (e) {
+    console.error('[auth] Failed to read auth store:', e.message)
+    return { token: null, refreshToken: null }
+  }
+})
+
+ipcMain.handle('auth-set-tokens', (_event, payload = {}) => {
+  try {
+    authStoreLib.writeAuthTokens(app.getPath('userData'), hostFromAuthPayload(payload), {
+      token: payload.token || null,
+      refreshToken: payload.refreshToken || null,
+    })
   } catch (e) {
     console.error('[auth] Failed to write auth store:', e.message)
   }
-}
-
-ipcMain.handle('auth-get-tokens', () => readAuthStore())
-
-ipcMain.handle('auth-set-tokens', (_event, { token, refreshToken }) => {
-  writeAuthStore({ token: token || null, refreshToken: refreshToken || null })
 })
 
-ipcMain.handle('auth-clear-tokens', () => {
-  writeAuthStore({ token: null, refreshToken: null })
+ipcMain.handle('auth-clear-tokens', (_event, payload) => {
+  try {
+    authStoreLib.clearAuthTokens(app.getPath('userData'), hostFromAuthPayload(payload))
+  } catch (e) {
+    console.error('[auth] Failed to write auth store:', e.message)
+  }
 })
 
 // ========== Server baseUrl config IPC ==========
@@ -1778,9 +1778,24 @@ ipcMain.handle('server-picker-close', () => {
 
 ipcMain.handle('server-config-remove-history', (_event, payload = {}) => {
   const target = String(payload?.serverBaseUrl || '').trim()
-  if (!target) return { ok: false, error: '缺少地址', history: serverConfigLib.readServerHistory(app.getPath('userData')) }
-  const history = serverConfigLib.removeServerHistory(app.getPath('userData'), target)
-  return { ok: true, history }
+  const userData = app.getPath('userData')
+  if (!target) return { ok: false, error: '缺少地址', history: serverConfigLib.readServerHistory(userData) }
+  const before = serverConfigLib.readServerHistory(userData)
+  const removed = before.find((entry) => entry.serverBaseUrl === target)
+  const history = serverConfigLib.removeServerHistory(userData, target)
+  let authCleared = false
+  if (removed) {
+    const host = serverConfigLib.serverHostKey(removed.serverBaseUrl)
+    const remainingHosts = history.map((entry) => serverConfigLib.serverHostKey(entry.serverBaseUrl))
+    if (authStoreLib.shouldForgetAuthHost(host, getServerHostKey(), remainingHosts)) {
+      try {
+        authCleared = authStoreLib.clearAuthTokens(userData, host)
+      } catch (e) {
+        console.error('[auth] Failed to forget removed server:', e.message)
+      }
+    }
+  }
+  return { ok: true, history, authCleared }
 })
 
 // ========== Window control IPC handlers ==========

@@ -6,11 +6,19 @@ function onIpc(channel, callback) {
   return () => ipcRenderer.removeListener(channel, handler)
 }
 
+// 钉死在本文档加载时的服务器 host。切换后旧页面的刷新回写仍进原槽，不会串到新站。
+let pageAuthHost = ''
+try {
+  pageAuthHost = ipcRenderer.sendSync('auth-current-host') || ''
+} catch {
+  pageAuthHost = ''
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // Auth token persistence (Electron userData/auth.json, all load protocols)
-  getAuthTokens: () => ipcRenderer.invoke('auth-get-tokens'),
-  setAuthTokens: (tokens) => ipcRenderer.invoke('auth-set-tokens', tokens),
-  clearAuthTokens: () => ipcRenderer.invoke('auth-clear-tokens'),
+  getAuthTokens: () => ipcRenderer.invoke('auth-get-tokens', { serverHost: pageAuthHost }),
+  setAuthTokens: (tokens) => ipcRenderer.invoke('auth-set-tokens', { ...(tokens || {}), serverHost: pageAuthHost }),
+  clearAuthTokens: () => ipcRenderer.invoke('auth-clear-tokens', { serverHost: pageAuthHost }),
 
   // Multi-server baseUrl configuration
   serverConfig: {
