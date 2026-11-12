@@ -288,7 +288,7 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 2px 4px 2px 12px;
+  padding: 0px 4px 0px 12px;
   border-radius: var(--aw-radius-xs);
   background: var(--aw-canvas-parchment);
   z-index: 1;
