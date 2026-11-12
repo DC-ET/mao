@@ -233,10 +233,9 @@
 
 .task-index-panel .group-header {
   position: relative;
-  font-size: var(--aw-text-micro);
+  font-size: var(--aw-text-fine);
   font-weight: 500;
   color: var(--aw-ink-muted-48);
-  letter-spacing: 0.5px;
   padding: 4px 4px;
   display: flex;
   align-items: center;
