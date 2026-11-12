@@ -1,6 +1,6 @@
 import { createServer, type Server, type Socket } from 'node:net';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { randomBytes, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { harnessLog } from '../log.js';
 import {
@@ -77,22 +77,41 @@ export class RuntimeChannelServer {
     const key = `${userId}:${agentId}`;
     const dir = this.userDir(userId, agentId);
     const socketPath = path.join(dir, 'runtime.sock');
-    if (this.servers.has(key)) return socketPath;
+    const existing = this.servers.get(key);
+    if (existing != null) {
+      // 已监听且在册：再校验 socket 文件仍在。2026-11-12 线上故障——蓝绿/并发替换期间
+      // 路径被 unlink 而进程仍持有 inode（ss 可见、容器 connect ENOENT），只查内存 map
+      // 会永久短路、永不恢复；文件缺失时关闭旧 server 重建（自愈）。
+      const st = lstatSync(socketPath, { throwIfNoEntry: false });
+      if (st != null && st.isSocket()) return socketPath;
+      harnessLog('warn', `Runtime channel socket file missing: userId=${userId}, agentId=${agentId}, re-listening`);
+      // 不 await：旧 server 若仍有活跃连接，close 回调要等连接结束才触发；这里只需让旧
+      // 监听停止接受新连接，fd 由 close 异步释放（无路径引用的旧 inode 不再可达）。
+      existing.close(() => { /* noop */ });
+      this.servers.delete(key);
+    }
     mkdirSync(dir, { recursive: true });
     try { chmodSync(dir, 0o700); } catch { /* non-posix */ }
-    if (existsSync(socketPath)) {
-      // 残留 socket 文件会让 listen 报 EADDRINUSE
-      rmSync(socketPath, { force: true });
-    }
+    // 原子替换：先 listen 同目录临时路径、成功后再 rename 覆盖目标（同一文件系统内 rename 原子）。
+    // 任何时刻 socketPath 要么指向旧的、要么指向新的监听者，不存在「已删除而新未建立」的空窗；
+    // 蓝绿双实例并发替换时最后 rename 者胜，容器侧连接始终可寻址。
+    const tmpPath = path.join(dir, `runtime.sock.tmp-${process.pid}-${randomBytes(4).toString('hex')}`);
     const server = createServer((socket) => this.acceptConnection(userId, agentId, socket));
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(socketPath, () => {
-        server.removeListener('error', reject);
-        try { chmodSync(socketPath, 0o600); } catch { /* non-posix */ }
-        resolve();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(tmpPath, () => {
+          server.removeListener('error', reject);
+          resolve();
+        });
       });
-    });
+      try { chmodSync(tmpPath, 0o600); } catch { /* non-posix */ }
+      renameSync(tmpPath, socketPath);
+    } catch (e) {
+      rmSync(tmpPath, { force: true });
+      server.close();
+      throw e;
+    }
     this.servers.set(key, server);
     harnessLog('info', `Runtime channel server listening: userId=${userId}, agentId=${agentId}, path=${socketPath}`);
     return socketPath;
