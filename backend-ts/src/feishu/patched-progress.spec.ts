@@ -246,9 +246,11 @@ describe('飞书完成卡终态快照持久化（persistTerminal）', () => {
 });
 
 describe('终态 PATCH 退避重试', () => {
-  function httpError(status: number): Error {
-    const error = new Error(`Request failed with status code ${status}`) as Error & { response: { status: number } };
-    error.response = { status };
+  function httpError(status: number, code?: number): Error {
+    const error = new Error(`Request failed with status code ${status}`) as Error & {
+      response: { status: number; data?: { code: number } };
+    };
+    error.response = code == null ? { status } : { status, data: { code } };
     return error;
   }
 
@@ -276,11 +278,21 @@ describe('终态 PATCH 退避重试', () => {
     expect(calls).toBe(4);
   });
 
-  it('终态 400（内容问题）不重试，直接抛出', async () => {
+  it('终态 400 + code 230099（11310 内容构建失败，实测瞬态）：重试后成功', async () => {
     let calls = 0;
     const progress = progressOf(new FeishuAskFormStore(), async () => {
       calls += 1;
-      throw httpError(400);
+      if (calls === 1) throw httpError(400, 230099);
+    }, 0, { sleep: async () => undefined });
+    await expect(progress.update('COMPLETED', 4, '结果', [])).resolves.toBeUndefined();
+    expect(calls).toBe(2);
+  });
+
+  it('终态 400 + 其它确定性错误码：不重试，直接抛出', async () => {
+    let calls = 0;
+    const progress = progressOf(new FeishuAskFormStore(), async () => {
+      calls += 1;
+      throw httpError(400, 230002);
     }, 0, { sleep: async () => undefined });
     await expect(progress.update('COMPLETED', 4, '结果', [])).rejects.toThrow('400');
     expect(calls).toBe(1);

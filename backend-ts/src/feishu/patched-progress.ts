@@ -192,9 +192,20 @@ async function patchTerminalWithRetry(
   }
 }
 
-/** 飞书 PATCH 是否值得重试：HTTP 5xx / 429 频控 / 无 response（网络错误、超时）。 */
+/**
+ * 飞书 PATCH 是否值得重试：
+ * - HTTP 5xx / 429 频控 / 无 response（网络错误、超时）→ 重试；
+ * - 230099（`Failed to create card content, ext=ErrCode: 11310`）实测为瞬态——同一卡片失败后
+ *   后续 PATCH 仍能成功（2026-11-12 采样 3 张卡失败后均更新到终态），与 5xx 同等重试；
+ * - 其余 4xx（权限、参数、bot 不在群等确定性错误）不重试，避免白等。
+ */
 function isRetryablePatchError(error: unknown): boolean {
-  const status = (error as { response?: { status?: unknown } } | null)?.response?.status;
-  if (typeof status === 'number') return status >= 500 || status === 429;
+  const response = (error as { response?: { status?: unknown; data?: { code?: unknown } } } | null)?.response;
+  if (response == null) return true;
+  const status = response.status;
+  if (typeof status === 'number') {
+    if (status >= 500 || status === 429) return true;
+    return response.data?.code === 230099;
+  }
   return true;
 }
