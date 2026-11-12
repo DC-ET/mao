@@ -162,7 +162,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated, inject, provide, type Ref } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated, onDeactivated, inject, provide, type Ref } from 'vue'
 import { Opportunity, Loading, Connection } from '@element-plus/icons-vue'
 import { useSessionStore } from '../../stores/session'
 import { useDraftStore } from '../../stores/draft'
@@ -817,7 +817,7 @@ async function loadOlderMessages(): Promise<boolean> {
 
 // --- 自动滚动：与主聊天共用 useChatScroll（同一套手势判定与定位时序） ---
 const {
-  scrollToBottom, resumeFollow, pauseFollow, handleMarkdownRendered,
+  scrollToBottom, resumeFollow, restoreAfterActivate, cancelRestoreAfterActivate, pauseFollow, handleMarkdownRendered,
   handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleKeyDown, handleScroll,
   resetScrollBaseline, dispose: disposeScroll,
 } = useChatScroll(messagesContainer, {
@@ -842,11 +842,13 @@ onMounted(async () => {
 })
 
 onActivated(() => {
-  // KeepAlive 恢复的容器 scrollTop 与缓存前无关，重新度量避免拿旧位置当基准
-  resetScrollBaseline()
-  // 切回边路会话 tab（KeepAlive 恢复）时恢复跟随并定位到底部
-  resumeFollow()
+  // 离开前贴底则贴回当前底部；已上滑看历史则写回离开时的位置
+  restoreAfterActivate()
   nextTick(() => chatInputRef.value?.focusInput())
+})
+
+onDeactivated(() => {
+  cancelRestoreAfterActivate()
 })
 
 onUnmounted(() => {

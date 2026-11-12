@@ -18,6 +18,23 @@ function fnBody(src: string, signature: string): string {
   return src.slice(start, end)
 }
 
+/** 取出签名处花括号配平的整段（含嵌套） */
+function balancedBlock(src: string, signature: string): string {
+  const start = src.indexOf(signature)
+  expect(start, `未找到 ${signature}`).toBeGreaterThanOrEqual(0)
+  const open = src.indexOf('{', start)
+  let depth = 0
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '{') depth++
+    else if (src[i] === '}') {
+      depth--
+      if (depth === 0) return src.slice(open, i + 1)
+    }
+  }
+  expect.fail(`未闭合 ${signature}`)
+  return ''
+}
+
 describe('对话区自动滚动共用 useChatScroll', () => {
   it('三个面板都调用同一个组合式函数，不再各自维护 userScrolledUp 状态机', () => {
     for (const [name, src] of [['ChatPanel', chatPanel], ['SideChatPanel', sidePanel], ['SubagentChatPanel', subagentPanel]] as const) {
@@ -39,13 +56,35 @@ describe('对话区自动滚动共用 useChatScroll', () => {
     expect(useChatScroll).toContain('cancelScheduledFollow()')
   })
 
-  it('useChatScroll 暴露 resumeFollow：显式恢复跟随（发送 / 切回 Tab / 回到最新）', () => {
+  it('useChatScroll 暴露 resumeFollow：显式恢复跟随（发送 / 回到最新）', () => {
     expect(useChatScroll).toContain('function resumeFollow()')
     // 必须先复位再定位，否则 scrollToBottom 内部的上滑守卫会把这次定位吞掉
     const body = fnBody(useChatScroll, 'function resumeFollow()')
     expect(body).toContain('userScrolledUp.value = false')
     expect(body).toContain('scrollToBottom()')
-    expect(useChatScroll).toContain('resumeFollow, pauseFollow: stopFollowing, scrollToMessage')
+    expect(useChatScroll).toContain('resumeFollow, restoreAfterActivate, cancelRestoreAfterActivate, pauseFollow: stopFollowing, scrollToMessage')
+  })
+
+  it('切回 Tab 按离开前状态恢复：跟随则贴底，上滑则写回原位置', () => {
+    expect(useChatScroll).toContain('function restoreAfterActivate()')
+    expect(useChatScroll).toContain('function cancelRestoreAfterActivate()')
+    const body = balancedBlock(useChatScroll, 'function restoreAfterActivate()')
+    expect(body).toContain('savedScrollTop')
+    expect(body).toContain('userScrolledUp.value')
+    // 清基准必须发生在「这次切回仍有效」的判断之后，不能在调用当帧就改掉
+    const guardAt = body.indexOf('serial !== activateSerial')
+    const resetAt = body.indexOf('resetScrollBaseline()')
+    expect(guardAt, '写回前没有核对切回代际').toBeGreaterThanOrEqual(0)
+    expect(resetAt, '仍在确认有效之前清掉滚动基准').toBeGreaterThan(guardAt)
+    for (const [name, src] of [['ChatPanel', chatPanel], ['SideChatPanel', sidePanel], ['SubagentChatPanel', subagentPanel]] as const) {
+      const activated = balancedBlock(src, 'onActivated(() => {')
+      // 同一次切回只能调用一次
+      expect(activated.match(/restoreAfterActivate\(\)/g) ?? [], `${name} 切回只能恢复一次`).toHaveLength(1)
+      expect(activated, `${name} 切回仍无条件贴底`).not.toContain('resumeFollow()')
+      expect(activated, `${name} 切回仍清掉上滑标记`).not.toContain('userScrolledUp.value = false')
+      const deactivated = balancedBlock(src, 'onDeactivated(() => {')
+      expect(deactivated.match(/cancelRestoreAfterActivate\(\)/g) ?? [], `${name} 切走未取消排队的写回`).toHaveLength(1)
+    }
   })
 
   it('搜索定位属于显式暂停跟随：两个可定位面板都接入 onLocate', () => {
@@ -72,7 +111,7 @@ describe('对话区自动滚动共用 useChatScroll', () => {
       expect(src, `${name} 未绑定按压手势（中键自动滚动等）`).toContain('handlePointerDown')
       expect(src, `${name} 未解绑 wheel`).toContain("removeEventListener('wheel', handleWheel")
       expect(src, `${name} 未释放滚动生命周期`).toContain('disposeScroll()')
-      expect(src, `${name} 未在切回时恢复跟随`).toContain('resumeFollow()')
+      expect(src, `${name} 未在切回时按离开前状态恢复位置`).toContain('restoreAfterActivate()')
     }
   })
 })

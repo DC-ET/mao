@@ -24,7 +24,9 @@ const SCROLL_UP_KEYS = new Set(['ArrowUp', 'PageUp', 'Home'])
  * 状态只有两个来源，不再从 scroll 事件反推意图：
  * - 用户手势（滚轮上滑、触摸下拉、键盘上翻、滚动条拖拽）→ 停止跟随；
  * - 用户手势结束时已回到近底部 → 恢复跟随；
- * - 显式动作（发送消息、切回 Tab、点「回到最新」）→ resumeFollow()。
+ * - 显式动作（发送消息、点「回到最新」）→ resumeFollow()；
+ * - 切回 Tab → restoreAfterActivate()：离开前正在跟随则贴底，已上滑则写回离开时的位置。
+ *   基准和 scrollTop 只在仍处于这次切回时才写；onDeactivated 调用 cancelRestoreAfterActivate() 作废已排队的写回。
  *
  * 触发定位也不靠枚举事件，而是 ResizeObserver 观察容器与内容子元素的尺寸：
  * 队列面板/审批卡/软键盘压缩 clientHeight、流式文本/图片/工具卡片撑高内容，
@@ -36,6 +38,8 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
 }) {
   const userScrolledUp = ref(false)
   let generation = 0
+  /** 切回写回的代际。切走时递增，已排队的 rAF 不得再改基准或 scrollTop */
+  let activateSerial = 0
   let restoring = false
   let loading = false
   let programmatic = false
@@ -46,6 +50,13 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
   let lastFollowAt = Number.NEGATIVE_INFINITY
   /** 最近一次用户手势的时间戳；初值 -Infinity 保证首帧 scroll 一律按布局处理 */
   let lastGestureAt = Number.NEGATIVE_INFINITY
+  /**
+   * 容器仍在文档中时记下的 scrollTop。KeepAlive 把面板移出文档后 clientHeight 变为 0，
+   * 浏览器会把 scrollTop 清掉；切回时用这份记录写回，而不是读当时的 DOM。
+   */
+  let savedScrollTop = 0
+  /** 容器已脱离文档：此后的 scrollTop 是布局清出来的，不能覆盖 savedScrollTop，也不能当作用户滑到顶 */
+  let positionFrozen = false
   let resizeObserver: ResizeObserver | undefined
   let mutationObserver: MutationObserver | undefined
 
@@ -65,6 +76,22 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
   function syncBaseline(el: HTMLElement) {
     lastScrollTop = el.scrollTop
     lastScrollHeight = el.scrollHeight
+  }
+
+  /** 只在容器有布局高度时记位置。高度为 0 说明面板已被 KeepAlive 藏起，此时的 scrollTop 不可信。 */
+  function noteVisiblePosition(el: HTMLElement) {
+    if (positionFrozen || el.clientHeight <= 0) return
+    const layoutReset = !programmatic
+      && performance.now() - lastGestureAt > GESTURE_WINDOW_MS
+      && el.scrollTop === 0
+      && savedScrollTop > 0
+    if (layoutReset) return
+    savedScrollTop = el.scrollTop
+  }
+
+  function freezePosition() {
+    positionFrozen = true
+    cancelScheduledFollow()
   }
 
   function cancelScheduledFollow() {
@@ -93,13 +120,14 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
    */
   function writeBottom() {
     const el = container.value
-    if (!el || disposed || userScrolledUp.value) return
+    if (!el || disposed || userScrolledUp.value || positionFrozen || el.clientHeight <= 0) return
     const dist = distanceFromBottom(el)
     if (dist <= 1) return
     if (lastScrollTop >= 0 && el.scrollTop < lastScrollTop - SCROLL_UP_TOLERANCE) return
     programmatic = true
     el.scrollTop = el.scrollHeight
     syncBaseline(el)
+    savedScrollTop = el.scrollTop
     lastFollowAt = performance.now()
     requestAnimationFrame(() => {
       programmatic = false
@@ -108,7 +136,7 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
 
   /** 尺寸变化的统一入口：rAF 合并 + 最小间隔，避免每帧强制布局 */
   function scheduleFollow() {
-    if (disposed || userScrolledUp.value) return
+    if (disposed || userScrolledUp.value || positionFrozen) return
     if (followRaf != null || followTimer != null) return
     const wait = Math.max(0, FOLLOW_MIN_INTERVAL_MS - (performance.now() - lastFollowAt))
     if (wait === 0) {
@@ -133,6 +161,7 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
         programmatic = true
         el.scrollTop = el.scrollHeight
         syncBaseline(el)
+        if (el.clientHeight > 0) savedScrollTop = el.scrollTop
         lastFollowAt = performance.now()
         requestAnimationFrame(() => {
           if (current === generation) programmatic = false
@@ -142,13 +171,60 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
   }
 
   /**
-   * 显式「恢复跟随」：发送消息、切回 Tab、点「回到最新」等动作调用。
+   * 显式「恢复跟随」：发送消息、点「回到最新」等动作调用。
    * 与 scrollToBottom 的差别是它不信任当前的上滑状态——这些动作本身就代表
    * 用户要看最新内容，不能因为历史上一次（可能是布局引起的）误判继续停在原处。
    */
   function resumeFollow() {
     userScrolledUp.value = false
+    positionFrozen = false
     scrollToBottom()
+  }
+
+  /** 切走页签：作废已排队、尚未写回的 restoreAfterActivate */
+  function cancelRestoreAfterActivate() {
+    activateSerial++
+  }
+
+  /**
+   * KeepAlive 切回聊天页签。离开前正在跟随底部 → 贴到当前底部并继续跟随；
+   * 离开前已上滑在看历史 → 写回离开时的 scrollTop，并保持暂停跟随。
+   * 隐藏期间浏览器会清掉 scrollTop，所以读调用时记下的 savedScrollTop，不读切回瞬间的 DOM。
+   * 清基准和写 scrollTop 都放在 rAF 里，并且先核对 activateSerial：切走后不得再改状态。
+   */
+  function restoreAfterActivate() {
+    const serial = ++activateSerial
+    const current = generation
+    const top = savedScrollTop
+    let layoutWaits = 0
+    const apply = () => {
+      // 卸载、切走，或被更新的会话恢复接管：冻结标记属于新的调用方，这里不能清。
+      if (disposed || serial !== activateSerial || current !== generation) return
+      const el = container.value
+      if (!el || el.clientHeight <= 0) {
+        // 仍在文档里但这一帧还没布局：再等一帧。切走后节点脱离文档，不再重试。
+        if (el?.isConnected && layoutWaits++ < 4) {
+          requestAnimationFrame(apply)
+          return
+        }
+        // 容器这一帧不在，但这次恢复仍有效：解冻，避免永久卡住。
+        positionFrozen = false
+        return
+      }
+      resetScrollBaseline()
+      programmatic = true
+      el.scrollTop = userScrolledUp.value ? top : el.scrollHeight
+      syncBaseline(el)
+      savedScrollTop = el.scrollTop
+      lastFollowAt = performance.now()
+      positionFrozen = false
+      requestAnimationFrame(() => {
+        if (serial === activateSerial && current === generation) programmatic = false
+      })
+    }
+    void nextTick(() => {
+      requestAnimationFrame(apply)
+    })
   }
 
   function beginRestore() {
@@ -160,6 +236,8 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
     userScrolledUp.value = false
     lastScrollTop = -1
     lastScrollHeight = -1
+    savedScrollTop = 0
+    positionFrozen = false
     touchY = undefined
     cancelScheduledFollow()
     return generation
@@ -235,9 +313,16 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
   function handleScroll() {
     const el = container.value
     if (!el || disposed) return
+    // 面板被 KeepAlive 移出文档：高度为 0，scrollTop 会被清掉，不代表滑到了顶部
+    if (el.clientHeight <= 0) {
+      freezePosition()
+      return
+    }
+    if (positionFrozen) return
     // 程序写入与恢复期替换缓存产生的 scroll 不代表任何意图
     if (programmatic || (restoring && !userScrolledUp.value)) {
       syncBaseline(el)
+      noteVisiblePosition(el)
       return
     }
     // 只有手势窗口内的 scroll 才允许改变跟随状态；窗口外一律视为布局产物
@@ -258,8 +343,11 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
       }
     }
     syncBaseline(el)
+    noteVisiblePosition(el)
 
     if (loading || !userScrolledUp.value || el.scrollTop > 120 || !options.canLoadOlder()) return
+    // 没有手势、记下的位置还在中段，scrollTop 却是 0：这是重新插入文档时的复位，不是用户滑到顶
+    if (el.scrollTop === 0 && savedScrollTop > 120 && performance.now() - lastGestureAt > GESTURE_WINDOW_MS) return
     const current = generation
     const oldHeight = el.scrollHeight
     const oldTop = el.scrollTop
@@ -280,6 +368,8 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
     programmatic = false
     lastScrollTop = -1
     lastScrollHeight = -1
+    savedScrollTop = 0
+    positionFrozen = false
     cancelScheduledFollow()
   }
 
@@ -318,7 +408,16 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
     const el = container.value
     // 测试环境（node）没有 ResizeObserver / MutationObserver，静默降级为显式触发
     if (!el || typeof ResizeObserver === 'undefined') return
-    resizeObserver = new ResizeObserver(() => scheduleFollow())
+    resizeObserver = new ResizeObserver(() => {
+      const el = container.value
+      if (!el || el.clientHeight <= 0) {
+        freezePosition()
+        return
+      }
+      // 仍冻着：等 restoreAfterActivate 先写回阅读位置，避免这一帧把人拽到底
+      if (positionFrozen) return
+      scheduleFollow()
+    })
     observeTargets()
     if (typeof MutationObserver !== 'undefined') {
       mutationObserver = new MutationObserver(() => {
@@ -344,12 +443,13 @@ export function useChatScroll(container: Ref<HTMLElement | undefined>, options: 
 
   function dispose() {
     disposed = true
+    activateSerial++
     unbindObservers()
     cancelRestore()
     cancelScheduledFollow()
   }
 
-  return { userScrolledUp, scrollToBottom, resumeFollow, pauseFollow: stopFollowing, scrollToMessage, beginRestore, completeRestore,
+  return { userScrolledUp, scrollToBottom, resumeFollow, restoreAfterActivate, cancelRestoreAfterActivate, pauseFollow: stopFollowing, scrollToMessage, beginRestore, completeRestore,
     handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleKeyDown, handleScroll,
     cancelRestore, resetScrollBaseline, scheduleFollow, dispose }
 }

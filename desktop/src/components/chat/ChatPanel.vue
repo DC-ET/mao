@@ -241,7 +241,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, inject, provide, watch, nextTick, onActivated, onMounted, onUnmounted, type Ref } from 'vue'
+import { ref, computed, inject, provide, watch, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChatDotRound, Loading, WarningFilled } from '@element-plus/icons-vue'
 import { useChat, normalizeMessageRole, type ChatMessage, type PendingUploadFile } from '../../composables/useChat'
@@ -438,7 +438,7 @@ watch(pendingApprovals, () => syncToTaskView(), { deep: true })
 // Session restore — ChatPanel watches sessionStore.activeSessionId
 const messagesContainer = ref<HTMLElement>()
 const {
-  userScrolledUp, scrollToBottom, pauseFollow, beginRestore, completeRestore,
+  userScrolledUp, scrollToBottom, pauseFollow, beginRestore, completeRestore, restoreAfterActivate, cancelRestoreAfterActivate,
   handleMarkdownRendered, handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleKeyDown, handleScroll, cancelRestore, resetScrollBaseline, dispose: disposeScroll,
 } = useChatScroll(messagesContainer, {
   loadOlder: loadOlderMessages,
@@ -721,15 +721,19 @@ watch(() => sessionStore.activeSession?.phase, (serverPhase) => {
   }
 })
 
-// Scroll to bottom when switching back to chat tab (KeepAlive restore)
+// KeepAlive 切回主会话：离开前贴底则继续跟随，已上滑则停在离开时的位置
 onActivated(() => {
-  userScrolledUp.value = false
+  restoreAfterActivate()
   // KeepAlive 缓存期间若仍卡在 waitingForSave（异步挂起/超时未完成），切回后需解锁发送按钮
   if (waitingForSave.value) {
     waitingForSave.value = false
     sendGeneration++
   }
-  scrollToBottom()
+})
+
+onDeactivated(() => {
+  // 已排队的写回不得在面板藏起后再改滚动基准或 scrollTop
+  cancelRestoreAfterActivate()
 })
 
 // Send/stop handlers

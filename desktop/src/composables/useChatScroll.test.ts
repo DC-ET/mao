@@ -217,6 +217,142 @@ describe('非手势滚动不误判上滑（发送消息时消息区不跳顶）'
     expect(s.el.scrollTop).toBe(1900)
   })
 
+  it('切回页签：已上滑则写回离开时的位置，隐藏期间清掉的 scrollTop 不触发翻页', async () => {
+    const s = setup()
+    await settledAtBottom(s)
+
+    gestureUp(s)
+    s.el.scrollTop = 400
+    s.handleScroll()
+    expect(s.userScrolledUp.value).toBe(true)
+
+    // KeepAlive 移出文档：高度变 0，浏览器把 scrollTop 清成 0
+    s.el.clientHeight = 0
+    s.el.scrollTop = 0
+    s.handleScroll()
+    // 重新插入后、写回前：位置仍是 0，且可能再派发一次 scroll
+    s.el.clientHeight = 500
+    s.el.scrollTop = 0
+    s.handleScroll()
+    expect(s.loadOlder).not.toHaveBeenCalled()
+
+    s.restoreAfterActivate()
+    await frameSettled()
+    expect(s.el.scrollTop).toBe(400)
+    expect(s.userScrolledUp.value).toBe(true)
+
+    // 切走期间底部又长出内容：人还停在原来的位置，不被拽下去
+    s.el.scrollHeight = 3000
+    s.scheduleFollow()
+    await settleFollow()
+    expect(s.el.scrollTop).toBe(400)
+
+    // 「回到最新」仍无条件贴底
+    s.resumeFollow()
+    await frameSettled()
+    expect(s.userScrolledUp.value).toBe(false)
+    expect(s.el.scrollTop).toBe(2500)
+  })
+
+  it('写回帧里上滑标记已取消：解除冻结并贴底，后续仍能跟随', async () => {
+    const s = setup()
+    await settledAtBottom(s)
+    gestureUp(s)
+    s.el.scrollTop = 400
+    s.handleScroll()
+    s.el.clientHeight = 0
+    s.handleScroll()
+    s.el.clientHeight = 500
+    s.el.scrollTop = 0
+
+    s.restoreAfterActivate()
+    // 等待写回的这一帧里，发送 / 回到最新把上滑标记清掉
+    s.userScrolledUp.value = false
+    await frameSettled()
+    expect(s.el.scrollTop).toBe(1500)
+
+    s.el.scrollHeight = 3000
+    s.scheduleFollow()
+    await settleFollow()
+    expect(s.userScrolledUp.value).toBe(false)
+    expect(s.el.scrollTop).toBe(2500)
+  })
+
+  it('写回帧里容器不在：解除冻结，之后滑到顶仍能翻更早的历史', async () => {
+    let top = 0
+    let height = 2000
+    let viewport = 500
+    const el = {
+      get scrollHeight() { return height },
+      set scrollHeight(value: number) { height = value },
+      get clientHeight() { return viewport },
+      set clientHeight(value: number) { viewport = value },
+      get scrollTop() { return top },
+      set scrollTop(value: number) { top = Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight)) },
+    }
+    const container = shallowRef<HTMLElement | undefined>(el as HTMLElement)
+    const loadOlder = vi.fn<() => Promise<boolean>>().mockResolvedValue(false)
+    const s = useChatScroll(container, {
+      loadOlder,
+      canLoadOlder: () => true,
+    })
+    s.beginRestore()
+    s.completeRestore(s.beginRestore())
+    await frameSettled()
+    await vi.advanceTimersByTimeAsync(400)
+
+    s.handleWheel({ deltaY: -1 } as WheelEvent)
+    el.scrollTop = 400
+    s.handleScroll()
+    el.clientHeight = 0
+    s.handleScroll()
+    el.clientHeight = 500
+    s.restoreAfterActivate()
+    container.value = undefined
+    await frameSettled()
+
+    container.value = el as HTMLElement
+    el.scrollTop = 0
+    s.handleWheel({ deltaY: -1 } as WheelEvent)
+    s.handleScroll()
+    expect(loadOlder).toHaveBeenCalledOnce()
+  })
+
+  it('调用切回写回的当帧不清滚动基准，切走后已排队的写回不再改位置', async () => {
+    const s = setup()
+    await settledAtBottom(s)
+
+    // 调用当帧：基准还在。若这里就把 lastScrollTop 清成 -1，
+    // 手势窗口内视口变矮会被当成「没有基准的远离底部」而停止跟随。
+    s.restoreAfterActivate()
+    s.handleWheel({ deltaY: 1 } as WheelEvent)
+    s.el.clientHeight = 100
+    s.handleScroll()
+    expect(s.userScrolledUp.value).toBe(false)
+
+    s.el.clientHeight = 500
+    s.el.scrollHeight = 4000
+    s.cancelRestoreAfterActivate()
+    await frameSettled()
+    expect(s.el.scrollTop).toBe(1500)
+  })
+
+  it('切回页签：离开前正在跟随则贴到当前底部（含切走期间新增的内容）', async () => {
+    const s = setup()
+    await settledAtBottom(s)
+
+    s.el.clientHeight = 0
+    s.el.scrollTop = 0
+    s.handleScroll()
+    s.el.scrollHeight = 4000
+    s.el.clientHeight = 500
+    s.el.scrollTop = 0
+    s.restoreAfterActivate()
+    await frameSettled()
+    expect(s.userScrolledUp.value).toBe(false)
+    expect(s.el.scrollTop).toBe(3500)
+  })
+
   it('resumeFollow 复位上滑并定位到底部（发送消息场景）', async () => {
     const s = setup()
     await settledAtBottom(s)

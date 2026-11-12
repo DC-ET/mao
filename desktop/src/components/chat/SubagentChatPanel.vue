@@ -62,7 +62,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, onActivated } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
 import { Opportunity } from '@element-plus/icons-vue'
 import { useSessionStore } from '../../stores/session'
 import { useStreamWS } from '../../composables/useStreamWS'
@@ -256,9 +256,9 @@ async function fetchMessages() {
 // --- 自动滚动：与主聊天 / 边路任务共用 useChatScroll ---
 // 本面板只读、无历史分页，故 loadOlder 恒为 false（分页入口自然关闭）。
 const {
-  scrollToBottom, resumeFollow, handleMarkdownRendered,
+  scrollToBottom, resumeFollow, restoreAfterActivate, cancelRestoreAfterActivate, handleMarkdownRendered,
   handleWheel, handleTouchStart, handleTouchMove, handlePointerDown, handleKeyDown, handleScroll,
-  resetScrollBaseline, dispose: disposeScroll,
+  dispose: disposeScroll,
 } = useChatScroll(messagesContainer, {
   loadOlder: async () => false,
   canLoadOlder: () => false,
@@ -298,14 +298,28 @@ onMounted(async () => {
   resumeFollow()
 })
 
+/** 切回代际：上一次激活的历史回补晚到时，不再改这一次的滚动位置 */
+let activateGeneration = 0
+
 onActivated(() => {
-  // KeepAlive 恢复的容器位置与缓存前无关，重新度量后恢复跟随
-  resetScrollBaseline()
-  resumeFollow()
-  // KeepAlive 切回时若无活跃流式，再拉一次历史（覆盖断线丢包）
-  if (!shouldPreserveLiveStream(sessionStore.getMessages(sid.value))) {
-    void fetchMessages()
+  const generation = ++activateGeneration
+  const restore = () => {
+    if (generation !== activateGeneration) return
+    restoreAfterActivate()
   }
+  // 无活跃流式时先补历史（覆盖断线丢包）。列表替换会把 scrollTop 打回 0，
+  // 所以只在拉完后恢复一次。拉历史前后各调一次会互相打断。
+  if (!shouldPreserveLiveStream(sessionStore.getMessages(sid.value))) {
+    void fetchMessages().finally(restore)
+    return
+  }
+  restore()
+})
+
+onDeactivated(() => {
+  // 晚到的回补不再发起写回；已经排队的那次也作废，避免清掉滚动基准
+  activateGeneration++
+  cancelRestoreAfterActivate()
 })
 
 onUnmounted(() => {
