@@ -1,6 +1,9 @@
 #!/bin/bash
 # =============================================================================
-# changelog-extract.sh — 从根 CHANGELOG.md 提取版本号与发版说明
+# changelog-extract.sh — 从按月归档的发版说明提取版本号与正文
+#
+# 已发布正文在 changelog/YYYY/MM.md。根 CHANGELOG.md 只是索引（没有 ## 标题）时，
+# 自动改读归档：version / sync-desktop 取最新月份文件的第一条版本。
 #
 # 用法：
 #   changelog-extract.sh version [CHANGELOG]
@@ -22,7 +25,7 @@ OTA_SECTIONS=(
 )
 
 usage() {
-  sed -n '3,12p' "$0" | sed 's/^# //'
+  sed -n '3,14p' "$0" | sed 's/^# //'
   exit 1
 }
 
@@ -35,15 +38,78 @@ resolve_changelog() {
   fi
 }
 
+# 月份文件按路径倒序：changelog/2026/11.md 先于 10.md，也先于上一年。
+list_month_files() {
+  local root="$1"
+  local dir="$root/changelog"
+  if [[ ! -d "$dir" ]]; then
+    return 0
+  fi
+  find "$dir" -type f -name '*.md' 2>/dev/null \
+    | grep -E '/[0-9]{4}/[0-9]{2}\.md$' \
+    | sort -r || true
+}
+
+file_has_version() {
+  local ver="$1"
+  local file="$2"
+  [[ -f "$file" ]] || return 1
+  awk -v ver="$ver" 'index($0, "## " ver " ")==1 { found=1; exit } END { exit found ? 0 : 1 }' "$file"
+}
+
+# 指定文件里已有该版本则用它；索引文件没有 ## 时，从新到旧查月份归档。
+locate_version_file() {
+  local ver="$1"
+  local hint="$2"
+  if file_has_version "$ver" "$hint"; then
+    echo "$hint"
+    return 0
+  fi
+  local root f
+  local files=()
+  root="$(cd "$(dirname "$hint")" && pwd)"
+  while IFS= read -r f; do
+    [[ -n "$f" ]] && files+=("$f")
+  done < <(list_month_files "$root")
+  local i
+  for ((i = 0; i < ${#files[@]}; i++)); do
+    if file_has_version "$ver" "${files[$i]}"; then
+      echo "${files[$i]}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# 文件自身有版本标题时取第一条；否则取最新月份文件的第一条。
+first_version_line() {
+  local hint="$1"
+  if [[ -f "$hint" ]] && grep -q '^## ' "$hint"; then
+    grep -m1 '^## ' "$hint"
+    return 0
+  fi
+  local root f
+  local files=()
+  root="$(cd "$(dirname "$hint")" && pwd)"
+  while IFS= read -r f; do
+    [[ -n "$f" ]] && files+=("$f")
+  done < <(list_month_files "$root")
+  if [[ ${#files[@]} -eq 0 ]]; then
+    echo "错误：找不到已发布版本" >&2
+    return 1
+  fi
+  grep -m1 '^## ' "${files[0]}"
+}
 
 cmd_version() {
-  local file
+  local file line
   file="$(resolve_changelog "$@")"
   if [[ ! -f "$file" ]]; then
     echo "错误：CHANGELOG 不存在: $file" >&2
     exit 1
   fi
-  grep -m1 '^## ' "$file" | sed 's/^## \([^ ]*\).*/\1/'
+  line="$(first_version_line "$file")" || exit 1
+  printf '%s\n' "$line" | sed 's/^## \([^ ]*\).*/\1/'
 }
 
 # body: 每行一条（已去掉 "- " 前缀）
@@ -70,6 +136,11 @@ cmd_body() {
   done
 
   local CHANGELOG_FILE="${changelog_arg:-$DEFAULT_CHANGELOG}"
+  local source=""
+  source="$(locate_version_file "$version" "$CHANGELOG_FILE" || true)"
+  if [[ -z "$source" ]]; then
+    return 0
+  fi
 
   local section_csv=""
   if ((${#sections[@]} > 0)); then
@@ -108,7 +179,7 @@ cmd_body() {
       if (!has_sub) print line
       else if (in_sec) print line
     }
-  ' "$CHANGELOG_FILE"
+  ' "$source"
 }
 
 lines_to_pipe() {
@@ -133,7 +204,7 @@ cmd_ota_text() {
   fi
 
   if [[ -z "$lines" ]]; then
-    echo "错误：版本 $version 在 $CHANGELOG_FILE 中无 OTA 条目" >&2
+    echo "错误：版本 $version 没有可写入 OTA 的条目" >&2
     exit 1
   fi
 

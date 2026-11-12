@@ -38,7 +38,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 | 部署/登录/LOCAL/Git/通知等 FAQ | [reference/troubleshooting.md](reference/troubleshooting.md) |
 | 首次部署、管理员上线、日常任务 + CLI | [business_process.md](business_process.md) |
 
-**发版记录**：完整 `CHANGELOG` 在 Mao 源码仓库根目录；独立分发包以发行说明为准。
+**发版记录**：Mao 源码仓库按月归档在 `changelog/`，根目录 `CHANGELOG.md` 是索引；独立分发包以发行说明为准。
 
 ## REST CLI 何时使用
 

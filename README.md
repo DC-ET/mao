@@ -181,7 +181,7 @@ mao agent list
 | [config.md](skills/mao-cli/reference/config.md) | 环境变量、数据目录、默认账号 |
 | [USER_GUIDE.md](USER_GUIDE.md) | 各端使用手册索引 |
 | [troubleshooting.md](skills/mao-cli/reference/troubleshooting.md) | 排障 |
-| [CHANGELOG.md](CHANGELOG.md) | 发版说明 |
+| [CHANGELOG.md](CHANGELOG.md) | 发版说明索引（正文在 `changelog/YYYY/MM.md`） |
 | [docs/plan/2026-05-20-technical-design.md](docs/plan/2026-05-20-technical-design.md) | 早期技术方案（部分已过时，以源码与 mao-cli 为准） |
 
 ## 开发

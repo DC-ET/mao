@@ -10,7 +10,7 @@ Mao 平台的**可独立分发**知识库与代理入口：产品说明、部署
 | **REST CLI** | `mao` / `mao-cli` 调用大部分管理与用户 REST API（不含对话与 WebSocket） |
 | **代理入口** | 给 Codex、Cursor 等 Agent 安装本目录后，按 `SKILL.md` 路由阅读文档并执行 CLI |
 
-完整发版记录见 Mao 仓库根目录 `CHANGELOG.md`（独立带走本目录时无该文件，以你拿到的发行包版本为准）。
+完整发版记录在 Mao 仓库 `changelog/`（按月归档），根目录 `CHANGELOG.md` 是索引（独立带走本目录时无这些文件，以你拿到的发行包版本为准）。
 
 ## 给人类
 
