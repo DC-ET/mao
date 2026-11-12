@@ -311,7 +311,7 @@ cd /opt/mao && git pull origin main
 | 仅 admin | `bash scripts/deploy-admin.sh` | 否 |
 | 仅 desktop | `bash scripts/deploy-desktop.sh` | 否 |
 | backend-ts | `cd backend-ts && npm ci && npm run build && ./restart.sh` | **是** |
-| 安卓原生壳 | 更新 CHANGELOG 后 `cd android && bash build-apk.sh` | 否 |
+| 安卓原生壳 | 在 main 上 `./scripts/changelog-cut.sh`，再 `cd android && bash build-apk.sh` | 否 |
 
 两个 deploy 脚本均**不接受任何参数**：`deploy-desktop.sh` 的 `--dry-run` 从未生效（参数会被静默忽略并直接执行真实构建），`deploy-admin.sh` 的 `--dry-run` 预览能力已一并移除。现传入参数一律报错退出（exit 2），不会有「以为在预览、其实已上线」的情况。安卓壳 `build-apk.sh --dry-run` 仍可用（不发布，仅构建）。
 

@@ -67,7 +67,7 @@ const emit = defineEmits<{
   min-width: 0;
   margin-bottom: 4px;
   font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-caption);
+  font-size: var(--aw-text-fine);
 }
 
 /* 查询词不用主色（蓝）：与 shell 命令同口径取墨色，蓝色只留给交互态底纹 */
@@ -120,7 +120,7 @@ const emit = defineEmits<{
   display: flex;
   padding: 0 12px;
   font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-caption);
+  font-size: var(--aw-text-fine);
   line-height: 1.5;
   color: var(--aw-text-code);
   white-space: pre-wrap;

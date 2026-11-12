@@ -6,7 +6,7 @@
 # 前端改动部署 Web 即可；仅原生壳变更时需本脚本发 APK OTA。
 #
 # 用法：
-#   ./build-apk.sh                  # 自动从根 CHANGELOG.md 提取版本
+#   ./build-apk.sh                  # 自动从 changelog 归档提取最新版本
 #   ./build-apk.sh --version 0.0.2  # 手动指定版本名（versionCode 仍自动递增）
 #   ./build-apk.sh --dry-run        # 仅构建，不发布
 #
@@ -66,7 +66,7 @@ if [ -n "$CUSTOM_VERSION" ]; then
 else
   VERSION_NAME=$("$CHANGELOG_EXTRACT" version "$CHANGELOG_FILE")
   if [ -z "$VERSION_NAME" ]; then
-    echo "错误：无法从 CHANGELOG.md 提取版本号，请使用 --version 手动指定"; exit 1
+    echo "错误：无法从发版说明提取版本号，请使用 --version 手动指定"; exit 1
   fi
 fi
 

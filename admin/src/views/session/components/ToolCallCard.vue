@@ -241,7 +241,7 @@ function toggleExpand() {
 
 .tool-body {
   border-top: 1px solid var(--el-border-color-lighter);
-  padding: 10px 14px;
+  padding: 10px 5px;
 }
 
 .code-block-wrapper {

@@ -2,29 +2,29 @@
 
 ## 定位
 
-Mao 是个人与企业都适用的**可私有化部署 AI Agent 管理与协作平台**。集中管理 Agent、模型、用户与审计；内置 Think-Act-Observe 运行引擎，支持流式对话、工具调用、MCP、技能扩展、上下文压缩、定时任务与子任务协作。
+Mao 是面向个人与团队的**自托管 AI Agent 平台**。一次部署，全员共用：在服务端集中管理模型、权限与按岗位构建的智能体，成员无需安装运行环境，即可通过 Web、移动端、CLI、飞书、钉钉、微信或内部业务系统直接调用。内置 Think-Act-Observe 运行引擎、Docker 容器级隔离、团队经验库自动沉淀，以及全量会话、调用与成本审计。
 
 - **开源**：MIT，仅提供源码与自部署文档，无官方 SaaS
 - **Git**：https://github.com/DC-ET/mao
 - **界面语言**：中文
 - **风险提示**：尚未经企业级生产充分验证，部署前请自行评估
 
-Logo 与客户端预览图见 GitHub 仓库 `docs/assets/logo.png`、`docs/assets/client.png`。
+Logo、工作台预览和技术架构图见 GitHub 仓库 `docs/assets/logo.png`、`docs/assets/client.png`、`docs/assets/mao-architecture-tech.jpeg`。
 
 ## 为什么选择 Mao
 
-| 能力 | Mao |
+| 维度 | Mao |
 |------|-----|
-| 部署 | 完全自托管，数据与 API Key 留在本地或内网 |
-| 权限与审计 | RBAC + 管理类 API 操作审计 |
-| 工具执行 | **CLOUD**（服务端）与 **LOCAL**（Electron）双模式，LOCAL 支持工具审批 |
-| Agent 引擎 | 内置 Harness 运行时，非仅 LLM 网关 |
-| 客户端 | 管理后台 + Web/Electron 桌面 + 安卓 APP（CLOUD）+ `mao-agent` 终端 CLI |
-| 协作 | Side Task、子代理委派、定时任务与完成通知 |
-| 扩展 | Skill + MCP + 内置工具（Shell/文件/搜索/文生图+改图等） |
-| 认证 | 本地账号 / LDAP / 飞书 SSO（可选） |
+| 部署与共享 | 一次私有化部署，全员共用；API Key、会话与工作区数据留在内网 |
+| 多端零配置 | Web、Android、CLI、飞书、钉钉、微信、网页嵌入（Embed SDK），用户侧免安装 |
+| 岗位智能体 | 按岗位配置 Agent，独立绑定提示词（带版本回滚）、Skill、MCP 与 HTTP 工具 |
+| 容器级隔离 | 可选 Docker 运行时：每用户独立容器执行环境，经验库按 Agent 隔离 |
+| 团队经验沉淀 | 云端会话自动归档排障与业务经验至 Agent 经验库，跨成员复用 |
+| 审计与成本治理 | 全量会话留痕、LLM 调用流水、操作审计、多维成本核算与月度预算拦截 |
+| 双执行边界 | **CLOUD**（服务端/容器执行）与 **LOCAL**（Electron / CLI 本机执行 + 工具审批）随时切换 |
+| 认证接入 | 本地账号 / LDAP / 飞书 SSO（可选） |
 
-若需要低代码工作流或开箱 SaaS，可考虑 Dify、n8n 等；若需要私有化、自选模型、服务端与本地工具边界可切换，选 Mao。
+若需要低代码画布编排或开箱 SaaS，可考虑 Dify、n8n；若需要团队级自托管、多端接入、岗位经验沉淀与完整的权限成本治理，选 Mao。
 
 ## 与 OpenAI Codex 对比
 
@@ -32,11 +32,11 @@ Logo 与客户端预览图见 GitHub 仓库 `docs/assets/logo.png`、`docs/asset
 |------|--------------|-----|
 | 形态 | 商业 SaaS | 开源 MIT，自托管 |
 | 数据与密钥 | OpenAI 云端 | 留在本地/内网 |
-| 入口 | App/CLI/IDE/Web | 管理后台 + 桌面 + 安卓 + 终端 CLI |
+| 入口 | App/CLI/IDE/Web | 管理后台、Web、安卓、终端、微信、飞书、钉钉、网页嵌入 |
 | 模型 | OpenAI 体系 | 任意 OpenAI 兼容 API |
 | 权限 | 个人/小团队 | RBAC、审计、LDAP/飞书 |
 | 工具执行 | 云端 Sandbox | CLOUD + LOCAL 可切换 |
-| Agent | 单一助手为主 | 多 Agent、Skill 绑定、用量统计 |
+| Agent | 单一助手为主 | 按岗位多个智能体；云端经验库跨成员复用；用量统计 |
 | 上手 | 注册即用 | 需自行部署 |
 
 ## 架构

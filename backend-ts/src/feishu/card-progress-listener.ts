@@ -60,6 +60,11 @@ export class FeishuCardProgressListener implements AgentEventListener {
     this.round = this.roundOffset;
   }
 
+  /** 当前展示轮次（含崩溃恢复 offset）；供终态降级卡片保持「共 N 轮」口径一致。 */
+  get currentRound(): number {
+    return this.round;
+  }
+
   onRoundStart(round: number): void {
     this.round = this.displayRound(round);
     // 仅首个轮次推送「正在思考…」占位：把首卡的「任务已接收，正在准备执行。」推进到思考态，

@@ -1,9 +1,10 @@
 # Android CHANGELOG
 
-已迁移至项目根目录 **[CHANGELOG.md](../CHANGELOG.md)**。
+已迁移到按月归档的 `changelog/YYYY/MM.md`。根目录 [CHANGELOG.md](../CHANGELOG.md) 是索引。
 
-发版前请更新根 `CHANGELOG.md` 顶部版本条目，然后执行：
+发版前把说明写成 `changelog/unreleased/` 下的碎片，在 main 上汇合后执行：
 
 ```bash
+./scripts/changelog-cut.sh
 cd android && bash build-apk.sh
 ```

@@ -572,6 +572,7 @@
               if (result && result.ok) {
                 history = Array.isArray(result.history) ? result.history : history.filter((e) => e.serverBaseUrl !== entry.serverBaseUrl)
                 renderHistory()
+                if (result.authCleared) setMsg('已从历史中删除，本机保存的该站登录已清除', 'ok')
               } else {
                 setMsg(result?.error || '删除失败', 'error')
                 revert()
@@ -635,7 +636,7 @@
         if (hostKeyOf(target) !== currentHostKey) {
           const ok = await showConfirm({
             title: '切换服务器',
-            bodyHtml: `将切换到 <span class="target">${target}</span>。<br/>切换会清除本机登录态，LOCAL 任务数据按服务器隔离，需要重新登录。确认继续？`,
+            bodyHtml: `将切换到 <span class="target">${target}</span>。<br/>将重新加载该站点；若此服务器曾在本机登录且登录仍有效，将直接进入。LOCAL 任务数据按服务器隔离。确认继续？`,
             confirmText: '切换',
             danger: true,
           })

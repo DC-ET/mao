@@ -40,7 +40,7 @@ bash build-apk.sh                      # --dry-run / --version 0.0.x
 - `mao-android-<versionName>-<versionCode>.apk`
 - `android-latest.json`（OTA 清单，含原生 changelog）
 
-`versionCode` 脚本按已发布 APK 自增；`versionName` 取自仓库 CHANGELOG 首条版本号。
+`versionCode` 脚本按已发布 APK 自增；`versionName` 取自 `changelog/` 归档里最新一条版本号。
 
 ## 应用内更新
 

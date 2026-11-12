@@ -2,7 +2,7 @@
   <div class="server-page">
     <div class="page-header">
       <h1 class="page-title">服务器</h1>
-      <p class="page-desc">查看当前桌面客户端连接的 Mao 站点；切换服务器后将自动登出并重新加载。</p>
+      <p class="page-desc">查看当前桌面客户端连接的 Mao 站点。切换会重新加载对应站点；该站曾在本机登录且登录仍有效时直接进入。</p>
     </div>
 
     <div class="server-card">
@@ -297,7 +297,7 @@ async function switchTo(entry: ServerConfigHistoryEntry) {
     if (hostKeyOf(target) !== currentHostKey.value) {
       try {
         await ElMessageBox.confirm(
-          `将切换到 ${target}。切换会清除本机登录态，LOCAL 任务数据按服务器隔离，需要重新登录。确认继续？`,
+          `将切换到 ${target}。将重新加载该站点；若此服务器曾在本机登录且登录仍有效，将直接进入。LOCAL 任务数据按服务器隔离。确认继续？`,
           '切换服务器',
           { type: 'warning', confirmButtonText: '切换', cancelButtonText: '取消' }
         )
@@ -329,7 +329,7 @@ async function removeEntry(entry: ServerConfigHistoryEntry) {
   if (!window.electronAPI?.serverConfig) return
   try {
     await ElMessageBox.confirm(
-      `从历史记录中移除 ${entry.serverBaseUrl}？不影响当前正在连接的站点。`,
+      `从历史记录中移除 ${entry.serverBaseUrl}？不影响当前正在连接的站点。若没有其他地址属于同一服务器，本机保存的该站登录会一并清除。`,
       '删除历史地址',
       { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
     )
@@ -342,6 +342,7 @@ async function removeEntry(entry: ServerConfigHistoryEntry) {
       history.value = Array.isArray(result.history)
         ? result.history
         : history.value.filter((e) => e.serverBaseUrl !== entry.serverBaseUrl)
+      if (result.authCleared) setMessage('已从历史中删除，本机保存的该站登录已清除', 'ok')
     } else {
       setMessage(result?.error || '删除失败', 'error')
     }
@@ -360,7 +361,7 @@ async function save() {
 
   try {
     await ElMessageBox.confirm(
-      '切换服务器将清除本机登录态，并重新加载对应站点。LOCAL 任务数据会按服务器隔离。确认继续？',
+      '切换服务器将重新加载对应站点。若该服务器曾在本机登录且登录仍有效，将直接进入。LOCAL 任务数据按服务器隔离。确认继续？',
       '切换服务器',
       {
         type: 'warning',

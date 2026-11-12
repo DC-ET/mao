@@ -202,21 +202,28 @@ describe('ApprovalStack 审批键盘流', () => {
     m.destroy()
   })
 
-  it('title：执行 / 拒绝注明快捷键，总是允许保持 hint label', async () => {
+  it('执行 / 拒绝按钮上可见 Y / N，悬停 title 与 aria-keyshortcuts 同步；总是允许无快捷键', async () => {
     mount([makeItem({
       requestId: 'r1',
       approvalHint: { ruleType: 'SHELL_PREFIX', ruleValue: 'npm run', label: '本会话总是允许以 npm run 开头的命令' },
     })])
     await nextTick()
 
-    const byText = (text: string): HTMLButtonElement | null => {
-      for (const btn of Array.from(document.querySelectorAll('button'))) {
-        if (btn.textContent?.trim() === text) return btn
-      }
-      return null
-    }
-    expect(byText('执行')?.getAttribute('title')).toBe('快捷键 Y')
-    expect(byText('拒绝')?.getAttribute('title')).toBe('快捷键 N')
-    expect(byText('总是允许')?.getAttribute('title')).toBe('本会话总是允许以 npm run 开头的命令')
+    const byClass = (cls: string): HTMLButtonElement | null =>
+      document.querySelector(`.action-btn.${cls}`)
+
+    const approve = byClass('approve')
+    const reject = byClass('reject')
+    const always = byClass('always-allow')
+    expect(approve?.getAttribute('title')).toBe('快捷键 Y')
+    expect(approve?.getAttribute('aria-keyshortcuts')).toBe('Y')
+    expect(approve?.querySelector('kbd')?.textContent).toBe('Y')
+    expect(approve?.querySelector('kbd')?.getAttribute('aria-hidden')).toBe('true')
+    expect(reject?.getAttribute('title')).toBe('快捷键 N')
+    expect(reject?.getAttribute('aria-keyshortcuts')).toBe('N')
+    expect(reject?.querySelector('kbd')?.textContent).toBe('N')
+    expect(always?.getAttribute('title')).toBe('本会话总是允许以 npm run 开头的命令')
+    expect(always?.hasAttribute('aria-keyshortcuts')).toBe(false)
+    expect(always?.querySelector('kbd')).toBeNull()
   })
 })

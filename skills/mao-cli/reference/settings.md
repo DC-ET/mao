@@ -6,6 +6,12 @@
 
 集成配置类 key（`auth.ldap.*`、`auth.feishu.*`、`upload.*`、`tools.*`、`oss.*`、`agent.*`、`notify.*`、`harness.*` 等）已支持后台可视化编辑（`agent.*`/`ws.*`/`harness.*` 为启动时构建，保存后需重启后端生效，其余即时生效）；secret 类项（`is_secret`）写入后仅返回掩码，不可读回明文。
 
+Shell 环境变量的注入总开关是 `shell.envVars.enabled`（`true` / `false`，缺省视为开启）。三层变量本身不在本模块，用 `mao env`，见 [env.md](env.md)。
+
+```bash
+mao settings set --key shell.envVars.enabled --value false
+```
+
 ## 公司 SSO 配置（0.0.111 起）
 
 推荐通过管理后台「系统设置 → 登录认证 → 公司 SSO」维护。也可使用现有 `settings set`，键为 `auth.companySso.config`，value 必须是包含以下五个字段的完整 JSON 字符串：

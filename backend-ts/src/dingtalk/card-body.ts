@@ -110,14 +110,23 @@ export function queueCardParams(input: {
   };
 }
 
+/**
+ * 按钮 Toast 的成败看 `requestOk`，不看 `status`。
+ * 卡片平台会把字符串 `isEqual`（如 `status == cancelled`）编译成空条件，
+ * `dtConditionalHandler` 的第一参变成 `''`，恒走失败 Toast——卡片内容仍按回包更新，
+ * 于是会出现「卡已变成已取消，同时提示取消失败」。
+ * 成功回包（有 cardParamMap）带 `requestOk=true`；失败回包只把 `requestOk` 置 false，不改其余字段。
+ * 模板按钮的成功判定是 `isTrue(requestOk)`，与可见性一样能被编译成 `@data{...}`。
+ */
 export function cardCallbackResponse(cardParamMap: Record<string, string> | null, tips?: string): Record<string, unknown> {
+  const accepted = cardParamMap != null;
   const response: Record<string, unknown> = {
     cardUpdateOptions: {
-      updateCardDataByKey: cardParamMap != null,
+      updateCardDataByKey: true,
       updatePrivateDataByKey: tips != null && tips !== '',
     },
+    cardData: { cardParamMap: { ...(cardParamMap ?? {}), requestOk: accepted ? 'true' : 'false' } },
   };
-  if (cardParamMap != null) response.cardData = { cardParamMap };
   if (tips != null && tips !== '') response.userPrivateData = { cardParamMap: { tips } };
   return response;
 }

@@ -49,8 +49,9 @@
               class="action-btn reject"
               :disabled="handledIds.has(item.requestId)"
               title="快捷键 N"
+              aria-keyshortcuts="N"
               @click="confirm(item.requestId, false, false)"
-            >拒绝</button>
+            >拒绝<kbd aria-hidden="true">N</kbd></button>
             <button
               v-if="item.approvalHint"
               class="action-btn always-allow"
@@ -62,8 +63,9 @@
               class="action-btn approve"
               :disabled="handledIds.has(item.requestId)"
               title="快捷键 Y"
+              aria-keyshortcuts="Y"
               @click="confirm(item.requestId, true, false)"
-            >执行</button>
+            >执行<kbd aria-hidden="true">Y</kbd></button>
           </div>
         </template>
       </div>
@@ -368,7 +370,9 @@ async function copyText(text: string) {
 
 .action-btn {
   height: var(--aw-btn-height);
-  padding: var(--aw-btn-padding);
+  /* 上下 padding 让给键帽：24px 胶囊扣掉 --aw-btn-padding 的 5px 后内容区只剩 14px，16px 键帽放不下 */
+  padding: 0 11px;
+  gap: 6px;
   border-radius: var(--aw-radius-pill);
   border: 1px solid var(--aw-hairline);
   background: var(--aw-canvas);
@@ -376,6 +380,24 @@ async function copyText(text: string) {
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s;
+}
+
+.action-btn kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
 }
 
 .action-btn:hover {

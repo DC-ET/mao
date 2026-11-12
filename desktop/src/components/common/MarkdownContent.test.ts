@@ -72,6 +72,34 @@ async function clickAndFlush(img: HTMLImageElement) {
   await flush()
 }
 
+describe('MarkdownContent 单根宿主', () => {
+  it('正文 class 在唯一根上，透传 class 落在同一节点，查看器不占兄弟根', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const app = createApp({
+      render: () => h(MarkdownContent, {
+        class: 'page-body',
+        content: '段落\n\n| 甲 | 乙 |\n| --- | --- |\n| 1 | 2 |',
+      }),
+    })
+    app.use(ElementPlus)
+    app.config.warnHandler = () => {}
+    app.mount(el)
+    await flush()
+
+    const host = el.firstElementChild as HTMLElement | null
+    expect(host).toBeTruthy()
+    expect(el.childElementCount).toBe(1)
+    expect(host!.classList.contains('markdown-body')).toBe(true)
+    expect(host!.classList.contains('page-body')).toBe(true)
+    expect(host!.querySelector('table')).toBeTruthy()
+    expect(host!.querySelector('p')).toBeTruthy()
+
+    app.unmount()
+    el.remove()
+  })
+})
+
 describe('MarkdownContent 正文图片点击放大', () => {
   it('正文 img 渲染后带 md-img-zoom，点击弹出 viewer（teleported 挂 body），关闭后卸载', async () => {
     const mounted = mount({ content: '前文\n\n![截图](/uploads/7/x.png)\n\n后文' })

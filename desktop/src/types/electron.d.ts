@@ -274,7 +274,7 @@ interface ElectronAPI {
     probe(serverBaseUrl: string, options?: { allowHttp?: boolean }): Promise<ServerConfigProbeResult>
     openPicker(): Promise<{ ok: boolean }>
     closePicker(): Promise<{ ok: boolean }>
-    removeHistory(serverBaseUrl: string): Promise<{ ok: boolean; error?: string; history?: ServerConfigHistoryEntry[] }>
+    removeHistory(serverBaseUrl: string): Promise<{ ok: boolean; error?: string; history?: ServerConfigHistoryEntry[]; authCleared?: boolean }>
   }
 
   getAppVersion(): Promise<string>

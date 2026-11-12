@@ -37,6 +37,7 @@ describe('DingtalkCardActionService', () => {
       outTrackId: 'track-q', userId: 'other', content: JSON.stringify({ cardPrivateData: { actionIds: ['run'], params: { senderUserid: 'staff-a' } } }),
     });
     expect(JSON.stringify(decision?.response)).toContain('仅消息发送者可操作');
+    expect(JSON.stringify(decision?.response)).toContain('"requestOk":"false"');
     expect(decision?.after).toBeUndefined();
   });
 
@@ -80,6 +81,7 @@ describe('DingtalkCardActionService', () => {
     expect(cancel).toHaveBeenCalledWith(4);
     expect(dropped?.after).toBeUndefined();
     expect(JSON.stringify(dropped?.response)).toContain('cancelled');
+    expect(JSON.stringify(dropped?.response)).toContain('"requestOk":"true"');
   });
 
   it('returns cancelled progress variables for the original sender', async () => {
@@ -93,6 +95,7 @@ describe('DingtalkCardActionService', () => {
     });
     expect(cancelRunning).toHaveBeenCalledWith(8);
     expect(JSON.stringify(decision?.response)).toContain('任务已取消');
+    expect(JSON.stringify(decision?.response)).toContain('"requestOk":"true"');
   });
 
   it('does not start a retry when the session is no longer failed', async () => {
@@ -150,6 +153,7 @@ describe('DingtalkCardActionService 一卡到底（V192）', () => {
     expect(queuePort.cancel).not.toHaveBeenCalled();
     expect(cancelRunning).toHaveBeenCalledWith(8);
     expect(JSON.stringify(decision?.response)).toContain('任务已取消');
+    expect(JSON.stringify(decision?.response)).toContain('"requestOk":"true"');
   });
 
   it('完成卡点踩「👎 不满意」：toggleDislike 生效并回传翻转后的 dislikeText', async () => {

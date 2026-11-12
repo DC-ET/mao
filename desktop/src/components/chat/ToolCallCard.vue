@@ -972,7 +972,7 @@ function toggleExpand() {
 
 .tool-body {
   border-top: 1px solid var(--aw-divider-soft);
-  padding: 10px 14px;
+  padding: 10px 5px;
 }
 
 .code-block-wrapper {
@@ -1013,7 +1013,7 @@ function toggleExpand() {
 
 .tool-command code {
   font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-caption);
+  font-size: var(--aw-text-fine);
   color: var(--aw-text-code);
   background: none;
   padding: 0;
@@ -1122,7 +1122,7 @@ function toggleExpand() {
 
 .result-content code {
   font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-caption);
+  font-size: var(--aw-text-fine);
   color: var(--aw-text-code);
   background: none;
   padding: 0;
