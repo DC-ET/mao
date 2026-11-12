@@ -238,6 +238,32 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
       }
       return messageId;
     },
+    // 进度卡终态更新失败（飞到飞书 500/400 等）时的兜底：补发一张完成/失败卡片（markdown 正常渲染），
+    // 卡片发送失败由 handler 退回纯文本。不渲染点踩/重试按钮——补发卡没有终态快照与卡归属，按钮回调无处可依。
+    onReplyCard: async (context: any, phase: 'COMPLETED' | 'FAILED', text: string, sessionId?: number, round?: number) => {
+      const client = await getFeishuClient(Number(context.accountId));
+      if (client == null) return false;
+      const detailUrl = sessionId == null ? undefined : await resolveFeishuSessionDetailUrl(sessionId);
+      const card = buildFeishuProgressCard(phase, round ?? 0, text, [], undefined, undefined, detailUrl);
+      const data = { msg_type: 'interactive' as const, content: JSON.stringify(card) };
+      let messageId: string | null = null;
+      if (context.chatType === 'group' && context.messageId != null) {
+        const response = await client.im.v1.message.reply({ path: { message_id: context.messageId }, data });
+        messageId = (response as { data?: { message_id?: string } }).data?.message_id ?? null;
+      } else {
+        const receiveId = context.chatType === 'group' ? context.chatId : context.senderId;
+        if (receiveId == null) return false;
+        const response = await client.im.v1.message.create({
+          params: { receive_id_type: context.chatType === 'group' ? 'chat_id' : 'open_id' },
+          data: { ...data, receive_id: receiveId },
+        });
+        messageId = (response as { data?: { message_id?: string } }).data?.message_id ?? null;
+      }
+      if (messageId != null && sessionId != null && context.chatType === 'p2p') {
+        await feishuMessageService.recordP2pMessage(context.accountId, messageId, sessionId, 'OUT');
+      }
+      return messageId != null;
+    },
     harnessService: { execute: (...args: any[]) => d.harness.execute(...args), prepareMessage: (...args: any[]) => d.harness.prepareMessage(...args) } as never,
     createCancelFlag: (sessionId: number) => d.agentLoop.registerCancelFlag(sessionId),
     releaseCancelFlag: (sessionId: number) => d.agentLoop.removeCancelFlag(sessionId),

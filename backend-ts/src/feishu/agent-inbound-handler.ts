@@ -221,6 +221,15 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     titleGenerator?: FeishuTitleGenerator;
     /** 文本回复发送：成功返回飞书 message_id（供出站映射），失败返回 null（内部可抛错，由 reply 统一容错）。 */
     onReply?: (context: FeishuInboundContext, text: string, sessionId?: number) => Promise<string | null>;
+    /**
+     * 终态卡片更新失败时的补发卡片：优先于纯文本兜底，让用户仍能看到渲染后的完整结果。
+     * 返回 false 或抛错时退回 onReply 文本（文本是最后兜底，保证结果一定送达）。
+     * @param round 进度卡同口径的展示轮次（未知时 undefined，卡片只显示状态行与正文）。
+     */
+    onReplyCard?: (
+      context: FeishuInboundContext, phase: 'COMPLETED' | 'FAILED', text: string,
+      sessionId?: number, round?: number,
+    ) => Promise<boolean>;
     /** 进度卡在途工具耗时刷新间隔（ms）；缺省用监听器默认值（与 app-config feishu.bot.cardToolTickMs 对齐）。 */
     cardToolTickMs?: number;
   }) {}
@@ -360,7 +369,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       const reply = await this.options.sessionService.getLatestAssistantReplyWithId(sessionId);
       const cardUpdated = await cardListener.complete(reply.text, reply.messageId ?? undefined);
       if (cardUpdated === false && reply.text != null && reply.text !== '') {
-        await this.reply(stubContext, reply.text, sessionId).catch(() => undefined);
+        await this.replyTerminalFallback(stubContext, reply.text, 'COMPLETED', sessionId, cardListener.currentRound).catch(() => undefined);
       }
       outcome = 'COMPLETED';
       return outcome;
@@ -371,7 +380,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       const cardUpdated = await cardListener?.fail(failText);
       await this.options.onExecutionFinished?.(sessionId, stubContext, executionId, 'FAILED', failText);
       if ((cardListener == null || cardUpdated === false) && failText !== '') {
-        await this.reply(stubContext, failText, sessionId).catch(() => undefined);
+        await this.replyTerminalFallback(stubContext, failText, 'FAILED', sessionId, cardListener?.currentRound).catch(() => undefined);
       }
       outcome = 'FAILED';
       return outcome;
@@ -610,7 +619,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       const result = await this.runExecution(sessionId, context, message, session.executionUserId ?? context.maoUserId ?? null, cancelFlag);
       // 回复发送失败不影响执行终态：任务已完成，队列仍应按 result.phase 决策是否接力。
       if (result.text) {
-        await this.reply(context, result.text, sessionId);
+        await this.replyTerminalFallback(context, result.text, result.phase, sessionId, result.round);
       }
       return result.phase;
     } finally {
@@ -712,7 +721,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       // 回复发送失败不影响执行终态：queueRow 仍会清理，且不把执行成功误判为 FAILED 而暂停队列。
       if (result.text) {
         try {
-          await this.reply(context, result.text, sessionId);
+          await this.replyTerminalFallback(context, result.text, result.phase, sessionId, result.round);
         } catch (error) {
           console.error(`飞书队列回复发送失败, queueId=${row.id}`, error);
         }
@@ -743,7 +752,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
   private async runExecution(
     sessionId: number, context: FeishuInboundContext, message: unknown,
     executionUserId: number | null, cancelFlag: CancelFlag, queueRow?: FeishuInboundQueueRow | null,
-  ): Promise<{ text: string | null; phase: 'COMPLETED' | 'CANCELLED' | 'FAILED' }> {
+  ): Promise<{ text: string | null; phase: 'COMPLETED' | 'CANCELLED' | 'FAILED'; round: number | undefined }> {
     let executionId = '';
     let cardListener: FeishuCardProgressListener | null = null;
     try {
@@ -776,13 +785,13 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
         await cardListener?.cancel(wasInterrupted);
         await this.options.onExecutionFinished?.(sessionId, context, executionId, 'CANCELLED');
         const text = cardListener == null ? (wasInterrupted ? '任务已被下一条消息中断。' : '任务已取消。') : null;
-        return { text, phase: 'CANCELLED' };
+        return { text, phase: 'CANCELLED', round: cardListener?.currentRound };
       }
       await this.options.onExecutionFinished?.(sessionId, context, executionId, 'COMPLETED');
       const reply = await this.options.sessionService.getLatestAssistantReplyWithId(sessionId);
       const cardUpdated = await cardListener?.complete(reply.text, reply.messageId ?? undefined);
       const replyText = cardListener == null || cardUpdated === false ? reply.text : null;
-      return { text: replyText, phase: 'COMPLETED' };
+      return { text: replyText, phase: 'COMPLETED', round: cardListener?.currentRound };
     } catch (error) {
       console.error(`飞书 Agent 执行失败, sessionId=${sessionId}`, error);
       await this.options.sessionService.cleanupIncompleteTail?.(sessionId);
@@ -791,7 +800,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       const cardUpdated = await cardListener?.fail(failText);
       await this.options.onExecutionFinished?.(sessionId, context, executionId, 'FAILED', failText);
       const replyText = cardListener == null || cardUpdated === false ? failText : null;
-      return { text: replyText, phase: 'FAILED' };
+      return { text: replyText, phase: 'FAILED', round: cardListener?.currentRound };
     }
   }
 
@@ -1038,6 +1047,26 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     if (messageId != null && sessionId != null && context.chatType === 'p2p') {
       await this.options.p2pSessionControl?.recordMessageMapping(context.accountId, messageId, sessionId, 'OUT');
     }
+  }
+
+  /**
+   * 终态降级回复（进度卡终态更新失败时）：
+   * 优先补发一张完成/失败卡片（markdown 正常渲染 + 会话详情按钮），卡片不可用或发送失败再退回纯文本——
+   * 纯文本是最后兜底（不渲染 markdown），保证结果一定送达。
+   * CANCELLED 不走卡片：取消场景没有富文本结果，文本一行就够。
+   */
+  private async replyTerminalFallback(
+    context: FeishuInboundContext, text: string, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED',
+    sessionId?: number, round?: number,
+  ): Promise<void> {
+    if ((phase === 'COMPLETED' || phase === 'FAILED') && this.options.onReplyCard != null) {
+      try {
+        if (await this.options.onReplyCard(context, phase, text, sessionId, round)) return;
+      } catch (error) {
+        console.error(`飞书降级卡片发送失败, 退回文本, sessionId=${sessionId ?? '-'}`, error);
+      }
+    }
+    await this.reply(context, text, sessionId);
   }
 
   private removeCancelFlag(sessionId: number, cancelFlag: CancelFlag): void {

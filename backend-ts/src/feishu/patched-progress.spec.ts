@@ -18,6 +18,7 @@ function progressOf(
     loadSubagents?: () => Promise<FeishuSubagentSummary[]>;
     now?: () => number;
     persistTerminal?: (snapshot: { round: number; content: string; elapsedMs?: number; messageId?: number }) => Promise<void>;
+    sleep?: (ms: number) => Promise<void>;
   } = {},
 ) {
   return createFeishuPatchedProgress({
@@ -31,7 +32,7 @@ function progressOf(
     persistTerminal: options.persistTerminal,
     startedAtMs: 0,
     now: options.now ?? (() => 1_000),
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    sleep: options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
     throttleMs,
   });
 }
@@ -241,6 +242,77 @@ describe('飞书完成卡终态快照持久化（persistTerminal）', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe('终态 PATCH 退避重试', () => {
+  function httpError(status: number): Error {
+    const error = new Error(`Request failed with status code ${status}`) as Error & { response: { status: number } };
+    error.response = { status };
+    return error;
+  }
+
+  it('终态 500：重试后成功，不抛错', async () => {
+    let calls = 0;
+    const cards: Array<Record<string, unknown>> = [];
+    const progress = progressOf(new FeishuAskFormStore(), async (card) => {
+      calls += 1;
+      if (calls === 1) throw httpError(500);
+      cards.push(card);
+    }, 0, { sleep: async () => undefined });
+    await expect(progress.update('COMPLETED', 4, '结果', [])).resolves.toBeUndefined();
+    expect(calls).toBe(2);
+    expect(cards).toHaveLength(1);
+    expect(JSON.stringify(cards[0])).toContain('状态：处理完成');
+  });
+
+  it('终态连续 500：最多重试 3 次（共 4 次尝试）后抛出', async () => {
+    let calls = 0;
+    const progress = progressOf(new FeishuAskFormStore(), async () => {
+      calls += 1;
+      throw httpError(500);
+    }, 0, { sleep: async () => undefined });
+    await expect(progress.update('COMPLETED', 4, '结果', [])).rejects.toThrow('500');
+    expect(calls).toBe(4);
+  });
+
+  it('终态 400（内容问题）不重试，直接抛出', async () => {
+    let calls = 0;
+    const progress = progressOf(new FeishuAskFormStore(), async () => {
+      calls += 1;
+      throw httpError(400);
+    }, 0, { sleep: async () => undefined });
+    await expect(progress.update('COMPLETED', 4, '结果', [])).rejects.toThrow('400');
+    expect(calls).toBe(1);
+  });
+
+  it('运行态 500 不重试（下一次更新会覆盖）', async () => {
+    let calls = 0;
+    const progress = progressOf(new FeishuAskFormStore(), async () => {
+      calls += 1;
+      throw httpError(500);
+    }, 0, { sleep: async () => undefined });
+    await expect(progress.update('RUNNING', 4, '执行中', [])).rejects.toThrow('500');
+    expect(calls).toBe(1);
+  });
+
+  it('网络错误（无 HTTP response）按可重试处理', async () => {
+    let calls = 0;
+    const progress = progressOf(new FeishuAskFormStore(), async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('socket hang up');
+    }, 0, { sleep: async () => undefined });
+    await expect(progress.update('FAILED', 2, '失败了', [])).resolves.toBeUndefined();
+    expect(calls).toBe(2);
+  });
+
+  it('退避间隔按 300/600/1200ms 递增', async () => {
+    const waits: number[] = [];
+    const progress = progressOf(new FeishuAskFormStore(), async () => {
+      throw httpError(503);
+    }, 0, { sleep: async (ms) => { waits.push(ms); } });
+    await expect(progress.update('CANCELLED', 1, '已取消', [])).rejects.toThrow('503');
+    expect(waits).toEqual([300, 600, 1200]);
   });
 });
 

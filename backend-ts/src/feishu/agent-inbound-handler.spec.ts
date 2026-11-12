@@ -1096,6 +1096,94 @@ describe('AgentFeishuInboundHandler', () => {
     expect(onReply).not.toHaveBeenCalled();
   });
 
+  it('sends a completion card instead of plain text when the final card update fails', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const onReply = vi.fn(async (): Promise<string | null> => 'om_text');
+    const onReplyCard = vi.fn(async (): Promise<boolean> => true);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      releaseCancelFlag: vi.fn(),
+      createProgressCard: vi.fn(async () => ({
+        update: async () => { throw new Error('Request failed with status code 500'); },
+      })),
+      listenerFactory: async () => listener,
+      onReply,
+      onReplyCard,
+    });
+    await handler.onMessage(makeContext());
+    expect(onReplyCard).toHaveBeenCalledWith(expect.anything(), 'COMPLETED', 'assistant text', 7, 0);
+    // 卡片补发成功即不再发纯文本
+    expect(onReply).not.toHaveBeenCalled();
+  });
+
+  it('falls back to plain text when the completion card cannot be sent', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const onReply = vi.fn(async (): Promise<string | null> => 'om_text');
+    const onReplyCard = vi.fn(async (): Promise<boolean> => false);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      releaseCancelFlag: vi.fn(),
+      createProgressCard: vi.fn(async () => ({
+        update: async () => { throw new Error('Request failed with status code 400'); },
+      })),
+      listenerFactory: async () => listener,
+      onReply,
+      onReplyCard,
+    });
+    await handler.onMessage(makeContext());
+    expect(onReplyCard).toHaveBeenCalled();
+    expect(onReply).toHaveBeenCalledWith(expect.anything(), 'assistant text', 7);
+  });
+
+  it('falls back to plain text when the completion card throws', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const onReply = vi.fn(async (): Promise<string | null> => 'om_text');
+    const onReplyCard = vi.fn(async (): Promise<boolean> => { throw new Error('send card failed'); });
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      releaseCancelFlag: vi.fn(),
+      createProgressCard: vi.fn(async () => ({
+        update: async () => { throw new Error('Request failed with status code 500'); },
+      })),
+      listenerFactory: async () => listener,
+      onReply,
+      onReplyCard,
+    });
+    await handler.onMessage(makeContext());
+    expect(onReply).toHaveBeenCalledWith(expect.anything(), 'assistant text', 7);
+  });
+
+  it('sends a failure card when the failed-state card update fails', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => { throw new Error('llm down'); }) };
+    const onReply = vi.fn(async (): Promise<string | null> => 'om_text');
+    const onReplyCard = vi.fn(async (): Promise<boolean> => true);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      releaseCancelFlag: vi.fn(),
+      createProgressCard: vi.fn(async () => ({
+        update: async () => { throw new Error('Request failed with status code 500'); },
+      })),
+      listenerFactory: async () => listener,
+      onReply,
+      onReplyCard,
+    });
+    await handler.onMessage(makeContext());
+    expect(onReplyCard).toHaveBeenCalledWith(expect.anything(), 'FAILED', 'llm down', 7, 0);
+    expect(onReply).not.toHaveBeenCalled();
+  });
+
   it('falls back to generic message when error has no message', async () => {
     const sessionService = makeSessionService();
     const harness = {

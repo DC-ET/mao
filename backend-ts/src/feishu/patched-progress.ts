@@ -26,6 +26,17 @@ const DEFAULT_THROTTLE_MS = 250;
 const SUBAGENT_CACHE_MS = 1000;
 
 /**
+ * 终态 PATCH 最多重试次数。
+ * 终态是「一次性」更新：失败后卡片会永久停在运行态（用户看到「正在处理」但其实任务已完成），
+ * 而飞书 OpenAPI 偶发 500/2200（今天 122 张完成卡里就有 1 次），必须补重试。
+ * 运行态失败由下一次更新覆盖，不重试（避免拖慢节流链）。
+ */
+const TERMINAL_PATCH_RETRIES = 3;
+
+/** 终态重试退避基数：300 → 600 → 1200ms，最多多花 2.1s。 */
+const TERMINAL_PATCH_BACKOFF_MS = 300;
+
+/**
  * 进度卡 PATCH 闭包。
  * 节流等待结束、真正发出 PATCH 之前才读取表单列表，这样工具开始时排队的更新只要发生在登记之后就会带上表单。
  * 每次 PATCH 结束后再读一遍：若等待期间表单被清掉（用户已提交，或更早的快照仍带表单），补一次不含该表单的 PATCH。
@@ -110,6 +121,14 @@ export function createFeishuPatchedProgress(deps: {
     const build = (pendingAsks: FeishuPendingAsk[]): Record<string, unknown> => deps.buildCard({
       status, round, content, tools, subagents: lastSubagents, pendingAsks, elapsedMs, disliked,
     });
+    /** 终态走退避重试（只有一次更新机会）；运行态保持单次——下一次更新会覆盖，重试只会拖慢节流链。 */
+    const patchCard = async (target: Record<string, unknown>): Promise<void> => {
+      if (status === 'RUNNING') {
+        await deps.patch(target);
+        return;
+      }
+      await patchTerminalWithRetry(() => deps.patch(target), sleep);
+    };
     last = { status, round, content, tools, subagents: lastSubagents };
     const card = build(asksNow());
     // D9：终态快照先落库再 PATCH。失败仅 warn——快照缺失只让该卡点击退化为兜底路径，不能卡住终态更新。
@@ -120,10 +139,10 @@ export function createFeishuPatchedProgress(deps: {
         console.warn(`飞书完成卡终态快照持久化失败: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
-    await deps.patch(card);
+    await patchCard(card);
     const latest = build(asksNow());
     if (JSON.stringify(latest) !== JSON.stringify(card)) {
-      await deps.patch(latest);
+      await patchCard(latest);
     }
   };
 
@@ -149,4 +168,33 @@ export function createFeishuPatchedProgress(deps: {
       return last.status === 'RUNNING';
     },
   };
+}
+
+/**
+ * 终态 PATCH 退避重试：300 → 600 → 1200ms，最多 3 次。
+ * 只重试「值得重试」的错误（5xx / 429 / 网络无响应）；4xx 多为卡片内容问题（如 11310 表格超限），
+ * 重试必然同样失败，只会白等 2s，直接抛出交给上层降级。
+ */
+async function patchTerminalWithRetry(
+  patch: () => Promise<void>,
+  sleep: (ms: number) => Promise<void>,
+): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await patch();
+      return;
+    } catch (error) {
+      if (attempt >= TERMINAL_PATCH_RETRIES || !isRetryablePatchError(error)) throw error;
+      const delayMs = TERMINAL_PATCH_BACKOFF_MS * 2 ** attempt;
+      console.warn(`飞书终态卡片更新失败，${delayMs}ms 后重试（第 ${attempt + 1}/${TERMINAL_PATCH_RETRIES} 次）: ${error instanceof Error ? error.message : String(error)}`);
+      await sleep(delayMs);
+    }
+  }
+}
+
+/** 飞书 PATCH 是否值得重试：HTTP 5xx / 429 频控 / 无 response（网络错误、超时）。 */
+function isRetryablePatchError(error: unknown): boolean {
+  const status = (error as { response?: { status?: unknown } } | null)?.response?.status;
+  if (typeof status === 'number') return status >= 500 || status === 429;
+  return true;
 }
