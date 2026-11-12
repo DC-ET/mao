@@ -7,10 +7,14 @@
   >
     <div class="member-summary">
       <span>当前成员 <strong>{{ memberCount }}</strong> 人</span>
-      <span class="member-tip">勾选用户后可批量添加为成员或移出角色</span>
+      <span class="member-tip">默认只显示当前成员；切到「全部用户」后可搜索并添加其他人</span>
     </div>
 
     <div class="member-toolbar">
+      <el-radio-group v-model="listMode" size="small" @change="handleListModeChange">
+        <el-radio-button value="members">当前成员</el-radio-button>
+        <el-radio-button value="all">全部用户</el-radio-button>
+      </el-radio-group>
       <el-input
         v-model="keyword"
         placeholder="用户名 / 显示名 / 邮箱"
@@ -25,7 +29,7 @@
 
     <el-table v-loading="loading" :data="users" stripe @selection-change="handleSelectionChange">
       <template #empty>
-        <el-empty description="暂无数据" :image-size="60" />
+        <el-empty :description="emptyDescription" :image-size="60" />
       </template>
       <el-table-column type="selection" width="46" />
       <el-table-column prop="username" label="用户名" width="140" show-overflow-tooltip />
@@ -92,6 +96,7 @@ import { api } from '../../api'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
+import { isRoleMember, roleMemberListParams, type RoleMemberListMode } from './roleMemberQuery'
 
 interface RoleTarget {
   id: number
@@ -116,11 +121,19 @@ const submitting = ref(false)
 const users = ref<any[]>([])
 const selectedRows = ref<any[]>([])
 const keyword = ref('')
+const listMode = ref<RoleMemberListMode>('members')
 const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
 
 const memberCount = computed(() => props.role?.userCount ?? 0)
+const emptyDescription = computed(() => {
+  const searching = keyword.value.trim().length > 0
+  if (listMode.value === 'members') {
+    return searching ? '当前成员中没有匹配的用户' : '该角色暂无成员'
+  }
+  return searching ? '没有匹配的用户' : '暂无数据'
+})
 const selectedMembers = computed(() => selectedRows.value.filter((row) => isMember(row)))
 const selectedNonMembers = computed(() => selectedRows.value.filter((row) => !isMember(row)))
 
@@ -138,8 +151,8 @@ function statusTagType(status?: number | null): 'success' | 'danger' | 'info' {
 }
 
 /** GET /v1/users 的 records 已带 roleIds，无需另查成员列表即可判定加入状态。 */
-function isMember(row: any): boolean {
-  return props.role != null && (row.roleIds || []).includes(props.role.id)
+function isMember(row: { roleIds?: unknown }): boolean {
+  return isRoleMember(props.role?.id, row.roleIds)
 }
 
 let fetchSeq = 0
@@ -148,11 +161,13 @@ async function fetchUsers() {
   const seq = ++fetchSeq
   loading.value = true
   try {
-    const params: Record<string, unknown> = {
+    const params = roleMemberListParams({
       page: currentPage.value,
-      size: pageSize.value
-    }
-    if (keyword.value) params.keyword = keyword.value
+      size: pageSize.value,
+      keyword: keyword.value,
+      mode: listMode.value,
+      roleId: props.role.id,
+    })
     const { data } = await api.get('/users', { params })
     if (seq !== fetchSeq) return
     users.value = data?.records || []
@@ -165,6 +180,12 @@ async function fetchUsers() {
 
 function handleSearch() {
   currentPage.value = 1
+  fetchUsers()
+}
+
+function handleListModeChange() {
+  currentPage.value = 1
+  selectedRows.value = []
   fetchUsers()
 }
 
@@ -230,6 +251,7 @@ watch(
   () => [props.modelValue, props.role?.id] as const,
   ([visible]) => {
     if (!visible) return
+    listMode.value = 'members'
     currentPage.value = 1
     keyword.value = ''
     selectedRows.value = []
@@ -244,6 +266,7 @@ watch(
   align-items: baseline;
   gap: 12px;
   margin-bottom: 12px;
+  flex-wrap: wrap;
 }
 
 .member-tip {
@@ -253,8 +276,10 @@ watch(
 
 .member-toolbar {
   display: flex;
+  align-items: center;
   gap: 8px;
   margin-bottom: 12px;
+  flex-wrap: wrap;
 }
 
 .member-pagination {
