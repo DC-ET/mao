@@ -1,3 +1,11 @@
+## 0.0.521 (2026-11-12)
+
+### 后端
+- **修复钉钉卡片点「取消排队」或「取消任务」后提示取消失败**：取消本身已经生效（卡片会变成「已取消」/「任务已取消」），失败 Toast 是客户端判出来的。按钮的成功判定写成了字符串 `status == cancelled`，卡片平台编译 `widgetInfo` 时把条件抹成空串，`dtConditionalHandler` 恒走失败文案（「取消失败，该消息可能已开始处理」/「取消失败，任务可能已结束」）。现改为布尔变量 `requestOk`：成功回包置 `true`，失败回包只把该位置 `false`，模板用 `isTrue(requestOk)` 判定。立即发送、重试、点踩的 Toast 是同一处空条件，一并改掉。**先把 `skills/mao-cli/template/dingtalk-card.json` 重新导入卡片平台并发布，再发后端**；只发后端、不发布模板时，失败提示还在。
+
+### mao-cli
+- 钉钉卡片模板的五个回传按钮（立即发送、取消排队、点踩、取消任务、重试）成功判定从 `status` 字符串比较改为 `isTrue(requestOk)`，并声明 boolean 变量 `requestOk`。自检同时核对 `widgetInfo` 里该条件已编译成 `@data{data.cardData.requestOk}`，避免再把抹空的导出提交回来。导入卡片平台、保存并发布后，钉钉侧 Toast 才跟着变。
+
 ## 0.0.520 (2026-11-11)
 
 ### 前端（桌面 / Web / 安卓）

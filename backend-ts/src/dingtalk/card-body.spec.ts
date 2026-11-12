@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDingtalkDuration, progressCardParams, queueCardParams } from './card-body.js';
+import { cardCallbackResponse, formatDingtalkDuration, progressCardParams, queueCardParams } from './card-body.js';
 
 describe('progressCardParams', () => {
   it('完成态拼出「状态行 + 正文 + 工具列表」，与飞书卡片同构', () => {
@@ -121,6 +121,21 @@ describe('queueCardParams', () => {
     const cancelled = queueCardParams({ status: 'cancelled', preview: 'y', queueId: 3, senderUserid: 'u', rankNo: 4 });
     expect(cancelled.body).toBe('**状态：已取消**\n\ny');
     expect(cancelled).toMatchObject({ canRun: 'false', canCancel: 'false', canRetry: 'false' });
+  });
+});
+
+describe('cardCallbackResponse', () => {
+  it('成功回包带 requestOk=true，失败回包只把 requestOk 置 false', () => {
+    const ok = cardCallbackResponse({ status: 'cancelled', body: 'x' });
+    expect(ok.cardUpdateOptions).toEqual({ updateCardDataByKey: true, updatePrivateDataByKey: false });
+    expect((ok.cardData as { cardParamMap: Record<string, string> }).cardParamMap).toEqual({
+      status: 'cancelled', body: 'x', requestOk: 'true',
+    });
+
+    const failed = cardCallbackResponse(null, '该任务已结束');
+    expect(failed.cardUpdateOptions).toEqual({ updateCardDataByKey: true, updatePrivateDataByKey: true });
+    expect((failed.cardData as { cardParamMap: Record<string, string> }).cardParamMap).toEqual({ requestOk: 'false' });
+    expect(failed.userPrivateData).toEqual({ cardParamMap: { tips: '该任务已结束' } });
   });
 });
 

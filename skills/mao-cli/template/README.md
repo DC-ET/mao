@@ -56,6 +56,7 @@ visibility="@triple{'' , 'visible', 'gone'}"   <!-- 条件位是空串，恒假�
 | `canRetry` | boolean | `true` 时显示「重试」按钮（仅 `failed` 态） |
 | `canFeedback` | boolean | `true` 时显示「👎 不满意」点踩按钮（仅 `completed` 态；点击 toggle，文案随 `dislikeText` 翻转） |
 | `canOpenSession` | boolean | `true` 时显示「会话详情」跳转按钮（进度/终态恒 `true`，排队态 `false`） |
+| `requestOk` | boolean | 按钮回调成功标记。仅成功回包为 `true`，失败回包为 `false`。五个回传按钮的 Toast 都用 `isTrue(requestOk)` 判定 |
 | `dislikeText` | string | 点踩按钮文案：`👎 不满意` ↔ `👎 已点踩 · 再点取消`（后端按 toggle 态下发） |
 | `sessionUrl` | string | 会话详情深链 `/tasks/{id}`（「会话详情」按钮跳转目标） |
 | `senderUserid` | string | 原发送者（按钮回调鉴权：只有本人能操作自己的卡片） |
@@ -67,7 +68,7 @@ visibility="@triple{'' , 'visible', 'gone'}"   <!-- 条件位是空串，恒假�
 状态 `status` 取值并集：排队 `queued` / 已插队 `started` / 已取消 `cancelled` / 执行中 `running` / 完成 `completed` / 失败 `failed`。
 
 按钮可见性：立即发送 `isTrue(canRun)`、取消排队 `isTrue(canRun)`（与「立即发送」同态并排）、点踩 `isTrue(canFeedback)`（仅完成态）、取消任务 `isTrue(canCancel)`、重试 `isTrue(canRetry)`、会话详情 `isTrue(canOpenSession)`（非排队态恒显，排序殿后）。
-**不要再改回「`status` 字符串 `isEqual` 比较」**——平台不会把它渲染成可用条件。
+**不要再改回「`status` 字符串 `isEqual` 比较」**——平台不会把它渲染成可用条件。按钮可见性和「请求成功判定」都受这条约束。
 
 ## 改模板时的注意点
 
@@ -80,7 +81,7 @@ visibility="@triple{'' , 'visible', 'gone'}"   <!-- 条件位是空串，恒假�
 - **`actionId` 必须填字面量**（`run` / `cancel` / `retry`），不能留空也不能绑变量：空 `dynamicString` 时点击不上报 actionId，后端 `parseCardCallback` 取不到值、整个回调分支不会触发（取消按钮曾因此完全无响应）
 - **按钮 `status` 不能是 `disabled`**：置灰且不响应点击，取消/重试都点不动（重试按钮曾遗留该值）
 - **按钮点击事件类型必须是「回传请求」**：若是「打开链接」，点击只会跳转、不会触发后端回调（重试按钮就曾因此完全失效）
-- **「请求成功判定条件」不能留空**：留空时平台会告警，且成功/失败 Toast 文案都不生效。判定条件要与后端回调契约一致——取消成功时后端回传 `cardParamMap` 把 `status` 置为 `cancelled`，失败路径只回 `tips`、不更新 `status`（仍为 `running`），故 cancel 绑 `status == 'cancelled'`；retry 同理绑 `status == 'running'`
+- **「请求成功判定条件」必须是 `isTrue(requestOk)`，不能用 `status == '...'`**：和按钮可见性是同一类坑。`editorData` 里写成字符串 `isEqual` 时，平台照单保留，但编译进 `widgetInfo` 的 `@dtConditionalHandler` 第一参会被抹成空串。空条件恒假，客户端永远弹失败 Toast（「取消失败，任务可能已结束」/「取消失败，该消息可能已开始处理」），同时仍应用回包里的 `body`/`status`，所以卡片已经变成「已取消」。五个回传按钮（立即发送、取消排队、点踩、取消任务、重试）统一绑 `isTrue(requestOk)`。后端成功回包带 `requestOk=true`，失败回包只把 `requestOk` 置 `false`、不改其余字段。`status` 仍随终态更新，但不再参与 Toast 判定
 - **按钮用横排 ButtonList（`direction: horizontal`），并带区块级 `visible`**（恒显示那个）：这是官方审批模板里「拒绝 / 同意」那一排的组件，窄屏也保持同一行（卡片宽度 ≤ 360 时两颗按钮均分，更宽时按文字宽度横排）。不要改回 ButtonBlock——它在非 PC、或卡片宽度 < 440 时会强制改成竖排，手机上「不满意」和「会话详情」就会叠成两行。区块级 `visible` 缺了的话整个按钮区块都不渲染，取消/重试会一起消失；单个按钮的显隐仍靠各自按钮里的可见性条件。按钮图标留空，点踩的 👎 来自 `dislikeText` 文案，不要套审批模板的拒绝/同意图标
 - **PC 宽屏自适应靠 `config.autoLayout`，投放时传入布尔 `true`**：在变量表声明对象变量 `config`，下面加 boolean 子字段 `autoLayout`。开放接口的 `cardParamMap` 普通值只能是字符串，布尔值要放进 `sys_full_json_obj`：`{"config":{"autoLayout":true}}`。放在 `cardData` 下与 `cardParamMap` 平级、或只把组件宽度改成 `match_parent`，PC 端都不会变宽。创建时写入即可，之后的增量更新会保留。模板重新导入并发布后，新投放的卡片才生效
 - **`preview` 变量已删除**：V192 起排队态正文也走 `body`（`queueCardParams` 拼状态行 + 消息摘要），不要在变量表里再加回 `preview`
