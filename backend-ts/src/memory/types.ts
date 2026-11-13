@@ -56,11 +56,17 @@ export interface MemoryPageVO {
 }
 
 export interface MemoryListQuery {
+  /** 归属用户；null/缺省=跨用户（仅 admin 路由可用，D5 强制过滤由路由层保证） */
+  userId?: number | null;
   scope?: MemoryScope | null;
   projectKey?: string | null;
   status?: MemoryStatus | null;
   /** 关键词过滤：对 content / project_key 做 LIKE 包含匹配（通配符按字面转义）。 */
   keyword?: string | null;
+  source?: MemorySource | null;
+  /** 更新时间范围（闭区间，路由层规范化为 YYYY-MM-DD 00:00:00 / 23:59:59）。 */
+  updatedFrom?: string | null;
+  updatedTo?: string | null;
   page: number;
   pageSize: number;
 }

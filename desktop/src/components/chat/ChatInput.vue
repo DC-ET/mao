@@ -44,10 +44,11 @@
     >
       <QuickCommandPanel
         ref="quickCommandPanelRef"
-        :visible="panelVisible"
+        :visible="commandPanelVisible"
         :skills="panelSkills"
         :commands="quickCommands.commands"
-        :filter="panelFilter"
+        :filter="commandPanelFilter"
+        :placement="commandPanelPlacement"
         @select="handleCommandSelect"
         @close="closePanel"
       />
@@ -58,9 +59,10 @@
         :filter="filePanelFilter"
         :loading="filePanelLoading"
         :load-error="fileListError"
+        :placement="filePanelPlacement"
         @select="handleFileReferenceSelect"
         @close="closeFilePanel"
-        @retry="fetchWorkspaceFiles(filePanelFilter)"
+        @retry="retryFileFetch"
       />
       <div v-if="replyQuotes.length" class="reply-quote-list">
         <div v-for="quote in replyQuotes" :key="quote.id" class="reply-quote-item">
@@ -168,7 +170,6 @@ import { TextSelection } from '@tiptap/pm/state'
 import { Fragment, Slice } from '@tiptap/pm/model'
 import QuickCommandPanel from './QuickCommandPanel.vue'
 import FileReferencePanel from './FileReferencePanel.vue'
-import type { WorkspaceFile } from './FileReferencePanel.vue'
 import ChatNewTaskConfigBar from './ChatNewTaskConfigBar.vue'
 import ChatPendingFileList from './ChatPendingFileList.vue'
 import ChatInputToolbar from './ChatInputToolbar.vue'
@@ -176,11 +177,10 @@ import ChatMobileConfigRow from './ChatMobileConfigRow.vue'
 import { QuickCommandNode } from './tiptap/QuickCommandNode'
 import { FileReferenceNode } from './tiptap/FileReferenceNode'
 import { refreshFileQuoteStaleFlags } from './file-quote-stale'
+import { useEditorTagPanels, type EditorPanelHandle } from '../../composables/useEditorTagPanels'
 import type { Agent } from '../../stores/agent'
-import type { QuickCommand, QuickCommandsData } from '../../types/quick-command'
 import { useSessionStore, type CloudProject } from '../../stores/session'
 import { useDraftStore, type DraftEntry } from '../../stores/draft'
-import { api } from '../../api'
 import {
   capReplyQuote,
   serializeReplyQuotes,
@@ -306,34 +306,6 @@ const replyQuotes = ref<ReplyQuote[]>([])
 const draggingFile = ref(false)
 const editorContent = ref('')
 
-// Quick command state
-const quickCommandPanelRef = ref<InstanceType<typeof QuickCommandPanel>>()
-const quickCommands = ref<QuickCommandsData>({ skills: [], commands: [] })
-// 快捷指令数据是否已加载过（无论结果是否为空），用于避免自动补全触发重复请求
-const commandsLoaded = ref(false)
-// LOCAL 模式下，桌面端本地未上传的技能（~/.agents/skills）也可直接用于快捷指令面板
-const localSkillItems = ref<QuickCommand[]>([])
-const panelSkills = computed<QuickCommand[]>(() => {
-  if (localSkillItems.value.length === 0) return quickCommands.value.skills
-  const uploadedNames = new Set(quickCommands.value.skills.map(s => s.name))
-  return [...quickCommands.value.skills, ...localSkillItems.value.filter(s => !uploadedNames.has(s.name))]
-})
-const panelVisible = ref(false)
-const panelFilter = ref('')
-const slashRange = ref<{ from: number; to: number } | null>(null)
-const autoComplete = ref(false)
-
-// File reference state
-const fileReferencePanelRef = ref<InstanceType<typeof FileReferencePanel>>()
-const filePanelVisible = ref(false)
-const filePanelFilter = ref('')
-const filePanelLoading = ref(false)
-const atRange = ref<{ from: number; to: number } | null>(null)
-const workspaceFiles = ref<WorkspaceFile[]>([])
-// 文件列表拉取失败态（静默失败可见化）：成功赋值点清除，失败置位
-const fileListError = ref(false)
-let fileSearchDebounce: ReturnType<typeof setTimeout> | null = null
-
 // ===== Computed =====
 const canSend = computed(() => {
   if (props.disabled) return false
@@ -423,162 +395,6 @@ const dynamicPlaceholder = computed(() => {
   }
   return props.placeholder
 })
-
-// ===== Quick commands: load =====
-
-async function ensureCommandsLoaded() {
-  try {
-    const { data } = await api.get('/quick-commands')
-    quickCommands.value = data || { skills: [], commands: [] }
-  } catch {
-    // Error handled by interceptor
-  } finally {
-    // 无论成功或失败都标记已加载，避免 detectAutoComplete 在失败时无限重试
-    commandsLoaded.value = true
-  }
-  await ensureLocalSkillsLoaded()
-}
-
-async function ensureLocalSkillsLoaded() {
-  if (props.executionMode !== 'LOCAL' || !isElectronClient) {
-    localSkillItems.value = []
-    return
-  }
-  try {
-    const result = await (window as any).electronAPI.listLocalSkills()
-    localSkillItems.value = (result?.skills || []).map((s: any) => ({
-      type: 'skill' as const,
-      name: s.name,
-      description: s.description ? `${s.description}（本地未上传，仅本次本地任务可用）` : '本地未上传，仅本次本地任务可用'
-    }))
-  } catch {
-    localSkillItems.value = []
-  }
-}
-
-// ===== Quick commands: select =====
-
-function handleCommandSelect(item: QuickCommand) {
-  if (!editor.value || !slashRange.value) return
-
-  const ed = editor.value
-  const { from, to } = slashRange.value
-
-  // Build a ProseMirror transaction directly
-  const { state, dispatch } = ed.view
-  const nodeType = state.schema.nodes.quickCommand
-  if (!nodeType) return
-
-  let tr = state.tr
-  // Delete from trigger character to cursor
-  tr = tr.delete(from, to)
-  // Insert quick command node
-  const node = nodeType.create({ commandType: item.type, commandName: item.name })
-  tr = tr.insert(from, node)
-  // Insert trailing space
-  const space = state.schema.text(' ')
-  tr = tr.insert(from + node.nodeSize, space)
-  // Set cursor after the space
-  tr = tr.setSelection(TextSelection.near(tr.doc.resolve(from + node.nodeSize + 1)))
-  dispatch(tr)
-
-  ed.commands.focus()
-  closePanel()
-}
-
-function closePanel() {
-  panelVisible.value = false
-  panelFilter.value = ''
-  slashRange.value = null
-  autoComplete.value = false
-}
-
-// ===== File reference: select =====
-
-function handleFileReferenceSelect(file: WorkspaceFile) {
-  if (!editor.value || !atRange.value) return
-
-  const ed = editor.value
-  const { from, to } = atRange.value
-
-  const { state, dispatch } = ed.view
-  const nodeType = state.schema.nodes.fileReference
-  if (!nodeType) return
-
-  let tr = state.tr
-  tr = tr.delete(from, to)
-  const node = nodeType.create({ filePath: file.path })
-  tr = tr.insert(from, node)
-  const space = state.schema.text(' ')
-  tr = tr.insert(from + node.nodeSize, space)
-  tr = tr.setSelection(TextSelection.near(tr.doc.resolve(from + node.nodeSize + 1)))
-  dispatch(tr)
-
-  ed.commands.focus()
-  closeFilePanel()
-}
-
-function closeFilePanel() {
-  filePanelVisible.value = false
-  filePanelFilter.value = ''
-  atRange.value = null
-  workspaceFiles.value = []
-  if (fileSearchDebounce) {
-    clearTimeout(fileSearchDebounce)
-    fileSearchDebounce = null
-  }
-}
-
-// ===== File reference: fetch files =====
-
-// 乱序保护：防抖只能合并连续输入，跨越 300ms 的两次过滤仍会产生并发请求。
-// 缺少序号校验时慢响应会覆盖新结果，用户按回车就引用到错误的文件（同 FileViewer 的 loadFileSeq）。
-let fetchFilesSeq = 0
-
-async function fetchWorkspaceFiles(filter: string) {
-  const seq = ++fetchFilesSeq
-  filePanelLoading.value = true
-  try {
-    const isElectron = typeof window !== 'undefined' && (window as any).electronAPI
-    if (props.executionMode === 'LOCAL' && isElectron && props.workspace) {
-      const result = await (window as any).electronAPI.listWorkspaceFiles(props.workspace, filter || undefined, 20)
-      if (seq !== fetchFilesSeq) return
-      workspaceFiles.value = result || []
-      fileListError.value = false
-    } else {
-      // CLOUD mode — call backend API
-      const sessionId = sessionStore.activeSessionId
-      if (sessionId) {
-        const { data } = await api.get('/files/workspace-list', {
-          params: { sessionId, filter: filter || undefined, limit: 20 },
-        })
-        if (seq !== fetchFilesSeq) return
-        workspaceFiles.value = data?.files || []
-        fileListError.value = false
-      } else if (props.workspaceMode === 'existing' && props.cloudProjectKey) {
-        // New task with an existing cloud project selected — use project-level API
-        const { data } = await api.get('/files/project-list', {
-          params: { projectKey: props.cloudProjectKey, filter: filter || undefined, limit: 20 },
-        })
-        if (seq !== fetchFilesSeq) return
-        workspaceFiles.value = data?.files || []
-        fileListError.value = false
-      } else {
-        if (seq !== fetchFilesSeq) return
-        workspaceFiles.value = []
-        fileListError.value = false
-      }
-    }
-  } catch {
-    if (seq !== fetchFilesSeq) return
-    // 拉取失败可见（静默失败可见化）：置错误态 + 清列表，面板渲染「文件列表加载失败 · 重试」
-    fileListError.value = true
-    workspaceFiles.value = []
-  } finally {
-    // 只有最新一轮请求能收起 loading，否则先返回的旧请求会提前清掉骨架
-    if (seq === fetchFilesSeq) filePanelLoading.value = false
-  }
-}
 
 // ===== Editor =====
 
@@ -725,73 +541,13 @@ const editor = useEditor({
     handleKeyDown: (_view, event) => {
       if (props.disabled) return false
 
+      // 面板开时 ↑↓/Enter/Esc 分层消费（共享实现：技术方案 2026-11-12-message-edit-quick-command-panels）；
+      // 面板关时不消费（本编辑器未传 onEscape），回落到下方 Enter-to-send 段——与原内联实现逐行为一致。
+      if (panels.handleEditorKeyDown(_view, event)) return true
+
       // IME composing (e.g. Chinese/Japanese): Enter confirms candidates, must not send/select.
       // keyCode 229 is a legacy fallback some browsers emit during composition.
       const imeComposing = event.isComposing || event.keyCode === 229
-
-      // File reference panel navigation
-      if (filePanelVisible.value) {
-        if (event.key === 'ArrowUp') {
-          event.preventDefault()
-          fileReferencePanelRef.value?.moveUp()
-          return true
-        }
-        if (event.key === 'ArrowDown') {
-          event.preventDefault()
-          fileReferencePanelRef.value?.moveDown()
-          return true
-        }
-        if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey) {
-          if (imeComposing) return false
-          event.preventDefault()
-          fileReferencePanelRef.value?.confirmSelection()
-          return true
-        }
-        if (event.key === 'Escape') {
-          event.preventDefault()
-          closeFilePanel()
-          return true
-        }
-      }
-
-      // Quick command panel navigation
-      if (panelVisible.value) {
-        if (event.key === 'ArrowUp') {
-          event.preventDefault()
-          userNavigatedPanel = true
-          quickCommandPanelRef.value?.moveUp()
-          return true
-        }
-        if (event.key === 'ArrowDown') {
-          event.preventDefault()
-          userNavigatedPanel = true
-          quickCommandPanelRef.value?.moveDown()
-          return true
-        }
-        if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey) {
-          if (imeComposing) return false
-          // 面板由输入自动弹出且用户未用方向键浏览时，Enter 应发送消息而非确认选中项；
-          // 记忆当前词与 Esc 关闭语义一致：同一词继续输入不再自动弹出
-          if (!userNavigatedPanel) {
-            if (autoComplete.value) dismissedWord = currentFilterWord
-            closePanel()
-            if (isTouchDevice) return false
-            event.preventDefault()
-            handleSend()
-            return true
-          }
-          event.preventDefault()
-          quickCommandPanelRef.value?.confirmSelection()
-          return true
-        }
-        if (event.key === 'Escape') {
-          event.preventDefault()
-          // Esc 关闭后记住当前词：同一词继续输入不再自动弹出，词变化后才恢复
-          if (autoComplete.value) dismissedWord = currentFilterWord
-          closePanel()
-          return true
-        }
-      }
 
       // Enter to send — only on non-touch devices
       // On touch devices (mobile), Enter inserts newline; send via button
@@ -806,9 +562,7 @@ const editor = useEditor({
   },
   onUpdate: ({ editor: ed }) => {
     editorContent.value = ed.getText({ blockSeparator: '\n' })
-    detectSlashTrigger()
-    detectAtTrigger()
-    detectAutoComplete()
+    panels.handleEditorUpdate()
   },
 })
 
@@ -866,170 +620,49 @@ watch(() => props.draftKey, (newKey, oldKey) => {
   restoreDraft(newKey)
 })
 
-// ===== Slash trigger detection =====
+// ===== Editor tag panels（技术方案 2026-11-12-message-edit-quick-command-panels）=====
+// 面板状态/检测/插入/键盘分层收敛到共享 composable；差异全部为入参（主输入框：触发符含「、」、
+// 自动补全开启、Enter 回落触屏裁决版发送），行为与原内联实现逐项一致。
+const quickCommandPanelRef = ref<EditorPanelHandle>()
+const fileReferencePanelRef = ref<EditorPanelHandle>()
 
-function detectSlashTrigger() {
-  if (!editor.value) return
-  const { state } = editor.value.view
-  const { from } = state.selection
-  const textBefore = state.doc.textBetween(Math.max(0, from - 50), from, '\n', '\n')
+const panels = useEditorTagPanels({
+  editorRef: editor,
+  quickCommandPanelRef,
+  fileReferencePanelRef,
+  getContext: () => ({
+    executionMode: props.executionMode,
+    workspace: props.workspace,
+    sessionId: sessionStore.activeSessionId,
+    // 新任务选已有云项目时文件枚举回落 project-list（与原内联实现同口径）
+    cloudProjectKey: props.workspaceMode === 'existing' ? (props.cloudProjectKey ?? null) : null,
+  }),
+  autoComplete: true,
+  // 自动补全面板未浏览时 Enter = 发送：触屏不发送（回落换行），与原 isTouchDevice 分支逐行为一致
+  onEnter: () => {
+    if (isTouchDevice) return false
+    handleSend()
+  },
+})
 
-  // Find the last trigger character ('/' or '、')
-  const slashIdx = textBefore.lastIndexOf('/')
-  const commaIdx = textBefore.lastIndexOf('、')
-  const lastTriggerIdx = Math.max(slashIdx, commaIdx)
-  if (lastTriggerIdx === -1) {
-    if (panelVisible.value) closePanel()
-    return
-  }
-
-  // Trigger must be at start or preceded by whitespace
-  if (lastTriggerIdx > 0 && !/\s/.test(textBefore[lastTriggerIdx - 1])) {
-    if (panelVisible.value) closePanel()
-    return
-  }
-
-  // No space between trigger and cursor
-  const afterTrigger = textBefore.substring(lastTriggerIdx + 1)
-  if (/\s/.test(afterTrigger)) {
-    if (panelVisible.value) closePanel()
-    return
-  }
-
-  // Store the absolute document range: from trigger to current cursor
-  const triggerDocPos = from - (textBefore.length - lastTriggerIdx)
-  slashRange.value = { from: triggerDocPos, to: from }
-  panelFilter.value = afterTrigger
-  if (!panelVisible.value) {
-    ensureCommandsLoaded()
-    panelVisible.value = true
-    // 显式 `/` 触发的面板：允许 Enter 直接确认选中项（用户主动唤起即有明确意图）
-    userNavigatedPanel = true
-  }
-}
-
-// ===== Auto-complete trigger detection =====
-
-// Esc 关闭记忆：同一词被手动关闭后不再自动弹出，直到词发生变化
-let dismissedWord = ''
-let currentFilterWord = ''
-// 用户是否在面板中用方向键浏览过：仅此状态下 Enter 才确认选中项，
-// 否则自动弹出的面板会劫持 Enter，导致用户无法正常发送消息
-let userNavigatedPanel = false
-
-function detectAutoComplete() {
-  if (!editor.value) return
-  // 如果面板已经打开但不是由自动补全触发的，不干扰
-  if (panelVisible.value && !autoComplete.value) return
-  if (filePanelVisible.value) return
-
-  // 如果指令数据尚未加载过，先加载数据（用标志位判断，避免数据为空时重复请求）
-  if (!commandsLoaded.value) {
-    ensureCommandsLoaded().then(() => {
-      // 数据加载完成后重新检测
-      detectAutoComplete()
-    })
-    return
-  }
-
-  const { state } = editor.value.view
-  const { from } = state.selection
-  const textBefore = state.doc.textBetween(Math.max(0, from - 50), from, '\n', '\n')
-
-  // 最后一个词：只有整体作为指令名称前缀时才触发，避免正文常见词误触发面板劫持 Enter/方向键
-  const currentWord = textBefore.split(/\s/).pop() ?? ''
-  const lower = currentWord.toLowerCase()
-  if (lower !== currentFilterWord) {
-    // 词已变化，重置 Esc 记忆与浏览标记
-    dismissedWord = ''
-    userNavigatedPanel = false
-  }
-  currentFilterWord = lower
-
-  // 如果文本长度不足，关闭自动补全面板
-  if (currentWord.length < 2) {
-    if (panelVisible.value && autoComplete.value) closePanel()
-    return
-  }
-
-  // URL / 邮箱 / 文件路径不触发自动补全：贴链接是高频操作，误弹面板会劫持 Enter 与方向键。
-  // 但以显式触发符（/ 、）开头的词是快捷指令语法本身（指令名可含 . 等），放行不做排除
-  if (!currentWord.startsWith('/') && !currentWord.startsWith('、')
-    && (/^(https?|ftp|file):\/\//i.test(currentWord) || /[/.@:\\]/.test(currentWord))) {
-    if (panelVisible.value && autoComplete.value) closePanel()
-    return
-  }
-
-  // 检查是否与任何快捷指令匹配（仅名称前缀整体匹配）
-  let matched: any[] = []
-  try {
-    const allCommands = [...panelSkills.value, ...quickCommands.value.commands]
-    matched = allCommands.filter(cmd => cmd.name.toLowerCase().startsWith(lower))
-  } catch (error) {
-    return
-  }
-
-  // 如果没有匹配，或该词已被 Esc 关闭过，关闭自动补全面板
-  if (matched.length === 0 || lower === dismissedWord) {
-    if (panelVisible.value && autoComplete.value) closePanel()
-    return
-  }
-
-  // 设置面板：使用当前词的范围
-  const matchStart = from - currentWord.length
-  slashRange.value = { from: matchStart, to: from }
-  panelFilter.value = currentWord
-  autoComplete.value = true
-  if (!panelVisible.value) {
-    ensureCommandsLoaded()
-    panelVisible.value = true
-    // 自动补全弹出的面板：用户未浏览前 Enter 不应确认选中项（应发送消息）
-    userNavigatedPanel = false
-  }
-}
-
-// ===== At trigger detection (file reference) =====
-
-function detectAtTrigger() {
-  if (!editor.value) return
-  const { state } = editor.value.view
-  const { from } = state.selection
-  const textBefore = state.doc.textBetween(Math.max(0, from - 50), from, '\n', '\n')
-
-  const lastAtIndex = textBefore.lastIndexOf('@')
-  if (lastAtIndex === -1) {
-    if (filePanelVisible.value) closeFilePanel()
-    return
-  }
-
-  // @ must be at start or preceded by whitespace
-  if (lastAtIndex > 0 && !/\s/.test(textBefore[lastAtIndex - 1])) {
-    if (filePanelVisible.value) closeFilePanel()
-    return
-  }
-
-  // No space between @ and cursor
-  const afterAt = textBefore.substring(lastAtIndex + 1)
-  if (/\s/.test(afterAt)) {
-    if (filePanelVisible.value) closeFilePanel()
-    return
-  }
-
-  const triggerDocPos = from - (textBefore.length - lastAtIndex)
-  atRange.value = { from: triggerDocPos, to: from }
-  filePanelFilter.value = afterAt
-
-  if (!filePanelVisible.value) {
-    filePanelVisible.value = true
-    fetchWorkspaceFiles(afterAt)
-  } else {
-    // Debounce filter changes
-    if (fileSearchDebounce) clearTimeout(fileSearchDebounce)
-    fileSearchDebounce = setTimeout(() => {
-      fetchWorkspaceFiles(afterAt)
-    }, 300)
-  }
-}
+const {
+  quickCommands,
+  panelSkills,
+  commandPanelVisible,
+  commandPanelFilter,
+  commandPanelPlacement,
+  handleCommandSelect,
+  closePanel,
+  filePanelVisible,
+  filePanelFilter,
+  filePanelLoading,
+  fileListError,
+  workspaceFiles,
+  filePanelPlacement,
+  handleFileReferenceSelect,
+  closeFilePanel,
+  retryFileFetch,
+} = panels
 
 // ===== File handling =====
 
@@ -1340,8 +973,7 @@ function insertText(text: string) {
 watch(() => props.disabled, (disabled) => {
   editor.value?.setEditable(!disabled)
   if (disabled) {
-    closePanel()
-    closeFilePanel()
+    panels.closeAll()
   }
 })
 
@@ -1501,10 +1133,8 @@ onBeforeUnmount(() => {
   if (typeof window !== 'undefined') {
     window.removeEventListener('resize', syncMobileViewport)
   }
-  if (fileSearchDebounce) {
-    clearTimeout(fileSearchDebounce)
-    fileSearchDebounce = null
-  }
+  // 关闭面板 + 清理文件搜索防抖（逻辑归一到 composable，技术方案 §4.4）
+  panels.closeAll()
   // 兜底保存当前草稿（覆盖 KeepAlive 淘汰 / 路由离开）
   try {
     saveDraft(props.draftKey)

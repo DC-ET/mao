@@ -4,6 +4,7 @@
       <h1 class="page-title">Git 凭证</h1>
       <p class="page-desc">
         按 Git 域名配置个人 Access Token，用于云端模式克隆私有仓库及 Shell 中的 git 远程操作。
+        未配置的域名会自动使用管理员配置的系统默认凭证（通常为只读）；需要写权限请添加自己的 Token，同域名添加后即以个人 Token 为准。
       </p>
     </div>
 
@@ -48,6 +49,19 @@
           <span v-if="item.description" class="credential-desc">{{ item.description }}</span>
         </div>
         <div class="credential-time">更新于 {{ formatTime(item.updatedAt) }}</div>
+      </div>
+    </div>
+
+    <div v-if="!loading && visibleSystemDefaults.length > 0" class="system-defaults">
+      <div class="system-defaults-title">系统默认</div>
+      <div v-for="item in visibleSystemDefaults" :key="item.domain" class="credential-card system-default-card">
+        <div class="credential-header">
+          <div class="credential-domain">{{ item.domain }}</div>
+          <span class="system-badge">系统默认</span>
+        </div>
+        <div v-if="item.description" class="credential-meta">
+          <span class="credential-desc">{{ item.description }}</span>
+        </div>
       </div>
     </div>
 
@@ -113,8 +127,15 @@ interface GitCredentialItem {
   updatedAt?: string
 }
 
+/** 系统默认凭据灰行（技术方案 2026-11-12 §5.7）：仅域名与备注，不含 Token。 */
+interface SystemGitDefaultItem {
+  domain: string
+  description?: string | null
+}
+
 const loading = ref(false)
 const credentials = ref<GitCredentialItem[]>([])
+const systemDefaults = ref<SystemGitDefaultItem[]>([])
 const dialogVisible = ref(false)
 const isEditing = ref(false)
 const editingId = ref<number | null>(null)
@@ -174,6 +195,22 @@ async function fetchCredentials() {
     loading.value = false
   }
 }
+
+async function fetchSystemDefaults() {
+  try {
+    const { data } = await api.get('/user/git-default-credentials')
+    systemDefaults.value = data || []
+  } catch {
+    // 系统默认域展示失败不影响个人凭证管理（技术方案 §6：降级为无灰行）
+    systemDefaults.value = []
+  }
+}
+
+/** 已配置同域个人 Token 的域不再展示灰行（个人优先，展示口径与注入口径一致） */
+const visibleSystemDefaults = computed(() => {
+  const owned = new Set(credentials.value.map((item) => item.domain))
+  return systemDefaults.value.filter((item) => !owned.has(item.domain))
+})
 
 function openCreateDialog() {
   isEditing.value = false
@@ -249,6 +286,7 @@ async function confirmDelete(item: GitCredentialItem) {
 
 onMounted(() => {
   fetchCredentials()
+  fetchSystemDefaults()
 })
 </script>
 
@@ -437,5 +475,40 @@ onMounted(() => {
   font-size: 12px;
   color: var(--aw-ink-muted);
   opacity: 0.75;
+}
+
+/* ── 系统默认灰行区（技术方案 2026-11-12 §5.7）：仅展示、不可编辑 ── */
+.system-defaults {
+  margin-top: 16px;
+  max-width: 640px;
+}
+
+.system-defaults-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--aw-ink-muted);
+  margin-bottom: 8px;
+}
+
+.system-default-card {
+  margin-bottom: 8px;
+  background: transparent;
+  border-style: dashed;
+  opacity: 0.75;
+}
+
+.system-default-card .credential-domain {
+  color: var(--aw-ink-muted);
+}
+
+.system-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--aw-divider-soft);
+  color: var(--aw-ink-muted);
+  background: var(--aw-surface);
 }
 </style>

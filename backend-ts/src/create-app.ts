@@ -27,6 +27,7 @@ import { MysqlEcpSessionRepository } from './auth/ecp-session.repository.js';
 import { MysqlUserRepository } from './user/user.repository.js';
 import { UserService } from './user/user.service.js';
 import { GitCredentialService, assertGitCredentialSecret } from './user/git-credential.service.js';
+import { SystemGitCredentialService } from './user/system-git-credential.service.js';
 import { DefaultGitTokenResolver } from './user/git-token-resolver.js';
 import { MysqlEnvVariableRepository } from './env/env-variable.repository.js';
 import { EnvVariableService } from './env/env-variable.service.js';
@@ -339,6 +340,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
   );
   const gitCredentials = new GitCredentialService(db, cfg.app.gitCredential.secretKey);
+  // 系统默认 Git 凭据（技术方案 2026-11-12）：管理员按域名托管默认 Token，用户缺域时兜底；
+  // 与用户凭据共用 APP_GIT_CREDENTIAL_SECRET，表空 = 功能未启用。
+  const systemGitCredentials = new SystemGitCredentialService(db, cfg.app.gitCredential.secretKey);
   // 说明：凭据注入统一走 GitTokenResolver（技术方案 2026-11-06），其构造依赖 agentRepo(:384) /
   // settingService(:435) / sessionRepo(:467)，因此延后到 sessionRepo 之后创建（见下方 gitTokenResolver）。
   // gitCredentials 实例保留：仍供 user/admin 凭据路由（app-routes 侧）直接使用。
@@ -446,6 +450,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // 用户 token ∩ Agent 允许域；依赖 gitCredentials / agentRepo / settingService，均已在本行之前构造。
   const gitTokenResolver = new DefaultGitTokenResolver({
     gitCredentialService: gitCredentials,
+    systemGitCredentialService: systemGitCredentials,
     agentLookup: agentRepo,
     sessionLookup: sessionRepo,
     scopePolicy: settingService,
@@ -938,7 +943,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   await registerAllRoutes({
     app, db, cfg, apiPrefix, jwt, agentRuntimeCfg,
     authService, feishu, ecpAuth, userService, userRepo, permissionService,
-    gitCredentials, envVariableService, sessionRepo,
+    gitCredentials, systemGitCredentials, envVariableService, sessionRepo,
     httpToolService, httpApiExecutor, httpToolStatsStore,
     fileService, agentService, experienceService, experienceIndexService, suggestedQuestionService,
     mcpValidator, httpToolValidator,

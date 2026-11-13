@@ -1,5 +1,5 @@
 import { createServer, type Server, type Socket } from 'node:net';
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomBytes, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { harnessLog } from '../log.js';
@@ -14,6 +14,14 @@ const HEARTBEAT_MISS_LIMIT = 3;
 /** 单向帧积压上限（pty 大数据帧共用连接时的背压保护：超出即丢最旧帧）。 */
 const WRITE_QUEUE_LIMIT = 512;
 const HANDSHAKE_TIMEOUT_MS = 10_000;
+
+/**
+ * Unix socket 路径长度预算：sun_path 必须含结尾 NUL，macOS 104、Linux 108。
+ * 原子替换的 tmp 后缀叠加在 socket 路径上，超预算时内核会**静默截断** bind 路径——
+ * listen 回调照常触发，但文件落在截断后的名字上，rename 必然 ENOENT（macOS 开发机
+ * 长仓路径实测）。超预算时退化为「先 unlink 旧 socket 再直听目标路径」。
+ */
+const SOCKET_PATH_LIMIT = process.platform === 'darwin' ? 103 : 107;
 
 export interface RuntimeStatus {
   shellSessions: number;
@@ -95,20 +103,31 @@ export class RuntimeChannelServer {
     // 原子替换：先 listen 同目录临时路径、成功后再 rename 覆盖目标（同一文件系统内 rename 原子）。
     // 任何时刻 socketPath 要么指向旧的、要么指向新的监听者，不存在「已删除而新未建立」的空窗；
     // 蓝绿双实例并发替换时最后 rename 者胜，容器侧连接始终可寻址。
-    const tmpPath = path.join(dir, `runtime.sock.tmp-${process.pid}-${randomBytes(4).toString('hex')}`);
+    // tmp 后缀只带 pid：跨进程唯一（蓝绿=两 pid，同进程同 key 被 map 短路、不同 key 不同目录），
+    // 比带随机 hex 短 7 字符——macOS 104 字节 sun_path 限制下，长路径 + 长后缀会被内核静默截断。
+    const tmpName = `runtime.sock.tmp-${process.pid}`;
+    const atomicRename = socketPath.length + tmpName.length < SOCKET_PATH_LIMIT;
+    const listenPath = atomicRename ? path.join(dir, tmpName) : socketPath;
+    if (!atomicRename) {
+      // 路径预算不足：退化为先移除旧 socket/残留文件再直听目标路径——缺失自愈语义不变，
+      // 仅放弃蓝绿并发替换的原子窗口（该场景是 Linux 生产部署，路径短，走上方原子分支）。
+      try { unlinkSync(socketPath); } catch { /* 不存在 */ }
+    }
     const server = createServer((socket) => this.acceptConnection(userId, agentId, socket));
     try {
       await new Promise<void>((resolve, reject) => {
         server.once('error', reject);
-        server.listen(tmpPath, () => {
+        server.listen(listenPath, () => {
           server.removeListener('error', reject);
           resolve();
         });
       });
-      try { chmodSync(tmpPath, 0o600); } catch { /* non-posix */ }
-      renameSync(tmpPath, socketPath);
+      try { chmodSync(listenPath, 0o600); } catch { /* non-posix */ }
+      if (atomicRename) {
+        renameSync(listenPath, socketPath);
+      }
     } catch (e) {
-      rmSync(tmpPath, { force: true });
+      if (atomicRename) rmSync(listenPath, { force: true });
       server.close();
       throw e;
     }

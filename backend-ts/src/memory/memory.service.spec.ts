@@ -264,6 +264,81 @@ describe('MemoryService.list', () => {
   });
 });
 
+describe('MemoryService admin methods', () => {
+  it('updateForAdminEditsOtherUserMemoryWithoutOwnershipCheck', async () => {
+    const r = repo();
+    (r.findById as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(row({ userId: 8, content: '旧内容', dedupHash: 'old' }))
+      .mockResolvedValueOnce(row({ userId: 8, content: '新内容', dedupHash: computeDedupHash('USER', '', '新内容') }));
+    (r.findByHash as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    const svc = new MemoryService(r, { listProjectKeyRows: async () => [] });
+    const vo = await svc.updateForAdmin(1, { content: '新内容' });
+    expect(vo.userId).toBe(8);
+    expect(vo.content).toBe('新内容');
+    expect(r.updateContent).toHaveBeenCalledWith(1, '新内容', computeDedupHash('USER', '', '新内容'), expect.anything());
+  });
+
+  it('updateForAdminMissingIdIsNotFound', async () => {
+    const r = repo();
+    (r.findById as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    const svc = new MemoryService(r, { listProjectKeyRows: async () => [] });
+    expect(await codeOf(() => svc.updateForAdmin(1, { content: 'x' }))).toBe(ErrorCode.MEMORY_ITEM_NOT_FOUND.code);
+  });
+
+  it('updateForAdminRestoreRespectsActiveLimit', async () => {
+    // 造 200 条 ACTIVE 后恢复他人 DISMISSED 记忆：admin 与用户域同受 200 上限约束（技术方案 D4/§6.2）
+    const r = repo();
+    (r.findById as ReturnType<typeof vi.fn>).mockResolvedValue(row({ userId: 8, status: 'DISMISSED' }));
+    (r.countActive as ReturnType<typeof vi.fn>).mockResolvedValue(200);
+    const svc = new MemoryService(r, { listProjectKeyRows: async () => [] });
+    expect(await codeOf(() => svc.updateForAdmin(1, { status: 'ACTIVE' }))).toBe(ErrorCode.MEMORY_LIMIT_EXCEEDED.code);
+    expect(r.updateStatus).not.toHaveBeenCalled();
+  });
+
+  it('updateForAdminDedupConflictReports3035', async () => {
+    const r = repo();
+    (r.findById as ReturnType<typeof vi.fn>).mockResolvedValue(row({ userId: 8, content: '旧内容', dedupHash: 'old' }));
+    (r.findByHash as ReturnType<typeof vi.fn>).mockResolvedValue(row({ id: 9, userId: 8 }));
+    const svc = new MemoryService(r, { listProjectKeyRows: async () => [] });
+    expect(await codeOf(() => svc.updateForAdmin(1, { content: '新内容' }))).toBe(ErrorCode.MEMORY_CONTENT_DUPLICATE.code);
+  });
+
+  it('removeForAdminPhysicallyDeletesOtherUserMemory', async () => {
+    const r = repo();
+    (r.findById as ReturnType<typeof vi.fn>).mockResolvedValue(row({ userId: 8 }));
+    const svc = new MemoryService(r, { listProjectKeyRows: async () => [] });
+    await svc.removeForAdmin(1);
+    expect(r.deleteById).toHaveBeenCalledWith(1);
+  });
+
+  it('createForAdminBehavesIdenticallyToUserCreate', async () => {
+    const r = repo();
+    (r.insert as ReturnType<typeof vi.fn>).mockResolvedValue(5);
+    (r.findById as ReturnType<typeof vi.fn>).mockResolvedValue(row({ id: 5 }));
+    const svc = new MemoryService(r, { listProjectKeyRows: async () => [] });
+    const input = { scope: 'USER', content: '  输出  报告用中文 ' };
+    const userVo = await svc.create(8, input);
+    const adminVo = await svc.createForAdmin(8, input);
+    expect(adminVo).toEqual(userVo);
+    const [userInsert, adminInsert] = (r.insert as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    expect(adminInsert).toEqual(userInsert);
+    expect(adminInsert).toMatchObject({ userId: 8, source: 'MANUAL', status: 'ACTIVE', content: '输出 报告用中文' });
+  });
+
+  it('listForAdminPassesUserIdOrNullThrough', async () => {
+    const r = repo();
+    (r.page as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const svc = new MemoryService(r, { listProjectKeyRows: async () => [] });
+    await svc.listForAdmin({ userId: null, keyword: 'k', page: 1, pageSize: 20 });
+    expect(r.page).toHaveBeenLastCalledWith(expect.objectContaining({ userId: null, keyword: 'k' }));
+    await svc.listForAdmin({ userId: 7, page: 2, pageSize: 10 });
+    expect(r.page).toHaveBeenLastCalledWith(expect.objectContaining({ userId: 7, page: 2, pageSize: 10 }));
+    // 用户域 list 恒覆盖 userId，不受 query 内残留字段影响
+    await svc.list(9, { userId: 7, page: 1, pageSize: 20 });
+    expect(r.page).toHaveBeenLastCalledWith(expect.objectContaining({ userId: 9 }));
+  });
+});
+
 describe('MemoryService.listProjectKeys', () => {
   it('dedupesAndExcludesRobotChannelKeys', async () => {
     const svc = new MemoryService(repo(), {

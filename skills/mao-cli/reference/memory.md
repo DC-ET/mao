@@ -73,4 +73,13 @@
 
 ### GET /api/v1/admin/memory（管理后台）
 
-只读审计：`?userId=&page=&pageSize=&scope=&status=`，需 `memory:read` 权限码。仅查询，无任何写接口。
+记忆管理列表：`?userId=&keyword=&scope=&status=&source=&projectKey=&updatedFrom=&updatedTo=&page=&pageSize=`，需 `memory:read` 权限码。`userId` 可省略（跨用户列表，此时 keyword/scope/status/source/projectKey 至少一个非空）；keyword 对内容/项目标识包含匹配；updatedFrom/updatedTo 为 `YYYY-MM-DD` 闭区间。
+
+写接口（需 `memory:write` 权限码，操作全量记入审计日志）：
+
+- `PATCH /api/v1/admin/memory/:id`：编辑内容 / 切换 ACTIVE↔DISMISSED（语义同用户域），目标用户由 id 反查。
+- `DELETE /api/v1/admin/memory/:id`：物理删除。
+- `POST /api/v1/admin/memory`：代建 `{ userId, scope, content, projectKey? }`，source 固定 MANUAL，与用户手写同受 500 字、去重、200 条生效上限约束；目标用户不存在报 USER_NOT_FOUND。
+- `GET /api/v1/admin/memory/users?keyword=&pageSize=`：记忆页用户选择器数据源（只回 id/username/displayName）。
+
+管理后台记忆管理页面为 admin Web 端功能，mao-cli 不封装上述管理端点。

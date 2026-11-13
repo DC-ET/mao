@@ -78,6 +78,10 @@
               <ContainerRebuildPanel
                 v-else-if="section.kind === 'container-rebuild'"
               />
+              <GitDefaultCredentialsPanel
+                v-else-if="section.kind === 'git-default-credentials'"
+                :can-write="canWrite"
+              />
               <template v-else-if="section.kind === 'integration'">
                 <el-alert
                   v-if="section.name === firstIntegrationName"
@@ -269,6 +273,7 @@ import MenuVisibilityPanel from './components/MenuVisibilityPanel.vue'
 import ShellEnvVarsPanel from './components/ShellEnvVarsPanel.vue'
 import ContainerHostsPanel from './components/ContainerHostsPanel.vue'
 import ContainerRebuildPanel from './components/ContainerRebuildPanel.vue'
+import GitDefaultCredentialsPanel from './components/GitDefaultCredentialsPanel.vue'
 import { COMPANY_SSO_KEY } from './companySsoConfig'
 import { ECP_CONFIG_KEY } from './ecpConfig'
 import { cidrAllowlistError } from './cidrAllowlist'
@@ -319,7 +324,7 @@ const INTEGRATION_LABELS: Record<string, string> = {
 }
 
 /** 目录分组声明：右侧卡片渲染顺序与目录一致。integration=集成配置组，category=后端 system_setting 分类；后端新增的未声明分类兜底归入「其他」。 */
-const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' | 'ecp' | 'menu-visibility' | 'shell-env' | 'container-hosts' | 'container-rebuild' | 'integration' | 'category'; name: string }> }> = [
+const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' | 'ecp' | 'menu-visibility' | 'shell-env' | 'container-hosts' | 'container-rebuild' | 'git-default-credentials' | 'integration' | 'category'; name: string }> }> = [
   {
     label: '登录认证',
     sections: [
@@ -354,6 +359,8 @@ const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' |
     sections: [
       { kind: 'category', name: '会话' },
       { kind: 'category', name: '代码' },
+      // 系统默认 Git 凭据（技术方案 2026-11-12）：不属于 system_setting 行，独立面板渲染
+      { kind: 'git-default-credentials', name: 'git-default-credentials' },
       { kind: 'category', name: 'Agent 与模型' },
       { kind: 'category', name: '记忆' },
     ],
@@ -686,7 +693,7 @@ const settingsByCategory = computed(() => {
 interface TocSection {
   id: string
   label: string
-  kind: 'company-sso' | 'ecp' | 'menu-visibility' | 'shell-env' | 'container-hosts' | 'container-rebuild' | 'integration' | 'category'
+  kind: 'company-sso' | 'ecp' | 'menu-visibility' | 'shell-env' | 'container-hosts' | 'container-rebuild' | 'git-default-credentials' | 'integration' | 'category'
   name: string
 }
 
@@ -733,7 +740,9 @@ const tocGroups = computed<TocGroup[]>(() => {
                     ? '容器域名解析'
                     : decl.kind === 'container-rebuild'
                       ? '容器管理'
-                      : decl.name,
+                      : decl.kind === 'git-default-credentials'
+                        ? 'Git 默认凭证'
+                        : decl.name,
       })
     }
     if (sections.length > 0) groups.push({ label: group.label, sections })

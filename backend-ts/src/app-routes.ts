@@ -109,6 +109,8 @@ import { CompanySsoError } from './auth/company-sso.error.js';
 import { registerUserRoutes } from './user/user.routes.js';
 import { registerPermissionRoutes } from './permission/permission.routes.js';
 import { registerAdminGitCredentialRoutes, registerGitCredentialRoutes } from './user/git-credential.routes.js';
+import { registerSystemGitCredentialRoutes } from './user/system-git-credential.routes.js';
+import type { SystemGitCredentialService } from './user/system-git-credential.service.js';
 import { registerAdminEnvVariableRoutes, registerEnvVariableRoutes } from './env/env-variable.routes.js';
 
 import { registerAdminHttpToolRoutes } from './http-tool/http-tool-admin.routes.js';
@@ -183,6 +185,7 @@ export interface RouteDeps {
   userRepo: MysqlUserRepository;
   permissionService: PermissionService;
   gitCredentials: GitCredentialService;
+  systemGitCredentials: SystemGitCredentialService;
   envVariableService: EnvVariableService;
   sessionRepo: SessionRepository;
 
@@ -343,7 +346,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
   const {
     app, db, cfg, apiPrefix, jwt, agentRuntimeCfg,
     authService, feishu, ecpAuth, userService, userRepo, permissionService,
-    gitCredentials, envVariableService, sessionRepo,
+    gitCredentials, systemGitCredentials, envVariableService, sessionRepo,
     httpToolService, httpApiExecutor, httpToolStatsStore,
     httpToolValidator,
     fileService, agentService, experienceService, experienceIndexService, suggestedQuestionService,
@@ -418,6 +421,11 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     registerPermissionRoutes(api, permissionService);
     registerGitCredentialRoutes(api, gitCredentials);
     registerAdminGitCredentialRoutes(api, { gitCredentialService: gitCredentials, permissionService });
+    registerSystemGitCredentialRoutes(api, {
+      systemGitCredentialService: systemGitCredentials,
+      gitCredentialService: gitCredentials,
+      permissionService,
+    });
     registerEnvVariableRoutes(api, { envVariableService, sessionLookup: sessionRepo });
     registerAdminEnvVariableRoutes(api, {
       envVariableService,
@@ -674,6 +682,13 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
           username: u.username,
           displayName: u.displayName,
         })),
+        // 记忆页用户选择器（技术方案 D6）：listUsers 默认按 created_at DESC（注册时间倒序），keyword 模糊命中 username/displayName/email
+        search: async (keyword: string, pageSize: number) =>
+          (await userService.listUsers(1, pageSize, keyword || undefined)).records.map((u) => ({
+            id: u.id!,
+            username: u.username,
+            displayName: u.displayName,
+          })),
       },
     };
     registerAdminAnalyticsRoutes(api, adminDeps);

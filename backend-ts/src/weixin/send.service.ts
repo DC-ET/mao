@@ -35,15 +35,21 @@ export function splitTextForWeixin(text: string, maxBytes: number = WEIXIN_MAX_T
   return chunks;
 }
 
-/** 取 text 的字节预算内最长字符前缀长度；逐字符累积保证不切出半个多字节字符。 */
+/**
+ * 取 text 的字节预算内最长前缀的 UTF-16 长度；按 code point 累积保证不切出半个多字节字符。
+ * 注意不能逐 UTF-16 码元累积：星形平面字符（emoji 等）由高低代理两个码元组成，
+ * Node 对孤立代理按 3 字节计长，逐码元累积会把代理对从中间切断，产出非法 UTF-8 分片。
+ */
 function prefixLenWithinBytes(text: string, maxBytes: number): number {
   let bytes = 0;
   let i = 0;
   while (i < text.length) {
-    const next = bytes + Buffer.byteLength(text[i]);
+    const code = text.codePointAt(i)!;
+    const unitCount = code > 0xffff ? 2 : 1; // 代理对占 2 个码元，须整体纳入或整体排除
+    const next = bytes + Buffer.byteLength(String.fromCodePoint(code));
     if (next > maxBytes) break;
     bytes = next;
-    i += 1;
+    i += unitCount;
   }
   return i;
 }

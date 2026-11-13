@@ -167,3 +167,53 @@ describe('MessageBubble 编辑态容器换载体', () => {
     expect(onExp(confirmBtns[0], 'click')).toBe('handleConfirm')
   })
 })
+
+// ── 编辑态面板挂载（技术方案 2026-11-12-message-edit-quick-command-panels §7.3，源码级断言） ──
+describe('编辑态面板挂载（2026-11-12 二期）', () => {
+  const bubbleSource = readFileSync(resolve(__dirname, 'MessageBubble.vue'), 'utf-8')
+  const editEditorSource = readFileSync(resolve(__dirname, 'MessageEditEditor.vue'), 'utf-8')
+  const composableSource = readFileSync(resolve(__dirname, '../../composables/useEditorTagPanels.ts'), 'utf-8')
+
+  it('MessageBubble 向 MessageEditEditor 传 session-id', () => {
+    expect(bubbleSource).toContain(':session-id="sessionId"')
+  })
+
+  it('MessageEditEditor 挂载两个面板且绑定 placement', () => {
+    expect(editEditorSource).toContain('<QuickCommandPanel')
+    expect(editEditorSource).toContain('<FileReferencePanel')
+    expect(editEditorSource).toContain(':placement="commandPanelPlacement"')
+    expect(editEditorSource).toContain(':placement="filePanelPlacement"')
+  })
+
+  it('面板键盘段先于 IME/Esc/Ctrl+Enter 既有守卫', () => {
+    const handleKeyDown = editEditorSource.slice(editEditorSource.indexOf('handleKeyDown'))
+    const panelIdx = handleKeyDown.indexOf('panels.handleEditorKeyDown')
+    const imeIdx = handleKeyDown.indexOf('isComposing')
+    expect(panelIdx).toBeGreaterThan(-1)
+    expect(imeIdx).toBeGreaterThan(panelIdx)
+  })
+
+  it('.message-edit-editor-wrap 具备 position: relative（面板 absolute 锚定前提）', () => {
+    const styleBlock = editEditorSource.slice(editEditorSource.indexOf('<style scoped>'))
+    const wrapRule = styleBlock.slice(styleBlock.indexOf('.message-edit-editor-wrap {'))
+    expect(wrapRule.replace(/\s+/g, ' ')).toContain('position: relative')
+  })
+
+  it('编辑态差异入参：只接 /、不接裸词自动补全、Esc 回落取消编辑、带翻转锚点', () => {
+    expect(editEditorSource).toContain("slashTriggers: ['/']")
+    expect(editEditorSource).toContain('autoComplete: false')
+    expect(editEditorSource).toContain('onEscape: () => emit(\'cancel\')')
+    expect(editEditorSource).toContain('anchorEl: () => wrapRef.value')
+  })
+
+  it('composable 不含「当前是不是编辑态」分支（差异全部为入参）', () => {
+    expect(composableSource).not.toContain('isEditing')
+    expect(composableSource).not.toContain("=== 'edit'")
+  })
+
+  it('ChatInput 主链路保持原差异配置（触发符含「、」、自动补全开启）', () => {
+    const chatInputSource = readFileSync(resolve(__dirname, 'ChatInput.vue'), 'utf-8')
+    expect(chatInputSource).toContain('autoComplete: true')
+    expect(chatInputSource).not.toContain('slashTriggers')
+  })
+})

@@ -74,7 +74,7 @@ export const menuGroups: MenuGroupDef[] = [
       { index: '/signal-watchers', label: '信号哨兵', icon: Aim, permission: 'signal:read' },
       { index: '/http-tools', label: '自定义工具', icon: Operation, permission: 'http_tool:read' },
       { index: '/feedback', label: '点踩反馈', icon: Flag, permission: 'feedback:read' },
-      { index: '/memory', label: '用户记忆', icon: Collection, permission: 'memory:read' }
+      { index: '/memory', label: '记忆管理', icon: Collection, permission: 'memory:read' }
     ]
   },
   {

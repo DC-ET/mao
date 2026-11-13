@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" ref="rootRef" class="file-reference-panel" :style="panelStyle" @mousedown.prevent>
+  <div v-if="visible" ref="rootRef" class="file-reference-panel" :class="{ 'is-placement-bottom': placement === 'bottom' }" :style="panelStyle" @mousedown.prevent>
     <div v-if="loading" class="panel-loading">
       <span class="loading-text">搜索文件中...</span>
     </div>
@@ -58,6 +58,8 @@ const props = defineProps<{
   loading?: boolean
   /** 文件列表拉取失败（ChatInput 传入）：渲染错误条 + 重试（静默失败可见化） */
   loadError?: boolean
+  /** 弹出方向（技术方案 2026-11-12 §4.2）：默认向上；编辑态短会话翻转向下 */
+  placement?: 'top' | 'bottom'
 }>()
 
 const emit = defineEmits<{
@@ -77,6 +79,8 @@ const panelStyle = computed(() =>
 )
 
 function measureAvailableHeight() {
+  // 向下弹出时面板高度与上方可用空间无关，不做视口顶部测量（技术方案 2026-11-12 §4.2-2）
+  if (props.placement === 'bottom') return
   nextTick(() => {
     const el = rootRef.value
     if (!el) return
@@ -103,6 +107,15 @@ watch(
     selectedIndex.value = 0
     // 文件列表异步加载完成后面板真实底边已确定，需重新测量
     if (props.visible) measureAvailableHeight()
+  }
+)
+
+// 翻转向下后清除按「上方空间」测得的 max-height，否则短会话场景面板被残留值压矮
+// （评审 P2：prop 传播晚于打开时的测量，需在翻转生效时显式复位）
+watch(
+  () => props.placement,
+  (val) => {
+    if (val === 'bottom') availableHeight.value = null
   }
 )
 
@@ -134,7 +147,9 @@ function confirmSelection() {
 
 function scrollToSelected() {
   nextTick(() => {
-    const panel = document.querySelector('.file-reference-panel')
+    // 用自身根节点滚动选中项：编辑态与主输入框的面板可能同时挂载，
+    // document.querySelector 会串台滚错元素（技术方案 2026-11-12 §4.2-3 修复）
+    const panel = rootRef.value
     const active = panel?.querySelector('.panel-item.active')
     if (active) {
       active.scrollIntoView({ block: 'nearest' })
@@ -163,6 +178,14 @@ defineExpose({ moveUp, moveDown, confirmSelection })
 
 [data-theme="dark"] .file-reference-panel {
   background: var(--aw-canvas-parchment);
+}
+
+/* 翻转向下（技术方案 2026-11-12 §4.2）：编辑态短会话向上弹出会被 .messages 滚动容器裁掉 */
+.file-reference-panel.is-placement-bottom {
+  bottom: auto;
+  top: 100%;
+  margin-bottom: 0;
+  margin-top: 4px;
 }
 
 .panel-loading,

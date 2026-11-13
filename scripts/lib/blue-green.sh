@@ -148,6 +148,56 @@ bg_migrate_legacy_pid() {
   fi
 }
 
+# Start the backend in its own transient unit when systemd is available.
+# setsid only escapes the process session; it does not escape the caller's
+# cgroup. A deploy launched by a transient systemd unit would therefore have
+# its backend killed when the deploy unit exits.
+bg_start_port_via_systemd() {
+  local app_dir="$1"
+  local port="$2"
+  local log_file="$3"
+  local pid_file="$4"
+  local node_bin
+  local unit="mao-backend-${port}-$(date +%s)-$$"
+
+  command -v systemd-run >/dev/null 2>&1 || return 1
+  node_bin="$(command -v node || true)"
+  [ -n "$node_bin" ] || return 1
+
+  : > "$pid_file"
+  if ! systemd-run \
+    --unit="$unit" \
+    --collect \
+    --property="WorkingDirectory=${app_dir}" \
+    --property="StandardOutput=append:${log_file}" \
+    --property="StandardError=append:${log_file}" \
+    --property=Restart=no \
+    --setenv="PATH=${PATH}" \
+    bash -c '
+      set -a
+      . "$1/.env"
+      set +a
+      export MAO_TS_PORT="$2"
+      exec "$3" dist/main.js
+    ' _ "$app_dir" "$port" "$node_bin"; then
+    echo "WARN: systemd-run failed; falling back to setsid nohup" >&2
+    return 1
+  fi
+
+  local i main_pid
+  for i in $(seq 1 50); do
+    main_pid="$(systemctl show --property MainPID --value "$unit" 2>/dev/null || true)"
+    if [ -n "$main_pid" ] && [ "$main_pid" != "0" ]; then
+      echo "$main_pid" > "$pid_file"
+      echo "Started on port ${port} (PID: ${main_pid}, systemd unit: ${unit})"
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "WARN: systemd unit ${unit} started but PID file ${pid_file} is not ready" >&2
+  return 0
+}
+
 # Start backend without inheriting deploy flock or other stray FDs from the parent shell.
 bg_start_port() {
   local app_dir="$1"
@@ -167,6 +217,11 @@ bg_start_port() {
   mkdir -p "$log_dir"
   cd "$app_dir"
   export MAO_TS_PORT="$port"
+
+  if [ -f dist/main.js ] && bg_start_port_via_systemd "$app_dir" "$port" "$log_file" "$pid_file"; then
+    return 0
+  fi
+
   if [ -f dist/main.js ]; then
     setsid nohup node dist/main.js >> "$log_file" 2>&1 </dev/null &
   else

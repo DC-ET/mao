@@ -84,7 +84,8 @@ export class GlobSearchTool extends BaseTool {
   }
 
   private async *walk(dir: string, root: string): AsyncGenerator<string> {
-    const entries = await opendir(dir);
+    const entries = await this.openDirEntries(dir, root);
+    if (entries == null) return;
     for await (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
@@ -93,6 +94,17 @@ export class GlobSearchTool extends BaseTool {
         yield path.relative(root, full).split(path.sep).join('/');
       }
       // 不跟随符号链接，避免递归环路及遍历到搜索目录之外。
+    }
+  }
+
+  /** 打开目录流；根目录不可读时抛出（整体报错），子目录不可读跳过续扫（对齐 ripgrep 与 grep-search 的 collectGrepFiles 基线）。 */
+  private async openDirEntries(dir: string, root: string) {
+    try {
+      return await opendir(dir);
+    } catch (e) {
+      if (dir === root) throw e;
+      harnessLog('warn', `GlobSearchTool 跳过不可读目录: ${dir}`, e);
+      return null;
     }
   }
 }

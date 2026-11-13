@@ -51,6 +51,49 @@ describe('MemoryRepository', () => {
     expect(comboParams).toEqual([7, 'PROJECT', 'ACTIVE', 'k', 'k', 20, 0]);
   });
 
+  it('pageWithoutUserIdQueriesAcrossUsers', async () => {
+    // 跨用户列表（admin 专属）：不追加 user_id 条件；D5 的强制过滤由路由层保证
+    const db = mockDb(null, [{ id: 1 }]);
+    const repo = new MemoryRepository(db as never);
+    await repo.page({ keyword: 'k', page: 1, pageSize: 20 });
+    const [sql, params] = (db.query as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(sql).not.toContain('user_id = ?');
+    expect(params).toEqual(['k', 'k', 20, 0]);
+
+    await repo.count({ page: 1, pageSize: 20 });
+    const [countSql, countParams] = (db.queryOne as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(countSql).toContain('1 = 1');
+    expect(countParams).toEqual([]);
+  });
+
+  it('pageSourceAndUpdatedAtRangeFiltersBindInOrder', async () => {
+    const db = mockDb(null, [{ id: 1 }]);
+    const repo = new MemoryRepository(db as never);
+    await repo.page({
+      userId: 7,
+      source: 'AUTO',
+      updatedFrom: '2026-11-01 00:00:00',
+      updatedTo: '2026-11-11 23:59:59',
+      page: 1,
+      pageSize: 20,
+    });
+    const [sql, params] = (db.query as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(sql).toContain('source = ?');
+    expect(sql).toContain('updated_at >= ?');
+    expect(sql).toContain('updated_at <= ?');
+    expect(params).toEqual([7, 'AUTO', '2026-11-01 00:00:00', '2026-11-11 23:59:59', 20, 0]);
+  });
+
+  it('pageSourceCombinesWithKeyword', async () => {
+    const db = mockDb(null, [{ id: 1 }]);
+    const repo = new MemoryRepository(db as never);
+    await repo.page({ source: 'MANUAL', keyword: 'k', page: 1, pageSize: 20 });
+    const [sql, params] = (db.query as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(sql).toContain('source = ?');
+    expect(sql).toContain('LIKE');
+    expect(params).toEqual(['MANUAL', 'k', 'k', 20, 0]);
+  });
+
   it('countActiveCountsOnlyActiveRows', async () => {
     const db = mockDb({ total: 5 });
     const repo = new MemoryRepository(db as never);

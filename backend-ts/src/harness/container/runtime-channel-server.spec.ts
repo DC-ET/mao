@@ -78,4 +78,20 @@ describe('RuntimeChannelServer ensureListening', () => {
     expect(lstatSync(socketPath).isSocket()).toBe(true);
     await connectOk(socketPath);
   });
+
+  it('路径超预算退化为直听：长 channelDir 下仍产出可用监听（macOS 104 字节回归）', async () => {
+    // sun_path 限制（macOS 104 / Linux 108，含 NUL）：tmp 后缀叠加在 socket 路径上超预算时，
+    // 内核会静默截断 bind 路径——listen 回调照常触发但文件落在截断名上，rename 必然 ENOENT。
+    // 该回归用例把 socket 路径垫到 ~101 字符（原子分支预算外、直听预算内），锁定退化分支。
+    const root = useTmpDir('mao-channel-');
+    const baseSocket = join(root, '7', '5', 'runtime.sock');
+    const padLen = 101 - baseSocket.length;
+    expect(padLen).toBeGreaterThan(0);
+    const server = makeServer(join(root, 'x'.repeat(padLen)));
+    const socketPath = await server.ensureListening(7, 5);
+
+    expect(socketPath.length).toBeLessThanOrEqual(103);
+    expect(lstatSync(socketPath).isSocket()).toBe(true);
+    await connectOk(socketPath);
+  });
 });

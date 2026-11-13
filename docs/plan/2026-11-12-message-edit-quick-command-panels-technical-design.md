@@ -1,6 +1,8 @@
 # 消息编辑态唤起指令/技能/文件面板 — 技术方案
 
 > 源自 2026-11-12 对话评估：编辑态已能把 `#{name}#`/`${name}$`/`@{path}@` 渲染为标签 chip，但无法在用 `/` 唤起指令/技能面板、`@` 唤起文件列表。零后端改动、零迁移、零 WS 协议改动；改动面集中在「ChatInput 面板逻辑抽共享 composable」与「MessageEditEditor 挂载面板」两处，确认出口 payload 与现状逐字节一致。
+> **评审状态**：2026-11-13 评审通过（需求与方案均可行）。修正两处事实错误并补两点说明，修订处标注「评审补充/评审更正」：①「模块级 let 跨实例串扰」系误判（见 §4.1 评审更正）；② `autoComplete` 一名两义须拆名（见 §4.1 内部差异点 4）；③ 补编辑态插入事务的 schema 前提（§4.5）与 @ 面板 Enter 语义锁定（§7.1）。
+> **实施更正（2026-11-13，开发期发现）**：① §4.5 的 `sessionStore.getSessionEntity(id)` 不存在——实际 API 是 `sessionStore.sessionEntities.get(id)`（实体 Map 投影，评审漏查）；② `EditorTagPanelContext` 增补 `cloudProjectKey?: string | null`——ChatInput 文件拉取存在第三分支「新任务选已有云项目 → `/files/project-list`」（原 :558-570），逐字节保留否则主输入框行为变化；③ 面板组件句柄 ref（quickCommandPanelRef/fileReferencePanelRef）改为**调用方创建并传入** composable（ref 仅被模板写入会触发 TS6133，作为入参传递即真实读取；composable 返回值不再含这两个 ref）；④ onEnter 契约：返回 `false` = 不消费（回落调用方后续 Enter 段，ChatInput 用它做触屏「换行不发送」裁决），返回 void = 已消费；触屏语义得以逐行为保留。
 > 基线设计：[2026-11-11-message-edit-quick-command-tags-technical-design.md](2026-11-11-message-edit-quick-command-tags-technical-design.md)（编辑态 chip 双向转换，本方案改写其 §3 决策 3 / §9 中「面板一期不做」的结论）、[2026-06-05-feature-edit-user-message.md](2026-06-05-feature-edit-user-message.md)（编辑重发主流程）。
 
 ## 1. 需求背景
@@ -88,13 +90,14 @@ export function useEditorTagPanels(opts: {
 
 返回值（供模板绑定与两个调用方的 `editorProps`）：`commandPanelVisible / commandPanelFilter / commandPanelPlacement / panelSkills / quickCommands`、`filePanelVisible / filePanelFilter / filePanelLoading / workspaceFiles / fileListError / filePanelPlacement`、`quickCommandPanelRef / fileReferencePanelRef`、`handleEditorKeyDown(view, event): boolean`（消费掉返回 true）、`handleEditorUpdate(): void`、`closeAll(): void`。
 
-内部差异点（仅此三处，其余逐字节照搬）：
+内部差异点（评审补充后共四处，除此外逐字节照搬）：
 
 1. `detectSlashTrigger`：触发符从 `opts.slashTriggers` 取，对每个符 `lastIndexOf` 后取最大下标（替换 :878-880 硬编码的两个符）；
 2. `detectAutoComplete`：函数首行 `if (!opts.autoComplete) return`；
-3. `handleKeyDown`：两段面板处理照搬（含 IME 守卫与 `preventDefault`）；Enter 分支 `!userNavigatedPanel` 时 `closePanel(); opts.onEnter?.()`（`autoComplete=false` 时该分支不可达——显式触发必置 `userNavigatedPanel=true`）；两段都不消费时末尾 `opts.onEscape?.()` 仅由编辑态传入。
+3. `handleKeyDown`：两段面板处理照搬（含 IME 守卫与 `preventDefault`）；Enter 分支 `!userNavigatedPanel` 时 `closePanel(); opts.onEnter?.()`（`autoComplete=false` 时该分支不可达——显式触发必置 `userNavigatedPanel=true`，文件面板分支本就无此门、恒确认选中）；两段都不消费时末尾 `opts.onEscape?.()` 仅由编辑态传入；
+4. **`autoComplete` 一名两义必须拆名（评审补充）**：ChatInput 里的 `autoComplete` ref（:324）不是配置，而是运行时标记「当前面板是否由自动补全弹出」——:982 置 true、:493（显式选中插入后）置 false、:776/:790（Enter/Esc 是否记忆 dismissedWord）与 :923/:951/:959/:974（不干扰显式面板）读取，共七处。抽离时配置位沿用 `opts.autoComplete`（是否启用自动补全检测），运行时标记更名 `panelAutoOpened`，七处同步改名；否则逐字照搬会在 composable 里与配置位撞名。编辑态（`autoComplete=false`）下 `detectAutoComplete` 首行短路，标记恒为 false，行为正确。
 
-**附带修复（记录）**：`dismissedWord / currentFilterWord / userNavigatedPanel` 在 ChatInput 是模块级 `let`（:914-918），而主会话与各边路任务的 ChatInput 同时挂载（SideChatPanel.vue:332-334 注释实证）——三个变量跨实例共享，存在「一个输入框里 Esc 关闭的词抑制另一个输入框自动补全」的串扰。抽成 composable 局部变量后自然变为实例级，修复该潜在问题。
+**评审更正（2026-11-13，v1.0 此节有误）**：v1.0 称这三个变量是「模块级 `let` 跨实例共享，存在多输入框串扰」，并引 SideChatPanel.vue:332-334 为证——核实为误判：ChatInput.vue 仅有一个 `<script setup>` 块（:159-1522），三个 `let`（:914-918）是 setup 内绑定，**本就是组件实例级**，不存在「一个输入框的 Esc 记忆抑制另一个输入框」的串扰；SideChatPanel.vue:332-334 是无关的设备在线事件处理代码（多实例并存本身真实——SideChatPanel.vue:134 挂载第二个 ChatInput——但不构成共享状态）。抽入 composable 后三者仍为闭包实例级，**行为零变化，纯搬家**；§8 决策 5 随之作废。
 
 ### 4.2 两个面板组件小改
 
@@ -140,6 +143,7 @@ const panels = useEditorTagPanels({
 ```
 
 - 模板：`div.message-edit-editor-wrap` 内、`EditorContent` 之前挂 `QuickCommandPanel` 与 `FileReferencePanel`（props 绑 `panels.*`，事件绑 composable 暴露的选择处理）；`@mousedown.prevent` 两组件自带，点击选中不抢编辑器焦点；
+- 可行性前提（评审补充，已核实）：MessageEditEditor 已注册 `QuickCommandNode`/`FileReferenceNode`（:48-49，扩展清单与 ChatInput 一致），`handleCommandSelect`/`handleFileReferenceSelect` 的插入事务无需改 schema 即可在编辑态工作；
 - `.message-edit-editor-wrap` 增补 `position: relative`（既有视觉属性不动）；
 - `editorProps.handleKeyDown`（:54-65）：首行插 `if (panels.handleEditorKeyDown(view, event)) return true`，其余 IME 守卫 / Esc / Ctrl|Meta+Enter 照旧；
 - `onUpdate`（:67-70）：mirror emit 之后调 `panels.handleEditorUpdate()`；
@@ -192,7 +196,7 @@ const panels = useEditorTagPanels({
 - **`/` 触发**：`/` 开面板且 filter 为空；`/ta` filter 累积、`slashRange` 覆盖触发符到光标；行首 / 空白后触发；`a/b`（前字符非空白）不触发；触发符后出现空格关面板；`、` 仅在 `slashTriggers` 含它时触发（编辑态配置下不触发）。
 - **`@` 触发**：filter 词正确；连续输入 300ms 防抖只发一次；乱序保护（先发的慢响应不覆盖后发的快结果，mock `api`/`electronAPI` 延时返回）；LOCAL Electron 走 `listWorkspaceFiles(workspace,…)`、CLOUD 走 `/files/workspace-list`（带 sessionId）；拉取失败置 `fileListError`。
 - **选中插入**：`handleCommandSelect` 后 doc 含 `quickCommand` 节点（commandType/commandName 正确）、`getText` 还原 `#{name}#`/`${name}$`、尾随空格与光标位置；`handleFileReferenceSelect` 后 `getText` 还原 `@{path}@`。
-- **键盘分层**：面板开时 ↑↓ 导航、Enter 确认选中、Esc 关面板（均消费返回 true）；面板关时 Enter 回落 `onEnter`（不传则不消费）、Esc 回落 `onEscape`；IME 组合态（`isComposing`/keyCode 229）Enter 放行。
+- **键盘分层**：面板开时 ↑↓ 导航、Enter 确认选中、Esc 关面板（均消费返回 true）；面板关时 Enter 回落 `onEnter`（不传则不消费）、Esc 回落 `onEscape`；IME 组合态（`isComposing`/keyCode 229）Enter 放行；@ 文件面板 Enter 恒确认选中（无 `userNavigatedPanel` 门，ChatInput :753-758 口径照搬即得，评审补充用例锁定）。
 - **自动补全**（`autoComplete=true` 配置）：词前缀匹配开面板；Esc 后同词不弹、词变恢复（dismissedWord）；URL / 邮箱 / 含 `/ . @ : \` 的词不触发；词长 < 2 关闭。
 - **closeAll**：防抖定时器清理、面板状态与 range 复位。
 
@@ -218,7 +222,7 @@ const panels = useEditorTagPanels({
 2. **编辑态只接 `/` 与 `@`**：`、` 是中文高频标点、裸词自动补全在「改已有文本」场景是惊吓而非帮助；用户诉求也是 `/` 与 `@`。
 3. **翻转而非 teleport**：absolute 锚定让面板天然跟随滚动容器，无需补监听；teleport + fixed 丢失该特性且两组件定位逻辑重写。
 4. **ChatInput 不传 anchorEl**：主输入框定位行为零变化，把回归面压到最小。
-5. **附带修复实例级状态**：模块级 `dismissedWord/userNavigatedPanel` 在多输入框并存时串扰（SideChatPanel.vue:332-334 实证），随抽取消除。
+5. **（评审更正，决策作废）**：v1.0 曾误判 `dismissedWord/userNavigatedPanel` 为模块级共享、把「实例化」列为附带修复；核实 ChatInput.vue 仅一个 `<script setup>` 块，三者本就是实例级——抽 composable 不改变语义，本条不构成行为修复。
 6. **payload 不变是硬约束**：确认出口仍 `getText`，chip `renderText` 还原标记——后端、WS、乐观截断、失败回滚全部零改动，这是本方案能把回归面压到最小的根本原因。
 
 ## 9. 明确不做的（汇总）

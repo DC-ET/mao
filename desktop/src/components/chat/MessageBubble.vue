@@ -73,6 +73,7 @@
         <MessageEditEditor
           ref="editEditorRef"
           v-model="editContent"
+          :session-id="sessionId"
           @confirm="handleConfirm"
           @cancel="$emit('cancelEdit')"
         />

@@ -895,6 +895,11 @@ export class ContainerRegistry {
     const userHomeMount = mounts.find((m) => m.purpose === 'userHome');
     const args = [
       'run', '-d',
+      // PID 1 用 docker-init（tini）回收孤儿进程：Node 作为 PID 1 只回收自己 spawn 的子进程，
+      // Chrome/playwright 等孙进程被 reparent 到 PID 1 后永久变僵尸，把 --pids-limit 配额
+      // 逐步耗尽（2026-11-13 事故：396 僵尸占满 512 配额，spawn 全部 EAGAIN）；tini 统一
+      // wait 孤儿，同时把 SIGTERM 转发给 node，docker stop 不再依赖超时后 SIGKILL。
+      '--init',
       '--name', name,
       '--label', 'mao.runtime=user',
       '--label', `mao.user=${userId}`,
