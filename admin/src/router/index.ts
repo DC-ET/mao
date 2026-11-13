@@ -31,6 +31,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'Agent 管理', keepAlive: true, permission: 'agent:read' }
       },
       {
+        path: 'experience',
+        name: 'ExperienceLibrary',
+        component: () => import('../views/experience/ExperienceLibraryView.vue'),
+        meta: { title: '经验库管理', keepAlive: true, permission: 'agent:read' }
+      },
+      {
         path: 'models',
         name: 'Models',
         component: () => import('../views/model/ModelListView.vue'),

@@ -118,7 +118,7 @@
             <div v-if="canWrite" class="row-actions">
               <el-button type="primary" link size="small" @click="handleCopy(row)">复制</el-button>
               <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
-              <el-button type="primary" link size="small" @click="experienceAgent = row">经验库</el-button>
+              <el-button type="primary" link size="small" @click="openExperienceLibrary(row)">经验库</el-button>
               <el-tooltip v-if="row.isDefault && row.enabled !== false" content="默认 Agent 不可停用" placement="top">
                 <span class="disabled-btn-wrap">
                   <el-button type="danger" link size="small" disabled>停用</el-button>
@@ -171,7 +171,7 @@
             <template v-if="canWrite">
               <el-button type="primary" link @click="handleCopy(row)">复制</el-button>
               <el-button type="primary" link @click="handleEdit(row)">编辑</el-button>
-              <el-button type="primary" link @click="experienceAgent = row">经验库</el-button>
+              <el-button type="primary" link @click="openExperienceLibrary(row)">经验库</el-button>
               <el-tooltip v-if="row.isDefault && row.enabled !== false" content="默认 Agent 不可停用" placement="top">
                 <span class="disabled-btn-wrap">
                   <el-button type="danger" link disabled>停用</el-button>
@@ -206,15 +206,6 @@
       />
     </el-card>
 
-    <AgentExperienceLibraryDialog
-      v-if="experienceAgent"
-      :agent-id="experienceAgent.id"
-      :agent-name="experienceAgent.name"
-      :initial-enabled="experienceAgent.experienceLibraryEnabled !== false"
-      :can-write="canWrite"
-      @close="experienceAgent = null"
-      @toggle-enabled="(v) => { if (experienceAgent) experienceAgent.experienceLibraryEnabled = v }"
-    />
     <AgentFormDialog
       v-if="dialogVisible"
       :visible="true"
@@ -228,7 +219,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onActivated, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { api } from '../../api'
@@ -238,13 +229,16 @@ import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useAuthStore } from '../../stores/auth'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import AgentFormDialog from './AgentFormDialog.vue'
-import AgentExperienceLibraryDialog from './AgentExperienceLibraryDialog.vue'
-
-const experienceAgent = ref<{ id: number; name: string; experienceLibraryEnabled?: boolean } | null>(null)
 
 const { isMobile } = useBreakpoint()
 
 const route = useRoute()
+const router = useRouter()
+
+/** 经验库入口跳转独立管理页（2026-11-13 方案：弹窗升级为三栏页面），带 agentId 直达。 */
+function openExperienceLibrary(row: { id: number }): void {
+  router.push({ path: '/experience', query: { agentId: String(row.id) } })
+}
 
 const loading = ref(false)
 const loadingDetail = ref(false)

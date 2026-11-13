@@ -445,7 +445,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       permissionService,
     });
     registerAgentExperienceLibraryRoutes(api, {
-      agentService, experienceIndexService, permissionService,
+      agentService, agentRepository: agentRepo, experienceIndexService, permissionService,
     });
     registerModelRoutes(api, { modelService, permissionService });
     registerSystemSettingRoutes(api, {

@@ -28,9 +28,10 @@
 
 - 存放于 `<MAO_SHARE_DIR>/agent-experience/<agentId>/`（share 已按 Agent 隔离，容器内只挂本 Agent 子路径）：`INDEX.md`（系统自动生成的索引，勿手改）+ 若干 `YYYY-MM-DD-主题.md` 子文档（首部 frontmatter：`title` / `keywords` / `summary` / `applicable` / `last_verified`）。
 - 仅 CLOUD 会话生效：会话创建时工作区自动挂符号链接 `团队经验/`（git 工作区自动加入 `.git/info/exclude`），系统提示注入一小节固定路标——Agent 接手复杂任务先 grep 索引、命中再读子文档；多轮探索解决难题后自行写带日期的新子文档（write_file / edit_file 落盘后索引自动重建）。LOCAL 不挂载、不注入。会话文件管理可只读打开这个目录（预览、搜索、下载）；新建、改名、删除、上传仍拒绝，避免从文件管理改到全体成员共享的库。
-- 管理后台「Agent 管理 → 经验库」维护：开关启用、浏览 / 新建 / 编辑 / 删除文档、强制重建索引、查看索引原文。REST（相对 `/api/v1`，读需登录、写需 `agent:write`；CLI 暂无子命令）：
-  - `PATCH /agents/:id/experience-library` `{ enabled }`；`GET /agents/:id/experience-library/docs`（含 `docs` 元信息列表与 `indexContent`）
-  - `GET|PUT /agents/:id/experience-library/docs/content?file=`（读 / upsert 单篇，PUT 传 JSON `{ fileName, content }`；单篇上限 1MB）；`DELETE /agents/:id/experience-library/docs?file=`（禁删 `INDEX.md`）；`POST /agents/:id/experience-library/index/rebuild`
+- 管理后台「能力 → 经验库管理」（独立页面，Agent 列表行内「经验库」按钮直达对应库）维护：跨库总览（各库文档数 / 大小 / 最近更新、孤儿库标记）、开关启用、搜索 / 筛选 / 排序 / 分月分组 / 分页浏览、Markdown 渲染阅读、新建 / 编辑 / 删除文档、查看渲染态索引、强制重建索引。REST（相对 `/api/v1`，docs/index 读需登录、overview 读需 `agent:read`、写需 `agent:write`；CLI 暂无子命令）：
+  - `GET /agents/experience-library/overview`（跨库统计：`libraries` 含名称与开关，`orphans` 为 Agent 已删除的残留库）；`PATCH /agents/:id/experience-library` `{ enabled }`
+  - `GET /agents/:id/experience-library/docs`（参数 `page` / `size`（≤100）/ `sort`（fileName|title|updatedAt|sizeBytes|lastVerified）/ `order` / `keyword` / `tag` / `verifiedFrom` / `verifiedTo` / `updatedFrom` / `updatedTo` / `abnormal`（no-frontmatter|no-title）/ `groupBy`（month|keyword|none），返回 `total` / `docs` / `groupCounts` / `keywords` facets）
+  - `GET /agents/:id/experience-library/index`（索引原文与 `docCount`）；`GET|PUT /agents/:id/experience-library/docs/content?file=`（读 / upsert 单篇，PUT 传 JSON `{ fileName, content }`；单篇上限 1MB）；`DELETE /agents/:id/experience-library/docs?file=`（禁删 `INDEX.md`）；`POST /agents/:id/experience-library/index/rebuild`
 - 边界：库内容由 Agent 会话写入；2026-11-09 起 share 按 Agent 隔离——容器内只能读写本 Agent 的经验库与私有区，其他 Agent 目录在容器文件系统层面不可见（跨 Agent 互写不再成立）；建议对整个 share 做每日快照（见 [deploy.md](deploy.md) 容器隔离运行时一节）。
 
 ## 系统提示词版本（REST / 管理后台）

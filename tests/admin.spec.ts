@@ -481,10 +481,13 @@ test.describe('Sidebar Navigation', () => {
   })
 
   test('should filter menu via search box and navigate with Enter', async ({ page }) => {
+    // 完整菜单数不写死（新增页面会加菜单项），以搜索前快照为准
+    const items = page.locator('.sidebar-menu .menu-item')
+    await expect(items.first()).toBeVisible()
+    const fullCount = await items.count()
     const search = page.locator('.menu-search-input')
     await expect(search).toBeVisible()
     await search.fill('模型')
-    const items = page.locator('.sidebar-menu .menu-item')
     await expect(items).toHaveCount(1)
     await expect(items.first()).toContainText('模型管理')
     // 命中文字高亮
@@ -493,7 +496,7 @@ test.describe('Sidebar Navigation', () => {
     await page.waitForURL(/\/models$/, { timeout: 10_000 })
     // 跳转后搜索词清空，菜单恢复完整列表
     await expect(search).toHaveValue('')
-    await expect(items).toHaveCount(22)
+    await expect(items).toHaveCount(fullCount)
   })
 
   test('should show empty state when search has no match', async ({ page }) => {
