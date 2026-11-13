@@ -966,6 +966,19 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     // from resetting sending/cancelling state
     switchingSession.value = true
 
+    try {
+      await runRestoreSession(sessionIdVal, mode, initialWorkspace, generation)
+    } finally {
+      // 无论中途被更新的切换代次截断还是抛错，都要让位给 phase watcher。
+      // 提前 return 会永久停在 switchingSession=true：之后所有 phase 变化都被
+      // 跳过（终态帧包括），输入框一直停在「正在运行，消息将进入队列...」。
+      if (generation === restoreGeneration) {
+        switchingSession.value = false
+      }
+    }
+  }
+
+  async function runRestoreSession(sessionIdVal: string, mode: string, initialWorkspace: string | undefined, generation: number) {
     // Unsubscribe from previous session
     if (sessionId.value && sessionId.value !== sessionIdVal) {
       unsubscribe(sessionId.value)
@@ -1009,23 +1022,33 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     )
     if (active) {
       sending.value = true
+      sendingSessionId.value = sessionIdVal
       if (hasCompleteCache) {
         sessionStore.ensureStreamingAssistantMessage(sessionIdVal)
       }
-      // Register a pending callback so stopExecution() works and session_status can resolve it
-      if (!pendingCallbacks.has(sessionIdVal)) {
-        new Promise<void>((resolve, reject) => {
-          pendingCallbacks.set(sessionIdVal, { resolve, reject })
-        }).then(() => {
+      // Register a pending callback so stopExecution() works and session_status can resolve it.
+      // 已注册时不得直接复用旧 Promise：那说明同会话上一轮执行的等待者还没收敛，
+      // 而本端此刻看到的是 DB 里的活动相位——终态帧极可能已在路上或已被处理（订阅快照
+      // 的 session_snapshot 分支此前只写 phase、不唤醒等待者），旧等待者若已被丢掉，
+      // 新等待的 Promise 永远等不到 resolve，输入框会停在「正在运行，消息将进入队列...」。
+      // awaitExecutionSettled 按单槽语义先让旧等待者以 superseded 失败退出，再挂新的，
+      // 保证占槽者一定就是本次恢复要等的那个，终态帧到达时有对象可唤醒。
+      awaitExecutionSettled(sessionIdVal)
+        .then(() => {
+          if (sessionId.value !== sessionIdVal) return
           sending.value = false
-          startedAt.value = null
-        }).catch(() => {
-          sending.value = false
+          sendingSessionId.value = null
           startedAt.value = null
         })
-      }
+        .catch(() => {
+          if (sessionId.value !== sessionIdVal) return
+          sending.value = false
+          sendingSessionId.value = null
+          startedAt.value = null
+        })
     } else {
       sending.value = false
+      sendingSessionId.value = null
     }
 
     // Ensure WS connection is established before subscribing
@@ -1046,11 +1069,6 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     }
     fetchTodos()
     fetchQueue()
-
-    // Resume phase watcher only after the latest session switch is complete
-    if (generation === restoreGeneration) {
-      switchingSession.value = false
-    }
   }
 
   async function submitQuestionAnswer(requestId: string, answers: QuestionAnswer[]): Promise<boolean> {

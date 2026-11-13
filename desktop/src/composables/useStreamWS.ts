@@ -1149,6 +1149,15 @@ export function useStreamWS() {
             // 临时轮 / 工具计时行，否则残留键会让轨迹面板显示上一次执行的内容
             sessionStore.clearLiveState(sessionId)
             if (phase !== 'IDLE') clearActiveExecution(sessionId)
+            // 与 session_status 终态分支对齐：唤醒等待本轮收敛的调用方。
+            // 订阅快照是断线补齐通道——终态若只在断线期间发过一次 session_status，
+            // 这帧就是本端见到的唯一终态，只写 phase 会让等待者（restoreSession 的
+            // sending、发送后等待、停止后重试）永远悬挂，输入框停在「正在运行」。
+            const cb = pendingCallbacks.get(sessionId)
+            if (cb) {
+              pendingCallbacks.delete(sessionId)
+              cb.resolve?.()
+            }
           } else if (data.thinking === true) {
             // 会话执行中恰好处于模型思考阶段：刷新/重连后恢复「思考中」，
             // 否则思考块会错误显示「思考完成」而内容仍在持续追加

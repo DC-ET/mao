@@ -61,6 +61,53 @@ describe('restoreSession', () => {
     expect(chat.switchingSession.value).toBe(false)
   })
 
+  // 线上 #2330：任务在 REST 快照读到 RUNNING 之后才收尾。恢复流程按活动相位把
+  // sending 置 true 并注册等待者，而终态帧（session_status / session_snapshot）
+  // 在毫秒级内到达。此时等待者必须能被唤醒，否则输入框永久停在
+  // 「正在运行，消息将进入队列...」——截图里右侧「已完成」、底部仍在转圈即此状。
+  it('恢复时读到 RUNNING、终态帧随即到达：输入框必须脱离运行态', async () => {
+    vi.mocked(api.get).mockResolvedValue({ data: { messages: [], hasMore: false } } as never)
+    const store = useSessionStore()
+    store.updateSession('A', { phase: 'RUNNING' } as any)
+    store.setActiveSession('A')
+
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    const pending = chat.restoreSession('A', 'CLOUD')
+    // 恢复同步段已把 sending 置位并注册等待者（等待 fetchMessages 期间）
+    expect(chat.sending.value).toBe(true)
+    expect(ws.pendingCallbacks.has('A')).toBe(true)
+    await pending
+
+    // 终态帧到达：既可能先走 session_status（广播）、也可能只有 session_snapshot
+    // （断线补齐），两条路径都必须唤醒等待者
+    ws.pendingCallbacks.get('A')?.resolve?.()
+    await vi.waitFor(() => expect(chat.sending.value).toBe(false))
+    expect(chat.switchingSession.value).toBe(false)
+  })
+
+  it('恢复时同会话已有未收敛的等待者，仍要挂上可被终态唤醒的新等待者', async () => {
+    vi.mocked(api.get).mockResolvedValue({ data: { messages: [], hasMore: false } } as never)
+    const store = useSessionStore()
+    store.updateSession('A', { phase: 'RUNNING' } as any)
+    store.setActiveSession('A')
+
+    // 上一轮执行的等待者尚未收敛（槽位仍被占用）
+    const supersededErrors: Error[] = []
+    ws.pendingCallbacks.set('A', { reject: (err: Error) => { supersededErrors.push(err) } })
+
+    const chat = useChat(ref('1'), ref('CLOUD'))
+    await chat.restoreSession('A', 'CLOUD')
+    expect(chat.sending.value).toBe(true)
+
+    // 旧等待者以 superseded 失败退出，新等待者占槽——否则终态帧无对象可唤醒
+    await vi.waitFor(() => expect(ws.pendingCallbacks.get('A')?.resolve).toBeTypeOf('function'))
+    expect(supersededErrors).toHaveLength(1)
+    expect(supersededErrors[0].message).toContain('superseded')
+
+    ws.pendingCallbacks.get('A')?.resolve?.()
+    await vi.waitFor(() => expect(chat.sending.value).toBe(false))
+  })
+
   it('历史请求失败后结束加载状态', async () => {
     vi.mocked(api.get).mockRejectedValue(new Error('network error'))
     const chat = useChat(ref('1'), ref('CLOUD'))
