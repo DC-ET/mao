@@ -343,7 +343,7 @@ const resetAuthSource = ref<string | null>(null)
 
 const detailVisible = ref(false)
 const detailUser = ref<any | null>(null)
-/** 深链定位 Tab（用量分析页「用量详情」→ /users?detail=&tab=usage）；列表「详情」按钮恒 undefined。 */
+/** 深链定位 Tab（如用量分析页「用量详情」→ /users?detail=&tab=usage）；列表「详情」按钮恒 undefined。 */
 const detailInitialTab = ref<string | undefined>(undefined)
 
 const rolesCache = ref<Array<{ id: number; name: string }>>([])
@@ -524,7 +524,7 @@ function handleDetail(row: any) {
 }
 
 /**
- * 用量分析页「用量详情」反链（方案 §5.7）：解析 ?detail={userId}&tab=usage，
+ * 跨页反链进用户详情：解析 ?detail={userId}&tab={usage|memory}（白名单见下方三元），
  * 取用户后打开抽屉并定位 Tab。地址栏参数取后即清（保留 roleId 等），keep-alive
  * 回切不会重复打开；appliedDetailKey 防同参数重复拉取。
  */
@@ -540,7 +540,7 @@ async function syncDetailFromRoute(): Promise<void> {
   router.replace({ path: '/users', query: rest })
   const parsed = Number(raw)
   if (!Number.isInteger(parsed) || parsed <= 0) return
-  const tab = tabRaw === 'usage' ? 'usage' : undefined
+  const tab = tabRaw === 'usage' || tabRaw === 'memory' ? tabRaw : undefined
   const key = `${parsed}|${tab ?? ''}`
   if (key === appliedDetailKey) return
   appliedDetailKey = key
