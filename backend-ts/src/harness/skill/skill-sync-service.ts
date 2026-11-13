@@ -215,27 +215,6 @@ export class SkillSyncService {
     await archive.finalize();
     await done;
   }
-
-  async zipSkillsForLocal(agent: Agent, userId: number): Promise<Buffer> {
-    const chunks: Buffer[] = [];
-    const archive = archiver('zip', { zlib: { level: 9 } });
-    archive.on('data', (c: Buffer) => chunks.push(c));
-    const names = this.resolveSkillNames(agent);
-    const userDocs = this.loadUserSkillDocs(userId);
-    const merged = new Map<string, string>();
-    for (const name of names) {
-      const folder = this.skillLoader.getSkillFolder(name);
-      if (folder) merged.set(name, folder);
-    }
-    for (const [name, doc] of Object.entries(userDocs)) {
-      if (doc.folderPath) merged.set(name, doc.folderPath);
-    }
-    for (const [name, folder] of merged) {
-      archive.directory(folder, name);
-    }
-    await archive.finalize();
-    return Buffer.concat(chunks);
-  }
 }
 
 /** 取整棵目录树的最大 mtime：只改嵌套文件时顶层目录 mtime 不变，仅看顶层会漏掉同步。 */

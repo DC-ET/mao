@@ -27,7 +27,7 @@ function fakeDeliveryRepo(row: DeliveryRow) {
       return row.id === id ? { ...row } : null;
     },
     async recoverInterrupted(): Promise<void> {},
-    async scheduleRetry(id: number, attemptCount: number, httpStatus: number | null, error: string | null, nextRetryAt: string): Promise<void> {
+    async scheduleRetry(id: number, attemptCount: number, httpStatus: number | null, error: string | null, nextRetryAt: string): Promise<boolean> {
       void id;
       calls.scheduleRetry++;
       row.status = 'PENDING';
@@ -35,8 +35,9 @@ function fakeDeliveryRepo(row: DeliveryRow) {
       row.lastHttpStatus = httpStatus;
       row.lastError = error;
       row.nextRetryAt = nextRetryAt;
+      return true;
     },
-    async markFailed(id: number, attemptCount: number, httpStatus: number | null, error: string | null): Promise<void> {
+    async markFailed(id: number, attemptCount: number, httpStatus: number | null, error: string | null): Promise<boolean> {
       void id;
       calls.markFailed++;
       row.status = 'FAILED';
@@ -44,14 +45,16 @@ function fakeDeliveryRepo(row: DeliveryRow) {
       row.lastHttpStatus = httpStatus;
       row.lastError = error;
       row.nextRetryAt = null;
+      return true;
     },
-    async markSucceeded(id: number, attemptCount: number, httpStatus: number | null, now: string): Promise<void> {
+    async markSucceeded(id: number, attemptCount: number, httpStatus: number | null, now: string): Promise<boolean> {
       void id;
       calls.markSucceeded++;
       row.status = 'SUCCEEDED';
       row.attemptCount = attemptCount;
       row.lastHttpStatus = httpStatus;
       row.sentAt = now;
+      return true;
     },
   };
   return { repo, calls };

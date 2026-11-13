@@ -201,10 +201,10 @@ describe('GenericHttpWebhookSender（经 scheduler 联测）', () => {
     };
     let deliveredRow: { id: number; attempt: number; status: string; http: number | null } | null = null;
     const deliveryRepo = {
-      findById: vi.fn(async () => ({ id: 5, subscriptionId: 1, event: 'task.completed', payload: '{"event":"task.completed"}', attemptCount: 0 })),
-      markFailed: vi.fn(async (id: number, attempt: number, http: number | null) => { deliveredRow = { id, attempt, status: 'FAILED', http }; }),
-      scheduleRetry: vi.fn(async () => undefined),
-      markSucceeded: vi.fn(async () => undefined),
+      findById: vi.fn(async () => ({ id: 5, subscriptionId: 1, event: 'task.completed', payload: '{"event":"task.completed"}', status: 'SENDING', attemptCount: 0 })),
+      markFailed: vi.fn(async (id: number, attempt: number, http: number | null) => { deliveredRow = { id, attempt, status: 'FAILED', http }; return true; }),
+      scheduleRetry: vi.fn(async () => true),
+      markSucceeded: vi.fn(async () => true),
       recoverInterrupted: vi.fn(async () => undefined),
       listDue: vi.fn(async () => []),
     };
@@ -219,7 +219,7 @@ describe('GenericHttpWebhookSender（经 scheduler 联测）', () => {
     await (scheduler as unknown as { deliver(id: number): Promise<void> }).deliver(5);
     expect(deliveryRepo.scheduleRetry).toHaveBeenCalled();
     // 第 2 次直接构造 attempt=3（≥ 退避表长度-1 后）400 → 不可重试 → FAILED
-    deliveryRepo.findById.mockResolvedValue({ id: 5, subscriptionId: 1, event: 'task.completed', payload: '{"event":"task.completed"}', attemptCount: 3 });
+    deliveryRepo.findById.mockResolvedValue({ id: 5, subscriptionId: 1, event: 'task.completed', payload: '{"event":"task.completed"}', status: 'SENDING', attemptCount: 3 });
     await (scheduler as unknown as { deliver(id: number): Promise<void> }).deliver(5);
     expect(deliveryRepo.markFailed).toHaveBeenCalledWith(5, 4, 400, '目标返回 400');
     void deliveredRow;
