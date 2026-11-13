@@ -107,6 +107,9 @@ describe('container registry', () => {
     expect(runArgs).toContain('--memory 512m');
     expect(runArgs).toContain('--cpus 1');
     expect(runArgs).toContain('--pids-limit 100');
+    // PID 1 用 docker-init（tini）回收孤儿进程：Node 作 PID 1 不回收被 reparent 的
+    // 孙进程（chrome 等），僵尸会逐步吃满 pids-limit（2026-11-13 事故）
+    expect(runArgs).toContain('--init');
     // locale 统一 C.UTF-8：容器 shell 的多字节字符语义与宿主机 UTF-8 对齐
     expect(runArgs).toContain('-e LANG=C.UTF-8');
     // 容器 agent 硬依赖 env：userId / token / 四个 roots（BUG-3 回归）
