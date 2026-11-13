@@ -89,7 +89,7 @@ describe('LocalTargetBanner', () => {
       targetDeviceOnline: true,
       executorClientType: 'electron',
     })
-    expect(electron).toContain('桌面客户端在执行')
+    expect(electron).toContain('桌面客户端已连接')
     const cli = await renderBanner({
       targetDeviceId: 'dev-1',
       currentDeviceId: 'dev-2',
@@ -97,7 +97,7 @@ describe('LocalTargetBanner', () => {
       targetDeviceOnline: true,
       executorClientType: 'cli',
     })
-    expect(cli).toContain('mao-agent 在执行')
+    expect(cli).toContain('mao-agent 已连接')
   })
 
   it('当前设备即绑定执行端时即使带了执行类型也不渲染', async () => {
