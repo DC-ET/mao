@@ -46,8 +46,8 @@ test.describe('经验库管理页', () => {
     try {
       await page.goto(`/admin/experience?agentId=${agentId}`)
 
-      // 左栏库列表
-      await expect(page.locator('.library-sidebar')).toContainText(agentName)
+      // 库选择器 + 统计
+      await expect(page.locator('.library-bar')).toContainText(agentName)
       // 默认按月分组：两篇同月文档 + 组头计数
       await expect(page.locator('.doc-table')).toContainText(`${FILE_A}`)
       await expect(page.locator('.doc-table')).toContainText(`${FILE_B}`)
@@ -64,19 +64,25 @@ test.describe('经验库管理页', () => {
       await page.getByRole('button', { name: '重置' }).click()
       await expect(page.locator('.doc-table')).toContainText(FILE_B)
 
-      // 打开文档：右栏元数据卡 + Markdown 渲染态
+      // 打开文档：整页阅读器（列表收起）+ 元数据卡 + Markdown 渲染态
       await page.locator('.doc-table').getByText(FILE_A).first().click()
       await expect(page.locator('.doc-viewer')).toContainText('经验库 e2e 文档 A')
       await expect(page.locator('.meta-card')).toContainText('冒烟种子文档')
       await expect(page.locator('.doc-content h2')).toHaveText('现象')
+      await expect(page.locator('.doc-table')).toHaveCount(0)
 
       // 源码态展示原文
       await page.locator('.doc-viewer').getByRole('button', { name: '源码态' }).click()
       await expect(page.locator('.source-pre')).toContainText('## 现象')
 
-      // 索引视图：渲染 INDEX.md
-      await page.getByRole('button', { name: '索引', exact: true }).click()
+      // 阅读器工具条直达索引视图：渲染 INDEX.md（按钮 aria-label 为「查看索引」）
+      await page.locator('.doc-viewer').getByRole('button', { name: '查看索引' }).click()
       await expect(page.locator('.doc-viewer')).toContainText('INDEX.md 由系统自动生成')
+
+      // 返回列表
+      await page.getByRole('button', { name: '返回列表' }).click()
+      await expect(page.locator('.doc-table')).toBeVisible()
+      await expect(page.locator('.doc-viewer')).toHaveCount(0)
     } finally {
       for (const fileName of [FILE_A, FILE_B]) {
         await request.delete(`/api/v1/agents/${agentId}/experience-library/docs`, {
@@ -124,31 +130,36 @@ test.describe('经验库管理页', () => {
     }
 
     try {
-      // 直达 URL：agentId + file 直接打开文档
-      await page.goto(`/admin/experience?agentId=${agentId}&file=${encodeURIComponent(FILE_A)}`)
-      await expect(page.locator('.doc-viewer')).toContainText('经验库 e2e 文档 A')
+      // 列表态先验证行内编辑（整页切换下阅读态时列表不可见，编辑入口在列表行）
+      await page.goto(`/admin/experience?agentId=${agentId}`)
+      await expect(page.locator('.doc-table')).toContainText(FILE_A)
 
-      // 行内「编辑」：直接进入编辑器且缓冲为原文
+      // 行内「编辑」：整页进编辑器且缓冲为原文
       await page.locator('.doc-table .el-table__body tr', { hasText: FILE_A }).getByRole('button', { name: '编辑' }).click()
       await expect(page.locator('.doc-viewer .editor')).toBeVisible()
       await expect(page.locator('.doc-viewer .editor textarea')).toHaveValue(DOC_A)
       await page.getByRole('button', { name: '取消' }).click()
       await expect(page.locator('.doc-viewer .editor')).toHaveCount(0)
+      // 取消后停留在该文档的渲染态（阅读器仍打开）
+      await expect(page.locator('.doc-content')).toBeVisible()
 
-      // 分组切换（月 → 关键词）：groupCounts 随新口径刷新，行不丢失
+      // 返回列表 → 分组切换（月 → 关键词）：groupCounts 随新口径刷新，行不丢失
+      await page.getByRole('button', { name: '返回列表' }).click()
+      await expect(page.locator('.doc-table')).toBeVisible()
       await page.locator('.list-controls .el-select').first().click()
       await page.locator('.el-select-dropdown:visible .el-select-dropdown__item', { hasText: '按关键词' }).click()
       await expect(page.locator('.doc-table .group-cell').first()).toContainText('e2e · 2 篇')
       await expect(page.locator('.doc-table')).toContainText(FILE_A)
       await expect(page.locator('.doc-table')).toContainText(FILE_B)
 
-      // 切库：右栏收起、URL 摘除 file、列表切到另一库自己的文档
-      await page.locator('.library-sidebar .lib-item', { hasText: otherAgentName }).click()
+      // 切库（下拉）：列表切到另一库自己的文档，URL 无 file
+      await page.locator('.library-bar .el-select').click()
+      await page.locator('.el-select-dropdown:visible .el-select-dropdown__item', { hasText: otherAgentName }).click()
       await expect(page).not.toHaveURL(/file=/)
-      await expect(page.locator('.viewer-placeholder')).toBeVisible()
+      await expect(page.locator('.doc-table')).toBeVisible()
       await expect(page.locator('.doc-table')).toContainText(FILE_B)
 
-      // 失效 file：直达 URL 指向已删文档 → 错误 toast + URL 摘除 file + 右栏回默认态
+      // 失效 file：直达 URL 指向已删文档 → 错误 toast + URL 摘除 file + 回列表态
       const delRes = await request.delete(`/api/v1/agents/${agentId}/experience-library/docs`, {
         headers: auth,
         params: { file: FILE_B },
@@ -157,7 +168,11 @@ test.describe('经验库管理页', () => {
       await page.goto(`/admin/experience?agentId=${agentId}&file=${encodeURIComponent(FILE_B)}`)
       await expect(page.locator('.el-message--error')).toBeVisible()
       await expect(page).not.toHaveURL(/file=/)
-      await expect(page.locator('.viewer-placeholder')).toBeVisible()
+      await expect(page.locator('.doc-table')).toBeVisible()
+
+      // 直达有效 file：整页阅读器
+      await page.goto(`/admin/experience?agentId=${otherAgentId}&file=${encodeURIComponent(FILE_B)}`)
+      await expect(page.locator('.doc-viewer')).toContainText('经验库 e2e 文档 B')
     } finally {
       for (const [id, fileName] of [
         [agentId, FILE_A],

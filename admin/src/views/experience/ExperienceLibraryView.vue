@@ -38,44 +38,18 @@
         </div>
       </template>
 
-      <div class="library-layout">
-        <LibrarySidebar v-if="!isMobile" class="col-sidebar" />
-        <div v-else class="mobile-agent-select">
-          <el-select
-            :model-value="store.selectedAgentId"
-            placeholder="选择 Agent 库"
-            filterable
-            aria-label="选择 Agent 经验库"
-            @update:model-value="store.selectAgent(Number($event))"
-          >
-            <el-option
-              v-for="lib in store.libraries"
-              :key="lib.agentId"
-              :value="lib.agentId"
-              :label="lib.agentName"
-            >
-              {{ lib.agentName }}（{{ lib.docCount }} 篇{{ lib.enabled ? '' : '，已停用' }}）
-            </el-option>
-          </el-select>
-        </div>
-
-        <DocListPanel class="col-list" />
-
-        <DocViewer v-if="store.viewer != null" ref="viewerRef" class="col-viewer" :payload="store.viewer" />
-        <div v-else class="col-viewer viewer-placeholder">
-          <el-empty description="点击左侧文档阅读；「索引」查看自动生成的 INDEX.md" :image-size="80" />
-        </div>
-      </div>
+      <!-- 整页两级切换（不做左右/上下分栏）：无打开文档 = 全宽列表页；打开文档/索引/新建 = 整页替换为阅读器，
+           由 URL file 参数驱动（返回列表/浏览器前进后退均可导航） -->
+      <DocListPanel v-if="store.viewer == null" />
+      <DocViewer v-else :payload="store.viewer" />
     </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, provide, ref, watch } from 'vue'
+import { computed, provide } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { useAuthStore } from '../../stores/auth'
-import { useBreakpoint } from '../../composables/useBreakpoint'
-import LibrarySidebar from './components/LibrarySidebar.vue'
 import DocListPanel from './components/DocListPanel.vue'
 import DocViewer from './components/DocViewer.vue'
 import { EXPERIENCE_LIBRARY_KEY, useExperienceLibrary } from './composables/useExperienceLibrary'
@@ -85,22 +59,10 @@ provide(EXPERIENCE_LIBRARY_KEY, store)
 
 const authStore = useAuthStore()
 const canWrite = computed(() => authStore.hasPermission('agent:write'))
-const { isMobile } = useBreakpoint()
 
 function onToggleEnabled(value: string | number | boolean): void {
   void store.toggleEnabled(!!value)
 }
-
-// 窄屏（≤1280px）右栏折到列表下方：打开文档时滚动定位，避免读者找不到右栏（与 style 中 CSS 断点一致）
-const NARROW_VIEW_BREAKPOINT = 1280
-const viewerRef = ref<InstanceType<typeof DocViewer> | null>(null)
-watch(() => store.viewer, async (value) => {
-  if (value == null) return
-  await nextTick()
-  if (typeof window !== 'undefined' && window.innerWidth <= NARROW_VIEW_BREAKPOINT) {
-    ;(viewerRef.value?.$el as HTMLElement | undefined)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
-})
 </script>
 
 <style scoped>
@@ -134,33 +96,5 @@ watch(() => store.viewer, async (value) => {
 .switch-hint {
   color: var(--el-text-color-secondary);
   font-size: 12px;
-}
-.library-layout {
-  display: grid;
-  grid-template-columns: 260px minmax(380px, 36%) minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
-}
-@media (max-width: 1280px) {
-  .library-layout {
-    grid-template-columns: 240px minmax(0, 1fr);
-  }
-  .col-viewer {
-    grid-column: 1 / -1;
-  }
-}
-@media (max-width: 768px) {
-  .library-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-.mobile-agent-select {
-  width: 100%;
-}
-.viewer-placeholder {
-  min-height: 320px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 </style>

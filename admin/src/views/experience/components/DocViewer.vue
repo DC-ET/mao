@@ -1,20 +1,30 @@
 <template>
   <section class="doc-viewer">
     <div class="viewer-toolbar">
+      <el-button class="viewer-back" size="small" aria-label="返回列表" @click="store.closeViewer()">
+        <el-icon><Back /></el-icon>
+        返回列表
+      </el-button>
       <div class="viewer-title" :title="titleText">{{ titleText }}</div>
       <div class="viewer-actions">
+        <el-button
+          v-if="payload.kind === 'doc'"
+          size="small"
+          aria-label="查看索引"
+          @click="store.openIndex()"
+        >索引</el-button>
         <template v-if="mode !== 'edit'">
           <el-button size="small" :type="mode === 'render' ? 'primary' : 'default'" @click="mode = 'render'">渲染态</el-button>
           <el-button size="small" :type="mode === 'source' ? 'primary' : 'default'" @click="mode = 'source'">源码态</el-button>
           <el-button v-if="payload.kind === 'doc' && canWrite" size="small" @click="startEdit">编辑</el-button>
         </template>
-        <el-button size="small" aria-label="关闭阅读器" @click="store.closeViewer()">关闭</el-button>
       </div>
     </div>
 
     <div v-if="store.viewerLoading" class="viewer-loading" v-loading="true" element-loading-text="加载中" />
 
-    <template v-else>
+    <!-- 阅读列：全页布局下限制行宽保证长文可读性 -->
+    <div v-else class="viewer-body">
       <!-- 元数据卡（单篇经验） -->
       <div v-if="payload.kind === 'doc' && payload.meta" class="meta-card">
         <div class="meta-row">
@@ -83,13 +93,14 @@
         <div v-if="mode === 'render'" class="markdown-body markdown-doc doc-content" v-html="rendered" />
         <pre v-else class="source-pre">{{ payload.content }}</pre>
       </template>
-    </template>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, inject, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Back } from '@element-plus/icons-vue'
 import { renderMarkdown } from '../../session/composables/useMarkdown'
 import { formatDateTime } from '../../../utils/datetime'
 import { useAuthStore } from '../../../stores/auth'
@@ -198,23 +209,28 @@ async function submitSave(): Promise<void> {
 .doc-viewer {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
-  min-height: 320px;
 }
 .viewer-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
+}
+.viewer-back {
+  flex-shrink: 0;
+}
+.viewer-back :deep(.el-icon) {
+  margin-right: 4px;
 }
 .viewer-title {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 600;
-  font-size: 14px;
+  font-size: 15px;
 }
 .viewer-actions {
   display: flex;
@@ -226,6 +242,15 @@ async function submitSave(): Promise<void> {
 }
 .viewer-loading {
   min-height: 200px;
+}
+.viewer-body {
+  width: 100%;
+  max-width: 880px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
 }
 .meta-card {
   display: flex;
@@ -272,7 +297,7 @@ async function submitSave(): Promise<void> {
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-all;
-  max-height: 480px;
+  max-height: 520px;
   overflow: auto;
 }
 .editor {
@@ -285,7 +310,7 @@ async function submitSave(): Promise<void> {
   gap: 8px;
 }
 .editor-name {
-  max-width: 360px;
+  max-width: 420px;
 }
 .editor-actions {
   display: flex;
