@@ -255,6 +255,29 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     return reply.send(stream);
   });
 
+  app.post('/v1/files/workspace-download-multi-zip', async (request, reply) => {
+    const userId = requireUserId(request);
+    const body = bodyOf<{ sessionId?: number; paths?: string[] }>(request);
+    const session = await requireOwnedSession(userId, body.sessionId!);
+    if (!Array.isArray(body.paths)) {
+      throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    }
+    const result = await workspaceBrowseService.zipEntries(session.workspace!, body.paths, experienceDirOf(session));
+    const stream = createReadStream(result.zipPath);
+    const cleanup = () => {
+      try { unlinkSync(result.zipPath); } catch (e) {
+        console.warn(`Failed to delete temp zip after download: ${result.zipPath}`, e);
+      }
+    };
+    stream.on('close', cleanup);
+    stream.on('error', cleanup);
+    reply
+      .header('Content-Disposition', contentDisposition('attachment', result.fileName))
+      .type('application/zip')
+      .header('Content-Length', String(result.size));
+    return reply.send(stream);
+  });
+
   app.get('/v1/files/workspace-git-repos', async (request, reply) => {
     const userId = requireUserId(request);
     const session = await requireOwnedSession(userId, requireQueryLong(request, 'sessionId'));
@@ -681,6 +704,27 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
     const root = await resolveOwnedWorkspace(userId, queryOptStr(request, 'root'));
     const result = await workspaceBrowseService.zipDirectory(root, path);
+    const stream = createReadStream(result.zipPath);
+    const cleanup = () => {
+      try { unlinkSync(result.zipPath); } catch { /* 临时 zip 已不在 */ }
+    };
+    stream.on('close', cleanup);
+    stream.on('error', cleanup);
+    reply
+      .header('Content-Disposition', contentDisposition('attachment', result.fileName))
+      .type('application/zip')
+      .header('Content-Length', String(result.size));
+    return reply.send(stream);
+  });
+
+  app.post('/v1/files/owned-download-multi-zip', async (request, reply) => {
+    const userId = requireUserId(request);
+    const body = bodyOf<{ root?: string; paths?: string[] }>(request);
+    const root = await resolveOwnedWorkspace(userId, body.root);
+    if (!Array.isArray(body.paths)) {
+      throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    }
+    const result = await workspaceBrowseService.zipEntries(root, body.paths);
     const stream = createReadStream(result.zipPath);
     const cleanup = () => {
       try { unlinkSync(result.zipPath); } catch { /* 临时 zip 已不在 */ }

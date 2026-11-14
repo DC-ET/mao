@@ -332,6 +332,136 @@ describe('WorkspaceBrowseService', () => {
     service.setMaxZipBytes(512);
     await expect(service.zipDirectory(workspace, 'sub')).rejects.toThrow(/目录过大/);
   });
+
+  it('zipEntriesPacksMixedFilesAndDirsFlat', async () => {
+    const dir = useTmpDir('mao-zip-');
+    const workspace = join(dir, 'workspace');
+    mkdirSync(join(workspace, 'docs', 'inner'), { recursive: true });
+    writeFileSync(join(workspace, 'a.txt'), 'alpha');
+    writeFileSync(join(workspace, 'docs', 'guide.md'), 'guide');
+    writeFileSync(join(workspace, 'docs', 'inner', 'deep.txt'), 'deep');
+    const service = new WorkspaceBrowseService(new PathSandbox(workspace));
+    const result = await service.zipEntries(workspace, ['a.txt', 'docs']);
+    const names = listZipEntries(result.zipPath);
+    // 平铺：选中文件在 zip 根；目录子树挂在目录名下（与 Finder「压缩 N 个项目」一致）
+    expect(names).toContain('a.txt');
+    expect(names).toContain('docs/');
+    expect(names).toContain('docs/guide.md');
+    expect(names).toContain('docs/inner/deep.txt');
+    expect(names.some((n) => n.startsWith('workspace/'))).toBe(false);
+  });
+
+  it('zipEntriesRejectsSymlinkEntry', async () => {
+    const dir = useTmpDir('mao-zip-');
+    const workspace = join(dir, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(join(workspace, 'a.txt'), 'a');
+    symlinkSync(join(workspace, 'a.txt'), join(workspace, 'link.txt'));
+    const service = new WorkspaceBrowseService(new PathSandbox(workspace));
+    await expect(service.zipEntries(workspace, ['link.txt'])).rejects.toThrow(/不是普通文件/);
+  });
+
+  it('zipEntriesSkipsSymlinksInsideDirs', async () => {
+    const dir = useTmpDir('mao-zip-');
+    const workspace = join(dir, 'workspace');
+    mkdirSync(join(workspace, 'docs'), { recursive: true });
+    writeFileSync(join(workspace, 'docs', 'guide.md'), 'guide');
+    const outside = join(dir, 'outside-secret.txt');
+    writeFileSync(outside, 'secret');
+    symlinkSync(outside, join(workspace, 'docs', 'link.txt'));
+    const service = new WorkspaceBrowseService(new PathSandbox(workspace));
+    const result = await service.zipEntries(workspace, ['docs']);
+    const names = listZipEntries(result.zipPath);
+    expect(names).toContain('docs/guide.md');
+    expect(names.some((n) => n.includes('link.txt'))).toBe(false);
+  });
+
+  it('zipEntriesRejectsEscapeAndMissing', async () => {
+    const dir = useTmpDir('mao-zip-');
+    const workspace = join(dir, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(join(workspace, 'a.txt'), 'a');
+    const service = new WorkspaceBrowseService(new PathSandbox(workspace));
+    await expect(service.zipEntries(workspace, ['../outside.txt'])).rejects.toThrow(/路径访问被拒绝/);
+    await expect(service.zipEntries(workspace, ['missing.txt'])).rejects.toThrow(/文件不存在/);
+  });
+
+  it('zipEntriesDedupsAndRejectsInvalid', async () => {
+    const dir = useTmpDir('mao-zip-');
+    const workspace = join(dir, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(join(workspace, 'a.txt'), 'a');
+    writeFileSync(join(workspace, 'b.txt'), 'b');
+    const service = new WorkspaceBrowseService(new PathSandbox(workspace));
+    // 非数组 → PARAM_MISSING；空数组 / 全空白 → PARAM_INVALID
+    await expect(service.zipEntries(workspace, undefined)).rejects.toThrow(/缺少必要参数/);
+    await expect(service.zipEntries(workspace, 'a.txt' as unknown as string[])).rejects.toThrow(/缺少必要参数/);
+    await expect(service.zipEntries(workspace, [])).rejects.toThrow(/下载目标不能为空/);
+    await expect(service.zipEntries(workspace, ['   '])).rejects.toThrow(/文件路径不能为空/);
+    // 重复路径去重，只打包一份
+    const result = await service.zipEntries(workspace, ['a.txt', 'a.txt', 'b.txt']);
+    const names = listZipEntries(result.zipPath);
+    expect(names.filter((n) => n === 'a.txt')).toHaveLength(1);
+    expect(names.filter((n) => n === 'b.txt')).toHaveLength(1);
+  });
+
+  it('zipEntriesSkipsNestedAndDedupsResolved', async () => {
+    const dir = useTmpDir('mao-zip-');
+    const workspace = join(dir, 'workspace');
+    mkdirSync(join(workspace, 'docs'), { recursive: true });
+    writeFileSync(join(workspace, 'docs', 'guide.md'), 'guide');
+    writeFileSync(join(workspace, 'a.txt'), 'a');
+    const service = new WorkspaceBrowseService(new PathSandbox(workspace));
+    // 目录 + 其子文件（子树包含跳过）；./a 与 a（解析后同路径去重）
+    const result = await service.zipEntries(workspace, ['docs', 'docs/guide.md', './a.txt', 'a.txt']);
+    const names = listZipEntries(result.zipPath);
+    expect(names.filter((n) => n === 'docs/guide.md')).toHaveLength(1);
+    expect(names.filter((n) => n === 'a.txt')).toHaveLength(1);
+    expect(names).toContain('docs/');
+  });
+
+  it('zipEntriesRejectsDuplicateRootNames', async () => {
+    const dir = useTmpDir('mao-zip-');
+    const workspace = join(dir, 'workspace');
+    mkdirSync(join(workspace, 'dir1'), { recursive: true });
+    mkdirSync(join(workspace, 'dir2'), { recursive: true });
+    writeFileSync(join(workspace, 'dir1', 'same.txt'), '1');
+    writeFileSync(join(workspace, 'dir2', 'same.txt'), '2');
+    const service = new WorkspaceBrowseService(new PathSandbox(workspace));
+    // 跨目录同名条目无法平铺，显式拒绝（UI 同目录选区不会触发）
+    await expect(service.zipEntries(workspace, ['dir1/same.txt', 'dir2/same.txt'])).rejects.toThrow(/重名/);
+  });
+
+  it('zipEntriesRejectsTooManyEntries', async () => {
+    const dir = useTmpDir('mao-zip-');
+    const workspace = join(dir, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(join(workspace, 'a.txt'), 'a');
+    const service = new WorkspaceBrowseService(new PathSandbox(workspace));
+    const many = Array.from({ length: 1001 }, (_, i) => `f${i}.txt`);
+    await expect(service.zipEntries(workspace, many)).rejects.toThrow(/选中条目过多/);
+  });
+
+  it('workspaceEntriesZipRejectsOversized', async () => {
+    const dir = useTmpDir('mao-zip-');
+    const workspace = join(dir, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(join(workspace, 'big.bin'), Buffer.alloc(1024));
+    writeFileSync(join(workspace, 'small.txt'), 's');
+    const service = new WorkspaceBrowseService(new PathSandbox(workspace));
+    service.setMaxZipBytes(512);
+    await expect(service.zipEntries(workspace, ['big.bin', 'small.txt'])).rejects.toThrow(/所选内容过大/);
+  });
+
+  it('zipEntriesNamesAfterWorkspaceWithTimestamp', async () => {
+    const dir = useTmpDir('mao-zip-');
+    const workspace = join(dir, 'ws');
+    mkdirSync(workspace, { recursive: true });
+    writeFileSync(join(workspace, 'a.txt'), 'a');
+    const service = new WorkspaceBrowseService(new PathSandbox(workspace));
+    const result = await service.zipEntries(workspace, ['a.txt']);
+    expect(result.fileName).toMatch(/^ws-\d{8}-\d{4}\.zip$/);
+  });
 });
 
 describe('GitWriteOperationService helpers', () => {

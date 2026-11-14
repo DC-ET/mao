@@ -11,6 +11,7 @@ import type { GitWriteOperationService } from './git-write-operation.service.js'
 import type { SessionService } from '../session/session.service.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
 import type { WorkspaceWriteService } from './workspace-write.service.js';
+import type { WorkspaceOverviewService } from './workspace-overview.service.js';
 import { RuntimeDataResolver } from '../harness/runtime/runtime-data-resolver.js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -181,6 +182,88 @@ describe('file routes', () => {
     // 属主本人访问放行
     const ownerDelete = await app.inject({ method: 'DELETE', url: '/v1/files/1' });
     expect(JSON.parse(ownerDelete.body).code).toBe(0);
+
+    await app.close();
+  });
+
+  it('multi zip downloads guard ownership and stream zip bytes', async () => {
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    await app.register(multipart);
+    app.addHook('preHandler', (req, _r, done) => {
+      const header = (req.headers['x-test-user'] ?? '7') as string;
+      req.userId = Number(header) || 7;
+      done();
+    });
+    const root = useTmpDir('mao-multi-zip-');
+    const workspace = join(root, 'ws');
+    mkdirSync(workspace, { recursive: true });
+    const session = { id: 1, userId: 7, workspace, agentId: 9 };
+    const sessionService = { getSession: vi.fn(async () => session) } as unknown as SessionService;
+    // 22 字节空 zip（仅 EOCD），断言响应字节原样透传
+    const zipBytes = Buffer.alloc(22);
+    zipBytes.write('PK\x05\x06', 0, 'binary');
+    const workspaceBrowseService = {
+      zipEntries: vi.fn(async (_ws: string, paths: string[]) => {
+        const zipPath = join(root, `out-${paths.length}.zip`);
+        writeFileSync(zipPath, zipBytes);
+        return { zipPath, size: zipBytes.length, fileName: 'ws-20261114-1530.zip' };
+      }),
+    } as unknown as WorkspaceBrowseService;
+    const owned = join(root, '7', 'projects', 'demo');
+    mkdirSync(owned, { recursive: true });
+    const workspaceOverviewService = {
+      resolveManagedPath: vi.fn(async (_userId: number, raw: string) => (raw === owned ? { path: owned } : { error: '目录不存在' })),
+    } as unknown as WorkspaceOverviewService;
+    registerFileRoutes(app, {
+      fileService: {} as FileService,
+      sessionService,
+      workspaceBrowseService,
+      workspaceGitService: {} as WorkspaceGitService,
+      gitCommitMessageService: {} as GitCommitMessageService,
+      gitWriteOperationService: {} as GitWriteOperationService,
+      workspaceWriteService: {} as WorkspaceWriteService,
+      pathSandbox: {} as PathSandbox,
+      workspaceOverviewService,
+      runtimeDataResolver: new RuntimeDataResolver(useTmpDir('mao-multi-rt-'), join(root, 'home')),
+    });
+
+    // workspace 家族：正常请求返回 zip 字节 + Content-Disposition 文件名
+    const ok = await app.inject({
+      method: 'POST', url: '/v1/files/workspace-download-multi-zip',
+      payload: { sessionId: 1, paths: ['a.txt', 'docs'] },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.headers['content-type']).toContain('application/zip');
+    expect(ok.headers['content-disposition']).toContain('ws-20261114-1530.zip');
+    expect(ok.rawPayload).toEqual(zipBytes);
+    expect(vi.mocked(workspaceBrowseService.zipEntries).mock.calls[0]?.[0]).toBe(workspace);
+    expect(vi.mocked(workspaceBrowseService.zipEntries).mock.calls[0]?.[1]).toEqual(['a.txt', 'docs']);
+
+    // paths 缺失 / 非数组 → 拒绝；他人会话 → 拒绝
+    const noPaths = await app.inject({ method: 'POST', url: '/v1/files/workspace-download-multi-zip', payload: { sessionId: 1 } });
+    expect(JSON.parse(noPaths.body).code).not.toBe(0);
+    const strPaths = await app.inject({ method: 'POST', url: '/v1/files/workspace-download-multi-zip', payload: { sessionId: 1, paths: 'a.txt' } });
+    expect(JSON.parse(strPaths.body).code).not.toBe(0);
+    const foreign = await app.inject({
+      method: 'POST', url: '/v1/files/workspace-download-multi-zip',
+      payload: { sessionId: 1, paths: ['a.txt'] }, headers: { 'x-test-user': '99' },
+    });
+    expect(JSON.parse(foreign.body).code).not.toBe(0);
+
+    // owned 家族：正常请求返回 zip 字节；非受管 root → 拒绝
+    const ownedOk = await app.inject({
+      method: 'POST', url: '/v1/files/owned-download-multi-zip',
+      payload: { root: owned, paths: ['a.txt'] },
+    });
+    expect(ownedOk.statusCode).toBe(200);
+    expect(ownedOk.rawPayload).toEqual(zipBytes);
+    expect(vi.mocked(workspaceBrowseService.zipEntries).mock.calls[1]?.[0]).toBe(owned);
+    const badRoot = await app.inject({
+      method: 'POST', url: '/v1/files/owned-download-multi-zip',
+      payload: { root: '/elsewhere', paths: ['a.txt'] },
+    });
+    expect(JSON.parse(badRoot.body).code).not.toBe(0);
 
     await app.close();
   });
