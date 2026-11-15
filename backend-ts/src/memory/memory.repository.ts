@@ -82,6 +82,18 @@ export class MemoryRepository {
     await (db ?? this.db).execute('UPDATE `memory_item` SET status = ? WHERE id = ?', [status, id]);
   }
 
+  /**
+   * 置为 DISMISSED 并写入来源标记（2026-11-15 技术方案 E1/E3/E4）：不传 status 拼死值，
+   * 强制两条置 DISMISSED 路径（用户/管理员显式忽略、溢出淘汰）都必须显式选择 reason，杜绝残留。
+   * 恢复（→ACTIVE）走 updateStatus，不动本列。
+   */
+  async dismiss(id: number, reason: 'USER' | 'EVICTED', db?: Db): Promise<void> {
+    await (db ?? this.db).execute(
+      "UPDATE `memory_item` SET status = 'DISMISSED', dismiss_reason = ? WHERE id = ?",
+      [reason, id],
+    );
+  }
+
   /** 再次确认：仅刷新 updated_at，让高频事实在注入排序中稳定占据名额。 */
   async touch(id: number): Promise<void> {
     await this.db.execute('UPDATE `memory_item` SET updated_at = ? WHERE id = ?', [nowSql(), id]);
@@ -171,10 +183,13 @@ export class MemoryRepository {
     );
   }
 
-  /** D13 负面约束集：最近忽略的 content 列表（MANUAL/AUTO 均含——用户显式忽略过的内容都不该再被抽出）。 */
+  /**
+   * D13 负面约束集：最近「用户显式忽略」（dismiss_reason=USER）的 content 列表，MANUAL/AUTO 均含。
+   * 系统淘汰行（EVICTED）不进：淘汰仅代表容量不足，不代表用户态度（2026-11-15 技术方案 E2）。
+   */
   listDismissedContents(userId: number, limit: number): Promise<MemoryItemRow[]> {
     return this.db.query<MemoryItemRow>(
-      `SELECT content FROM \`memory_item\` WHERE user_id = ? AND status = 'DISMISSED'
+      `SELECT content FROM \`memory_item\` WHERE user_id = ? AND status = 'DISMISSED' AND dismiss_reason = 'USER'
        ORDER BY updated_at DESC, id DESC LIMIT ?`,
       [userId, limit],
     );

@@ -25,6 +25,7 @@ function buildDeps(): Deps {
     touch: vi.fn(async () => undefined),
     updateContent: vi.fn(async () => undefined),
     updateStatus: vi.fn(async () => undefined),
+    dismiss: vi.fn(async () => undefined),
     listActiveForDedup: vi.fn(async () => []),
     listStaleAuto: vi.fn(async () => []),
     listDismissedContents: vi.fn(async () => []),
@@ -190,7 +191,8 @@ describe('MemoryExtractionService', () => {
     expect(d.memoryRepo.insert).not.toHaveBeenCalled();
   });
 
-  it('dismissedHitIsSkippedAndNeverRevived', async () => {
+  it('dismissedHitWithoutReasonMarkStaysSkipped', async () => {
+    // E5 后 DISMISSED 分两类：无来源标记（undefined，含存量与异常形态）按 USER 口径保守处理，不复活
     d.llm.chat.mockResolvedValue({
       choices: [{ message: { content: JSON.stringify([{ type: 'user', content: '输出报告用中文' }]) } }],
     });
@@ -199,6 +201,8 @@ describe('MemoryExtractionService', () => {
     await settle(svc.extractForSession(BASE_INPUT));
     expect(d.memoryRepo.touch).not.toHaveBeenCalled();
     expect(d.memoryRepo.insert).not.toHaveBeenCalled();
+    expect(d.memoryRepo.updateStatus).not.toHaveBeenCalled();
+    expect(d.memoryRepo.dismiss).not.toHaveBeenCalled();
   });
 
   it('touchesKnownRowOnSemanticHit', async () => {
@@ -314,7 +318,7 @@ describe('MemoryExtractionService', () => {
     (d.memoryRepo.listStaleAuto as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 5 }]);
     const svc = buildService(d);
     await settle(svc.extractForSession(BASE_INPUT));
-    expect(d.memoryRepo.updateStatus).toHaveBeenCalledWith(5, 'DISMISSED');
+    expect(d.memoryRepo.dismiss).toHaveBeenCalledWith(5, 'EVICTED');
     expect(d.memoryRepo.insert).toHaveBeenCalledTimes(1);
   });
 
@@ -326,6 +330,7 @@ describe('MemoryExtractionService', () => {
     (d.memoryRepo.listStaleAuto as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     const svc = buildService(d);
     await settle(svc.extractForSession(BASE_INPUT));
+    expect(d.memoryRepo.dismiss).not.toHaveBeenCalled();
     expect(d.memoryRepo.updateStatus).not.toHaveBeenCalled();
     expect(d.memoryRepo.insert).not.toHaveBeenCalled();
   });
@@ -345,7 +350,102 @@ describe('MemoryExtractionService', () => {
     const svc = buildService(d);
     await settle(svc.extractForSession(BASE_INPUT));
     expect(d.memoryRepo.insert).toHaveBeenCalledTimes(3);
-    expect((d.memoryRepo.updateStatus as ReturnType<typeof vi.fn>).mock.calls).toEqual([[40, 'DISMISSED'], [41, 'DISMISSED'], [42, 'DISMISSED']]);
+    expect((d.memoryRepo.dismiss as ReturnType<typeof vi.fn>).mock.calls).toEqual([[40, 'EVICTED'], [41, 'EVICTED'], [42, 'EVICTED']]);
+  });
+
+  it('evictedHitRevivesWithSlotAvailable', async () => {
+    // E5：系统淘汰（EVICTED）行字节级复现时复活——淘汰只代表容量不足，不代表用户态度
+    d.llm.chat.mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify([{ type: 'user', content: '输出报告用中文' }]) } }],
+    });
+    (d.memoryRepo.countActive as ReturnType<typeof vi.fn>).mockResolvedValue(100);
+    (d.memoryRepo.findByHash as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 5, status: 'DISMISSED', dismissReason: 'EVICTED', scope: 'USER', projectKey: '',
+    });
+    const svc = buildService(d);
+    await settle(svc.extractForSession(BASE_INPUT));
+    expect(d.memoryRepo.updateStatus).toHaveBeenCalledWith(5, 'ACTIVE');
+    expect(d.memoryRepo.touch).toHaveBeenCalledWith(5);
+    expect(d.memoryRepo.dismiss).not.toHaveBeenCalled();
+    expect(d.memoryRepo.insert).not.toHaveBeenCalled();
+  });
+
+  it('evictedHitAtCapEvictsOldestInSameGroupThenRevives', async () => {
+    d.llm.chat.mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify([{ type: 'user', content: '输出报告用中文' }]) } }],
+    });
+    (d.memoryRepo.countActive as ReturnType<typeof vi.fn>).mockResolvedValue(200);
+    (d.memoryRepo.findByHash as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 5, status: 'DISMISSED', dismissReason: 'EVICTED', scope: 'PROJECT', projectKey: 'mao',
+    });
+    (d.memoryRepo.listStaleAuto as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 41 }]);
+    const svc = buildService(d);
+    await settle(svc.extractForSession(BASE_INPUT));
+    // 名额来自同一分组（PROJECT/mao）内最旧 AUTO 行，与 insert 路径同款
+    expect(d.memoryRepo.listStaleAuto).toHaveBeenCalledWith(7, 'PROJECT', 'mao', 1);
+    expect(d.memoryRepo.dismiss).toHaveBeenCalledWith(41, 'EVICTED');
+    expect(d.memoryRepo.updateStatus).toHaveBeenCalledWith(5, 'ACTIVE');
+    expect(d.memoryRepo.touch).toHaveBeenCalledWith(5);
+    expect(d.memoryRepo.insert).not.toHaveBeenCalled();
+  });
+
+  it('evictedHitAtCapWithNoEvictableRowStaysDismissed', async () => {
+    d.llm.chat.mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify([{ type: 'user', content: '输出报告用中文' }]) } }],
+    });
+    (d.memoryRepo.countActive as ReturnType<typeof vi.fn>).mockResolvedValue(200);
+    (d.memoryRepo.findByHash as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 5, status: 'DISMISSED', dismissReason: 'EVICTED', scope: 'USER', projectKey: '',
+    });
+    (d.memoryRepo.listStaleAuto as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const svc = buildService(d);
+    await settle(svc.extractForSession(BASE_INPUT));
+    expect(d.memoryRepo.dismiss).not.toHaveBeenCalled();
+    expect(d.memoryRepo.updateStatus).not.toHaveBeenCalled();
+    expect(d.memoryRepo.touch).not.toHaveBeenCalled();
+  });
+
+  it('userDismissedHitStaysDismissedEvenWithSlot', async () => {
+    // D3 不变：用户显式忽略（dismiss_reason=USER）永不复活
+    d.llm.chat.mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify([{ type: 'user', content: '输出报告用中文' }]) } }],
+    });
+    (d.memoryRepo.findByHash as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 5, status: 'DISMISSED', dismissReason: 'USER', scope: 'USER', projectKey: '',
+    });
+    const svc = buildService(d);
+    await settle(svc.extractForSession(BASE_INPUT));
+    expect(d.memoryRepo.touch).not.toHaveBeenCalled();
+    expect(d.memoryRepo.updateStatus).not.toHaveBeenCalled();
+    expect(d.memoryRepo.dismiss).not.toHaveBeenCalled();
+  });
+
+  it('revivalBookkeepingKeepsSubsequentInsertEvicting', async () => {
+    // 复活占用名额后记账回池：满载下复活腾位（41）→ 后续 insert 同样满载再腾位（42）
+    d.llm.chat.mockResolvedValue({
+      choices: [{
+        message: {
+          content: JSON.stringify([
+            { type: 'user', content: '输出报告用中文' },
+            { type: 'user', content: '另一个长期事实' },
+          ]),
+        },
+      }],
+    });
+    (d.memoryRepo.countActive as ReturnType<typeof vi.fn>).mockResolvedValue(200);
+    const evictedRow = { id: 5, status: 'DISMISSED', dismissReason: 'EVICTED', scope: 'USER', projectKey: '' };
+    // persistCandidates 与 applyDedupHit 各查一次 findByHash（既有模式），候选1 两次都需命中淘汰行
+    const findByHash = d.memoryRepo.findByHash as ReturnType<typeof vi.fn>;
+    findByHash.mockResolvedValueOnce(evictedRow);
+    findByHash.mockResolvedValueOnce(evictedRow);
+    findByHash.mockResolvedValueOnce(null);
+    let staleId = 41;
+    (d.memoryRepo.listStaleAuto as ReturnType<typeof vi.fn>).mockImplementation(async () => [{ id: staleId++ }]);
+    const svc = buildService(d);
+    await settle(svc.extractForSession(BASE_INPUT));
+    expect(d.memoryRepo.updateStatus).toHaveBeenCalledWith(5, 'ACTIVE');
+    expect(d.memoryRepo.insert).toHaveBeenCalledTimes(1);
+    expect((d.memoryRepo.dismiss as ReturnType<typeof vi.fn>).mock.calls).toEqual([[41, 'EVICTED'], [42, 'EVICTED']]);
   });
 
   it('touchActionStillAppliesWhenActiveFull', async () => {

@@ -215,7 +215,13 @@ export class MemoryService {
             await this.memoryRepo.updateContent(row.id!, content, dedupHash, tx);
           }
           if (statusChanged != null) {
-            await this.memoryRepo.updateStatus(row.id!, statusChanged, tx);
+            if (statusChanged === 'DISMISSED') {
+              // 用户/管理员显式忽略：来源标记恒写 USER（2026-11-15 技术方案 E3）。
+              // 若依赖列默认值，「系统淘汰 → 恢复 → 再忽略」会残留 EVICTED，让用户明确否过的内容漏出负面约束
+              await this.memoryRepo.dismiss(row.id!, 'USER', tx);
+            } else {
+              await this.memoryRepo.updateStatus(row.id!, statusChanged, tx);
+            }
           }
         } catch (e) {
           // 并发窗口内内容重算哈希撞 uk_memory_dedup：回业务错误码并整体回滚

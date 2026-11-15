@@ -52,7 +52,7 @@
 | 层 | 改动 |
 |---|---|
 | DB | 一条迁移 `V196__memory_dismiss_reason.sql`：`memory_item` 加列 `dismiss_reason VARCHAR(16) NOT NULL DEFAULT 'USER'`（存量行全部落 `USER`，零 backfill 语句） |
-| Repository | `listDismissedContents` 加 `AND dismiss_reason = 'USER'`；`updateStatus` 增加可选 reason 参数；`evictStale` 调用处写 `EVICTED`；`insert` 不加字段（走列默认值） |
+| Repository | `listDismissedContents` 加 `AND dismiss_reason = 'USER'`；新增专用方法 `dismiss(id, reason, db?)`（见 §5.2 实施更正）；`evictStale` 调用处写 `EVICTED`；`insert` 不加字段（走列默认值） |
 | Extraction | 负面约束集自然变纯（查询过滤）；M2：`applyDedupHit` 对 EVICTED 行走复活分支（名额规则复用 `evictStale`）；常量注释更新 |
 | Service | `applyUpdate` 在切换为 DISMISSED 时显式写 `dismiss_reason='USER'`（用户域与 admin 方法族共用，一处改） |
 | 契约 | **零改动**：`dismiss_reason` 是审计维度不是生命周期状态，`MemoryStatus` 联合保持 `ACTIVE/DISMISSED`，前端 `Record` 穷尽汉化表不动 |
@@ -95,19 +95,19 @@ ALTER TABLE `memory_item`
 | 方法 | 改动 |
 |---|---|
 | `listDismissedContents` | SQL 加 `AND dismiss_reason = 'USER'`；注释改写（原「MANUAL/AUTO 均含」口径终止） |
-| `updateStatus(id, status, db?)` | 签名加可选 `reason?: 'USER' \| 'EVICTED'`：传了才写 `dismiss_reason = ?`，不传不动该列（复活路径与既有调用零感知） |
+| `updateStatus(id, status, db?)` | **不改**（实施更正 2026-11-16：第三位已是 `db` 位置参数，再叠 reason 语义含混）；改为新增专用方法 `dismiss(id, reason, db?)`：`SET status = 'DISMISSED', dismiss_reason = ?` 一次写入，强制两条置 DISMISSED 路径（用户忽略 / 溢出淘汰）都显式选 reason；恢复（→ACTIVE）走 `updateStatus` 不动本列 |
 | 其余 | `insert`/`touch`/`updateContent`/`listStaleAuto`/注入查询全部不动（新列走 DB 默认值；`MemoryItemRow` 加可选字段 `dismissReason?` 仅用于复活分支读判断） |
 
 ### 5.3 服务层（memory.service.ts）
 
 `applyUpdate`（用户域 `update` 与 admin `updateForAdmin` 共用）：
 
-- `statusChanged === 'DISMISSED'` 时，`updateStatus(row.id!, 'DISMISSED', 'USER', tx)`——显式写 USER（E3 边角）；
+- `statusChanged === 'DISMISSED'` 时，走 `dismiss(row.id!, 'USER', tx)`——显式写 USER（E3 边角；实施更正 2026-11-16，见 §5.2）；
 - 恢复（→ACTIVE）不写 reason（ACTIVE 期间值陈旧不读，下次置 DISMISSED 时会被正确覆盖）。
 
 ### 5.4 抽取层（memory-extraction.service.ts）
 
-**M1（负面约束变纯）**：仅因 `listDismissedContents` 过滤而生效，抽取代码零改动；`evictStale` 内 `updateStatus(row.id, 'DISMISSED')` → `updateStatus(row.id, 'DISMISSED', 'EVICTED')`；`MEMORY_EXTRACT_DISMISSED_HINT_LIMIT` 常量注释更新（噪音源已消除）。
+**M1（负面约束变纯）**：仅因 `listDismissedContents` 过滤而生效，抽取代码零改动；`evictStale` 内 `updateStatus(row.id, 'DISMISSED')` → `dismiss(row.id, 'EVICTED')`；`MEMORY_EXTRACT_DISMISSED_HINT_LIMIT` 常量注释更新（噪音源已消除）。
 
 **M2（复活，E5）**：`persistCandidates` 的命中分支 `applyDedupHit` 改造：
 
@@ -124,7 +124,7 @@ applyDedupHit(userId, dedupHash, activeCount):
       !slotFreed → return
       activeCount -= 1
     updateStatus(row.id, 'ACTIVE'); touch(row.id)
-    return（activeCount += 1 由调用方记账）
+    return（applyDedupHit 末尾自行 pool.activeCount += 1）
 ```
 
 - activeCount 记账口径与 insert 路径一致（进程内估算，硬约束仍由手工路径 `assertActiveLimit` 现查兜底）；
@@ -144,8 +144,8 @@ applyDedupHit(userId, dedupHash, activeCount):
 
 | 文件 | 用例 |
 |---|---|
-| `memory.repository.spec.ts` | `listDismissedContents` SQL 含 reason 过滤；`updateStatus` 传/不传 reason 的 SQL 断言；不传 reason 不写该列 |
-| `memory-extraction.service.spec.ts` | ① evictStale 写 `EVICTED`；② 负面约束集不含 EVICTED 行（repo 返回口径由 ①/仓储用例保证，此处断言 prompt 只含 USER 忽略行）；③ M2 复活四态：EVICTED+有名额 → ACTIVE+touch；EVICTED+满额+可淘汰 → 先淘汰组内最旧再复活；EVICTED+满额+组内无可淘汰 → 放弃；USER 忽略 → 不复活；④ 一轮淘汰上限 3 对复活路径同样生效；⑤ 复活后 activeCount 记账正确 |
+| `memory.repository.spec.ts` | `listDismissedContents` SQL 含 reason 过滤；`dismissWritesStatusAndReasonTogether`：`dismiss` 的 `SET status='DISMISSED', dismiss_reason=?` 子句与 USER/EVICTED 两值参数断言 |
+| `memory-extraction.service.spec.ts` | ① evictStale 写 `EVICTED`；② 负面约束集不含 EVICTED 行（repo 返回口径由 ①/仓储用例保证，此处断言 prompt 只含 USER 忽略行）；③ M2 复活四态：EVICTED+有名额 → ACTIVE+touch；EVICTED+满额+可淘汰 → 先淘汰组内最旧再复活；EVICTED+满额+组内无可淘汰 → 放弃；USER 忽略 → 不复活；④ 一轮淘汰上限 3 对复活路径同样生效（实施更正 2026-11-16：协议每轮候选 ≤ 3、淘汰数 ≤ 候选数，该封顶在复活路径结构性不可达，保留检查仅与 insert 路径对称；端到端不可测，由 ⑤ 记账用例覆盖共享上限语义）；⑤ 复活后 activeCount 记账正确（复活腾位 → 后续 insert 同样满载再腾位） |
 | `memory.service.spec.ts` | applyUpdate 切 DISMISSED 显式写 `USER`；「淘汰→恢复→再忽略」序列后 reason 为 `USER`（E3 边角回归） |
 | 回归 | 既有 spec 全量通过；涉及 `<ignored_memories>` 组装的用例语义不变（prompt 未改） |
 

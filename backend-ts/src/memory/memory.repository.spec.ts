@@ -201,12 +201,28 @@ describe('MemoryRepository dedupQueries', () => {
     expect(params).toEqual([7, 'USER', 1]);
   });
 
-  it('listDismissedContentsBindsLimit', async () => {
+  it('listDismissedContentsBindsLimitAndOnlyUserReason', async () => {
+    // E2：负面约束集只含用户显式忽略行；系统淘汰（EVICTED）不进——淘汰仅代表容量不足
     const db = mockDb(null, [{ content: 'x' }]);
     const repo = new MemoryRepository(db as never);
     await repo.listDismissedContents(7, 50);
     const [sql, params] = (db.query as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(sql).toContain("status = 'DISMISSED'");
+    expect(sql).toContain("dismiss_reason = 'USER'");
     expect(params).toEqual([7, 50]);
+  });
+
+  it('dismissWritesStatusAndReasonTogether', async () => {
+    // 置 DISMISSED 与来源标记一次写入；显式传参强制两条路径（用户忽略 / 溢出淘汰）都选 reason（E3）
+    const db = mockDb();
+    const repo = new MemoryRepository(db as never);
+    await repo.dismiss(9, 'EVICTED');
+    let [sql, params] = (db.execute as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(sql).toContain("SET status = 'DISMISSED', dismiss_reason = ?");
+    expect(params).toEqual(['EVICTED', 9]);
+
+    await repo.dismiss(10, 'USER');
+    [sql, params] = (db.execute as ReturnType<typeof vi.fn>).mock.calls[1];
+    expect(params).toEqual(['USER', 10]);
   });
 });

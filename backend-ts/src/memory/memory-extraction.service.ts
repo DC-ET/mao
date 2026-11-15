@@ -86,6 +86,12 @@ export interface ExtractionModelLookup {
 
 type SettingLookup = { getValue(key: string): Promise<string | null> };
 
+/** 一轮抽取内的名额记账：activeCount 为 ACTIVE 估算值（硬约束仍由手工路径现查兜底），evicted 为本轮已淘汰数（insert 与复活路径共享上限）。 */
+interface SlotPool {
+  activeCount: number;
+  evicted: number;
+}
+
 export class MemoryExtractionService {
   /** 同会话并发互斥链：同一会话的任务串行抽取，避免并发重复调 LLM（技术方案 5.6 第 6 点）。 */
   private readonly sessionLocks = new Map<number, Promise<void>>();
@@ -221,7 +227,9 @@ export class MemoryExtractionService {
   /**
    * 落库（技术方案 5.6 第 5 点 + D13 动作协议 + D14 溢出自动降级）：
    * 逐候选按模型判定的 insert/touch/update 执行；满 200 时淘汰受影响组最旧 AUTO 行腾名额，
-   * 组内无 AUTO 可淘汰则放弃该候选；DISMISSED 行永不复活不变。
+   * 组内无 AUTO 可淘汰则放弃该候选。DISMISSED 行不再一律不复活（2026-11-15 技术方案 E5）：
+   * 用户显式忽略（dismiss_reason=USER）永不复活；系统淘汰（EVICTED）仅代表容量不足，
+   * 事实字节级复现时按 insert 同款名额规则复活——按复现的 LRU，而非永久封禁。
    */
   private async persistCandidates(
     input: ExtractionSessionInput,
@@ -229,11 +237,10 @@ export class MemoryExtractionService {
     known: KnownMemoryIndex,
   ): Promise<void> {
     const userId = input.userId!;
-    let activeCount = await this.memoryRepo.countActive(userId);
-    if (activeCount >= MEMORY_ACTIVE_LIMIT) {
+    const pool: SlotPool = { activeCount: await this.memoryRepo.countActive(userId), evicted: 0 };
+    if (pool.activeCount >= MEMORY_ACTIVE_LIMIT) {
       console.warn(`[memory-extraction] active memory limit (${MEMORY_ACTIVE_LIMIT}) reached, evicting stale AUTO rows for userId=${userId}`);
     }
-    let evicted = 0;
     for (const candidate of candidates) {
       let scope = candidate.scope;
       let projectKey = '';
@@ -254,19 +261,8 @@ export class MemoryExtractionService {
       const dedupHash = computeDedupHash(scope, projectKey, candidate.content);
       const existing = await this.memoryRepo.findByHash(userId, dedupHash);
       if (existing == null) {
-        if (activeCount >= MEMORY_ACTIVE_LIMIT) {
-          // D14：满了不再整体放弃——按组淘汰最旧 AUTO 行（软降级可恢复）腾名额，一轮最多淘汰 3 条
-          if (evicted >= MEMORY_EXTRACT_MAX_ITEMS) {
-            console.warn(`[memory-extraction] eviction cap reached, skip insert sessionId=${input.sessionId}`);
-            continue;
-          }
-          const slotFreed = await this.evictStale(userId, scope, projectKey);
-          if (!slotFreed) {
-            console.warn(`[memory-extraction] no evictable AUTO row in group scope=${scope} projectKey=${projectKey}, skip insert userId=${userId}`);
-            continue;
-          }
-          evicted += 1;
-          activeCount -= 1;
+        if (!(await this.freeSlotFor(userId, scope, projectKey, pool, input.sessionId, 'insert'))) {
+          continue;
         }
         try {
           await this.memoryRepo.insert({
@@ -279,16 +275,43 @@ export class MemoryExtractionService {
             dedupHash,
             originSessionId: input.sessionId,
           });
-          activeCount += 1;
+          pool.activeCount += 1;
         } catch (e) {
           if (!isDuplicateKeyError(e)) throw e;
           // 并发插入撞唯一键：转为命中分支处理
-          await this.applyDedupHit(userId, dedupHash);
+          await this.applyDedupHit(userId, dedupHash, pool, input.sessionId);
         }
         continue;
       }
-      await this.applyDedupHit(userId, dedupHash);
+      await this.applyDedupHit(userId, dedupHash, pool, input.sessionId);
     }
+  }
+
+  /**
+   * 名额腾挪（D14 insert 路径与 E5 复活路径共用）：池满时按组淘汰最旧 AUTO 行（软降级可恢复），
+   * 一轮最多淘汰 MEMORY_EXTRACT_MAX_ITEMS 条（insert 与复活共享该上限）；组内无可淘汰或封顶返回 false。
+   */
+  private async freeSlotFor(
+    userId: number,
+    scope: MemoryScope,
+    projectKey: string,
+    pool: SlotPool,
+    sessionId: number,
+    what: 'insert' | 'revive',
+  ): Promise<boolean> {
+    if (pool.activeCount < MEMORY_ACTIVE_LIMIT) return true;
+    if (pool.evicted >= MEMORY_EXTRACT_MAX_ITEMS) {
+      console.warn(`[memory-extraction] eviction cap reached, skip ${what} sessionId=${sessionId}`);
+      return false;
+    }
+    const slotFreed = await this.evictStale(userId, scope, projectKey);
+    if (!slotFreed) {
+      console.warn(`[memory-extraction] no evictable AUTO row in group scope=${scope} projectKey=${projectKey}, skip ${what} userId=${userId}`);
+      return false;
+    }
+    pool.evicted += 1;
+    pool.activeCount -= 1;
+    return true;
   }
 
   /** D13 touch/update 执行：非法引用整条丢弃；update 哈希冲突回退 touch。 */
@@ -323,22 +346,35 @@ export class MemoryExtractionService {
     }
   }
 
-  /** D14 溢出淘汰：受影响组内 updated_at 最旧的一条 AUTO 行置 DISMISSED（软降级，可恢复）。 */
+  /** D14 溢出淘汰：受影响组内 updated_at 最旧的一条 AUTO 行置 DISMISSED（软降级，可恢复；来源标记 EVICTED，方案 E4）。 */
   private async evictStale(userId: number, scope: MemoryScope, projectKey: string): Promise<boolean> {
     const rows = await this.memoryRepo.listStaleAuto(userId, scope, projectKey, 1);
     const row = rows[0];
     if (row?.id == null) return false;
-    await this.memoryRepo.updateStatus(row.id, 'DISMISSED');
+    await this.memoryRepo.dismiss(row.id, 'EVICTED');
     console.warn(`[memory-extraction] overflow evict: dismissed AUTO memory id=${row.id} scope=${scope} projectKey=${projectKey} userId=${userId}`);
     return true;
   }
 
-  /** 命中已有行：ACTIVE 仅刷新 updated_at 视为再次确认；DISMISSED 跳过不复活（D3）。 */
-  private async applyDedupHit(userId: number, dedupHash: string): Promise<void> {
+  /**
+   * 命中已有行：ACTIVE 仅刷新 updated_at 视为再次确认。DISMISSED 分两类（2026-11-15 技术方案 E5）：
+   * 用户显式忽略（dismiss_reason=USER，含存量无法区分来源的行）跳过不复活（D3 不变）；
+   * 系统淘汰（EVICTED）按 insert 同款名额规则复活——淘汰只代表最近不相关，事实复现就该回来。
+   */
+  private async applyDedupHit(userId: number, dedupHash: string, pool: SlotPool, sessionId: number): Promise<void> {
     const row = await this.memoryRepo.findByHash(userId, dedupHash);
     if (row == null) return;
-    if (row.status === 'DISMISSED') return;
+    if (row.status !== 'DISMISSED') {
+      await this.memoryRepo.touch(row.id!);
+      return;
+    }
+    if (row.dismissReason !== 'EVICTED') return;
+    const scope: MemoryScope = row.scope === 'PROJECT' ? 'PROJECT' : 'USER';
+    const projectKey = row.projectKey != null && row.projectKey !== '' ? row.projectKey : '';
+    if (!(await this.freeSlotFor(userId, scope, projectKey, pool, sessionId, 'revive'))) return;
+    await this.memoryRepo.updateStatus(row.id!, 'ACTIVE');
     await this.memoryRepo.touch(row.id!);
+    pool.activeCount += 1;
   }
 
   private async resolveExtractionModel(): Promise<LlmModel | null> {

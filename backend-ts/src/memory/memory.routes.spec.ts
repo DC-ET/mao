@@ -162,6 +162,7 @@ describe('memory routes validate request payload types', () => {
       insert: vi.fn(async () => 1),
       updateContent: vi.fn(async () => undefined),
       updateStatus: vi.fn(async () => undefined),
+      dismiss: vi.fn(async () => undefined),
       touch: vi.fn(async () => undefined),
       deleteById: vi.fn(async () => undefined),
       listActiveUser: vi.fn(async () => []),

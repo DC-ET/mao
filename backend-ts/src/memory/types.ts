@@ -12,6 +12,8 @@ export interface MemoryItemRow {
   content?: string | null;
   source?: string | null;
   status?: string | null;
+  /** DISMISSED 行来源：USER=用户/管理员显式忽略；EVICTED=D14 溢出自动淘汰；ACTIVE 期间值陈旧不读。 */
+  dismissReason?: string | null;
   dedupHash?: string | null;
   originSessionId?: number | null;
   createdAt?: string | null;
@@ -93,7 +95,7 @@ export const MEMORY_EXTRACT_MIN_USER_MESSAGE_LENGTH = 20;
 /** 抽取输入截断护栏：USER 消息与 ASSISTANT 答复各截取的最大字符数。 */
 export const MEMORY_EXTRACT_INPUT_MAX_CHARS = 6000;
 
-/** 负面约束集上限：DISMISSED 行 content 进入抽取 prompt 的条数上限（D13，D14 淘汰会持续产生 DISMISSED 行）。 */
+/** 负面约束集上限：用户显式忽略（dismiss_reason=USER）行的 content 进入抽取 prompt 的条数上限（D13；系统淘汰行 EVICTED 自 2026-11-15 方案 E2 起不进该集合）。 */
 export const MEMORY_EXTRACT_DISMISSED_HINT_LIMIT = 50;
 
 export const MEMORY_SCOPES = ['USER', 'PROJECT'] as const satisfies readonly MemoryScope[];

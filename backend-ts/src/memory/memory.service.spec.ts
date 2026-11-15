@@ -22,6 +22,7 @@ function repo(): MemoryRepository {
     insert: vi.fn(async () => 1),
     updateContent: vi.fn(async () => undefined),
     updateStatus: vi.fn(async () => undefined),
+    dismiss: vi.fn(async () => undefined),
     touch: vi.fn(async () => undefined),
     deleteById: vi.fn(async () => undefined),
     listActiveUser: vi.fn(async () => []),
@@ -180,6 +181,26 @@ describe('MemoryService.update', () => {
     const svc = new MemoryService(r, { listProjectKeyRows: async () => [] });
     expect(await codeOf(() => svc.update(7, 1, { content: null, status: 'ACTIVE' }))).toBe(ErrorCode.MEMORY_LIMIT_EXCEEDED.code);
     expect(r.updateStatus).not.toHaveBeenCalled();
+  });
+
+  it('dismissWritesUserReasonViaDismissMethod', async () => {
+    // E3：用户显式忽略走 dismiss 通道，来源标记恒写 USER（负面约束集只认 USER）
+    const r = repo();
+    (r.findById as ReturnType<typeof vi.fn>).mockResolvedValue(row({ status: 'ACTIVE' }));
+    const svc = new MemoryService(r, { listProjectKeyRows: async () => [] });
+    await svc.update(7, 1, { content: null, status: 'DISMISSED' });
+    expect(r.dismiss).toHaveBeenCalledWith(1, 'USER', expect.anything());
+    expect(r.updateStatus).not.toHaveBeenCalled();
+  });
+
+  it('reDismissAfterEvictionRestoreWritesUserReasonNotStaleEvicted', async () => {
+    // E3 边角回归：「系统淘汰 → 用户恢复 → 用户再忽略」——若依赖列默认值会残留 EVICTED，
+    // 让用户明确否过的内容漏出负面约束；显式写 USER 堵住
+    const r = repo();
+    (r.findById as ReturnType<typeof vi.fn>).mockResolvedValue(row({ status: 'ACTIVE', dismissReason: 'EVICTED' }));
+    const svc = new MemoryService(r, { listProjectKeyRows: async () => [] });
+    await svc.update(7, 1, { content: null, status: 'DISMISSED' });
+    expect(r.dismiss).toHaveBeenCalledWith(1, 'USER', expect.anything());
   });
 
   it('createMapsConcurrentDuplicateKeyRaceToBusinessCode', async () => {
