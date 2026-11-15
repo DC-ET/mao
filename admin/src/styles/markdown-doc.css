@@ -1,0 +1,123 @@
+/*
+ * 经验库文档阅读视图的 Markdown 渲染样式（.markdown-doc）。
+ * 与 session 消息渲染（MessageGroup 的 .markdown-body）同源的精简版：
+ * renderMarkdown（marked + DOMPurify + highlight.js）产物 + 代码块复制按钮。
+ * 全局类名，仅在显式挂载该类的容器内生效。
+ */
+.markdown-doc {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.markdown-doc p {
+  margin: 4px 0;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.markdown-doc h1,
+.markdown-doc h2,
+.markdown-doc h3,
+.markdown-doc h4 {
+  margin: 12px 0 6px;
+  line-height: 1.5;
+}
+
+.markdown-doc ul,
+.markdown-doc ol {
+  padding-left: 22px;
+  margin: 4px 0;
+}
+
+.markdown-doc li {
+  margin: 2px 0;
+  line-height: 1.8;
+}
+
+.markdown-doc pre {
+  margin: 4px 0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.markdown-doc .code-block {
+  margin: 4px 0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.markdown-doc .code-block-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--el-fill-color);
+  font-size: 12px;
+}
+
+.markdown-doc .code-lang {
+  color: var(--el-text-color-secondary);
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  text-transform: uppercase;
+}
+
+.markdown-doc .code-copy-btn {
+  background: none;
+  border: 1px solid var(--el-border-color);
+  color: var(--el-text-color-secondary);
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.15s;
+}
+
+.markdown-doc .code-copy-btn:hover {
+  color: var(--el-text-color-primary);
+  border-color: var(--el-text-color-secondary);
+}
+
+.markdown-doc code {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.markdown-doc .hljs {
+  padding: 12px;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-regular);
+  overflow-x: auto;
+}
+
+.markdown-doc blockquote {
+  margin: 6px 0;
+  padding: 2px 12px;
+  border-left: 3px solid var(--el-border-color);
+  color: var(--el-text-color-secondary);
+}
+
+.markdown-doc table {
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+
+.markdown-doc th,
+.markdown-doc td {
+  border: 1px solid var(--el-border-color-lighter);
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.markdown-doc a {
+  color: var(--el-color-primary);
+}
+
+.markdown-doc img {
+  max-width: 100%;
+}
+
+.markdown-doc hr {
+  border: none;
+  border-top: 1px solid var(--el-border-color-lighter);
+  margin: 10px 0;
+}

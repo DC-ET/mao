@@ -54,6 +54,7 @@ export const menuGroups: MenuGroupDef[] = [
     label: '能力',
     items: [
       { index: '/agents', label: 'Agent 管理', icon: Monitor, permission: 'agent:read' },
+      { index: '/experience', label: '经验库管理', icon: Collection, permission: 'agent:read' },
       { index: '/models', label: '模型管理', icon: Connection, permission: 'model:read' },
       { index: '/feishu-bots', label: '飞书机器人', icon: ChatLineRound, permission: 'feishu-bot:read' },
       { index: '/dingtalk-bots', label: '钉钉机器人', icon: ChatLineRound, permission: 'dingtalk-bot:read' },

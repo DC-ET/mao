@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { ref } from 'vue'
-import { createProjectProvider, useWorkspaceFileProvider } from './workspace-file-provider'
+import { createCloudProvider, createLocalProvider, createOwnedWorkspaceProvider, createProjectProvider, useWorkspaceFileProvider } from './workspace-file-provider'
 
 const apiGet = vi.fn()
 vi.mock('../api', () => ({
@@ -133,6 +133,7 @@ describe('createProjectProvider', () => {
     const provider = createProjectProvider('demo')
     expect(provider.downloadFile).toBeUndefined()
     expect(provider.downloadDirectory).toBeUndefined()
+    expect(provider.downloadEntriesZip).toBeUndefined()
   })
 })
 
@@ -166,5 +167,110 @@ describe('getAbsolutePath（复制绝对路径）', () => {
     ;(globalThis as any).window = { electronAPI: { listDirectory: vi.fn(async () => ({ entries: [], truncated: false })) } }
     const provider = useWorkspaceFileProvider(ref('LOCAL'), ref('/tmp/ws'), ref(''), ref('')).value!
     expect(provider.getAbsolutePath!('scripts/deploy.sh')).toBe('/tmp/ws/scripts/deploy.sh')
+  })
+})
+
+describe('downloadEntriesZip（多选合并 zip 下载）', () => {
+  /** node 环境无 DOM：triggerBrowserDownload 需要最小 document / URL 桩 */
+  function stubDownloadDom() {
+    const anchor = { href: '', download: '', click: vi.fn(), remove: vi.fn() }
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => anchor),
+      body: { appendChild: vi.fn() },
+    })
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => 'blob:test'),
+      revokeObjectURL: vi.fn(),
+    })
+    return anchor
+  }
+
+  it('CLOUD：POST workspace-download-multi-zip，body 含 sessionId 与 paths，一次浏览器下载', async () => {
+    vi.useFakeTimers()
+    try {
+      const blob = new Blob(['zip-bytes'], { type: 'application/zip' })
+      const fetchMock = vi.fn(async () => ({
+        ok: true,
+        headers: { get: (k: string) => (k === 'content-disposition' ? `attachment; filename*=UTF-8''multi.zip` : 'application/zip') },
+        blob: async () => blob,
+      }))
+      vi.stubGlobal('fetch', fetchMock)
+      const anchor = stubDownloadDom()
+      const provider = createCloudProvider('42')
+      const result = await provider.downloadEntriesZip!(['a.txt', 'docs'], 'selected.zip')
+      expect(result.ok).toBe(true)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+      expect(url).toContain('/files/workspace-download-multi-zip')
+      expect(init.method).toBe('POST')
+      expect(init.headers).toMatchObject({ Authorization: 'Bearer test-token' })
+      expect(JSON.parse(String(init.body))).toEqual({ sessionId: 42, paths: ['a.txt', 'docs'] })
+      // 文件名优先后端 Content-Disposition；一次 anchor click，blob URL 延迟回收
+      expect(anchor.download).toBe('multi.zip')
+      expect(anchor.click).toHaveBeenCalledTimes(1)
+      expect(URL.createObjectURL).toHaveBeenCalledWith(blob)
+      expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+      vi.runAllTimers()
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:test')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('owned：POST owned-download-multi-zip，body 含 root 与 paths', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchMock = vi.fn(async () => ({
+        ok: true,
+        headers: { get: (k: string) => (k === 'content-disposition' ? `attachment; filename*=UTF-8''owned.zip` : 'application/zip') },
+        blob: async () => new Blob(['z'], { type: 'application/zip' }),
+      }))
+      vi.stubGlobal('fetch', fetchMock)
+      stubDownloadDom()
+      const provider = createOwnedWorkspaceProvider('demo')
+      const result = await provider.downloadEntriesZip!(['a.txt'], 'selected.zip')
+      expect(result.ok).toBe(true)
+      const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+      expect(url).toContain('/files/owned-download-multi-zip')
+      expect(JSON.parse(String(init.body))).toEqual({ root: 'demo', paths: ['a.txt'] })
+      expect(init.headers).toMatchObject({ Authorization: 'Bearer test-token' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('CLOUD：HTTP 500 JSON 错误体 → error 映射', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ code: 3044, message: '所选内容过大（1.0 GB）' }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const provider = createCloudProvider('42')
+    const result = await provider.downloadEntriesZip!(['a.txt'], 'selected.zip')
+    expect(result).toEqual({ ok: false, error: '所选内容过大（1.0 GB）' })
+  })
+
+  it('CLOUD：ok 响应携带 JSON 错误体（无 disposition）→ error 映射', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      headers: { get: (k: string) => (k === 'content-disposition' ? null : 'application/json') },
+      json: async () => ({ code: 5000, message: '打包选中项失败' }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const provider = createCloudProvider('42')
+    const result = await provider.downloadEntriesZip!(['a.txt'], 'selected.zip')
+    expect(result).toEqual({ ok: false, error: '打包选中项失败' })
+  })
+
+  it('LOCAL / 项目 provider 不实现（调用方提示「当前模式不支持下载」）', () => {
+    expect(createLocalProvider('/tmp/ws').downloadEntriesZip).toBeUndefined()
+    expect(createProjectProvider('demo').downloadEntriesZip).toBeUndefined()
+  })
+
+  it('会话未就绪 fallback：返回错误而非「不支持下载」', async () => {
+    const provider = createCloudProvider('not-a-number')
+    expect(await provider.downloadEntriesZip!(['a.txt'], 'selected.zip')).toEqual({ ok: false, error: '会话未就绪' })
   })
 })

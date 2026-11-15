@@ -3,7 +3,7 @@ import {
   readSync, readdirSync, rmSync, statSync, type Stats,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join, relative, resolve } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import archiver from 'archiver';
 import sharp from 'sharp';
@@ -20,6 +20,12 @@ import { PathSandbox, SecurityException } from '../harness/safety/path-sandbox.j
 import { StrictPathResolver } from '../harness/safety/strict-path.js';
 
 const MAX_ENTRIES = 500;
+/**
+ * 单次打包条目数硬上限：UI 选区受当前目录列表 500 项约束远够用。
+ * 不设上限时，恶意大 body（生产 bodyLimit 为 52MB）叠加 O(n²) 的去重 / 包含校验
+ * 全是同步循环，单个已认证请求即可长时间阻塞整个后端事件循环。
+ */
+const MAX_ZIP_ENTRIES = 1000;
 const MAX_SEARCH_RESULTS = 100;
 const MAX_SEARCH_SCANNED_DIRS = 2000;
 const MAX_SEARCH_DEPTH = 12;
@@ -75,6 +81,14 @@ export interface ZipResult {
   zipPath: string;
   size: number;
   fileName: string;
+}
+
+/** 打包源条目：absPath 已过沙箱校验；entryRoot 为 zip 内的根 entry 名 */
+interface ZipSourceItem {
+  /** 沙箱解析后的绝对路径（文件或目录） */
+  absPath: string;
+  /** zip 内的根 entry 名：文件 = 文件名；目录 = 目录名（其子树挂在该前缀下） */
+  entryRoot: string;
 }
 
 export class WorkspaceBrowseService {
@@ -322,7 +336,7 @@ export class WorkspaceBrowseService {
     const zipPath = join(tmpdir(), `mao-workspace-${randomUUID()}.zip`);
     let written = false;
     try {
-      await writeZip(dirPath, rootName, zipPath);
+      await writeZip([{ absPath: dirPath, entryRoot: rootName }], zipPath);
       written = true;
     } catch (e) {
       console.warn(`Failed to write zip for directory: ${dirPath}`, e);
@@ -339,6 +353,106 @@ export class WorkspaceBrowseService {
       zipSize = 0;
     }
     return { zipPath, size: zipSize, fileName: `${rootName}.zip` };
+  }
+
+  /**
+   * 多选打包下载（技术方案 2026-11-14）：把选中的文件 / 目录合并为一个 zip。
+   * UI 选区天然来自当前目录列表（同父必不同名、不跨目录），这里只做逐项
+   * 沙箱校验与防御性去重；任意相对路径组合 API 层面允许，不强制同目录。
+   */
+  async zipEntries(sessionWorkspace: string, paths: string[] | null | undefined, experienceDir?: string | null): Promise<ZipResult> {
+    if (!Array.isArray(paths)) {
+      throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    }
+    if (paths.length > MAX_ZIP_ENTRIES) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, `选中条目过多（${paths.length}），请减少选中项或分批下载`);
+    }
+    const trimmed: string[] = [];
+    const seenTrimmed = new Set<string>();
+    for (const p of paths) {
+      if (typeof p !== 'string' || p.trim().length === 0) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '文件路径不能为空');
+      }
+      if (!seenTrimmed.has(p.trim())) {
+        seenTrimmed.add(p.trim());
+        trimmed.push(p.trim());
+      }
+    }
+    if (trimmed.length === 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '下载目标不能为空');
+    }
+    const workspaceRoot = this.pathSandbox.getEffectiveWorkspaceRoot(sessionWorkspace);
+    const resolved: { absPath: string; isDir: boolean }[] = [];
+    const seenAbs = new Set<string>();
+    for (const p of trimmed) {
+      const absPath = this.resolvePath(p, sessionWorkspace, experienceDir);
+      if (seenAbs.has(absPath)) continue;
+      if (!existsSync(absPath)) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, `文件不存在：${p}`);
+      }
+      const lst = lstatSync(absPath);
+      if (lst.isSymbolicLink() || (!lst.isFile() && !lst.isDirectory())) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, `不是普通文件：${p}`);
+      }
+      seenAbs.add(absPath);
+      resolved.push({ absPath, isDir: lst.isDirectory() });
+    }
+    // 防御性去重（API 直调才会触发）：内层条目位于外层目录子树内时跳过——
+    // 外层目录已包含它，避免 archiver 产出重复 entry 名。
+    const sourceItems: ZipSourceItem[] = [];
+    for (const item of resolved) {
+      const nested = resolved.some((o) => o !== item && o.isDir && isStrictlyInside(item.absPath, o.absPath));
+      if (nested) continue;
+      sourceItems.push({ absPath: item.absPath, entryRoot: basename(item.absPath) });
+    }
+    if (sourceItems.length === 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '下载目标不能为空');
+    }
+    // 跨目录选中同名条目无法平铺（重名 entry 语义不明），显式拒绝
+    const rootNames = new Set<string>();
+    for (const item of sourceItems) {
+      if (rootNames.has(item.entryRoot)) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, `选中项存在重名：${item.entryRoot}，无法合并打包`);
+      }
+      rootNames.add(item.entryRoot);
+    }
+    let totalBytes = 0;
+    for (const item of sourceItems) {
+      if (lstatSync(item.absPath).isFile()) {
+        totalBytes += statSync(item.absPath).size;
+        continue;
+      }
+      walkFiles(item.absPath, (p, st) => {
+        if (!lstatSync(p).isSymbolicLink() && st.isFile()) {
+          totalBytes += st.size;
+        }
+      });
+    }
+    if (totalBytes > this.maxZipBytes) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, `所选内容过大（${formatSize(totalBytes)}），请减少选中项或分批下载`);
+    }
+    const zipPath = join(tmpdir(), `mao-workspace-${randomUUID()}.zip`);
+    let written = false;
+    try {
+      await writeZip(sourceItems, zipPath);
+      written = true;
+    } catch (e) {
+      console.warn(`Failed to write zip for selected entries in workspace: ${sessionWorkspace}`, e);
+      throw new BusinessException(ErrorCode.INTERNAL_ERROR, '打包选中项失败');
+    } finally {
+      if (!written) {
+        try { rmSync(zipPath, { force: true }); } catch { /* ignore */ }
+      }
+    }
+    let zipSize = 0;
+    try {
+      zipSize = statSync(zipPath).size;
+    } catch {
+      zipSize = 0;
+    }
+    // dir === root 分支：basename 即工作区根名，与 resolveZipRootName 同源
+    const baseName = this.resolveZipRootName(workspaceRoot, workspaceRoot);
+    return { zipPath, size: zipSize, fileName: `${baseName}-${zipStamp()}.zip` };
   }
 
   async readFile(
@@ -552,41 +666,52 @@ function walkFiles(dir: string, visit: (p: string, st: Stats) => void): void {
   }
 }
 
-function zipEntryName(baseDir: string, rootName: string, file: string): string {
-  const base = resolve(baseDir);
-  const target = resolve(file);
-  if (base === target) return rootName;
-  const rel = relative(base, target).replace(/\\/g, '/');
-  return `${rootName}/${rel}`;
+/** child 是否位于 dir 子树内（严格内部，不含 dir 本身） */
+function isStrictlyInside(child: string, dir: string): boolean {
+  const rel = relative(dir, child);
+  return rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
-async function writeZip(dirPath: string, rootName: string, zipPath: string): Promise<void> {
+/** 服务端本地时间戳：YYYYMMDD-HHmm（zip 建议文件名用） */
+function zipStamp(now: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+}
+
+async function writeZip(items: ZipSourceItem[], zipPath: string): Promise<void> {
   await new Promise<void>((resolveP, reject) => {
     const output = createWriteStream(zipPath);
     const archive = archiver('zip', { zlib: { level: 5 } });
     output.on('close', () => resolveP());
     archive.on('error', reject);
     archive.pipe(output);
-    const files: string[] = [];
-    const walk = (d: string) => {
-      for (const e of readdirSync(d, { withFileTypes: true })) {
-        const p = join(d, e.name);
-        if (lstatSync(p).isSymbolicLink()) continue;
-        files.push(p);
-        if (e.isDirectory()) walk(p);
-      }
-    };
-    files.push(dirPath);
-    walk(dirPath);
-    files.sort((a, b) => zipEntryName(dirPath, rootName, a).localeCompare(zipEntryName(dirPath, rootName, b)));
-    for (const p of files) {
-      const lst = lstatSync(p);
-      if (lst.isSymbolicLink()) continue;
-      const name = zipEntryName(dirPath, rootName, p);
+    const entries: { name: string; path: string }[] = [];
+    for (const item of items) {
+      const lst = lstatSync(item.absPath);
+      if (lst.isSymbolicLink() || (!lst.isFile() && !lst.isDirectory())) continue;
+      // 根 entry 本身：文件 = 文件名；目录 = 占位根，子树挂其前缀下
+      entries.push({ name: item.entryRoot, path: item.absPath });
       if (lst.isDirectory()) {
-        archive.append(Buffer.alloc(0), { name: `${name}/` });
+        const walk = (d: string) => {
+          for (const e of readdirSync(d, { withFileTypes: true })) {
+            const p = join(d, e.name);
+            if (lstatSync(p).isSymbolicLink()) continue;
+            entries.push({ name: `${item.entryRoot}/${relative(item.absPath, p).replace(/\\/g, '/')}`, path: p });
+            if (e.isDirectory()) walk(p);
+          }
+        };
+        walk(item.absPath);
+      }
+    }
+    // 占位与子树统一排序后 append，保持确定性输出
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const e of entries) {
+      const lst = lstatSync(e.path);
+      if (lst.isSymbolicLink()) continue;
+      if (lst.isDirectory()) {
+        archive.append(Buffer.alloc(0), { name: `${e.name}/` });
       } else if (lst.isFile()) {
-        archive.file(p, { name });
+        archive.file(e.path, { name: e.name });
       }
     }
     void archive.finalize();

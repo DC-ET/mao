@@ -126,6 +126,11 @@
           </el-table>
         </el-tab-pane>
 
+        <!-- 记忆（lazy + memory:read 门控；面板定人模式自带加载/筛选/管理操作，写操作另需 memory:write） -->
+        <el-tab-pane v-if="canViewMemory" label="记忆" name="memory" lazy>
+          <MemoryManagePanel :fixed-user-id="user.id" :fixed-user-label="user.displayName || user.username" />
+        </el-tab-pane>
+
         <!-- Git 凭证 -->
         <el-tab-pane label="Git 凭证" name="git">
           <el-table :data="gitCredentials" v-loading="loadingTabs['git']" size="small" stripe>
@@ -212,6 +217,7 @@ import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
 import { phaseLabel } from '../../utils/labels'
 import { useAuthStore } from '../../stores/auth'
 import UserUsageTab from './components/UserUsageTab.vue'
+import MemoryManagePanel from '../memory/components/MemoryManagePanel.vue'
 
 interface UserRow {
   id: number
@@ -227,7 +233,7 @@ interface UserRow {
 const props = defineProps<{
   visible: boolean
   user: UserRow | null
-  /** 深链定位 Tab（/users?detail=&tab=usage）；非法/无权限值回落 sessions。 */
+  /** 深链定位 Tab（/users?detail=&tab=usage 或 tab=memory）；非法/无权限值回落 sessions。 */
   initialTab?: string
 }>()
 
@@ -250,6 +256,8 @@ const canWrite = computed(() => authStore.hasPermission('user:write'))
 const canManageContainer = computed(() => authStore.hasPermission('container:manage'))
 /** 用量 Tab（2026-11-10 用户用量方案）：与用量分析同语义 analytics:read；无权限整 Tab 不渲染。 */
 const canViewUsage = computed(() => authStore.hasPermission('analytics:read'))
+/** 记忆 Tab（2026-11-13 用户详情记忆管理）：读 memory:read，写操作由面板按 memory:write 控制显隐。 */
+const canViewMemory = computed(() => authStore.hasPermission('memory:read'))
 const recycling = ref(false)
 
 async function recycleContainer() {
@@ -331,8 +339,10 @@ function execStatusLabel(status: string): string {
 }
 
 function handleOpen() {
-  // 深链可指定 initialTab；目标 Tab 无权限（如 usage 未授 analytics:read）时回落会话
-  activeTab.value = props.initialTab === 'usage' && canViewUsage.value ? 'usage' : 'sessions'
+  // 深链可指定 initialTab；目标 Tab 无权限（如 usage 未授 analytics:read / memory 未授 memory:read）时回落会话
+  activeTab.value = props.initialTab === 'usage' && canViewUsage.value ? 'usage'
+    : props.initialTab === 'memory' && canViewMemory.value ? 'memory'
+      : 'sessions'
   sessionsPage.value = 1
   tasksPage.value = 1
   // 抽屉复用同一组件实例：先清空上一位用户的数据，避免加载期间透出旧明细

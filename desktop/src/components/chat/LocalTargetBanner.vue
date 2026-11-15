@@ -31,8 +31,7 @@ const props = defineProps<{
   /** 快照：true=在线 / false=离线 / null=未知 */
   targetDeviceOnline?: boolean | null
   /** 当前执行连接：electron=桌面客户端，cli=mao-agent；缺省回落「该任务在 {设备} 上执行」 */
-  executorClientType?: string | null
-  /** 当前 Electron 设备 id；浏览器 / 非桌面壳为 null（无法确认，照常提示） */
+  executorClientType?: string | null  /** 当前 Electron 设备 id；浏览器 / 非桌面壳为 null（无法确认，照常提示） */
   currentDeviceId?: string | null
 }>()
 
@@ -58,8 +57,8 @@ const displayName = computed(() => deviceName.value.replace(/\.local$/, ''))
 const bannerText = computed(() => {
   if (!deviceName.value) return '该本地任务还未登记执行端，请在桌面客户端打开一次完成登记'
   if (props.targetDeviceOnline === false) return `执行端 ${displayName.value} 不在线，发送前请在该设备上打开 Mao`
-  if (props.executorClientType === 'electron') return '桌面客户端在执行'
-  if (props.executorClientType === 'cli') return 'mao-agent 在执行'
+  if (props.executorClientType === 'electron') return '桌面客户端已连接'
+  if (props.executorClientType === 'cli') return 'mao-agent 已连接'
   return `该任务在 ${displayName.value} 上执行`
 })
 </script>

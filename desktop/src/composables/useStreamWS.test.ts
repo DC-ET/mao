@@ -535,6 +535,30 @@ describe('useStreamWS 崩溃恢复 executionId 重绑（恢复帧不得被 stale
 
     expect(store.getMessages('42').map((m) => String(m.content)).join('')).toContain('[恢复执行增量2]')
   })
+
+  // 线上 #2330：任务在 REST 快照读到 RUNNING 之后才收尾，安卓端随后才建 WS 订阅。
+  // 终态 session_status 已在该连接注册前发出，本端见到的唯一终态就是订阅回放的
+  // session_snapshot。此前该分支只写 phase 不唤醒等待者，restoreSession 挂上的
+  // 等待 Promise 永远等不到 resolve，输入框停在「正在运行，消息将进入队列...」。
+  it('session_snapshot 带回终态时必须唤醒等待本轮收敛的调用方', async () => {
+    const { connect, pendingCallbacks } = useStreamWS()
+    const store = useSessionStore()
+    const connecting = connect()
+    sockets[0].open()
+    await connecting
+    store.updateSessionPhase('42', 'RUNNING')
+
+    // restoreSession / sendMessage 挂上的等待者
+    let settled = false
+    pendingCallbacks.set('42', { resolve: () => { settled = true } })
+
+    frame('session_snapshot', { phase: 'COMPLETED' })
+
+    // phase 已落地，等待者也被唤醒（槽位释放）
+    expect(store.getSessionPhase('42')).toBe('COMPLETED')
+    expect(settled).toBe(true)
+    expect(pendingCallbacks.has('42')).toBe(false)
+  })
 })
 
 describe('useStreamWS 后台子代理完成通知（assistant_message_saved）', () => {

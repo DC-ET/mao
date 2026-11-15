@@ -70,15 +70,24 @@ export class ExperienceIndexService {
    * 与实际子文档数不符（删除——mtime 比对对删除恒真，必须靠 count 兜住）。
    */
   ensureFresh(agentDir: string): void {
+    this.ensureFreshScanned(agentDir);
+  }
+
+  /**
+   * 扫描并保证索引新鲜，返回扫描产物供调用方复用（技术方案 2026-11-13 §4.2：
+   * 新鲜 2 次、陈旧 3 次的重复扫描收敛为全程单次——重建直接用本次扫描产物写盘）。
+   */
+  private ensureFreshScanned(agentDir: string): (ExperienceDocMeta & { mtimeMs: number })[] {
     this.ensureRealDir(agentDir);
     const indexPath = path.join(agentDir, EXPERIENCE_INDEX_FILE);
+    const docs = this.scanDocs(agentDir);
     if (existsSync(indexPath)) {
-      const docs = this.scanDocs(agentDir);
       const indexMtime = statSync(indexPath).mtimeMs;
       const recorded = readIndexCount(readFileSync(indexPath, 'utf8'));
-      if (docs.every((doc) => doc.mtimeMs <= indexMtime) && recorded === docs.length) return;
+      if (docs.every((doc) => doc.mtimeMs <= indexMtime) && recorded === docs.length) return docs;
     }
-    this.rebuild(agentDir);
+    this.writeIndexAtomic(agentDir, docs);
+    return docs;
   }
 
   /** 强制重建索引（admin「重建索引」入口），不看陈旧判定。 */
@@ -89,10 +98,45 @@ export class ExperienceIndexService {
 
   /** 子文档元信息列表（admin 列表；先 ensureFresh 保证与索引同口径）。 */
   listDocs(agentDir: string): ExperienceDocMeta[] {
-    this.ensureFresh(agentDir);
-    return this.scanDocs(agentDir)
+    return this.ensureFreshScanned(agentDir)
       .sort((a, b) => b.fileName.localeCompare(a.fileName))
       .map(({ mtimeMs, ...meta }) => meta);
+  }
+
+  /** 读索引文档（admin 展示）：ensureFresh 后取 INDEX.md 全文与记录条数（索引头 count 注释，缺失回 0），不额外扫描。 */
+  readIndex(agentDir: string): { fileName: string; content: string; docCount: number } {
+    this.ensureFreshScanned(agentDir);
+    const content = this.readDoc(agentDir, EXPERIENCE_INDEX_FILE) ?? '';
+    return { fileName: EXPERIENCE_INDEX_FILE, content, docCount: readIndexCount(content) ?? 0 };
+  }
+
+  /**
+   * 跨库统计（admin 总览端点）：经验根下数字目录逐库扫描统计。
+   * 只读子文档不刷索引（docCount 本就来自文件系统扫描，与索引新鲜度无关）；
+   * 目录名非纯数字与符号链接目录（readdir Dirent 反映 lstat，isDirectory 为假）忽略。
+   */
+  overviewLibraries(): Array<{ agentId: number; docCount: number; totalBytes: number; lastUpdatedAt: string }> {
+    if (!existsSync(this.root)) return [];
+    const out: Array<{ agentId: number; docCount: number; totalBytes: number; lastUpdatedAt: string }> = [];
+    for (const entry of readdirSync(this.root, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
+      const agentDir = path.join(this.root, entry.name);
+      try {
+        const docs = this.scanDocs(agentDir);
+        // updatedAt 为 ISO 串，字典序即时间序
+        const lastUpdatedAt = docs.map((doc) => doc.updatedAt).sort().at(-1) ?? '';
+        out.push({
+          agentId: Number(entry.name),
+          docCount: docs.length,
+          totalBytes: docs.reduce((sum, doc) => sum + doc.sizeBytes, 0),
+          lastUpdatedAt,
+        });
+      } catch (e) {
+        // 单库损坏（并发删除/权限）不该让总览失败
+        harnessLog('warn', `experience overview scan failed: ${agentDir}: ${(e as Error).message}`);
+      }
+    }
+    return out;
   }
 
   /** 读单篇子文档；不存在返回 null。符号链接（含指向存在的目标）一律视为不存在。 */

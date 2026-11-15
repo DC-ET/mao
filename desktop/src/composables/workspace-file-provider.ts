@@ -104,6 +104,8 @@ export interface WorkspaceFileProvider {
   downloadFile?(relativePath: string, suggestedName: string): Promise<DownloadResult>
   /** 打包下载目录（zip）到浏览器（仅 CLOUD 模式实现）。 */
   downloadDirectory?(relativePath: string, suggestedName: string): Promise<DownloadResult>
+  /** 打包下载多个选中条目（zip）到浏览器（仅 CLOUD 模式实现）。paths 为工作区相对路径。 */
+  downloadEntriesZip?(paths: string[], suggestedName: string): Promise<DownloadResult>
 }
 
 /** 本地搜索跳过的目录与遍历上限：IPC 遍历虽不经 HTTP，也必须设界防止大目录卡死渲染进程 */
@@ -238,6 +240,9 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
       async downloadDirectory() {
         return { ok: false, error: '会话未就绪' }
       },
+      async downloadEntriesZip() {
+        return { ok: false, error: '会话未就绪' }
+      },
     }
   }
 
@@ -314,6 +319,9 @@ export function createCloudProvider(sessionId: string): WorkspaceFileProvider {
     },
     downloadDirectory(relativePath: string, suggestedName: string) {
       return downloadWorkspaceResource('/files/workspace-download-zip', numericSessionId, relativePath, suggestedName)
+    },
+    downloadEntriesZip(paths: string[], suggestedName: string) {
+      return downloadWorkspaceZip('/files/workspace-download-multi-zip', { sessionId: numericSessionId, paths }, suggestedName)
     },
     async previewFile(relativePath: string) {
       try {
@@ -528,6 +536,9 @@ export function createOwnedWorkspaceProvider(root: string): WorkspaceFileProvide
     downloadDirectory(relativePath: string, suggestedName: string) {
       return downloadWorkspaceResource('/files/owned-download-zip', 0, relativePath, suggestedName, identity)
     },
+    downloadEntriesZip(paths: string[], suggestedName: string) {
+      return downloadWorkspaceZip('/files/owned-download-multi-zip', { root, paths }, suggestedName)
+    },
     async previewFile(relativePath: string) {
       try {
         const token = getToken()
@@ -599,6 +610,45 @@ async function downloadWorkspaceResource(
   }
 }
 
+/**
+ * 多选打包下载（POST 变体）：paths 多值不适合 query，走 JSON body + Authorization header。
+ * 一次 anchor click 携带用户手势，绕开 Chromium 对无手势后续下载的静默丢弃。
+ */
+async function downloadWorkspaceZip(
+  endpoint: string,
+  body: Record<string, unknown>,
+  suggestedName: string,
+): Promise<DownloadResult> {
+  const token = getToken()
+  try {
+    const resp = await fetch(`${API_BASE}${endpoint}`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+    if (!resp.ok) {
+      return { ok: false, error: await extractDownloadError(resp) }
+    }
+    const disposition = resp.headers.get('content-disposition')
+    const contentType = resp.headers.get('content-type') || ''
+    if (!disposition && contentType.includes('application/json')) {
+      const result = await resp.json()
+      if (result?.code !== undefined && result.code !== 0) {
+        return { ok: false, error: result.message || '下载失败' }
+      }
+    }
+    const blob = await resp.blob()
+    const fileName = parseDownloadFileName(disposition) || suggestedName
+    triggerBrowserDownload(blob, fileName)
+    return { ok: true }
+  } catch (e: any) {
+    return { ok: false, error: apiErrorMessage(e, '下载失败') }
+  }
+}
+
 async function extractDownloadError(resp: Response): Promise<string> {
   try {
     const contentType = resp.headers.get('content-type') || ''
@@ -636,7 +686,8 @@ function triggerBrowserDownload(blob: Blob, fileName: string) {
   document.body.appendChild(a)
   a.click()
   a.remove()
-  URL.revokeObjectURL(objectUrl)
+  // 立即 revoke 存在「浏览器尚未开始读 blob 就注销 URL」的竞态；延后 1s 回收
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
 }
 
 export function useWorkspaceFileProvider(
