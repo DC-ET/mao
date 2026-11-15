@@ -38,7 +38,9 @@ mysql -e "CREATE DATABASE mao CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 cp backend-ts/.env.example backend-ts/.env
 ```
 
-编辑 `backend-ts/.env`，至少配置 `MYSQL_URL`、`MYSQL_USERNAME`、`MYSQL_PASSWORD`。生产或对外暴露时请设置 `JWT_SECRET`。完整变量见 [config.md](config.md)。
+编辑 `backend-ts/.env`，至少配置 `MYSQL_URL`、`MYSQL_USERNAME`、`MYSQL_PASSWORD`，并设置 `APP_GIT_CREDENTIAL_SECRET`（Git 凭证加密密钥，唯一无内置默认的必填项；生成：`openssl rand -base64 32`）。生产或对外暴露时请设置 `JWT_SECRET`。完整变量见 [config.md](config.md)。
+
+`npm run start:dev` 会自动加载 `backend-ts/.env`（`--env-file-if-exists`，Node 22+），无需手工 export。
 
 ## 3. 启动后端
 

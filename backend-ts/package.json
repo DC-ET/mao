@@ -7,7 +7,7 @@
   "license": "MIT",
   "scripts": {
     "start": "node dist/main.js",
-    "start:dev": "tsx src/main.ts",
+    "start:dev": "tsx --env-file-if-exists=.env src/main.ts",
     "build": "tsc -p tsconfig.build.json && node scripts/emit-container-runtime-build.mjs",
     "test": "vitest run --coverage",
     "test:watch": "vitest"

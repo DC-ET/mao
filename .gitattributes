@@ -1,0 +1,4 @@
+# 迁移 SQL 与 shell 脚本强制 LF：Windows checkout 若转 CRLF，
+# 含 DELIMITER 存储过程的迁移经 mysql 客户端执行会语法错（见 install.md）
+*.sql text eol=lf
+*.sh text eol=lf

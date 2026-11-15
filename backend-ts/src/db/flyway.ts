@@ -71,6 +71,45 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
+/**
+ * delimiter-aware 语句拆分：`DELIMITER` 是 mysql 客户端指令，mysql2 的
+ * multipleStatements 只按 `;` 盲切，存储过程体（内含分号）会被切碎（V001 从零
+ * 安装即撞）。与 mysql 客户端同口径：DELIMITER 指令切换分隔符、行级判定语句终结，
+ * 仅裁掉语句尾部的分隔符。行尾归一为 LF，Windows checkout（autocrlf）不影响。
+ */
+export function splitSqlStatements(sql: string): string[] {
+  const lines = sql.replace(/\r\n/g, '\n').split('\n');
+  const out: string[] = [];
+  let delim = ';';
+  let buf: string[] = [];
+  const flush = () => {
+    const text = buf.join('\n').trim();
+    buf = [];
+    if (text) {
+      out.push(text);
+    }
+  };
+  for (const line of lines) {
+    const m = /^DELIMITER\s+(\S+)\s*$/i.exec(line.trim());
+    if (m) {
+      flush();
+      delim = m[1];
+      continue;
+    }
+    buf.push(line);
+    const tail = buf.join('\n').trimEnd();
+    if (tail.endsWith(delim)) {
+      const body = tail.slice(0, tail.length - delim.length);
+      buf = [];
+      if (body.trim()) {
+        out.push(body.trim());
+      }
+    }
+  }
+  flush();
+  return out;
+}
+
 function hasSqlFiles(dir: string): boolean {
   return existsSync(dir) && readdirSync(dir).some((f) => f.endsWith('.sql'));
 }
@@ -264,7 +303,11 @@ export async function migrateWithDb(
       }
       const started = Date.now();
       try {
-        await db.query(migration.sql);
+        // 逐句执行（delimiter-aware）：整文件灌给 multipleStatements 会把 DELIMITER
+        // 当 SQL 发给服务端报语法错，存储过程体也会被 `;` 盲切切碎。
+        for (const statement of splitSqlStatements(migration.sql)) {
+          await db.query(statement);
+        }
         await insertHistory(db, {
           installedRank: nextRank,
           version: migration.version,

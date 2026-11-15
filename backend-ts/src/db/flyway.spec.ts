@@ -10,10 +10,50 @@ import {
   parseMigrationName,
   resolveMigrationDir,
   runFlywayIfEnabled,
+  splitSqlStatements,
   type FlywayDb,
 } from './flyway.js';
 import { notDeleted } from './db.js';
 import type { AppConfig } from '../config/app-config.js';
+
+describe('splitSqlStatements', () => {
+  it('splits plain statements and strips trailing semicolons', () => {
+    expect(splitSqlStatements('CREATE TABLE a(id INT);\nINSERT INTO a VALUES (1);')).toEqual([
+      'CREATE TABLE a(id INT)',
+      'INSERT INTO a VALUES (1)',
+    ]);
+  });
+
+  it('keeps stored procedure bodies intact across DELIMITER blocks', () => {
+    const sql = [
+      'DELIMITER //',
+      'CREATE PROCEDURE p()',
+      'BEGIN',
+      '  IF NOT EXISTS (SELECT 1) THEN',
+      '    CREATE TABLE t(id INT);',
+      '  END IF;',
+      'END//',
+      'DELIMITER ;',
+      'CALL p();',
+    ].join('\n');
+    const parts = splitSqlStatements(sql);
+    expect(parts).toHaveLength(2);
+    expect(parts[0]).toContain('CREATE PROCEDURE p()');
+    expect(parts[0]).toContain('CREATE TABLE t(id INT);');
+    expect(parts[0].endsWith('END')).toBe(true);
+    expect(parts[1]).toBe('CALL p()');
+  });
+
+  it('normalizes CRLF line endings (Windows checkout)', () => {
+    const parts = splitSqlStatements('CREATE TABLE a(id INT);\r\nINSERT INTO a VALUES (1);\r\n');
+    expect(parts).toEqual(['CREATE TABLE a(id INT)', 'INSERT INTO a VALUES (1)']);
+  });
+
+  it('keeps statements before DELIMITER directives and restores the default delimiter', () => {
+    const parts = splitSqlStatements('SELECT 1;\nDELIMITER $$\nCALL p()$$\nDELIMITER ;\nSELECT 2;\n');
+    expect(parts).toEqual(['SELECT 1', 'CALL p()', 'SELECT 2']);
+  });
+});
 
 describe('Flyway contract', () => {
   it('migration files are well-formed with stable checksums', () => {
