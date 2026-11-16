@@ -135,7 +135,7 @@ function toggleExpand() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  letter-spacing: -0.12px;
+  letter-spacing: var(--aw-tracking);
 }
 
 .group-status {

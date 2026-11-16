@@ -610,7 +610,7 @@ onUnmounted(() => {
   font-weight: 600;
   color: var(--aw-ink);
   margin: 4px 0 2px;
-  letter-spacing: 0;
+  letter-spacing: var(--aw-tracking);
 }
 
 .markdown-body :deep(h1) { font-size: var(--aw-text-lead); }
@@ -622,7 +622,7 @@ onUnmounted(() => {
   margin: 0;
   font-size: var(--aw-text-caption);
   line-height: 2;
-  letter-spacing: var(--aw-tracking-body);
+  letter-spacing: var(--aw-tracking);
 }
 
 .markdown-body :deep(a) {
@@ -662,7 +662,7 @@ onUnmounted(() => {
   color: var(--aw-ink-muted-48);
   font-family: var(--aw-font-mono);
   text-transform: uppercase;
-  letter-spacing: 0;
+  letter-spacing: var(--aw-tracking);
 }
 
 .markdown-body :deep(.code-copy-btn) {
@@ -702,7 +702,7 @@ onUnmounted(() => {
 .markdown-body :deep(li) {
   font-size: var(--aw-text-caption);
   line-height: 2;
-  letter-spacing: var(--aw-tracking-body);
+  letter-spacing: var(--aw-tracking);
 }
 
 .markdown-body :deep(blockquote) {

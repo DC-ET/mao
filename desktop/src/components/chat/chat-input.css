@@ -196,7 +196,7 @@
   border-radius: 10px;
   font-weight: 500;
   vertical-align: baseline;
-  letter-spacing: -0.1px;
+  letter-spacing: var(--aw-tracking);
   cursor: default;
 }
 

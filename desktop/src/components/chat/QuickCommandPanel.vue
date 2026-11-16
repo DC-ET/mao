@@ -196,7 +196,7 @@ defineExpose({ moveUp, moveDown, confirmSelection })
   font-weight: 600;
   color: var(--aw-ink-muted-48);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: var(--aw-tracking);
 }
 
 .panel-item {

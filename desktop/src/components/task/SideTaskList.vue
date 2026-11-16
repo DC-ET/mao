@@ -411,7 +411,7 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  letter-spacing: -0.224px;
+  letter-spacing: var(--aw-tracking);
 }
 
 .side-task-title-input {
@@ -419,7 +419,7 @@ onUnmounted(() => {
   min-width: 0;
   font-size: var(--aw-text-caption);
   color: var(--aw-ink);
-  letter-spacing: -0.224px;
+  letter-spacing: var(--aw-tracking);
   background: var(--aw-surface-pearl);
   border: 1px solid var(--aw-primary);
   border-radius: var(--aw-radius-xs);
@@ -444,7 +444,7 @@ onUnmounted(() => {
   font-family: var(--aw-font-mono);
   font-size: var(--aw-text-micro);
   color: var(--aw-ink-muted-48);
-  letter-spacing: -0.1px;
+  letter-spacing: var(--aw-tracking);
 }
 
 .side-task-item-actions {

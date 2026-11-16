@@ -34,7 +34,7 @@
   font-size: var(--aw-text-tagline);
   font-weight: 600;
   color: var(--aw-ink);
-  letter-spacing: 0.231px;
+  letter-spacing: var(--aw-tracking);
 }
 
 .task-index-panel .refresh-btn {
@@ -236,7 +236,7 @@
   font-size: var(--aw-text-fine);
   font-weight: 500;
   color: var(--aw-ink-muted-48);
-  letter-spacing: 0;
+  letter-spacing: var(--aw-tracking);
   padding: 4px 4px;
   display: flex;
   align-items: center;
@@ -487,7 +487,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  letter-spacing: -0.224px;
+  letter-spacing: var(--aw-tracking);
 }
 
 .task-index-panel .session-item-meta {
@@ -523,7 +523,7 @@
   font-family: var(--aw-font-mono);
   font-size: var(--aw-text-micro);
   color: var(--aw-ink-muted-48);
-  letter-spacing: -0.1px;
+  letter-spacing: var(--aw-tracking);
 }
 
 .task-index-panel .session-item-actions {
@@ -573,7 +573,7 @@
   min-width: 0;
   font-size: var(--aw-text-caption);
   color: var(--aw-ink);
-  letter-spacing: -0.224px;
+  letter-spacing: var(--aw-tracking);
   background: var(--aw-surface-pearl);
   border: 1px solid var(--aw-primary);
   border-radius: var(--aw-radius-xs);
@@ -859,7 +859,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  letter-spacing: -0.1px;
+  letter-spacing: var(--aw-tracking);
 }
 
 .task-index-panel .focus-status-label {
@@ -867,7 +867,7 @@
   font-size: var(--aw-text-micro);
   color: var(--aw-ink-muted-48);
   white-space: nowrap;
-  letter-spacing: -0.1px;
+  letter-spacing: var(--aw-tracking);
 }
 
 .task-index-panel .focus-status-label.status-waiting { color: var(--aw-status-waiting); }

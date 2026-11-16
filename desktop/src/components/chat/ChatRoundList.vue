@@ -283,7 +283,7 @@ function handleFork(messageId: string) {
 .final-reply-time {
   font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-48);
-  letter-spacing: -0.12px;
+  letter-spacing: var(--aw-tracking);
   margin-bottom: 4px;
 }
 

@@ -51,7 +51,7 @@ const savedLabel = computed(() => {
   flex-shrink: 0;
   font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-48);
-  letter-spacing: -0.12px;
+  letter-spacing: var(--aw-tracking);
   white-space: nowrap;
 }
 </style>

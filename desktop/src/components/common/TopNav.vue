@@ -502,7 +502,7 @@ async function handleCommand(command: string) {
   font-size: var(--aw-text-fine);
   font-weight: 400;
   color: var(--aw-nav-text);
-  letter-spacing: -0.12px;
+  letter-spacing: var(--aw-tracking);
 }
 
 .nav-left-actions {
@@ -523,7 +523,7 @@ async function handleCommand(command: string) {
   font-size: var(--aw-text-fine);
   font-weight: 400;
   color: var(--aw-nav-text-muted);
-  letter-spacing: -0.12px;
+  letter-spacing: var(--aw-tracking);
   padding: 4px 10px;
   border-radius: var(--aw-radius-xs);
   text-decoration: none;
@@ -678,7 +678,7 @@ async function handleCommand(command: string) {
   font-size: 18px;
   line-height: 1.35;
   font-weight: 600;
-  letter-spacing: 0;
+  letter-spacing: var(--aw-tracking);
 }
 
 :global(.app-update-message-box .el-message-box__headerbtn) {
@@ -702,7 +702,7 @@ async function handleCommand(command: string) {
   margin: 0;
   font-size: 14px;
   line-height: 1.65;
-  letter-spacing: 0;
+  letter-spacing: var(--aw-tracking);
 }
 
 :global(.app-update-message-box .el-message-box__btns) {

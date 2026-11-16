@@ -882,7 +882,7 @@ function toggleExpand() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  letter-spacing: -0.12px;
+  letter-spacing: var(--aw-tracking);
 }
 
 .tool-icon {
@@ -1024,7 +1024,7 @@ function toggleExpand() {
   color: var(--aw-ink-muted-48);
   margin-bottom: 4px;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: var(--aw-tracking);
 }
 
 /* 三个文件工具富视图的路径行：链接态走 --aw-primary，单行省略（超长路径 title 兜底全文），

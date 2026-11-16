@@ -887,7 +887,7 @@ async function copyMessage() {
 .message-time {
   font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-48);
-  letter-spacing: -0.12px;
+  letter-spacing: var(--aw-tracking);
 }
 
 .bg-subagent-card {
@@ -931,7 +931,7 @@ async function copyMessage() {
   color: var(--aw-body);
   font-size: var(--aw-text-caption);
   line-height: 2;
-  letter-spacing: var(--aw-tracking-body);
+  letter-spacing: var(--aw-tracking);
   word-break: break-word;
 }
 
@@ -962,7 +962,7 @@ async function copyMessage() {
 .message-text {
   border-radius: var(--aw-radius-lg);
   line-height: 2;
-  letter-spacing: var(--aw-tracking-body);
+  letter-spacing: var(--aw-tracking);
   word-break: break-word;
   font-size: var(--aw-text-caption);
 }
@@ -1041,7 +1041,7 @@ async function copyMessage() {
   color: var(--aw-body);
   font-size: var(--aw-text-caption);
   line-height: 2;
-  letter-spacing: var(--aw-tracking-body);
+  letter-spacing: var(--aw-tracking);
   word-break: break-word;
 }
 
@@ -1054,7 +1054,7 @@ async function copyMessage() {
   margin: 0;
   font-size: var(--aw-text-caption);
   line-height: 2;
-  letter-spacing: var(--aw-tracking-body);
+  letter-spacing: var(--aw-tracking);
 }
 
 .markdown-body :deep(pre) {
@@ -1082,7 +1082,7 @@ async function copyMessage() {
   color: var(--aw-ink-muted-48);
   font-family: var(--aw-font-mono);
   text-transform: uppercase;
-  letter-spacing: 0;
+  letter-spacing: var(--aw-tracking);
 }
 
 .markdown-body :deep(.code-copy-btn) {
@@ -1202,7 +1202,7 @@ async function copyMessage() {
 .markdown-body :deep(li) {
   font-size: var(--aw-text-caption);
   line-height: 2;
-  letter-spacing: var(--aw-tracking-body);
+  letter-spacing: var(--aw-tracking);
 }
 
 .markdown-body :deep(blockquote) {
@@ -1247,7 +1247,7 @@ async function copyMessage() {
   font-weight: 600;
   color: var(--aw-ink);
   margin: 4px 0 2px;
-  letter-spacing: 0;
+  letter-spacing: var(--aw-tracking);
 }
 
 .markdown-body :deep(h1) { font-size: var(--aw-text-lead); }
@@ -1449,7 +1449,7 @@ async function copyMessage() {
   cursor: pointer;
   border-radius: var(--aw-radius-xs);
   transition: color 0.15s, background 0.15s;
-  letter-spacing: -0.12px;
+  letter-spacing: var(--aw-tracking);
 }
 
 .copy-btn:hover {
@@ -1479,7 +1479,7 @@ async function copyMessage() {
   cursor: pointer;
   border-radius: var(--aw-radius-xs);
   transition: color 0.15s, background 0.15s;
-  letter-spacing: -0.12px;
+  letter-spacing: var(--aw-tracking);
 }
 
 .dislike-btn:hover:not(:disabled) {

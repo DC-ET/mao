@@ -115,12 +115,15 @@
   --aw-text-micro: 10px;
 
   /* Typography — Tracking
-   * 正文字距统一 0。中文是全宽方块字、自带设计字隙，负字距会显挤；且消息正文
-   * line-height 已是 2 倍，横向再收紧便成「行距松、字距挤」。原 -0.374px 等于
-   * -0.022em×17px，是为 --aw-text-body 算的拉丁文光学字距，套到 14px 的
-   * --aw-text-caption 上变成 -2.7%，偏紧，故整档收口为 0。
-   * 三档字号缩放（html[data-font-scale]）不覆写本令牌：0 无需随字号变化。 */
-  --aw-tracking-body: 0px;
+   * 全站文字统一字距 0.025em（微正）。中文是全宽方块字、自带设计字隙，负字距会显挤；
+   * 且消息正文 line-height 已是 2 倍，横向再收紧便成「行距松、字距挤」。原各处
+   * 硬编码 -0.374px 等于 -0.022em×17px，是为 --aw-text-body 算的拉丁文光学
+   * 字距，套到 14px 的 --aw-text-caption 上变成 -2.7%，偏紧，故全站收口为一个值。
+   * 用 em 而非 px：随各元素字号自动缩放（12px 标签得 0.3px、56px hero 得 1.4px），
+   * 三档字号缩放（html[data-font-scale]）无需覆写本令牌。
+   * 注：等宽字体下各字形推进宽度相同，加统一字距不会破坏字符网格对齐，只是每行
+   * 宽约 2.5%；终端 xterm 的 letterSpacing 只收 px，见 useTerminal.ts 的换算注释。 */
+  --aw-tracking: 0.025em;
 
   /* Spacing */
   --aw-space-xxs: 4px;
@@ -544,7 +547,7 @@ body {
   font-family: var(--aw-font-text);
   font-size: var(--aw-text-body);
   line-height: 1.47;
-  letter-spacing: var(--aw-tracking-body);
+  letter-spacing: var(--aw-tracking);
   color: var(--aw-body);
   background: var(--aw-canvas);
   -webkit-font-smoothing: antialiased;
@@ -558,7 +561,7 @@ body {
 h1, h2, h3, h4, h5, h6 {
   font-family: var(--aw-font-display);
   font-weight: 600;
-  letter-spacing: 0;
+  letter-spacing: var(--aw-tracking);
   color: var(--aw-ink);
 }
 

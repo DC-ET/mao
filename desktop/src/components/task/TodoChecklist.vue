@@ -181,7 +181,7 @@ defineExpose({ revealFocus })
   gap: 8px;
   font-size: var(--aw-text-caption);
   color: var(--aw-ink-muted-80);
-  letter-spacing: -0.224px;
+  letter-spacing: var(--aw-tracking);
   padding: 4px 6px;
   border-radius: 4px;
   transition: background 0.15s ease;

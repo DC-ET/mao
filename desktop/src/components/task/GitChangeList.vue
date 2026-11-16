@@ -352,7 +352,7 @@ function toggleDir(path: string) {
   font-size: var(--aw-text-caption);
   font-weight: 600;
   color: var(--aw-ink);
-  letter-spacing: 0.5px;
+  letter-spacing: var(--aw-tracking);
   text-transform: uppercase;
   display: flex;
   align-items: center;
@@ -364,7 +364,7 @@ function toggleDir(path: string) {
   font-weight: 500;
   color: var(--aw-ink-muted-48);
   text-transform: none;
-  letter-spacing: 0;
+  letter-spacing: var(--aw-tracking);
 }
 
 .git-toolbar-actions {

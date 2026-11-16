@@ -150,7 +150,7 @@ onUnmounted(() => {
   font-size: var(--aw-text-micro);
   font-weight: 600;
   color: var(--aw-ink-muted-48);
-  letter-spacing: 0.5px;
+  letter-spacing: var(--aw-tracking);
 }
 
 .round-directory-row {

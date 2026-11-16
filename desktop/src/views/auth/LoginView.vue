@@ -606,7 +606,7 @@ onBeforeUnmount(() => {
   border-radius: var(--aw-radius-pill) !important;
   font-size: var(--aw-text-caption);
   font-weight: 500;
-  letter-spacing: 0.01em;
+  letter-spacing: var(--aw-tracking);
 }
 
 .login-btn:active,

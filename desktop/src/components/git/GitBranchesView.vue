@@ -150,7 +150,7 @@ function confirmCreate() {
   padding: 8px 12px 4px;
   font-size: var(--aw-text-fine);
   font-weight: 600;
-  letter-spacing: 0.5px;
+  letter-spacing: var(--aw-tracking);
   text-transform: uppercase;
   color: var(--aw-ink-muted-48);
   background: var(--aw-surface);

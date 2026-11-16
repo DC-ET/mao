@@ -1122,7 +1122,7 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   font-size: var(--aw-text-caption);
   font-weight: 600;
   color: var(--aw-ink);
-  letter-spacing: 0.5px;
+  letter-spacing: var(--aw-tracking);
   text-transform: uppercase;
 }
 
@@ -1218,7 +1218,7 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   font-size: var(--aw-text-body);
   font-weight: 600;
   color: var(--aw-ink);
-  letter-spacing: 0.231px;
+  letter-spacing: var(--aw-tracking);
   word-break: break-word;
   cursor: pointer;
 }
@@ -1234,7 +1234,7 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   font-size: var(--aw-text-body);
   font-weight: 600;
   color: var(--aw-ink);
-  letter-spacing: 0.231px;
+  letter-spacing: var(--aw-tracking);
   background: var(--aw-surface-pearl);
   border: 1px solid var(--aw-primary);
   border-radius: var(--aw-radius-xs);
@@ -1590,7 +1590,7 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   padding: 3px 10px;
   border: none;
   border-radius: var(--aw-radius-md);
-  letter-spacing: -0.224px;
+  letter-spacing: var(--aw-tracking);
 }
 
 /* 徽标是「运行轨迹」的入口（button）：主会话 / 边路 / 子代理视图均可点 */
@@ -1650,7 +1650,7 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   align-items: center;
   font-size: var(--aw-text-caption);
   font-family: var(--aw-font-mono);
-  letter-spacing: -0.224px;
+  letter-spacing: var(--aw-tracking);
   padding: 3px 10px;
   border-radius: var(--aw-radius-md);
   color: var(--aw-ink-muted-48);

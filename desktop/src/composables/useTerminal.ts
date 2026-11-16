@@ -168,7 +168,9 @@ export function useTerminal() {
       cursorBlink: true,
       fontSize: 12,
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-      letterSpacing: 0,
+      // 与全局令牌 --aw-tracking（style.css）的 0.025em 对齐；xterm 的 letterSpacing
+      // 只收 px，故按上面的 fontSize 换算，改字号需同步改这里。
+      letterSpacing: 0.3,
       lineHeight: 1.2,
       scrollback: 5000,
       theme: currentTheme(),

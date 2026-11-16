@@ -616,7 +616,7 @@ onMounted(() => {
   color: var(--aw-ink);
   font-size: 20px;
   font-weight: 600;
-  letter-spacing: 0;
+  letter-spacing: var(--aw-tracking);
 }
 
 .page-desc {

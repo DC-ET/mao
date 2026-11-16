@@ -145,7 +145,7 @@ watch(() => props.thinking, async () => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  letter-spacing: -0.12px;
+  letter-spacing: var(--aw-tracking);
 }
 
 .thinking-preview {
@@ -164,7 +164,7 @@ watch(() => props.thinking, async () => {
   line-height: 1.6;
   color: var(--aw-ink-muted-48);
   opacity: 0.65;
-  letter-spacing: -0.12px;
+  letter-spacing: var(--aw-tracking);
   vertical-align: middle;
 }
 
