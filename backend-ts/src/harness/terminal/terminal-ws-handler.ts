@@ -1,5 +1,6 @@
 import { harnessLog } from '../log.js';
 import type { RemoteTerminalInfo } from './remote-terminal.js';
+import { sanitizeReplayData } from './replay-sanitizer.js';
 import {
   MAX_TERMINAL_COLS,
   MAX_TERMINAL_ROWS,
@@ -274,7 +275,9 @@ export class TerminalWsHandler {
 
     const info = terminal.toInfo();
     this.send(conn.socket, { type: 'attached', terminalId, cols: info.cols, rows: info.rows });
-    const buffered = terminal.readBuffered();
+    // 回放的是历史字节：先剔除会引发 xterm 自动应答的序列（旧查询被重新应答后，
+    // 应答经 input 帧回到 PTY 被 bash 当命令执行，每次重开面板都刷一屏 command not found）
+    const buffered = sanitizeReplayData(terminal.readBuffered());
     if (buffered !== '') {
       this.send(conn.socket, { type: 'output', terminalId, data: buffered });
     }

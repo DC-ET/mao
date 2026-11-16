@@ -284,6 +284,21 @@ describe('TerminalWsHandler attach', () => {
     expect(socket.frames('output')).toHaveLength(0);
   });
 
+  it('strips response-soliciting sequences from the replayed buffer', async () => {
+    const harness = newHarness();
+    const terminal = harness.registry.add(new FakeTerminal('t1', 3, 7));
+    // vim 探测主题色的查询 + 焦点上报：回放时若原样写回，xterm 会替它们应答，
+    // 应答经 input 帧回到 PTY 被 bash 当命令执行（每次重开面板刷一屏 command not found）
+    terminal.buffered = 'prompt$ \x1b]11;?\x07\x1b[6n\x1b[?1004h';
+    const socket = await authed(harness);
+    await harness.handler.handleTextMessage(socket, JSON.stringify({ type: 'attach', terminalId: 't1' }));
+
+    expect(socket.sent[2]).toEqual({ type: 'output', terminalId: 't1', data: 'prompt$ ' });
+    // 实时流不过滤：活着的程序确实在等应答
+    terminal.emit('\x1b]11;?\x07');
+    expect(socket.last()).toEqual({ type: 'output', terminalId: 't1', data: '\x1b]11;?\x07' });
+  });
+
   it('rejects attach without terminalId', async () => {
     const harness = newHarness();
     const socket = await authed(harness);
