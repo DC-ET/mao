@@ -47,7 +47,9 @@
 - 除 `overview` 中的实时运行态外，所有数字均为**窗口内新增**，不是全表累计
 - 环比窗口是紧邻的上一个等长窗口（如 days=7 时为前 7 天；昨日的环比为前日）
 - 环比窗口（已结束区间）的聚合结果在**后端进程内缓存 5 分钟**（0.0.338 起）：过去窗口不再增长，同一份结果供各 Tab 复用，因此`previousTotals` 最多滞后 5 分钟；本期窗口每次实时计算
-- Token 分两类：`chatTokens` 来自 `message.token_count`（对话消耗），`backgroundTokens` 来自 `llm_usage`（后台调用，如会话标题、Git 提交信息生成），`totalTokens` 为两者之和；管理后台 UI 紧凑展示用 K/M/B（千/百万/十亿）
+- Token 分两类：`chatTokens` 来自 `message.token_count`（对话消耗），`backgroundTokens` 来自 `llm_usage`（后台调用，如会话标题、Git 提交信息生成）；管理后台 UI 紧凑展示用 K/M/B（千/百万/十亿）
+- Token 展示口径（0.0.459 起统一为 llm_call）：总览「Token 消耗」卡片（`periodTotals.totalTokens`）、其 spark 折线（`spark[].totalTokens`）、环比窗口（`previousTotals.totalTokens`）与模型明细（`modelStats[].totalTokens`）均取 `SUM(llm_call.total_tokens)`，与调用次数 / 成本 / 用户与 Agent 排行同源——同窗口同 `excludeConnectivity` 下三处数字严格相等。`trends[].totalTokens` 与旧 `summary` 接口的 `periodTotals.totalTokens` 仍是 `chatTokens + backgroundTokens`（趋势堆叠图两段之和），未随之改变
+- 无用户上下文的系统 / 后台调用（Git 提交信息、定时任务等）在用户维度归入 `userId=0`「未关联用户」（`COALESCE(user_id,0)`，与模型侧「未关联模型」对称），因此「用户 Token 占比」环图与用户 Tab `tokenTop` 的合计等于窗口 llm_call 总量；用户 Tab 明细（`userActivity`）遍历用户列表，不产生假用户行
 - 管理后台总览的计数类 KPI（新增会话 / 消息数 / 活跃用户 / 会话总数）≥1 万时紧凑展示为「万 / 亿」并固定保留两位小数（如 1.70 万）；图表坐标轴与条形排行标签仍为一位小数
 - 管理后台总览的 Token KPI（0.0.301 起）同样固定保留两位小数：`totalTokens` ≥1B 显示 1.40B、`chatTokens` / `backgroundTokens` / 命中与入 Token 同口径；趋势图纵轴、模型 / 用户 / Agent 各 Tab 的条形排行与 tooltip 仍为一位小数
 - Token 紧凑展示（0.0.302 起）全站统一保留两位小数：管理后台 K/M/B 与桌面端 K/M/B/T 折算后固定两位（1.4B → 1.40B、667.6M → 667.58M），趋势纵轴、排行标签、tooltip、桌面「我的用量」抽屉与运行轨迹面板同口径；小于 1000 仍按千分位原样展示
@@ -86,9 +88,9 @@
 | 字段 | 说明 |
 |------|------|
 | `overview` | 全局累计概览 + `runningSessions` / `waitingSessions` / `failedSessions` / `cancelledSessions`（**实时快照**） |
-| `periodTotals` | 窗口内合计：`sessions` / `messages` / `chatTokens` / `backgroundTokens` / `totalTokens` / `backgroundCalls` / `activeUsers` / `completedSessions` / `failedSessions` / `totalCost` / `promptTokens` / `cachedTokens` / `cacheHitRate`（后三项 llm_call 口径，缓存命中率分母为 0 时为 null） |
-| `previousTotals` | 上一等长窗口同口径（含 `cacheHitRate`） |
-| `spark[]` | Token 日走势：`date` / `totalTokens` |
+| `periodTotals` | 窗口内合计：`sessions` / `messages` / `chatTokens` / `backgroundTokens` / `totalTokens` / `backgroundCalls` / `activeUsers` / `completedSessions` / `failedSessions` / `totalCost` / `promptTokens` / `cachedTokens` / `cacheHitRate`。其中 `totalTokens` 为 llm_call 口径（0.0.459 起，与调用 / 成本 / 模型与用户占比环一致），`chatTokens` / `backgroundTokens` 仍为 message / llm_usage 口径；`promptTokens` / `cachedTokens` / `cacheHitRate` 为 llm_call 口径（分母为 0 时 null） |
+| `previousTotals` | 上一等长窗口同口径（含 `cacheHitRate`；`totalTokens` 与本期卡片同为 llm_call 口径，环比不跨口径相除） |
+| `spark[]` | Token 日走势：`date` / `totalTokens`（llm_call 口径，与卡片同源，折线之和等于卡片数字） |
 | `phaseDistribution[]` | 窗口内创建会话的阶段分布（固定 8 阶段：IDLE / RUNNING / RESUMING / WAITING_APPROVAL / CANCELLING / COMPLETED / FAILED / CANCELLED，无数据为 0；未知 phase 追加在末尾，保证合计等于 `periodTotals.sessions`） |
 | `insights[]` | 规则洞察：`level`（info/warn）/ `text` / 可选 `path` |
 
@@ -97,18 +99,18 @@
 | 字段 | 说明 |
 |------|------|
 | `granularity` | `day` 或 `hour`。`date` 在 day 下为 `YYYY-MM-DD`，在 hour 下为 `YYYY-MM-DD HH:00` |
-| `trends[]` | 按粒度补零：`date` / `sessions` / `messages` / `chatTokens` / `backgroundTokens` / `totalTokens` / `backgroundCalls`，以及 llm_call 列 `callCount` / `callFailCount` / `callCancelledCount` / `callTokens` / `promptTokens` / `cachedTokens` / `cost` / `callSuccessRate` / `cacheHitRate` / `avgDurationMs` / `avgFirstTokenMs` / `costPerMTokens`（后三项为平均总耗时 ms / 平均首字耗时 ms / 每百万 Token 平均成本，口径见下） |
-| `periodTotals` / `previousTotals` | 同 overview 口径 |
+| `trends[]` | 按粒度补零：`date` / `sessions` / `messages` / `chatTokens` / `backgroundTokens` / `totalTokens`（= `chatTokens` + `backgroundTokens`，message + llm_usage 口径，与堆叠柱两段一致）/ `backgroundCalls`，以及 llm_call 列 `callCount` / `callFailCount` / `callCancelledCount` / `callTokens` / `promptTokens` / `cachedTokens` / `cost` / `callSuccessRate` / `cacheHitRate` / `avgDurationMs` / `avgFirstTokenMs` / `costPerMTokens`（后三项为平均总耗时 ms / 平均首字耗时 ms / 每百万 Token 平均成本，口径见下） |
+| `periodTotals` / `previousTotals` | 字段同 overview，但 `periodTotals.totalTokens` 是 `trends[].totalTokens` 之和（chat + background 口径）；`previousTotals.totalTokens` 与总览卡片同为 llm_call 口径（0.0.459 起） |
 
 ### models
 
 | 字段 | 说明 |
 |------|------|
-| `modelStats[]` | `modelId` / `modelName` / `provider` / `status` / `isDefault` / `sessionCount` / `messageCount` / `chatTokens` / `backgroundTokens` / `totalTokens`（含 llm_call 调用 Token）/ `backgroundCalls` / `contextWindowTokens`，以及质量列：`callCount` / `callFailCount` / `callCancelledCount` / `callSuccessRate` / `callTokens` / `promptTokens` / `cachedTokens` / `cacheHitRate` / `avgFirstTokenMs` / `avgDurationMs` / `avgThroughput`（0.0.364 起，输出速度加权平均，口径见下）/ `retryCallCount`，以及成本列 `cost`（成本单位）。按 Token 合计降序；窗口内完全未被调用的模型不返回 |
-| `periodTotals` | `{ totalTokens, totalCost }`（模型明细合计） |
+| `modelStats[]` | `modelId` / `modelName` / `provider` / `status` / `isDefault` / `sessionCount` / `messageCount` / `chatTokens` / `backgroundTokens` / `totalTokens`（llm_call 口径，0.0.459 起，与 `callTokens` / 成本同源）/ `backgroundCalls` / `contextWindowTokens`，以及质量列：`callCount` / `callFailCount` / `callCancelledCount` / `callSuccessRate` / `callTokens` / `promptTokens` / `cachedTokens` / `cacheHitRate` / `avgFirstTokenMs` / `avgDurationMs` / `avgThroughput`（0.0.364 起，输出速度加权平均，口径见下）/ `retryCallCount`，以及成本列 `cost`（成本单位）。按 Token 合计降序；窗口内完全未被调用的模型不返回 |
+| `periodTotals` | `{ totalTokens, totalCost }`（模型明细合计；`totalTokens` 为 llm_call 口径，等于同页「用户 Token 占比」中心数与总览卡片） |
 | `sceneStats[]` | `{ key, callCount, failCount, cancelledCount, callTokens }`，默认全部模型；可传 `modelId` 按模型过滤（`0` = 未关联模型，按 `model_id IS NULL` 命中） |
 | `protocolStats[]` | 同上，按 `llm_call.protocol` 分组；空串归一到 `openai-compatible`（与 `llm_model.api_protocol` 同语义，见迁移 V091），NULL 归 `unknown` |
-| `userTokenTop[]` | 「用户 Token 占比」环图数据，与 users 的 `tokenTop` 同源（`llm_call` 口径，0.0.440 起） |
+| `userTokenTop[]` | 「用户 Token 占比」环图数据，与 users 的 `tokenTop` 同源（`llm_call` 口径，0.0.440 起）；无用户上下文的调用归入 `userId=0`「未关联用户」（0.0.459 起），合计等于窗口 llm_call 总量 |
 | `excludeConnectivity` | 是否排除了 `connectivity_test`（默认 true） |
 
 可选查询参数：`excludeConnectivity=true|false`、`modelId`。
@@ -148,7 +150,7 @@
 
 ### summary（旧）
 
-一页返回 overview + periodTotals + trends + phaseDistribution + agentStats + userActivity + modelStats。管理后台已改走分维度接口；字段与上表对应项一致（不含 Phase 2 质量列）。
+一页返回 overview + periodTotals + trends + phaseDistribution + agentStats + userActivity + modelStats。管理后台已改走分维度接口；字段与上表对应项一致（不含 Phase 2 质量列）。例外：`periodTotals.totalTokens` 仍是 `chatTokens + backgroundTokens`（message + llm_usage 口径，与 `trends[].totalTokens` 一致），未随 0.0.459 的 llm_call 统一改造；要 llm_call 口径请用 `analytics overview` / `analytics models`。
 
 ## 成功失败判断
 

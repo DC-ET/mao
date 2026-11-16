@@ -81,9 +81,9 @@ function buildStore() {
         failCount: 1,
         retryCallCount: 2,
         promptTokens: 800,
-        completionTokens: 200,
+        completionTokens: 700,
         cachedTokens: 100,
-        callTokens: 1000,
+        callTokens: 1500,
         firstTokenMsSum: 4000,
         firstTokenMsCount: 8,
         durationMsSum: 40000,
@@ -98,7 +98,7 @@ function buildStore() {
     selectLlmCallProtocolStats: vi.fn(async () => [
       { key: 'openai-compatible', callCount: 10, failCount: 1, callTokens: 1500 },
     ]),
-    selectLlmCallStatsByUser: vi.fn(async () => [{ id: 1, callCount: 9, failCount: 1, callTokens: 1200 }]),
+    selectLlmCallStatsByUser: vi.fn(async () => [{ id: 1, callCount: 9, failCount: 1, callTokens: 1500 }]),
     selectLlmCallStatsByAgent: vi.fn(async () => [{ id: 9, callCount: 8, failCount: 1, callTokens: 1000 }]),
     selectLlmCallQualitySummary: vi.fn(async () => ({
       callCount: 10,
@@ -146,7 +146,9 @@ describe('AdminAnalyticsService', () => {
       completedSessions: 5,
       failedSessions: 2,
     });
-    expect(result.previousTotals).toMatchObject({ sessions: 3, messages: 6, totalTokens: 700 });
+    // 旧 summary 的 periodTotals.totalTokens 仍是 chat+background（message+llm_usage）；
+    // 环比与模型明细已切 llm_call 口径
+    expect(result.previousTotals).toMatchObject({ sessions: 3, messages: 6, totalTokens: 1500 });
     expect(result.phaseDistribution).toEqual(expect.arrayContaining([
       expect.objectContaining({ phase: 'COMPLETED', count: 5 }),
     ]));
@@ -155,8 +157,8 @@ describe('AdminAnalyticsService', () => {
       modelName: 'gpt',
       chatTokens: 400,
       backgroundTokens: 90,
-      callTokens: 1000,
-      totalTokens: 490,
+      callTokens: 1500,
+      totalTokens: 1500,
       callCount: 8,
       callFailCount: 1,
       callSuccessRate: 87.5,
@@ -180,7 +182,7 @@ describe('AdminAnalyticsService', () => {
     const result = (await service.summary(7)) as Record<string, any>;
 
     expect(result.userActivity).toHaveLength(1);
-    expect(result.userActivity[0]).toMatchObject({ username: 'ada', sessionCount: 3, messageCount: 7, totalTokens: 1200 });
+    expect(result.userActivity[0]).toMatchObject({ username: 'ada', sessionCount: 3, messageCount: 7, totalTokens: 1500 });
   });
 
   it('userActivitySortsByTokensDesc', async () => {
@@ -243,7 +245,7 @@ describe('AdminAnalyticsService', () => {
     expect(result.periodTotals).toMatchObject({
       sessions: 4,
       messages: 8,
-      totalTokens: 1000,
+      totalTokens: 1500,
       activeUsers: 2,
       completedSessions: 5,
       failedSessions: 2,
@@ -252,7 +254,7 @@ describe('AdminAnalyticsService', () => {
     expect(result.periodTotals).toMatchObject({ promptTokens: 1000, cachedTokens: 200, cacheHitRate: 20 });
     expect(result.previousTotals).toMatchObject({ cacheHitRate: 20 });
     expect(result.spark).toHaveLength(7);
-    expect(result.spark.at(-1)).toEqual({ date: today, totalTokens: 1000 });
+    expect(result.spark.at(-1)).toEqual({ date: today, totalTokens: 1500 });
     expect(result.insights.length).toBeGreaterThan(0);
     expect(result.insights.some((item: any) => item.level === 'warn' && String(item.text).includes('失败率'))).toBe(true);
     // overview 不应拉取模型/用户/Agent 排行
@@ -268,6 +270,11 @@ describe('AdminAnalyticsService', () => {
     store.selectDailySessionCounts = vi.fn(async () => []);
     store.selectDailyMessageStats = vi.fn(async () => []);
     store.selectDailyUsageStats = vi.fn(async () => []);
+    store.selectDailyLlmCallStats = vi.fn(async () => []);
+    store.selectLlmCallQualitySummary = vi.fn(async () => ({
+      callCount: 0, successCount: 0, failCount: 0, cancelledCount: 0, retryCallCount: 0,
+      promptTokens: 0, cachedTokens: 0, callTokens: 0,
+    }));
     store.countActiveUsers = vi.fn(async () => 0);
     const service = new AdminAnalyticsService(statistics as never, store as never);
 
@@ -330,8 +337,10 @@ describe('AdminAnalyticsService', () => {
     const result = (await service.trendsScope(7)) as Record<string, any>;
 
     expect(result.trends).toHaveLength(7);
+    // 趋势 Tab 的 periodTotals.totalTokens 仍是 chat+background（趋势堆叠图两段之和）；
+    // 环比已切 llm_call 口径，与总览卡片一致
     expect(result.periodTotals).toMatchObject({ sessions: 4, messages: 8, totalTokens: 1000 });
-    expect(result.previousTotals).toMatchObject({ sessions: 3, totalTokens: 700 });
+    expect(result.previousTotals).toMatchObject({ sessions: 3, totalTokens: 1500 });
     expect(store.listUsers).not.toHaveBeenCalled();
   });
 
@@ -344,7 +353,7 @@ describe('AdminAnalyticsService', () => {
     expect(result.modelStats).toHaveLength(1);
     expect(result.modelStats[0]).toMatchObject({
       modelId: 3,
-      totalTokens: 490,
+      totalTokens: 1500,
       callCount: 8,
       cacheHitRate: 12.5,
       avgFirstTokenMs: 500,
@@ -353,13 +362,98 @@ describe('AdminAnalyticsService', () => {
       avgThroughput: 60,
     });
     // store 桩未返回 cost 行 → 成本合计 0
-    expect(result.periodTotals).toEqual({ totalTokens: 490, totalCost: 0 });
+    expect(result.periodTotals).toEqual({ totalTokens: 1500, totalCost: 0 });
     expect(result.sceneStats[0]).toMatchObject({ key: 'agent', callTokens: 800 });
     expect(result.protocolStats[0]).toMatchObject({ key: 'openai-compatible', callCount: 10 });
-    // 模型页「用户 Token 占比」与用户 Tab tokenTop 同源，走 llm_call 口径（1200，不取 message 的 700）
+    // 模型页「用户 Token 占比」与用户 Tab tokenTop 同源，走 llm_call 口径（1500，不取 message 的 700）
     expect(result.userTokenTop).toEqual([
-      expect.objectContaining({ userId: 1, displayName: 'Ada', totalTokens: 1200 }),
+      expect.objectContaining({ userId: 1, displayName: 'Ada', totalTokens: 1500 }),
     ]);
+  });
+
+  it('三处 Token 数字同源：总览卡片 = 模型占比环中心 = 用户占比环中心', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const service = new AdminAnalyticsService(statistics as never, buildStore() as never);
+
+    const overview = (await service.overview(7)) as Record<string, any>;
+    const models = (await service.modelsScope(7)) as Record<string, any>;
+    const userTotal = (models.userTokenTop as Array<{ totalTokens: number }>)
+      .reduce((sum, row) => sum + row.totalTokens, 0);
+
+    // 同窗口同「含自检调用」过滤下，三处都等于 SUM(llm_call.total_tokens)，不再各按各的口径
+    expect(overview.periodTotals.totalTokens).toBe(1500);
+    expect(models.periodTotals.totalTokens).toBe(1500);
+    expect(userTotal).toBe(1500);
+    // spark 与卡片同源，折线之和等于卡片数字
+    expect(overview.spark.reduce((sum: number, row: any) => sum + row.totalTokens, 0)).toBe(1500);
+  });
+
+  it('overview 把含自检调用口径透传给 llm_call 聚合（总览页复选框生效）', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const store = buildStore();
+    const service = new AdminAnalyticsService(statistics as never, store as never);
+
+    // 不传 → 默认排除连通性自检，与趋势 / 模型 / 用户 Tab 一致
+    await service.overview(7);
+    expect(vi.mocked(store.selectLlmCallQualitySummary).mock.calls.at(-1)?.[1]).toEqual({ excludeConnectivity: true });
+    expect(vi.mocked(store.selectDailyLlmCallStats).mock.calls.at(-1)?.[1]).toEqual({ excludeConnectivity: true });
+
+    // 显式含自检 → 透传 false，成本 / 缓存命中率随开关变
+    await service.overview(7, 0, { excludeConnectivity: false });
+    expect(vi.mocked(store.selectLlmCallQualitySummary).mock.calls.at(-1)?.[1]).toEqual({ excludeConnectivity: false });
+    expect(vi.mocked(store.selectDailyLlmCallStats).mock.calls.at(-1)?.[1]).toEqual({ excludeConnectivity: false });
+  });
+
+  it('userTokenTop 把无用户上下文的调用归入 id=0 未关联用户', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const store = buildStore();
+    // git 提交信息 / 定时任务等无用户上下文的调用：SQL 侧 COALESCE(user_id, 0)
+    store.selectLlmCallStatsByUser = vi.fn(async () => [
+      { id: 1, callCount: 9, failCount: 1, callTokens: 1200 },
+      { id: 0, callCount: 2, failCount: 0, callTokens: 300 },
+    ]);
+    const service = new AdminAnalyticsService(statistics as never, store as never);
+
+    const models = (await service.modelsScope(7)) as Record<string, any>;
+    expect(models.userTokenTop).toEqual([
+      expect.objectContaining({ userId: 1, displayName: 'Ada', totalTokens: 1200 }),
+      expect.objectContaining({ userId: 0, username: '未关联用户', totalTokens: 300 }),
+    ]);
+    // 环图中心含无主调用，与模型侧 / 总览的 llm_call 总量对齐
+    const userTotal = (models.userTokenTop as Array<{ totalTokens: number }>)
+      .reduce((sum, row) => sum + row.totalTokens, 0);
+    expect(userTotal).toBe(1500);
+    // 用户 Tab 明细遍历 users 列表，id=0 不会变成一行假用户
+    const users = (await service.usersScope(7)) as Record<string, any>;
+    expect(users.userActivity.map((row: any) => row.userId)).toEqual([1]);
+  });
+
+  it('用户数超过 MAX_SCOPE_LIMIT 时环图中心仍取全量，截断只影响扇区', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const store = buildStore();
+    // 150 个用户各 10 Token = 1500，与模型侧 / quality 的 1500 对齐；userTokenTop 仍按 100 行截断
+    store.selectLlmCallStatsByUser = vi.fn(async () =>
+      Array.from({ length: 150 }, (_, index) => ({ id: index + 1, callCount: 1, failCount: 0, callTokens: 10 })),
+    );
+    const service = new AdminAnalyticsService(statistics as never, store as never);
+
+    const models = (await service.modelsScope(7)) as Record<string, any>;
+    expect(models.userTokenTop).toHaveLength(100);
+    // 截断样本之和只有 1000：前端环图中心因此不读这份数据，改读 periodTotals.totalTokens（模型侧全量）
+    const truncatedSum = (models.userTokenTop as Array<{ totalTokens: number }>)
+      .reduce((sum, row) => sum + row.totalTokens, 0);
+    expect(truncatedSum).toBe(1000);
+    expect(models.periodTotals.totalTokens).toBe(1500);
+  });
+
+  it('环比 Token 与本期卡片同为 llm_call 口径，不跨口径相除', async () => {
+    const statistics = { getOverview: vi.fn(async () => ({})) };
+    const service = new AdminAnalyticsService(statistics as never, buildStore() as never);
+
+    const result = (await service.overview(7)) as Record<string, any>;
+    // message+llm_usage 口径是 600+100=700，llm_call 口径是 1500：环比必须取后者
+    expect(result.periodTotals.totalTokens).toBe(1500);
+    expect(result.previousTotals.totalTokens).toBe(1500);
   });
 
   it('modelsScopeAvgThroughputNullWhenNoDecodableRows', async () => {
@@ -403,12 +497,12 @@ describe('AdminAnalyticsService', () => {
       username: 'ada',
       callCount: 9,
       callFailCount: 1,
-      callTokens: 1200,
+      callTokens: 1500,
       // 明细 Token 与调用/成本同源：message.token_count 为 700 时不采用
-      totalTokens: 1200,
+      totalTokens: 1500,
     });
     // 排行与明细同口径
-    expect(result.tokenTop).toEqual([expect.objectContaining({ userId: 1, totalTokens: 1200 })]);
+    expect(result.tokenTop).toEqual([expect.objectContaining({ userId: 1, totalTokens: 1500 })]);
   });
 
   it('agentsScopeMergesCallSuccessRate', async () => {
@@ -985,6 +1079,21 @@ describe('AdminAnalyticsService 成本聚合（§5.2 / 决策 13：成本唯一�
     ].join('\n');
     const costHits = (sqls.match(/COALESCE\(SUM\(cost_micros\), 0\) \/ 1000000 AS cost/g) ?? []).length;
     expect(costHits).toBe(5);
+  });
+
+  it('用户维度聚合用 COALESCE(user_id,0) 归并无主调用，与模型侧同构', async () => {
+    const db = { query: vi.fn(async () => []), queryOne: vi.fn(async () => ({ c: 0 })) };
+    const store = new AdminAnalyticsDbStore(db as never);
+    await store.selectLlmCallStatsByUser(range);
+    const sql = (db.query.mock.calls[0] as unknown[])[0] as string;
+    // 无用户上下文的调用（git 提交信息 / 定时任务等）必须落 id=0 分桶，
+    // 否则「用户 Token 占比」中心数比模型侧 / 总览少一块，三处数字对不上
+    expect(sql).toContain('COALESCE(user_id, 0) AS id');
+    expect(sql).toContain('GROUP BY COALESCE(user_id, 0)');
+    expect(sql).not.toContain('user_id IS NOT NULL');
+    // 连通性过滤仍按 llmCallWhere 注入
+    await store.selectLlmCallStatsByUser(range, { excludeConnectivity: true });
+    expect((db.query.mock.calls[1] as unknown[])[0] as string).toContain("scene != 'connectivity_test'");
   });
 });
 

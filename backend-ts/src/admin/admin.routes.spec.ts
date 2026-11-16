@@ -85,6 +85,21 @@ describe('admin analytics range param', () => {
 
     await fastify.close();
   });
+
+  it('含自检调用开关透传给 overview（总览卡片 / 成本 / 缓存命中率同口径）', async () => {
+    const { fastify, overview } = await overviewApp();
+
+    // 不传 → 默认排除连通性自检，与 trends / models / users 一致
+    await fastify.inject({ method: 'GET', url: '/v1/admin/analytics/overview?days=7' });
+    expect(vi.mocked(overview).mock.calls[0][2]).toEqual({ excludeConnectivity: true });
+
+    // 前端 conn=0（勾选「含自检调用」）→ excludeConnectivity=false
+    vi.mocked(overview).mockClear();
+    await fastify.inject({ method: 'GET', url: '/v1/admin/analytics/overview?days=7&excludeConnectivity=false' });
+    expect(vi.mocked(overview).mock.calls[0][2]).toEqual({ excludeConnectivity: false });
+
+    await fastify.close();
+  });
 });
 
 describe('admin memory manage routes', () => {

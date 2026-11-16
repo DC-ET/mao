@@ -7,6 +7,7 @@
             <div class="card-header">
               <span>模型 Token 占比</span>
               <div class="header-actions">
+                <span class="card-hint">llm_call 口径</span>
                 <el-checkbox
                   :model-value="includeConnectivity"
                   @update:model-value="handleConnectivityChange"
@@ -30,13 +31,13 @@
             <div class="card-header">
               <span>用户 Token 占比</span>
               <div class="header-actions">
-                <span class="card-hint">Top 10 + 其他</span>
+                <span class="card-hint">Top 10 + 其他 · llm_call 口径</span>
                 <el-button type="primary" link @click="go('/users')">用户管理</el-button>
               </div>
             </div>
           </template>
           <BaseChart
-            :option="donutOption(userTokenItems, 'Token 总量', formatTokens(userTokenTotal))"
+            :option="donutOption(userTokenItems, 'Token 总量', formatTokens(totalTokens))"
             :empty="userTokenItems.length === 0"
             :height="300"
           />
@@ -90,7 +91,7 @@
         <div class="card-header">
           <span>模型用量明细</span>
           <div class="header-actions">
-            <span class="card-hint">质量列来自 llm_call，延迟为均值</span>
+            <span class="card-hint">Token 为 llm_call 口径；质量列同源，延迟为均值</span>
             <el-button v-if="selectedModelId != null" link type="danger" @click="clearSelection">清除选中</el-button>
             <el-button :disabled="modelStats.length === 0" @click="exportRows">导出 CSV</el-button>
             <el-button type="primary" link @click="go('/llm-calls')">调用流水</el-button>
@@ -124,16 +125,8 @@
         <el-table-column label="成功率" width="90" align="right">
           <template #default="{ row }">{{ rateText(row.callSuccessRate) }}</template>
         </el-table-column>
-        <el-table-column label="对话 Token" width="110" align="right" class-name="hide-on-mobile">
-          <template #default="{ row }">{{ formatNumber(row.chatTokens || 0) }}</template>
-        </el-table-column>
         <el-table-column label="调用 Token" width="110" align="right" class-name="hide-on-mobile">
           <template #default="{ row }">{{ formatNumber(row.callTokens || 0) }}</template>
-        </el-table-column>
-        <el-table-column label="Token 合计" width="110" align="right">
-          <template #default="{ row }">
-            <strong>{{ formatNumber(row.totalTokens || 0) }}</strong>
-          </template>
         </el-table-column>
         <el-table-column label="成本" width="110" align="right" class-name="hide-on-mobile">
           <template #default="{ row }">{{ formatCost(row.cost) }}</template>
@@ -153,12 +146,12 @@
         <el-table-column label="占比" min-width="120">
           <template #default="{ row }">
             <el-progress
-              :percentage="tokenShare(row.totalTokens)"
+              :percentage="tokenShare(row.callTokens)"
               :stroke-width="8"
               :show-text="false"
               :color="CHART_PALETTE[0]"
             />
-            <span class="share-text">{{ tokenShare(row.totalTokens) }}%</span>
+            <span class="share-text">{{ tokenShare(row.callTokens) }}%</span>
           </template>
         </el-table-column>
       </el-table>
@@ -205,6 +198,9 @@ watch(
 )
 
 const modelStats = computed(() => props.payload?.modelStats || [])
+/** 窗口 Token 总量（llm_call 口径）：两个环图的中心数与占比列分母共用这一份，
+ *  不再让用户环图自己对 userTokenTop 求和——那份数据后端按 MAX_SCOPE_LIMIT(100) 截断，
+ *  用户数超限时求和会少算；中心数取全量，扇区截断只影响「其他」桶 */
 const totalTokens = computed(() => props.payload?.periodTotals?.totalTokens || 0)
 const sceneRows = computed(() => props.payload?.sceneStats || [])
 const protocolRows = computed(() => props.payload?.protocolStats || [])
@@ -214,13 +210,16 @@ const sceneHint = computed(() => {
   return row ? `已选：${row.modelName}` : `模型 ${selectedModelId.value}`
 })
 
+// 环图分段与中心同为 llm_call 口径（totalTokens 自 0.0.459 起即 callTokens，这里显式取 callTokens 便于对照）
 const modelTokenItems = computed<RankItem[]>(() =>
   topWithOthers(
-    modelStats.value.map((row) => ({ name: row.modelName || '未命名', value: Number(row.totalTokens || 0) })),
+    modelStats.value.map((row) => ({ name: row.modelName || '未命名', value: Number(row.callTokens || 0) })),
     10
   )
 )
 
+// 环图中心与占比分母同源（periodTotals.totalTokens，全量 llm_call）：用户侧含 id=0「未关联用户」分桶，
+// 同窗口同「含自检调用」开关下与模型环中心严格相等；userTokenTop 的 100 行截断只影响「其他」扇区
 const userTokenSource = computed(() => props.payload?.userTokenTop || [])
 const userTokenItems = computed<RankItem[]>(() =>
   topWithOthers(
@@ -231,8 +230,6 @@ const userTokenItems = computed<RankItem[]>(() =>
     10
   )
 )
-// 环图中心与图例合计一致：用户 Token 与模型 totalTokens 口径不同（消息 Token vs 模型合计），不共用 totalTokens
-const userTokenTotal = computed(() => userTokenSource.value.reduce((sum, row) => sum + Number(row.totalTokens || 0), 0))
 
 function tokenShare(value: unknown): number {
   return percent(Number(value || 0), totalTokens.value)
@@ -259,16 +256,14 @@ function sceneLabel(scene: string): string {
 function exportRows() {
   exportCsv(
     `analytics-models-${new Date().toISOString().slice(0, 10)}.csv`,
-    ['模型', '供应商', '会话', '调用', '成功率', '对话 Token', '调用 Token', 'Token 合计', '成本', '缓存命中', '首 token 均值(ms)', '耗时均值(ms)', '吞吐均值(tok/s)'],
+    ['模型', '供应商', '会话', '调用', '成功率', '调用 Token', '成本', '缓存命中', '首 token 均值(ms)', '耗时均值(ms)', '吞吐均值(tok/s)'],
     modelStats.value.map((row) => [
       row.modelName || '未命名',
       row.provider ?? '',
       row.sessionCount || 0,
       row.callCount || 0,
       row.callSuccessRate == null ? '' : `${row.callSuccessRate}%`,
-      row.chatTokens || 0,
       row.callTokens || 0,
-      row.totalTokens || 0,
       row.cost ?? '',
       row.cacheHitRate == null ? '' : `${row.cacheHitRate}%`,
       row.avgFirstTokenMs == null ? '' : Math.round(Number(row.avgFirstTokenMs)),

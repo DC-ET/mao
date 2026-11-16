@@ -11,6 +11,7 @@
             </span>
           </div>
           <div class="sub">环比 {{ previousLabel }}</div>
+          <div class="caliber">口径：llm_call.total_tokens</div>
           <BaseChart
             v-if="sparkValues.length > 1"
             class="spark"
@@ -262,10 +263,12 @@ const liveWindow = computed<LiveItem[]>(() => {
   ]
 })
 
-/** 构成明细：补充指标条之外的结构信息，避免与环比重复 */
+/** 构成明细：补充指标条之外的结构信息，避免与环比重复。
+ *  对话 / 后台 Token 仍是 message / llm_usage 口径（与趋势堆叠图同源），
+ *  与头部「Token 消耗」的 llm_call 口径不是一回事，标签里带口径避免对不上。 */
 const composeRows = computed(() => [
-  { label: '对话 Token', valueText: formatTokens(totals.value.chatTokens), fail: false },
-  { label: '后台 Token', valueText: formatTokens(totals.value.backgroundTokens), fail: false },
+  { label: '对话 Token（message）', valueText: formatTokens(totals.value.chatTokens), fail: false },
+  { label: '后台 Token（llm_usage）', valueText: formatTokens(totals.value.backgroundTokens), fail: false },
   { label: '成本合计', valueText: formatCost(totals.value.totalCost), fail: false },
   { label: '完成会话', valueText: formatNumber(totals.value.completedSessions), fail: false },
   { label: '失败会话', valueText: formatNumber(totals.value.failedSessions), fail: true }
@@ -391,6 +394,13 @@ export default {
 
 .sub {
   margin-top: 4px;
+  font-size: 12px;
+  color: var(--mao-muted);
+}
+
+/* 口径标注：与模型 / 用户占比环同源（llm_call），避免三处数字对不上时的困惑 */
+.caliber {
+  margin-top: 2px;
   font-size: 12px;
   color: var(--mao-muted);
 }

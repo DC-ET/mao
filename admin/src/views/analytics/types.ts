@@ -39,6 +39,9 @@ export interface PeriodTotals {
   messages: number
   chatTokens: number
   backgroundTokens: number
+  /** 口径随 scope：overview / models 为 llm_call.total_tokens（与调用 / 成本同源，三处展示数字严格相等）；
+   *   trends / summary 为 chatTokens + backgroundTokens（message + llm_usage 口径，供趋势堆叠图）
+   */
   totalTokens: number
   backgroundCalls: number
   /** 窗口成本合计（成本单位 = 模型价格填写口径；唯一口径 llm_call） */
@@ -62,6 +65,7 @@ export interface TrendPoint {
   messages: number
   chatTokens: number
   backgroundTokens: number
+  /** 桶内 chatTokens + backgroundTokens（message + llm_usage 口径，与堆叠柱两段一致）；llm_call 口径看 callTokens */
   totalTokens: number
   backgroundCalls: number
   callCount?: number
@@ -85,6 +89,7 @@ export interface TrendPoint {
 
 export interface SparkPoint {
   date: string
+  /** llm_call 分桶 Token：与总览「Token 消耗」卡片同口径，折线之和等于卡片数字 */
   totalTokens: number
 }
 
@@ -174,6 +179,7 @@ export interface ModelStatRow {
   messageCount: number
   chatTokens: number
   backgroundTokens: number
+  /** llm_call.total_tokens 口径（0.0.459 起，与 callTokens / 成本 / 占比同源，替代此前的 chat + background） */
   totalTokens: number
   backgroundCalls: number
   contextWindowTokens?: number
@@ -198,13 +204,14 @@ export interface ModelStatRow {
 export interface ModelsPayload {
   period: AnalyticsPeriodMeta
   modelStats: ModelStatRow[]
+  /** 模型明细合计：totalTokens 为 llm_call 口径，等于同页用户占比环中心数与总览卡片 */
   periodTotals: { totalTokens: number; totalCost: number }
   previousTotals: PreviousTotals
   sceneStats?: NamedCallStat[]
   protocolStats?: NamedCallStat[]
   sceneModelId?: number | null
   excludeConnectivity?: boolean
-  /** 窗口内按 Token 排序截断的用户分布（与用户 Tab tokenTop 同源），供模型页并排环图 */
+  /** 窗口内按 Token 排序截断的用户分布（与用户 Tab tokenTop 同源，llm_call 口径；含 userId=0「未关联用户」），供模型页并排环图 */
   userTokenTop?: Array<{ userId: number; username?: string; displayName?: string; totalTokens: number }>
 }
 
@@ -228,7 +235,8 @@ export interface UserActivityRow {
 export interface UsersPayload {
   period: AnalyticsPeriodMeta
   userActivity: UserActivityRow[]
-  /** 独立按 Token 排序截断的排行（llm_call 口径，与明细同源；与按消息数截断的 userActivity 互不影响） */
+  /** 独立按 Token 排序截断的排行（llm_call 口径，与明细同源；与按消息数截断的 userActivity 互不影响）；
+   *  无用户上下文的系统/后台调用归入 userId=0「未关联用户」，使排行合计等于窗口 llm_call 总量 */
   tokenTop?: Array<{ userId: number; username?: string; displayName?: string; totalTokens: number }>
   periodTotals: { activeUsers: number }
   previousTotals: PreviousTotals
