@@ -36,6 +36,14 @@ export async function ensureHtmlConverter(): Promise<void> {
         strongDelimiter: '**',
       })
       instance.use(gfmMod.gfm)
+      // turndown 默认对每个文本节点做 Markdown 转义（其 markdownEscapes 规则表）：节点以
+      // `-` 开头 → `\-`、以 `N. ` 开头 → `N\. `，节点内 `*` `_` `[` `]` 反引号亦被转义。
+      // 转义粒度是「文本节点边界」而非行——从飞书 / 网页 / Word 等富文本复制时 run 切分
+      // 位置随机，同样的 `--flag` 有时转义有时不转义。本路径产物是纯文本消费（按 \n 拆行
+      // 建 paragraph 节点插输入框，原样发模型，链上无 Markdown 渲染器），这些反斜杠纯属
+      // 噪声且污染发给模型的内容。覆写 escape 为恒等：只动文本节点的字面内容，代码块本就
+      // 不走 escape，`*em*`、表格 `|` 转义、链接目标均来自规则产物，不受影响。
+      instance.escape = (s: string) => s
       // turndown-plugin-gfm 的 tableCell 原样输出单元格文本，不转义 `|`；GFM 会把它
       // 当成列分隔符，2 列表格被撑成 3 列。这里覆盖同名规则：addRule 后注册的规则
       // 在 Rules 数组中排在最前，优先于插件规则命中。

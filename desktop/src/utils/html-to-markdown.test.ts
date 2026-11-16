@@ -75,6 +75,37 @@ describe('convertHtmlToMarkdown 结构转换', () => {
   })
 })
 
+describe('convertHtmlToMarkdown 转义治理（纯文本消费：字面内容不注入反斜杠）', () => {
+  it('行首 "1. / 2. " 序号不被转成 1\\.', async () => {
+    await ready()
+    expect(convertHtmlToMarkdown('<p>1. 支持「按结束时间」查作业</p><p>2. limit 截断</p>')).toBe(
+      '1. 支持「按结束时间」查作业\n\n2. limit 截断',
+    )
+  })
+
+  it('文本节点以 - 开头（富文本 run 切分）不被转成 \\-', async () => {
+    await ready()
+    const md = convertHtmlToMarkdown(
+      '<p>场景：我要找「昨晚 13:41 失败」的作业，<span>--since 24h/30h 全部查不到</span></p>',
+    )
+    expect(md).toContain('--since 24h/30h')
+    expect(md).not.toContain('\\-')
+  })
+
+  it('文本节点内的 * _ [ ] 反引号逐字保留', async () => {
+    await ready()
+    expect(convertHtmlToMarkdown('<p>普通 *星号* _下划线_ [方括号] `反引号`</p>')).toBe(
+      '普通 *星号* _下划线_ [方括号] `反引号`',
+    )
+  })
+
+  it('规则产物不受影响：em → *斜体*，代码块仍为围栏', async () => {
+    await ready()
+    expect(convertHtmlToMarkdown('<p><em>斜体</em>与<code>a * b</code></p>')).toBe('*斜体*与`a * b`')
+    expect(convertHtmlToMarkdown('<pre><code>const a = 1</code></pre>')).toContain('```')
+  })
+})
+
 describe('convertHtmlToMarkdown 护栏', () => {
   it('converter 未就绪 → null（同步探测，粘贴回落现状）', () => {
     // 本 describe 不预热：前提是前面用例可能已预热过——用独立判断不可靠，这里直接验证
