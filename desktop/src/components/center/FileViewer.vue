@@ -622,7 +622,7 @@ onUnmounted(() => {
   margin: 0;
   font-size: var(--aw-text-caption);
   line-height: 2;
-  letter-spacing: -0.374px;
+  letter-spacing: var(--aw-tracking-body);
 }
 
 .markdown-body :deep(a) {
@@ -702,7 +702,7 @@ onUnmounted(() => {
 .markdown-body :deep(li) {
   font-size: var(--aw-text-caption);
   line-height: 2;
-  letter-spacing: -0.374px;
+  letter-spacing: var(--aw-tracking-body);
 }
 
 .markdown-body :deep(blockquote) {

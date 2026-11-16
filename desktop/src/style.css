@@ -114,6 +114,14 @@
   --aw-text-fine: 12px;
   --aw-text-micro: 10px;
 
+  /* Typography — Tracking
+   * 正文字距统一 0。中文是全宽方块字、自带设计字隙，负字距会显挤；且消息正文
+   * line-height 已是 2 倍，横向再收紧便成「行距松、字距挤」。原 -0.374px 等于
+   * -0.022em×17px，是为 --aw-text-body 算的拉丁文光学字距，套到 14px 的
+   * --aw-text-caption 上变成 -2.7%，偏紧，故整档收口为 0。
+   * 三档字号缩放（html[data-font-scale]）不覆写本令牌：0 无需随字号变化。 */
+  --aw-tracking-body: 0px;
+
   /* Spacing */
   --aw-space-xxs: 4px;
   --aw-space-xs: 8px;
@@ -536,7 +544,7 @@ body {
   font-family: var(--aw-font-text);
   font-size: var(--aw-text-body);
   line-height: 1.47;
-  letter-spacing: -0.374px;
+  letter-spacing: var(--aw-tracking-body);
   color: var(--aw-body);
   background: var(--aw-canvas);
   -webkit-font-smoothing: antialiased;

@@ -931,7 +931,7 @@ async function copyMessage() {
   color: var(--aw-body);
   font-size: var(--aw-text-caption);
   line-height: 2;
-  letter-spacing: -0.374px;
+  letter-spacing: var(--aw-tracking-body);
   word-break: break-word;
 }
 
@@ -962,7 +962,7 @@ async function copyMessage() {
 .message-text {
   border-radius: var(--aw-radius-lg);
   line-height: 2;
-  letter-spacing: -0.374px;
+  letter-spacing: var(--aw-tracking-body);
   word-break: break-word;
   font-size: var(--aw-text-caption);
 }
@@ -1041,7 +1041,7 @@ async function copyMessage() {
   color: var(--aw-body);
   font-size: var(--aw-text-caption);
   line-height: 2;
-  letter-spacing: -0.374px;
+  letter-spacing: var(--aw-tracking-body);
   word-break: break-word;
 }
 
@@ -1054,7 +1054,7 @@ async function copyMessage() {
   margin: 0;
   font-size: var(--aw-text-caption);
   line-height: 2;
-  letter-spacing: -0.374px;
+  letter-spacing: var(--aw-tracking-body);
 }
 
 .markdown-body :deep(pre) {
@@ -1202,7 +1202,7 @@ async function copyMessage() {
 .markdown-body :deep(li) {
   font-size: var(--aw-text-caption);
   line-height: 2;
-  letter-spacing: -0.374px;
+  letter-spacing: var(--aw-tracking-body);
 }
 
 .markdown-body :deep(blockquote) {
