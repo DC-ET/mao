@@ -134,6 +134,9 @@ export class SessionEnvelopeBuilder {
 
 /**
  * §5.13 依赖持久化 env（NPM_CONFIG_PREFIX / PIP_TARGET / PIP_BREAK_SYSTEM_PACKAGES / MAO_DEPS_BIN）。
+ * 另注入 pip 源覆盖（PIP_INDEX_URL，env 优先于镜像内 /etc/pip.conf）：镜像内置的 aliyun PyPI
+ * 镜像对本环境 HTTP/1.1 连接限速约 200KB/s（pip 不支持 HTTP/2），pandas / matplotlib 等大包
+ * 安装十分钟级、表现为工具反复等待超时；腾讯源同环境实测约 30MB/s（2026-11-16）。
  * 宿主机与容器路径逐字节一致（决策 15），shell 与 pty 子进程注入、MCP stdio env 共用。
  * PATH 注入由消费方拼接（MAO_DEPS_BIN 前置到现有 PATH），这里只给前缀根。
  */
@@ -144,5 +147,7 @@ export function buildDepsEnv(depsRoot: string, userId: number): Record<string, s
     PIP_TARGET: path.join(depsUserDir, 'py'),
     PIP_BREAK_SYSTEM_PACKAGES: '1',
     MAO_DEPS_BIN: path.join(depsUserDir, 'npm', 'bin'),
+    PIP_INDEX_URL: 'https://mirrors.cloud.tencent.com/pypi/simple/',
+    PIP_TRUSTED_HOST: 'mirrors.cloud.tencent.com',
   };
 }

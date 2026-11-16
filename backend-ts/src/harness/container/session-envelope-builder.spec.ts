@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
 import { useTmpDir } from '../../testing/tmp-dir.js';
-import { SessionEnvelopeBuilder } from './session-envelope-builder.js';
+import { buildDepsEnv, SessionEnvelopeBuilder } from './session-envelope-builder.js';
 
 function newBuilder(envVariableService?: { resolveForSession: (userId: number, workspace: string | null) => Promise<Record<string, string>> }) {
   const root = useTmpDir('mao-envelope-');
@@ -51,5 +51,14 @@ describe('SessionEnvelopeBuilder env vars', () => {
     const envelope = await builder.build({ userId: 7, sessionId: 9, workspace: null });
     expect(envelope.envVars).toEqual({});
     expect(envelope.userId).toBe(7);
+  });
+});
+
+describe('buildDepsEnv pip source', () => {
+  it('injects the Tencent PyPI mirror over the image default (aliyun throttles HTTP/1.1 downloads)', () => {
+    const env = buildDepsEnv('/srv/mao-data/deps', 7);
+    expect(env.PIP_INDEX_URL).toBe('https://mirrors.cloud.tencent.com/pypi/simple/');
+    expect(env.PIP_TRUSTED_HOST).toBe('mirrors.cloud.tencent.com');
+    expect(env.PIP_TARGET).toBe('/srv/mao-data/deps/7/py');
   });
 });

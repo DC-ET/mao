@@ -397,7 +397,7 @@ FROM message WHERE deleted = 0;
 
 ### 前置条件
 
-1. **Docker**：生产机安装 Docker（`docker version` 可用）。容器使用默认 bridge 网络，可出网（npm/pip 安装、curl 外部 API），不对外暴露任何端口，进出只走 Unix socket。
+1. **Docker**：生产机安装 Docker（`docker version` 可用）。容器使用默认 bridge 网络，可出网（npm/pip 安装、curl 外部 API），不对外暴露任何端口，进出只走 Unix socket。容器内 pip 源由依赖环境注入 `PIP_INDEX_URL`（腾讯云 PyPI 镜像，覆盖镜像内 aliyun 配置：aliyun 对本环境 HTTP/1.1 限速约 200KB/s，pip 装大包十分钟级；2026-11-16 起）。
 2. **运行时镜像**：构建 `mao-runtime` 镜像（Node + bash + git + coreutils + 与镜像 Node ABI 匹配的 `sharp`/`node-pty`）：
 
    ```bash
