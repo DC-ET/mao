@@ -470,15 +470,15 @@ export class AdminAnalyticsDbStore implements AdminAnalyticsStore {
   selectLlmCallStatsByUser(range: AnalyticsRange, opts?: LlmCallFilterOpts): Promise<LlmCallDimRow[]> {
     const { sql, params } = this.llmCallWhere(range, opts);
     return this.db.query(
-      `SELECT user_id AS id,
+      `SELECT COALESCE(user_id, 0) AS id,
               COUNT(*) AS callCount,
               COALESCE(SUM(CASE WHEN success = 0 AND ${NOT_CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS failCount,
               COALESCE(SUM(CASE WHEN ${CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS cancelledCount,
               COALESCE(SUM(total_tokens), 0) AS callTokens,
               COALESCE(SUM(cost_micros), 0) / 1000000 AS cost
        FROM llm_call
-       WHERE ${sql} AND user_id IS NOT NULL
-       GROUP BY user_id`,
+       WHERE ${sql}
+       GROUP BY COALESCE(user_id, 0)`,
       params,
     );
   }
@@ -767,23 +767,30 @@ export class AdminAnalyticsService {
   }
 
   /** 总览：运行态 + 窗口合计 + 环比 + Token spark + 规则洞察；不拉维度排行。 */
-  async overview(days: number, endOffset = 0): Promise<Record<string, unknown>> {
+  async overview(
+    days: number,
+    endOffset = 0,
+    opts?: { excludeConnectivity?: boolean },
+  ): Promise<Record<string, unknown>> {
     const { range, previous } = this.resolveWindows(days, endOffset);
+    const callOpts = { excludeConnectivity: opts?.excludeConnectivity !== false };
     const [baseOverview, livePhaseRows, periodPhaseRows, trends, activeUsers, previousTotals, quality] = await Promise.all([
       this.statisticsService.getOverview(),
       this.store.selectLivePhaseCounts(),
       this.store.selectPhaseCounts(range),
-      this.trends(range),
+      this.trends(range, callOpts),
       this.store.countActiveUsers(range),
-      this.previousTotals(previous),
-      // 缓存命中率口径 llm_call，默认排除连通性自检（与趋势 Tab 一致）
-      this.store.selectLlmCallQualitySummary(range),
+      this.previousTotals(previous, callOpts),
+      this.store.selectLlmCallQualitySummary(range, callOpts),
     ]);
 
     const livePhases = phaseMap(livePhaseRows);
     const periodPhases = phaseMap(periodPhaseRows);
     const periodTotals = {
       ...sumTrends(trends),
+      // Token 消耗口径 = llm_call.total_tokens：与模型占比环、用户占比环、调用/成本同源，
+      // 三处在同窗口同「含自检调用」开关下严格相等（message/llm_usage 覆盖不到不落消息的调用）
+      totalTokens: quality.callTokens,
       activeUsers,
       completedSessions: periodPhases.get('COMPLETED') ?? 0,
       failedSessions: periodPhases.get('FAILED') ?? 0,
@@ -803,9 +810,10 @@ export class AdminAnalyticsService {
       },
       periodTotals,
       previousTotals,
+      // spark 与卡片同口径：取 llm_call 分桶 Token，否则折线之和 ≠ 卡片数字
       spark: trends.map((row) => ({
         date: String(row.date),
-        totalTokens: toNumber(row.totalTokens),
+        totalTokens: toNumber(row.callTokens),
       })),
       phaseDistribution: phaseDistributionOf(periodPhases),
       insights: buildOverviewInsights(periodTotals, previousTotals),
@@ -878,6 +886,8 @@ export class AdminAnalyticsService {
       period: this.periodMeta(range, previous),
       modelStats,
       periodTotals: {
+        // modelStats.totalTokens 已是 llm_call 口径（selectLlmCallStatsByModel 按 COALESCE(model_id,0) 覆盖全部行），
+        // 故这里既等于窗口内 llm_call 总量，也与同页「用户 Token 占比」中心数、总览卡片严格相等
         totalTokens: modelStats.reduce((sum, row) => sum + toNumber((row as { totalTokens?: unknown }).totalTokens), 0),
         totalCost: modelStats.reduce((sum, row) => sum + toNumber((row as { cost?: unknown }).cost), 0),
       },
@@ -1178,7 +1188,9 @@ export class AdminAnalyticsService {
       messages: messages.count,
       chatTokens: messages.tokens,
       backgroundTokens,
-      totalTokens: messages.tokens + backgroundTokens,
+      // 与本期卡片同口径：llm_call.total_tokens。若仍取 messages.tokens + backgroundTokens，
+      // 环比百分比是跨口径相除（分子 llm_call、分母 message），会随两口径差放大失真
+      totalTokens: quality.callTokens,
       activeUsers,
       callCount: quality.callCount,
       callFailCount: quality.failCount,
@@ -1310,6 +1322,8 @@ export class AdminAnalyticsService {
   /**
    * Token 排行独立按 totalTokens 排序截断，避免依赖消息数截断的明细集而遗漏重消耗用户。
    * Token 取 llm_call.total_tokens（与明细/调用/成本同源，0.0.440 起）。
+   * 无用户上下文的系统/后台调用归入 id=0「未关联用户」（与模型侧 COALESCE(model_id,0) 同构），
+   * 使「用户 Token 占比」中心数 = 窗口内 llm_call 总量，与总览卡片、模型占比环严格相等。
    */
   private async userTokenTop(
     range: AnalyticsRange,
@@ -1329,7 +1343,7 @@ export class AdminAnalyticsService {
       const user = meta.get(userId);
       rows.push({
         userId,
-        username: user?.username,
+        username: user?.username ?? (userId === 0 ? '未关联用户' : undefined),
         displayName: user?.displayName,
         totalTokens,
       });
@@ -1433,8 +1447,9 @@ export class AdminAnalyticsService {
         messageCount,
         chatTokens: chat,
         backgroundTokens: background,
-        // 口径与总览页一致：chat + background（llm_call 与二者为包含关系，不能叠加，否则重复计一倍）
-        totalTokens: chat + background,
+        // 口径与总览卡片、用户占比环一致：llm_call.total_tokens（覆盖全部调用，含 delegate / 压缩 / 自检等不落消息的调用）。
+        // message/llm_usage 与 llm_call 是包含关系，三者不能叠加，否则重复计一倍；chat/background 仅作明细列展示
+        totalTokens: callTokens,
         backgroundCalls: usageCalls,
         contextWindowTokens: model?.contextWindowTokens,
         callCount,

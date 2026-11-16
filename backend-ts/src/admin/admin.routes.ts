@@ -116,8 +116,8 @@ export function registerAdminAnalyticsRoutes(app: FastifyInstance, deps: AdminRo
 
   app.get('/v1/admin/analytics/overview', async (req, reply) => {
     await requireRequestPermission(deps.permissionService, req, 'analytics:read');
-    const { days, endOffset } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
-    sendJson(reply, 200, ok(await deps.analytics.overview(days, endOffset)));
+    const { days, endOffset, excludeConnectivity } = parseAnalyticsQuery(req.query as AnalyticsQueryRaw);
+    sendJson(reply, 200, ok(await deps.analytics.overview(days, endOffset, { excludeConnectivity })));
   });
 
   app.get('/v1/admin/analytics/trends', async (req, reply) => {
