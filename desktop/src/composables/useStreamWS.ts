@@ -719,6 +719,23 @@ export function useStreamWS() {
     setActiveExecution(sessionId, executionId)
   }
 
+  /**
+   * 非 FAILED 相位到达时清除该会话残留的执行错误横幅。
+   *
+   * 错误横幅的产生有两条路：本端在线时收到 error 帧；断线错过 error 帧时由
+   * FAILED 相位 + runtimeStatus.executionError 恢复（applyRuntimeStatus）。而清除
+   * 原本只挂在本端发送/重试入口（useChat），新一轮执行由其他端发起（手机重试）
+   * 时桌面端只能靠相位帧感知——不清的话横幅会一直挂到刷新页面（错误 Map 是内存态，
+   * 刷新后服务端 VO 在非 FAILED 相位不再下发 executionError，才「看起来好了」）。
+   *
+   * FAILED 例外：执行中失败是「error 帧先设横幅、终态 FAILED 帧随后到达」（见
+   * 测试「error 帧置 FAILED 后的终态重拉」），这里清会把刚显示的错误抹掉。
+   * FAILED 横幅的清除交给下一轮执行的 RESUMING/RUNNING 或成功/取消终态。
+   */
+  function clearExecutionErrorOnPhase(sessionId: string, phase: TaskPhase) {
+    if (phase !== 'FAILED') sessionStore.clearExecutionError(sessionId)
+  }
+
   function routeEvent(msg: any) {
     const { type, sessionId: rawSid, data } = msg
     const sessionId = rawSid != null ? String(rawSid) : null
@@ -863,6 +880,8 @@ export function useStreamWS() {
           if (phase === 'RUNNING' && data.executionId) {
             rebindActiveExecution(sessionId, data.executionId)
           }
+          // 其他端发起的重试 / 新一轮执行：桌面端靠相位帧同步清除上一轮错误横幅
+          clearExecutionErrorOnPhase(sessionId, phase)
           const startedAt = phase === 'RUNNING' ? new Date().toISOString() : undefined
 
           // Ignore stale CANCELLING after local optimistic cancel
@@ -1127,6 +1146,9 @@ export function useStreamWS() {
         if (sessionId && data?.phase) {
           if (data.executionId) rebindActiveExecution(sessionId, data.executionId)
           const phase = data.phase as TaskPhase
+          // 与 session_status 同口径：断线期间其他端发起的重试已翻过失败相位，
+          // 重连快照按当前相位清除残留横幅（FAILED 除外，见 clearExecutionErrorOnPhase）
+          clearExecutionErrorOnPhase(sessionId, phase)
           const startedAt = phase === 'RUNNING' ? new Date().toISOString() : undefined
           sessionStore.updateSessionPhase(sessionId, phase, startedAt)
           sessionStore.updateSideTaskPhase(Number(sessionId), phase, startedAt)

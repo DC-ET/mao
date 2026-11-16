@@ -412,6 +412,111 @@ describe('useStreamWS budget blocked (0.0.355 P3)', () => {
   })
 })
 
+describe('useStreamWS 跨端重试后错误横幅清除（executionError 不残留到刷新）', () => {
+  it('error 帧设横幅后，其他端重试触发的 session_status RUNNING/COMPLETED 清除横幅', async () => {
+    const { connect, subscribe } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    await subscribe('11')
+
+    const sessionStore = useSessionStore()
+    sessionStore.updateSessionPhase('11', 'RUNNING')
+    sessionStore.setActiveSession('11')
+
+    // 本地执行端未连接：落库前拒绝只回 error 帧（无终态相位帧），横幅落进 store
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({
+        type: 'error',
+        sessionId: 11,
+        data: { message: '本地执行端未连接，请确保桌面客户端正在运行' },
+      }),
+    })
+    expect(sessionStore.activeExecutionError).toBe('本地执行端未连接，请确保桌面客户端正在运行')
+
+    // 手机端重试成功：桌面端只收到相位帧（本端发送入口的 clearExecutionError 不会跑），
+    // 新一轮执行启动必须同步清掉上一轮横幅，成功终态后仍为空
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({
+        type: 'session_status',
+        sessionId: 11,
+        data: { phase: 'RUNNING', executionId: 'exec-retry' },
+      }),
+    })
+    expect(sessionStore.activeExecutionError).toBeNull()
+
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({
+        type: 'session_status',
+        sessionId: 11,
+        data: { phase: 'COMPLETED', executionId: 'exec-retry' },
+      }),
+    })
+    expect(sessionStore.activeExecutionError).toBeNull()
+  })
+
+  it('执行中失败的终态 FAILED 帧不清横幅（error 帧先行设置，终态帧不能抹掉错误）', async () => {
+    const { connect, subscribe } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    await subscribe('11')
+
+    const sessionStore = useSessionStore()
+    sessionStore.updateSessionPhase('11', 'RUNNING')
+    sessionStore.setActiveSession('11')
+
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({ type: 'error', sessionId: 11, data: { message: 'boom' } }),
+    })
+    expect(sessionStore.activeExecutionError).toBe('boom')
+
+    // 与「error 帧置 FAILED 后的终态重拉」同序：finishFailedSession 随后补发终态帧
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({
+        type: 'session_status',
+        sessionId: 11,
+        data: { phase: 'FAILED', executionId: 'e1' },
+      }),
+    })
+    expect(sessionStore.activeExecutionError).toBe('boom')
+  })
+
+  it('断线补齐：session_snapshot 带回非 FAILED 相位时同样清除残留横幅', async () => {
+    const { connect, subscribe } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    await subscribe('11')
+
+    const sessionStore = useSessionStore()
+    sessionStore.updateSessionPhase('11', 'RUNNING')
+    sessionStore.setActiveSession('11')
+
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({ type: 'error', sessionId: 11, data: { message: 'boom' } }),
+    })
+    expect(sessionStore.activeExecutionError).toBe('boom')
+
+    // 断线期间其他端已重试成功：重连订阅快照带回的唯一相位就是 COMPLETED
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({
+        type: 'session_snapshot',
+        sessionId: 11,
+        data: { phase: 'COMPLETED', executionId: 'exec-retry' },
+      }),
+    })
+    expect(sessionStore.activeExecutionError).toBeNull()
+  })
+})
+
 describe('useStreamWS inbox_updated', () => {
   it('权威未读数写入 inbox store，非 Electron 不触发系统通知', async () => {
     const { useStreamWS } = (await import('./useStreamWS')) as any
