@@ -508,6 +508,9 @@ describe('PromptEngine experience library', () => {
     expect(system).toContain('## 团队经验库');
     expect(system).toContain('团队经验/INDEX.md');
     expect(system).toContain('YYYY-MM-DD-主题.md');
+    // 敏感信息红线：路标明示不得写入密码 / 密钥
+    expect(system).toContain('敏感信息');
+    expect(system).toContain('密码');
     const expIdx = system.indexOf('## 最佳实践经验');
     const libIdx = system.indexOf('## 团队经验库');
     const memIdx = system.indexOf('## 长期记忆');
