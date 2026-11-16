@@ -227,6 +227,7 @@ import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import { useRelativeTime, formatRelativeTime } from '../../composables/useRelativeTime'
 import { cloudGroupKey, cloudProjectKeyForNewTask, isEmbedGroupKey, isGroupRenameable, newTaskWorkspaceFromSession, resolveGroupLabel, SIGNAL_GROUP_KEY } from '../../utils/cloud-project'
 import { planFocusReveal, planGroupReveal } from '../../utils/taskSidebarReveal'
+import { sortSessionsInGroup } from '../../utils/taskGroupSort'
 import { sessionToFocusCandidate, sortByFocusPriority, isHistoryEligible } from '../../utils/focusSort'
 import TaskSessionGroupList from './TaskSessionGroupList.vue'
 import TaskFocusList from './TaskFocusList.vue'
@@ -936,10 +937,15 @@ function scrollSessionIntoView(sessionId: string) {
 }
 
 async function onGroupNewTask(group: { sessions: Session[] }) {
-  const last = group.sessions[0] // already sorted by updatedAt desc
+  // 组内首行不再保证是「最近更新」（任务树活跃优先，见 groupedSessions 排序）：
+  // 显式取 updatedAt 最大者做兜底，避免新建任务继承到陈旧会话的模型 / 工作区。
+  const last = group.sessions.reduce<Session | undefined>((m, s) => {
+    if (!m) return s
+    return new Date(s.updatedAt || s.createdAt || 0).getTime() > new Date(m.updatedAt || m.createdAt || 0).getTime() ? s : m
+  }, undefined)
   if (!last) return
   // Prefer the currently open session in this group (user may have just switched model mid-chat;
-  // model switch does not bump updatedAt, so sessions[0] can be a different older session).
+  // model switch does not bump updatedAt, so the newest session can be a different one).
   const activeId = activeSessionId.value
   const activeInGroup = activeId
     ? group.sessions.find(s => String(s.id) === String(activeId))
@@ -982,9 +988,30 @@ function openTerminal(group: { key: string }) {
   createTerminal(workspace || undefined)
 }
 
+/**
+ * 任务树活跃：主任务自身或边路任务处于活跃相位，或整树有待审批 / 待回答。
+ * 与行内展示同源（圆点 / 转圈用的就是这批函数）：服务端 tree* 聚合 + 实时 Map +
+ * 边路缓存三源并集，保证「排序说空闲、圆点说在跑」的分裂不会出现。
+ * 用于标准模式组内排序第一档（聚焦模式另有 sortByFocusPriority）。
+ */
+function isTreeActive(session: Session): boolean {
+  if (session.running) return true // 主任务自身活跃（原第一档，严格扩容为其子集）
+  if (session.treeRunning === true) return true // 服务端聚合：树内有活跃相位
+  // treeRunning === false 时服务端已判定整树无活跃相位，不信边路缓存里的残留活跃态
+  // （WAITING_APPROVAL 本身属活跃相位，treeRunning=false 与待审批自相矛盾，不会误抑制）
+  if (session.treeRunning !== false && hasActiveSideTask(session.id)) return true
+  return hasPendingApproval(session.id) || hasPendingQuestion(session.id)
+}
+
 const groupedSessions = computed(() => {
   const sessions = sessionStore.sessions
   const groups = new Map<string, Session[]>()
+
+  // 组内排序第一档「任务树活跃」一次预计算：comparator 内只做 Set 查询
+  const treeActiveIds = new Set<string>()
+  for (const s of sessions) {
+    if (isTreeActive(s)) treeActiveIds.add(String(s.id))
+  }
 
   for (const s of sessions) {
     const key = cloudGroupKey(s)
@@ -1010,15 +1037,8 @@ const groupedSessions = computed(() => {
   const result = entries.map(([key, sessions]) => ({
     key,
     label: resolveGroupLabel(key, groupAliases.value, sessions[0]),
-    sessions: sessions.sort((a, b) => {
-      if (a.running && !b.running) return -1
-      if (!a.running && b.running) return 1
-      const tb = new Date(b.updatedAt || b.createdAt || 0).getTime()
-      const ta = new Date(a.updatedAt || a.createdAt || 0).getTime()
-      if (tb !== ta) return tb - ta
-      // updated_at 相同时按 id 倒序，避免批量更新导致按创建正序排列
-      return Number(b.id) - Number(a.id)
-    })
+    // 任务树活跃（自身 / 边路在跑、待审批、待回答）优先 → updatedAt DESC → id DESC
+    sessions: sortSessionsInGroup(sessions, treeActiveIds)
   }))
 
   // 应用自定义排序

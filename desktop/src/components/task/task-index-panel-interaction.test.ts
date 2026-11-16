@@ -82,7 +82,8 @@ const store = reactive({
   loadMoreInGroup: vi.fn(async () => true),
   getGroupMeta: vi.fn(() => undefined),
   isGroupLoadingMore: vi.fn(() => false),
-  getSessionEntity: vi.fn(() => undefined),
+  // 与真实 store 同口径：实体即列表投影背后的行（tree* 聚合字段经实体读取）
+  getSessionEntity: vi.fn((id: string) => store.sessions.find((s: any) => String(s.id) === String(id))),
   updateSessionTreeSignals: vi.fn(),
   isArchiving: vi.fn(() => false),
   isDeleting: vi.fn(() => false),
@@ -96,7 +97,8 @@ const store = reactive({
   unarchiveSession: vi.fn(async () => {}),
   sessionPendingApprovals: new Map(),
   sessionPendingQuestions: new Map(),
-  getSideTasks: vi.fn(() => []),
+  // 与真实 store 同口径：按父会话 id 取边路任务（组内排序「任务树活跃」判定用）
+  getSideTasks: vi.fn((_id: string): any[] => []),
   activeCompactionEvents: [] as any[],
   activeExecutionError: null,
   activeStreaming: false,
@@ -546,6 +548,116 @@ describe('TaskIndexPanel 宽度阈值', () => {
     ;(globalThis as any).__resizeCallbacks.forEach((cb: () => void) => cb())
     await tick()
     expect(q(host, '.panel-title')!.textContent).toBe('任务')
+    app.unmount()
+  })
+})
+
+describe('TaskIndexPanel 组内排序（任务树活跃优先）', () => {
+  const OLD = '2026-11-01T00:00:00'
+  const MID = '2026-11-10T00:00:00'
+  const NEW = '2026-11-15T00:00:00'
+
+  // 判定读 store 实时表与边路缓存：每组用例自带实现，复位避免污染后续
+  beforeEach(() => {
+    store.getSideTasks.mockReset()
+    store.getSideTasks.mockImplementation(() => [])
+    store.sessionPendingApprovals.clear()
+    store.sessionPendingQuestions.clear()
+  })
+
+  const order = (host: HTMLElement) =>
+    qa(host, '.session-group .session-item').map((el) => el.getAttribute('data-session-id'))
+  const sides = (map: Record<string, any[]>) =>
+    store.getSideTasks.mockImplementation((id: string) => map[String(id)] ?? [])
+
+  it('边路任务在跑：自身已完成的主任务也顶到组内最前', async () => {
+    store.sessions = [
+      { ...row('1', 'COMPLETED'), updatedAt: OLD },
+      { ...row('2', 'COMPLETED'), updatedAt: NEW },
+    ]
+    sides({ '1': [{ id: 11, phase: 'RUNNING', title: '边路' }] })
+    const { host, app } = mountPanel()
+    await tick()
+    // 1 虽旧，但边路在跑 → 活跃档前置
+    expect(order(host)).toEqual(['1', '2'])
+    app.unmount()
+  })
+
+  it('服务端 treeRunning=true（本地无边路缓存）同样提升', async () => {
+    store.sessions = [
+      { ...row('1', 'COMPLETED'), updatedAt: OLD, treeRunning: true },
+      { ...row('2', 'COMPLETED'), updatedAt: NEW },
+    ]
+    const { host, app } = mountPanel()
+    await tick()
+    expect(order(host)).toEqual(['1', '2'])
+    app.unmount()
+  })
+
+  it('边路有待审批 / 有待回答同样提升（D2：两者同档）', async () => {
+    store.sessions = [
+      { ...row('1', 'COMPLETED'), updatedAt: OLD, treePendingApprovalCount: 1 },
+      { ...row('2', 'COMPLETED'), updatedAt: NEW, treePendingQuestionCount: 1 },
+      { ...row('3', 'COMPLETED'), updatedAt: MID },
+    ]
+    const { host, app } = mountPanel()
+    await tick()
+    // 1、2 提升，同档内按 updatedAt DESC；3 无信号沉底
+    expect(order(host)).toEqual(['2', '1', '3'])
+    app.unmount()
+  })
+
+  it('treeRunning=false 时不信边路缓存里的残留活跃态（D4 守卫）', async () => {
+    store.sessions = [
+      { ...row('1', 'COMPLETED'), updatedAt: OLD, treeRunning: false },
+      { ...row('2', 'COMPLETED'), updatedAt: NEW },
+    ]
+    sides({ '1': [{ id: 11, phase: 'RUNNING', title: '残留' }] })
+    const { host, app } = mountPanel()
+    await tick()
+    // 服务端已判定整树无活跃相位：残留活跃态不抢位，按 updatedAt 排
+    expect(order(host)).toEqual(['2', '1'])
+    app.unmount()
+  })
+
+  it('回归：主任务自身运行中仍优先（原第一档行为不回退）', async () => {
+    store.sessions = [
+      { ...row('1', 'RUNNING'), running: true, updatedAt: OLD },
+      { ...row('2', 'COMPLETED'), updatedAt: NEW },
+    ]
+    const { host, app } = mountPanel()
+    await tick()
+    expect(order(host)).toEqual(['1', '2'])
+    app.unmount()
+  })
+
+  it('同档内仍按 updatedAt DESC（活跃行之间不插队乱序）', async () => {
+    store.sessions = [
+      { ...row('1', 'COMPLETED'), updatedAt: OLD },
+      { ...row('2', 'RUNNING'), running: true, updatedAt: MID },
+      { ...row('3', 'COMPLETED'), updatedAt: NEW },
+    ]
+    sides({ '1': [{ id: 11, phase: 'RUNNING', title: '边路' }] })
+    const { host, app } = mountPanel()
+    await tick()
+    // 1（11-01）与 2（11-10）同处活跃档 → 2 在前；3 更新但无信号沉底
+    expect(order(host)).toEqual(['2', '1', '3'])
+    app.unmount()
+  })
+
+  it('分组「+」兜底取组内最近更新的会话（D6：不再假设首行最新）', async () => {
+    store.sessions = [
+      { ...row('1', 'COMPLETED'), updatedAt: OLD, agentId: '9', treeRunning: true },
+      { ...row('2', 'COMPLETED'), updatedAt: NEW, agentId: '7' },
+    ]
+    const spy = vi.fn()
+    const { host, app } = mountPanel('standard', { onNewTaskFromGroup: spy })
+    await tick()
+    ;(q(host, '.group-add-btn') as HTMLElement).click()
+    await tick()
+    // 1 被顶到首行但更新更旧：兜底来源必须是最近更新的 2，不是 sessions[0]
+    expect(order(host)).toEqual(['1', '2'])
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ agentId: '7' }))
     app.unmount()
   })
 })
