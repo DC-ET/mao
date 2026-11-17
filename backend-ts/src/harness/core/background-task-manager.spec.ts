@@ -106,6 +106,33 @@ describe('BackgroundTaskManager', () => {
     expect(await manager.awaitResult(taskId, 0, 9)).toEqual({ status: 'not_found' });
     expect(await manager.consumeCompletedResults(7)).toEqual({ [taskId]: 'secret' });
   });
+
+  it('reports a delivered result instead of not_found when the task_id is reused', async () => {
+    let now = 0;
+    const manager = new BackgroundTaskManager(() => now);
+    const taskId = manager.submit(7, () => 'done');
+    await flush();
+
+    expect(await manager.awaitResult(taskId, 0, 7)).toEqual({ status: 'done', result: 'done' });
+    // task_id 一次性：结果取走后重问必须能区分「已交付」与「从未存在」
+    expect(await manager.awaitResult(taskId, 0, 7)).toEqual({ status: 'delivered' });
+    // 已交付标记同样受归属校验保护，别的会话问不出任何信息
+    expect(await manager.awaitResult(taskId, 0, 8)).toEqual({ status: 'not_found' });
+
+    // 标记到期后回收，回到普通「不存在」
+    now = 31 * MINUTE;
+    expect(await manager.awaitResult(taskId, 0, 7)).toEqual({ status: 'not_found' });
+  });
+
+  it('reports delivered after the auto-injection path consumed the result', async () => {
+    const manager = new BackgroundTaskManager();
+    const taskId = manager.submit(7, () => 'injected');
+    await flush();
+
+    expect(await manager.consumeCompletedResults(7)).toEqual({ [taskId]: 'injected' });
+    // 自动注入消费同样留「已交付」标记：模型随后再带 task_id await 不能收到「不存在」
+    expect(await manager.awaitResult(taskId, 0, 7)).toEqual({ status: 'delivered' });
+  });
 });
 
 describe('BackgroundTaskManager shell result normalization', () => {

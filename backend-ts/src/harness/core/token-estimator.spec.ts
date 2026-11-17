@@ -259,7 +259,8 @@ describe('BackgroundTaskManager', () => {
     expect(await manager.awaitResult(slow, 1000)).toEqual({ status: 'done', result: 'late' });
     const ok = manager.submit(7, () => 'ok');
     expect(await manager.awaitResult(ok, 1)).toEqual({ status: 'done', result: 'ok' });
-    expect(await manager.awaitResult(ok, 1)).toEqual({ status: 'not_found' });
+    // task_id 一次性：结果取走后再问必须回「已交付」，而不是让调用方以为任务丢了
+    expect(await manager.awaitResult(ok, 1)).toEqual({ status: 'delivered' });
     const failed = manager.submit(7, () => { throw new Error('bad'); });
     const failure = await manager.awaitResult(failed, 1);
     expect(failure.status).toBe('done');

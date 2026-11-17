@@ -7,6 +7,13 @@ const MAX_RESULT_LENGTH = 10000;
 const ABANDONED_THRESHOLD_MS = 30 * 60 * 1000;
 /** 仍未结束的任务保留上限：超过即认为不可能再有人领结果，才允许回收登记表。 */
 const UNFINISHED_HARD_EXPIRY_MS = 24 * 60 * 60 * 1000;
+/**
+ * 结果被消费后「已交付」标记的保留时长。
+ * task_id 是一次性的：等待或自动注入取走结果后登记项即删除。但调用方常在拿到结果后
+ * 仍带着同一个 task_id 重问（例如同时传 task_id + session_id 续等），没有这个标记就
+ * 只能回答「任务不存在」，把「结果已交付」误报成「任务丢失」。
+ */
+const DELIVERED_RETENTION_MS = 30 * 60 * 1000;
 
 interface TaskEntry {
   sessionId: number | null;
@@ -18,14 +25,23 @@ interface TaskEntry {
   overdueWarned: boolean;
 }
 
-/** awaitResult 的三态：任务不存在 / 仍在跑（未消费） / 已完成（已消费）。 */
+/** 已交付结果后的短期标记：区分「结果已取走」与「从未存在 / 被回收」。 */
+interface DeliveredEntry {
+  sessionId: number | null;
+  deliveredAtMs: number;
+}
+
+/** awaitResult 的四态：任务不存在 / 结果已交付过 / 仍在跑（未消费） / 已完成（本次消费）。 */
 export type AwaitTaskResult =
   | { status: 'not_found' }
+  | { status: 'delivered' }
   | { status: 'pending' }
   | { status: 'done'; result: string };
 
 export class BackgroundTaskManager {
   private readonly tasks = new Map<string, TaskEntry>();
+  /** 已交付结果的短期标记（task_id 一次性，重问时回答「已交付」而不是「不存在」）。 */
+  private readonly delivered = new Map<string, DeliveredEntry>();
 
   /** now 可注入，便于测试超时回收而不依赖真实时钟。 */
   constructor(private readonly now: () => number = () => Date.now()) {}
@@ -56,6 +72,7 @@ export class BackgroundTaskManager {
   async consumeCompletedResults(sessionId: number | null): Promise<Record<string, string>> {
     const completed: Record<string, string> = {};
     const now = this.now();
+    this.gcDelivered(now);
     for (const taskId of [...this.tasks.keys()]) {
       const entry = this.tasks.get(taskId);
       if (!entry) continue;
@@ -73,6 +90,7 @@ export class BackgroundTaskManager {
           continue;
         }
         this.tasks.delete(taskId);
+        this.markDelivered(taskId, entry.sessionId);
         continue;
       }
       // 仍在跑的任务必须留在登记表里：长时构建超过 30 分钟很常见，提前移除会让
@@ -102,11 +120,15 @@ export class BackgroundTaskManager {
   async awaitResult(
     taskId: string, timeoutMs: number, sessionId: number | null = null,
   ): Promise<AwaitTaskResult> {
+    this.gcDelivered(this.now());
     const entry = this.tasks.get(taskId);
-    if (!entry) return { status: 'not_found' };
-    if (sessionId != null && entry.sessionId != null && entry.sessionId !== sessionId) {
+    if (!entry) {
+      // 结果可能已被等待或自动注入消费掉：凭短期标记回答「已交付」，不能误报「不存在」
+      const delivered = this.delivered.get(taskId);
+      if (delivered && this.ownedBy(delivered.sessionId, sessionId)) return { status: 'delivered' };
       return { status: 'not_found' };
     }
+    if (!this.ownedBy(entry.sessionId, sessionId)) return { status: 'not_found' };
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timedOut = Symbol('timeout');
     try {
@@ -116,13 +138,31 @@ export class BackgroundTaskManager {
       ]);
       if (raced === timedOut) return { status: 'pending' };
       this.tasks.delete(taskId);
+      this.markDelivered(taskId, entry.sessionId);
       return { status: 'done', result: this.normalizeResult(raced) };
     } catch (e) {
       this.tasks.delete(taskId);
+      this.markDelivered(taskId, entry.sessionId);
       return { status: 'done', result: this.formatError(e) };
     } finally {
       // 不清理定时器的话，任务早已返回，事件循环仍会被挂住最长 timeoutMs
       if (timer) clearTimeout(timer);
+    }
+  }
+
+  /** 归属校验：调用方给了 sessionId 且登记项也有 sessionId 时必须一致。 */
+  private ownedBy(entrySessionId: number | null, callerSessionId: number | null): boolean {
+    return callerSessionId == null || entrySessionId == null || entrySessionId === callerSessionId;
+  }
+
+  /** 结果被消费后登记「已交付」：短期保留，把「已取走」与「从未存在 / 被回收」区分开。 */
+  private markDelivered(taskId: string, sessionId: number | null): void {
+    this.delivered.set(taskId, { sessionId, deliveredAtMs: this.now() });
+  }
+
+  private gcDelivered(now: number): void {
+    for (const [taskId, entry] of this.delivered) {
+      if (now - entry.deliveredAtMs > DELIVERED_RETENTION_MS) this.delivered.delete(taskId);
     }
   }
 

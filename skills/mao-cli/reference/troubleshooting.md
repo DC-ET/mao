@@ -71,7 +71,7 @@
 
 返回 `completed:false` 表示命令仍在跑、会话已保留，不是失败：
 
-- 用 `action:'await_async'` + `session_id` 接着等（`async` 提交的用 `task_id`）
+- 用 `action:'await_async'` + `session_id` 接着等；`async` 提交的任务首次领取结果用 `task_id`（结果取走后 `task_id` 即失效，再用它会提示「结果已取走」而非任务丢失），之后继续等待一律用 `session_id`
 - 已知关键输出（如 `Listening on`）时给 `wait_for` 正则，命中即提前返回，不必等满 `yield_time_ms`
 - 提前返回后剩余输出会缓冲在会话里，`output_file` 始终是完整输出
 - 提示「会话仍有未结束的命令」是因为一个会话同一时刻只跑一条命令，先 `await_async` 收完再发下一条；要给运行中的命令喂输入用 `write_stdin`

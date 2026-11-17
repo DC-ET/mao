@@ -101,7 +101,7 @@ export class ShellSessionTool extends BaseTool {
         yield_time_ms: { type: 'integer', description: '等待输出的最长时间，单位毫秒（exec 默认 300000，write_stdin 默认 5000，await_async 默认 60000）' },
         wait_for: { type: 'string', description: `正则，命中输出即提前返回（最长 ${MAX_WAIT_FOR_LENGTH} 字符）。例如等服务启动打印 "Listening on"。若命中后进程已退出（命令含 exit）则 completed=true，不要再 await_async。` },
         async: { type: 'boolean', description: '是否在后台运行并立即返回 task_id（默认 false，仅用于 exec 动作）' },
-        task_id: { type: 'string', description: '后台任务 ID（用于 await_async 动作，等待 async 提交的任务）' },
+        task_id: { type: 'string', description: '后台任务 ID（用于 await_async 动作，领取 async 提交的任务结果；结果取走后不再可用，继续等待请改用 session_id）' },
         keep_session: { type: 'boolean', description: '是否保留会话（默认 false）。执行后自动关闭会话以释放资源。' },
       },
     };
@@ -371,9 +371,12 @@ export class ShellSessionTool extends BaseTool {
     if (typeof waitFor === 'string') return errorJson(waitFor);
     const yieldTimeMs = args.yield_time_ms != null ? asInt(args.yield_time_ms, DEFAULT_AWAIT_YIELD_MS) : DEFAULT_AWAIT_YIELD_MS;
     const taskId = asText(args.task_id);
+    const shellId = asText(args.session_id);
+    // 任务分支降级到会话分支时记录来源：delivered 要按「结果已取走」归因，
+    // 不能把正常路径报成「会话失效 / 切换 Agent」（会话 2696 事故的同类误判）。
+    let fallbackFrom: 'delivered' | 'not_found' | null = null;
     if (taskId) {
       const awaited = await this.backgroundTaskManager.awaitResult(taskId, yieldTimeMs, conversationId);
-      if (awaited.status === 'not_found') return errorJson('后台任务不存在或已失效（可能因切换 Agent 或容器回收）：' + taskId + '，请重新提交后台任务');
       if (awaited.status === 'pending') {
         return toJson({
           task_id: taskId,
@@ -381,15 +384,43 @@ export class ShellSessionTool extends BaseTool {
           message: `后台任务仍在执行（已等待 ${yieldTimeMs} ms），可继续 await_async 或等待结果自动注入。`,
         });
       }
-      return awaited.result;
+      if (awaited.status === 'done') return awaited.result;
+      // 任务不可用时若还带了 session_id，直接降级按会话续等：模型常把 task_id 与
+      // session_id 一起带上，不能把仍在跑的命令误报成「任务丢失」（会话 2696 事故）。
+      if (!shellId) {
+        if (awaited.status === 'delivered') {
+          return errorJson(
+            `后台任务 ${taskId} 的结果此前已取走（task_id 不再可用）。`
+            + `如需继续等待该命令，改用 action:'await_async' + session_id:'<任务返回的 session_id>'；`
+            + '完整输出也可从任务返回的 output_file 读取。',
+          );
+        }
+        return errorJson('后台任务不存在或已失效（可能因切换 Agent 或容器回收）：' + taskId + '，请重新提交后台任务');
+      }
+      fallbackFrom = awaited.status;
     }
-    const shellId = asText(args.session_id);
     if (!shellId) return errorJson("await_async 必须提供 session_id 或 task_id");
     // 进程可能刚因 exit 退出，仍要读出最后输出，不能把死会话当成「不存在」
     const session = this.sessionManager.getSession(shellId, { allowDead: true, conversationId: conversationId ?? 0 });
-    if (!session) return errorJson('会话不存在或已失效（可能因切换 Agent 或容器回收）：' + shellId + '，请用 action:"create" 重新创建 shell 会话');
+    if (!session) {
+      if (fallbackFrom === 'delivered' && taskId) {
+        return errorJson(
+          `后台任务 ${taskId} 的结果此前已取走（task_id 不再可用），会话 ${shellId} 也不存在。`
+          + '可先读任务返回的 output_file 确认输出是否完整；确认命令未结束再重新提交。',
+        );
+      }
+      return errorJson('会话不存在或已失效（可能因切换 Agent 或容器回收）：' + shellId + '，请用 action:"create" 重新创建 shell 会话');
+    }
     const pending = session.pendingCommand;
-    if (!pending) return errorJson('该会话没有未结束的命令：' + shellId);
+    if (!pending) {
+      if (fallbackFrom === 'delivered' && taskId) {
+        return errorJson(
+          `后台任务 ${taskId} 的结果此前已取走（task_id 不再可用），该会话也没有待收的输出。`
+          + '可先读任务返回的 output_file 确认输出是否完整；确认命令未结束再重新提交。',
+        );
+      }
+      return errorJson('该会话没有未结束的命令：' + shellId);
+    }
     if (pending.taskId != null) {
       return errorJson(`会话的输出正由后台任务 ${pending.taskId} 读取，请用 task_id:'${pending.taskId}' 等待。`);
     }

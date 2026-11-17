@@ -47,6 +47,8 @@ describe('ShellSessionTool', () => {
   beforeEach(() => {
     // submit 是 mock，后台读取任务不会真的跑，pending 需要在用例间复位
     session.pendingCommand = null;
+    // 各用例动态挂的 awaitResult 同样复位，避免用例顺序影响
+    delete (background as unknown as Record<string, unknown>).awaitResult;
   });
 
   it('executes lists closes and writes stdin', async () => {
@@ -81,6 +83,70 @@ describe('ShellSessionTool', () => {
     expect(taskGone.error).toContain('已失效');
     expect(taskGone.error).toContain('切换 Agent');
     expect(taskGone.error).toContain('重新提交后台任务');
+  });
+
+  it('distinguishes an already delivered task result from a missing one', async () => {
+    // 会话 2696 事故：第一次 await_async 已消费结果，第二次仍带旧 task_id。
+    // 此时必须回答「结果已取走」并给出续等姿势，不能报成「任务丢失」。
+    (background as unknown as Record<string, unknown>).awaitResult = vi.fn(async () => ({ status: 'delivered' }));
+    const delivered = JSON.parse(await tool.execute(
+      JSON.stringify({ action: 'await_async', task_id: 'bg-1' }), 11, null, null,
+    ));
+    expect(delivered.error).toContain('已取走');
+    expect(delivered.error).toContain('await_async');
+    expect(delivered.error).toContain('session_id');
+    expect(delivered.error).not.toContain('切换 Agent');
+  });
+
+  it('prefers the task result over the session when both ids are provided', async () => {
+    (background as unknown as Record<string, unknown>).awaitResult = vi.fn(async () => ({
+      status: 'done', result: '{"exit_code":0,"output":"task-done"}',
+    }));
+    sessionManager.getSession.mockClear();
+    const res = JSON.parse(await tool.execute(
+      JSON.stringify({ action: 'await_async', task_id: 'bg-1', session_id: 'sh-1' }), 11, 7, '/tmp',
+    ));
+    // done 优先级最高：直接交付任务结果，不能再去续读会话
+    expect(res.output).toBe('task-done');
+    expect(sessionManager.getSession).not.toHaveBeenCalled();
+  });
+
+  it('carries delivered semantics into the session fallback failure paths', async () => {
+    (background as unknown as Record<string, unknown>).awaitResult = vi.fn(async () => ({ status: 'delivered' }));
+    // 会话已不存在：不能说「切换 Agent 或容器回收」，要说结果已取走
+    sessionManager.getSession.mockReturnValueOnce(null);
+    const gone = JSON.parse(await tool.execute(
+      JSON.stringify({ action: 'await_async', task_id: 'bg-1', session_id: 'sh-x' }), 11, 7, '/tmp',
+    ));
+    expect(gone.error).toContain('已取走');
+    expect(gone.error).not.toContain('切换 Agent');
+    expect(gone.error).not.toContain('重新创建 shell 会话');
+
+    // 会话在但没有未结束的命令：同样按「结果已取走」归因，并指向 output_file
+    session.pendingCommand = null;
+    const idle = JSON.parse(await tool.execute(
+      JSON.stringify({ action: 'await_async', task_id: 'bg-1', session_id: 'sh-1' }), 11, 7, '/tmp',
+    ));
+    expect(idle.error).toContain('已取走');
+    expect(idle.error).toContain('output_file');
+    expect(idle.error).not.toContain('该会话没有未结束的命令');
+  });
+
+  it('falls back to the caller-provided session when the task is unavailable', async () => {
+    // task_id + session_id 一起传是模型续等时的常见形态：任务不可用要按会话续等，
+    // 否则仍在跑的命令会被误判成「后台任务不存在」，模型只能重跑
+    for (const status of ['delivered', 'not_found'] as const) {
+      (background as unknown as Record<string, unknown>).awaitResult = vi.fn(async () => ({ status }));
+      session.pendingCommand = { marker: 'm', keepSession: true, persist: true, taskId: null };
+      sessionManager.getSession.mockClear();
+      const resumed = JSON.parse(await tool.execute(
+        JSON.stringify({ action: 'await_async', task_id: 'bg-1', session_id: 'sh-1' }), 11, 7, '/tmp',
+      ));
+      expect(resumed.error).toBeUndefined();
+      expect(resumed.output).toContain('hello');
+      // 降级续等同样带 conversationId：别的会话的 shell 不能被借用
+      expect(sessionManager.getSession).toHaveBeenCalledWith('sh-1', { allowDead: true, conversationId: 11 });
+    }
   });
 
   it('passes the conversation id on every session lookup so foreign ids cannot be used', async () => {
