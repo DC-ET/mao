@@ -4,6 +4,8 @@ import {
   ANNOTATE_LINE_WIDTH,
   applyMosaic,
   drawOp,
+  canvasPointFromClient,
+  fitDisplaySize,
   fitImageSize,
   redrawOps,
   type AnnotateOp,
@@ -180,5 +182,39 @@ describe('fitImageSize', () => {
 
   it('零尺寸兜底为 1px', () => {
     expect(fitImageSize(0, 0)).toEqual({ width: 1, height: 1 })
+  })
+})
+
+describe('fitDisplaySize', () => {
+  it('小图不放大', () => {
+    expect(fitDisplaySize(100, 50, 800, 600)).toEqual({ width: 100, height: 50 })
+  })
+
+  it('手机竖图收进窄视口，整图可见且比例不变', () => {
+    const fitted = fitDisplaySize(1170, 2532, 360, 520)
+    expect(fitted.height).toBeLessThanOrEqual(520)
+    expect(fitted.width).toBeLessThanOrEqual(360)
+    expect(fitted.width / fitted.height).toBeCloseTo(1170 / 2532, 2)
+  })
+
+  it('宽图按宽度收缩', () => {
+    expect(fitDisplaySize(2000, 500, 400, 800)).toEqual({ width: 400, height: 100 })
+  })
+})
+
+describe('canvasPointFromClient', () => {
+  it('1:1 显示时坐标原样', () => {
+    expect(canvasPointFromClient(30, 40, { left: 10, top: 10, width: 200, height: 100 }, { width: 200, height: 100 }))
+      .toEqual({ x: 20, y: 30 })
+  })
+
+  it('显示缩小一半时，屏幕位移映射回位图像素', () => {
+    expect(canvasPointFromClient(25, 40, { left: 5, top: 0, width: 100, height: 80 }, { width: 200, height: 160 }))
+      .toEqual({ x: 40, y: 80 })
+  })
+
+  it('越出画布的点夹在位图边缘', () => {
+    expect(canvasPointFromClient(0, 500, { left: 10, top: 10, width: 100, height: 50 }, { width: 100, height: 50 }))
+      .toEqual({ x: 0, y: 49 })
   })
 })

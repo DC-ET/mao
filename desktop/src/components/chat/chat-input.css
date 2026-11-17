@@ -242,14 +242,37 @@
   white-space: nowrap;
 }
 
-.remove-file {
-  cursor: pointer;
-  color: var(--aw-ink-muted-48);
-  transition: color 0.15s;
+.pending-file-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 10px;
+  margin-left: 4px;
 }
 
-.remove-file:hover {
+.pending-file .annotate-file,
+.pending-file .remove-file {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  font-size: 14px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  cursor: pointer;
+  color: var(--aw-ink-muted-48);
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.pending-file .annotate-file:hover {
+  color: var(--aw-ink);
+  background: color-mix(in srgb, var(--aw-ink) 8%, transparent);
+}
+
+.pending-file .remove-file:hover {
   color: var(--aw-danger);
+  background: color-mix(in srgb, var(--aw-danger) 12%, transparent);
 }
 
 .file-preview-img {
@@ -627,7 +650,8 @@
   pointer-events: none;
 }
 
-.remove-file.disabled {
+.pending-file .annotate-file.disabled,
+.pending-file .remove-file.disabled {
   opacity: 0.4;
   cursor: not-allowed;
   pointer-events: none;

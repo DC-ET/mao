@@ -17,13 +17,37 @@
             v-for="def in TOOL_DEFS"
             :key="def.tool"
             type="button"
-            class="annotator-tool-btn"
+            class="annotator-tool-btn is-icon"
             :class="{ active: tool === def.tool }"
             :aria-pressed="tool === def.tool"
             :aria-label="def.label"
             :title="def.label"
             @click="selectTool(def.tool)"
-          >{{ def.label }}</button>
+          >
+            <svg class="annotator-tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <g v-if="def.tool === 'pen'" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 20.5l4.4-1.2L19.2 8.5a2 2 0 0 0 0-2.8l-1.4-1.4a2 2 0 0 0-2.8 0L4.2 15.1 4 20.5z" />
+                <path d="M13.2 5.6l5.2 5.2" />
+              </g>
+              <g v-else-if="def.tool === 'rect'" fill="none" stroke="currentColor" stroke-width="1.7">
+                <rect x="4.5" y="6.5" width="15" height="11" rx="1.5" />
+              </g>
+              <g v-else-if="def.tool === 'arrow'" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M5 19L19 5" />
+                <path d="M10 5h9v9" />
+              </g>
+              <g v-else-if="def.tool === 'text'" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                <path d="M5 6h14" />
+                <path d="M12 6v13" />
+              </g>
+              <g v-else fill="currentColor">
+                <rect x="4" y="4" width="6.5" height="6.5" rx="1" />
+                <rect x="13.5" y="4" width="6.5" height="6.5" rx="1" opacity="0.35" />
+                <rect x="4" y="13.5" width="6.5" height="6.5" rx="1" opacity="0.35" />
+                <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1" />
+              </g>
+            </svg>
+          </button>
           <button
             type="button"
             class="annotator-tool-btn"
@@ -36,7 +60,7 @@
       </div>
     </template>
 
-    <div class="annotator-viewport">
+    <div ref="viewportEl" class="annotator-viewport">
       <div class="annotator-stack" :style="stackStyle">
         <canvas ref="baseCanvas" :width="size.width" :height="size.height" class="annotator-base"></canvas>
         <canvas
@@ -67,7 +91,7 @@
     <template #footer>
       <div class="annotator-footer">
         <span class="annotator-hint">标注只影响本次发送的图片副本，原图保留可再次标注</span>
-        <div>
+        <div class="annotator-actions">
           <el-button :disabled="exporting" @click="$emit('update:visible', false)">取消</el-button>
           <el-button type="primary" :loading="exporting" @click="confirmExport">确认标注</el-button>
         </div>
@@ -85,7 +109,9 @@ import {
   ANNOTATE_LINE_WIDTH,
   MOSAIC_DEFAULT_RADIUS,
   applyMosaic,
+  canvasPointFromClient,
   drawOp,
+  fitDisplaySize,
   fitImageSize,
   type AnnotateOp,
   type AnnotateTool,
@@ -109,10 +135,14 @@ const TOOL_DEFS: Array<{ tool: AnnotateTool; label: string }> = [
 const tool = ref<AnnotateTool>('pen')
 const ops = ref<AnnotateOp[]>([])
 const size = ref({ width: 0, height: 0 })
+/** CSS 显示盒子。位图保持原图分辨率，屏幕上整图缩进视口。 */
+const display = ref({ width: 0, height: 0 })
+const viewportEl = ref<HTMLElement>()
 const baseCanvas = ref<HTMLCanvasElement>()
 const drawCanvas = ref<HTMLCanvasElement>()
 const textDraft = ref<{ x: number; y: number; value: string } | null>(null)
 const exporting = ref(false)
+let resizeObserver: ResizeObserver | null = null
 let imageUrl: string | null = null
 // 在途笔画：pen/mosaic 累积 points，rect/arrow 记起止；pointerup 落栈
 let drawing: { points?: Array<{ x: number; y: number }>; x0?: number; y0?: number; x1?: number; y1?: number; stamped?: number } | null = null
@@ -121,8 +151,45 @@ let committed: HTMLCanvasElement | null = null
 let committedCtx: CanvasRenderingContext2D | null = null
 let previewScheduled = false
 
-const stackStyle = computed(() => ({ width: `${size.value.width}px`, height: `${size.value.height}px` }))
-const textInputStyle = computed(() => (textDraft.value ? { left: `${textDraft.value.x}px`, top: `${textDraft.value.y}px` } : {}))
+const stackStyle = computed(() => ({ width: `${display.value.width}px`, height: `${display.value.height}px` }))
+const textInputStyle = computed(() => {
+  const draft = textDraft.value
+  if (!draft || size.value.width <= 0 || display.value.width <= 0) return {}
+  const sx = display.value.width / size.value.width
+  const sy = display.value.height / size.value.height
+  return {
+    left: `${draft.x * sx}px`,
+    top: `${draft.y * sy}px`,
+    fontSize: `${Math.max(16, ANNOTATE_FONT_SIZE * sy)}px`,
+  }
+})
+
+/** 视口内容盒（去掉 padding），供整图适配。对话框动画未结束时可能是 0。 */
+function viewportAvail(): { width: number; height: number } | null {
+  const vp = viewportEl.value
+  if (!vp) return null
+  const style = getComputedStyle(vp)
+  const padX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0)
+  const padY = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0)
+  return { width: vp.clientWidth - padX, height: vp.clientHeight - padY }
+}
+
+function updateDisplaySize() {
+  const box = viewportAvail()
+  if (!box || size.value.width <= 0 || size.value.height <= 0) return
+  if (box.width < 2 || box.height < 2) return
+  const next = fitDisplaySize(size.value.width, size.value.height, box.width, box.height)
+  if (next.width === display.value.width && next.height === display.value.height) return
+  display.value = next
+}
+
+function bindViewportObserver() {
+  resizeObserver?.disconnect()
+  const vp = viewportEl.value
+  if (!vp || typeof ResizeObserver === 'undefined') return
+  resizeObserver = new ResizeObserver(() => updateDisplaySize())
+  resizeObserver.observe(vp)
+}
 
 const baseCtx = () => baseCanvas.value?.getContext('2d') ?? null
 const drawCtx = () => drawCanvas.value?.getContext('2d') ?? null
@@ -144,7 +211,11 @@ async function init() {
   }
   size.value = fitImageSize(img.naturalWidth, img.naturalHeight)
   ops.value = []
+  bindViewportObserver()
   await nextTick()
+  updateDisplaySize()
+  // 首帧页眉/页脚换行后视口会变矮，再量一次，避免底栏被挤出屏幕
+  requestAnimationFrame(() => updateDisplaySize())
   baseCtx()?.drawImage(img, 0, 0, size.value.width, size.value.height)
   committed = document.createElement('canvas')
   committed.width = size.value.width
@@ -155,6 +226,8 @@ async function init() {
 }
 
 onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  resizeObserver = null
   if (imageUrl) URL.revokeObjectURL(imageUrl)
 })
 
@@ -185,8 +258,9 @@ function rebuildCommitted() {
 }
 
 function canvasPoint(e: PointerEvent): { x: number; y: number } {
-  const rect = drawCanvas.value!.getBoundingClientRect()
-  return { x: Math.round(e.clientX - rect.left), y: Math.round(e.clientY - rect.top) }
+  const canvas = drawCanvas.value!
+  const rect = canvas.getBoundingClientRect()
+  return canvasPointFromClient(e.clientX, e.clientY, rect, { width: canvas.width, height: canvas.height })
 }
 
 function onPointerDown(e: PointerEvent) {
@@ -315,10 +389,13 @@ async function confirmExport() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
+  min-width: 0;
 }
 
 .annotator-title {
+  flex: 1;
+  min-width: 0;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -328,11 +405,16 @@ async function confirmExport() {
 .annotator-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   flex: none;
+  max-width: 100%;
 }
 
 .annotator-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--aw-hairline);
   background: var(--aw-canvas-parchment);
   color: var(--aw-ink);
@@ -340,6 +422,19 @@ async function confirmExport() {
   padding: 4px 12px;
   border-radius: var(--aw-radius-sm);
   cursor: pointer;
+  flex: none;
+}
+
+.annotator-tool-btn.is-icon {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+.annotator-tool-icon {
+  width: 18px;
+  height: 18px;
+  display: block;
 }
 
 .annotator-tool-btn:hover {
@@ -349,6 +444,7 @@ async function confirmExport() {
 .annotator-tool-btn.active {
   border-color: var(--aw-primary);
   color: var(--aw-primary);
+  background: color-mix(in srgb, var(--aw-primary) 10%, var(--aw-canvas-parchment));
 }
 
 .annotator-tool-btn:disabled {
@@ -357,8 +453,15 @@ async function confirmExport() {
 }
 
 .annotator-viewport {
-  height: calc(100vh - 190px);
-  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: var(--aw-canvas);
   border: 1px solid var(--aw-divider-soft);
   border-radius: var(--aw-radius-sm);
@@ -366,18 +469,19 @@ async function confirmExport() {
 
 .annotator-stack {
   position: relative;
-  margin: 16px;
+  flex: none;
 }
 
 .annotator-base,
 .annotator-draw {
+  position: absolute;
+  inset: 0;
   display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .annotator-draw {
-  position: absolute;
-  top: 0;
-  left: 0;
   cursor: crosshair;
   touch-action: none;
 }
@@ -399,10 +503,113 @@ async function confirmExport() {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.annotator-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: none;
 }
 
 .annotator-hint {
+  flex: 1;
+  min-width: 0;
   font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-48);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .annotator-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .annotator-toolbar {
+    justify-content: flex-start;
+  }
+
+  .annotator-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .annotator-hint,
+  .annotator-actions {
+    flex: none;
+    width: 100%;
+  }
+}
+
+@media (pointer: coarse) {
+  .annotator-tool-btn.is-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .annotator-tool-icon {
+    width: 20px;
+    height: 20px;
+  }
+
+  .annotator-tool-btn:not(.is-icon) {
+    min-height: 40px;
+  }
+}
+</style>
+
+<style>
+/* ElDialog teleport 到 body，壳层样式不能写在 scoped 里。 */
+.el-overlay-dialog:has(.image-annotator-dialog) {
+  overflow: hidden;
+}
+
+.image-annotator-dialog.el-dialog.is-fullscreen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  width: auto;
+  height: auto;
+  max-height: none;
+  margin: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.image-annotator-dialog .el-dialog__header,
+.image-annotator-dialog .el-dialog__footer {
+  flex: none;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.image-annotator-dialog .el-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+@media (max-width: 640px) {
+  .image-annotator-dialog.el-dialog.is-fullscreen {
+    --el-dialog-padding-primary: 10px;
+    padding: 10px;
+  }
 }
 </style>

@@ -47,6 +47,48 @@ export function fitImageSize(width: number, height: number, maxEdge = MAX_ANNOTA
   }
 }
 
+/**
+ * 显示尺寸：整图收进视口，保持比例，且不放大（小图维持 1:1，避免发糊）。
+ * 画布位图仍用 fitImageSize 的结果，这里只决定 CSS 盒子。
+ */
+export function fitDisplaySize(
+  imageWidth: number,
+  imageHeight: number,
+  availWidth: number,
+  availHeight: number,
+): { width: number; height: number } {
+  if (imageWidth <= 0 || imageHeight <= 0) return { width: 1, height: 1 }
+  const aw = Math.max(1, Math.floor(availWidth))
+  const ah = Math.max(1, Math.floor(availHeight))
+  const scale = Math.min(aw / imageWidth, ah / imageHeight, 1)
+  return {
+    width: Math.max(1, Math.min(aw, Math.round(imageWidth * scale))),
+    height: Math.max(1, Math.min(ah, Math.round(imageHeight * scale))),
+  }
+}
+
+/**
+ * 指针坐标从 CSS 显示盒子换算到位图像素。
+ * 显示被缩小后，getBoundingClientRect 是屏幕尺寸，笔迹必须落在位图上，导出才和看到的一致。
+ */
+export function canvasPointFromClient(
+  clientX: number,
+  clientY: number,
+  rect: { left: number; top: number; width: number; height: number },
+  bitmap: { width: number; height: number },
+): { x: number; y: number } {
+  const bw = Math.max(1, bitmap.width)
+  const bh = Math.max(1, bitmap.height)
+  const sx = rect.width > 0 ? bw / rect.width : 1
+  const sy = rect.height > 0 ? bh / rect.height : 1
+  const x = Math.round((clientX - rect.left) * sx)
+  const y = Math.round((clientY - rect.top) * sy)
+  return {
+    x: Math.min(bw - 1, Math.max(0, x)),
+    y: Math.min(bh - 1, Math.max(0, y)),
+  }
+}
+
 export function drawOp(ctx: CanvasRenderingContext2D, op: AnnotateOp): void {
   ctx.strokeStyle = op.color
   ctx.fillStyle = op.color

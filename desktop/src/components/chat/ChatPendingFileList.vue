@@ -5,16 +5,18 @@
       <img v-if="item.previewUrl" :src="item.previewUrl" class="file-preview-img" />
       <el-icon v-else><Document /></el-icon>
       <span class="file-name">{{ item.file.name }}</span>
-      <el-icon
-        v-if="item.file.type.startsWith('image/')"
-        class="annotate-file"
-        :class="{ disabled: disabled }"
-        role="button"
-        aria-label="标注图片"
-        title="标注图片"
-        @click="!disabled && emit('annotate', idx)"
-      ><EditPen /></el-icon>
-      <el-icon class="remove-file" :class="{ disabled: disabled }" role="button" aria-label="移除待发文件" @click="!disabled && removeFile(idx)"><Close /></el-icon>
+      <span class="pending-file-actions">
+        <el-icon
+          v-if="item.file.type.startsWith('image/')"
+          class="annotate-file"
+          :class="{ disabled: disabled }"
+          role="button"
+          aria-label="标注图片"
+          title="标注图片"
+          @click="!disabled && emit('annotate', idx)"
+        ><EditPen /></el-icon>
+        <el-icon class="remove-file" :class="{ disabled: disabled }" role="button" aria-label="移除待发文件" title="移除" @click="!disabled && removeFile(idx)"><Close /></el-icon>
+      </span>
     </div>
   </div>
 </template>
