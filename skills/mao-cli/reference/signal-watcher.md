@@ -33,7 +33,7 @@
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/v1/signal-watchers` | 我的哨兵列表（脱敏） |
-| POST | `/v1/signal-watchers` | 新建；body 支持 `triggerMode`（`NEW_SESSION` 默认 / `REUSE_SESSION`）与 `copyFrom`（源哨兵 id，敏感请求头与请求体由后端从源行解密继承，前端不接触明文） |
+| POST | `/v1/signal-watchers` | 新建；body 支持 `triggerMode`（`NEW_SESSION` 默认 / `REUSE_SESSION` / `SPECIFIED_SESSION`）、`specifiedSessionId`（指定模式必填，服务端校验归属）与 `copyFrom`（源哨兵 id，敏感请求头与请求体由后端从源行解密继承，前端不接触明文） |
 | GET | `/v1/signal-watchers/:id` | 详情（脱敏） |
 | PUT | `/v1/signal-watchers/:id` | 编辑；命中判定字段则重置基线 |
 | DELETE | `/v1/signal-watchers/:id` | 删除（级联删轮询记录，已产生的会话不删） |
@@ -65,7 +65,7 @@
 
 `--probe-type` 选 HTTP（默认，请求接口）或 SCRIPT（执行项目工作区里的 Shell 脚本）。HTTP 必填 `--url`，SCRIPT 必填 `--script-path`；两侧字段互斥，显式传了 `--probe-type` 时非生效侧的字段在本地丢弃并打提示（不静默）。未传 `--probe-type` 时全部下发，由后端按库内类型忽略非生效侧字段。
 
-HTTP 侧可选 `--method`（默认 GET）、`--headers`（JSON 对象或 `[{key,value}]` 数组）、`--body` / `--body-file`；SCRIPT 侧可选 `--timeout-seconds`（默认 60）。共用可选 `--interval`（HTTP 1~1440 / SCRIPT 5~1440，默认 30）、`--compare-mode`（默认 HASH；SCRIPT 仅 HASH / JSON_FIELD）、`--json-path`、`--trigger-mode`（默认 NEW_SESSION）、`--copy-from`。
+HTTP 侧可选 `--method`（默认 GET）、`--headers`（JSON 对象或 `[{key,value}]` 数组）、`--body` / `--body-file`；SCRIPT 侧可选 `--timeout-seconds`（默认 60）。共用可选 `--interval`（HTTP 1~1440 / SCRIPT 5~1440，默认 30）、`--compare-mode`（默认 HASH；SCRIPT 仅 HASH / JSON_FIELD）、`--json-path`、`--trigger-mode`（默认 NEW_SESSION）、`--session-id`（见下文「指定执行会话」）、`--copy-from`。
 
 ```bash
 # 新建 HTTP 哨兵：每 15 分钟探测库存接口，按 JSON 字段判定，变化时新建会话交给 Agent
@@ -109,6 +109,18 @@ update 为部分更新：未传的字段保持原值；`--headers '{}'`、`--bod
 | 切换模式 | `NEW_SESSION → REUSE_SESSION` 不清指针（可能接着旧会话聊）；`REUSE_SESSION → NEW_SESSION` 清指针 |
 | 复制继承 | `copyFrom` 命中时：未修改的敏感请求头按掩码占位从源行还原，POST 且请求体缺省时继承源请求体；`reuseSessionId` 不继承 |
 | 会话来源 | 哨兵会话 `source = signal`，归入独立分组「信号哨兵」（后端 `SIGNAL_GROUP_KEY`），不计未读但收件箱 / 出站订阅照常 |
+
+## 指定执行会话（0.0.526）
+
+`--trigger-mode SPECIFIED_SESSION` + `--session-id`（CLI 单传 `--session-id` 即隐含指定模式）：变化触发在指定的会话中执行，飞书/钉钉通道会话的最终回复会推回聊天，其余会话在任务面板可见。与复用指针相反，会话由**用户指定**：
+
+| 项 | 规则 |
+|----|------|
+| 保存校验 | 会话必须存在、属于本人、为主会话、云端执行（CLOUD）、属于哨兵所选 Agent 且未归档；不满足则保存失败并给具体文案 |
+| 失效策略 | 指定会话在触发时被删/归档 → 本次触发判失败（轮询记录 error 给具体原因）并计入连续失败，**不自动降级新建**；连续 5 次失败自动停用 |
+| 编辑沿用 | `specifiedSessionId` 键未下发 = 沿用库值；非指定模式下服务端单侧归空（切走模式即清列） |
+| 复制继承 | CLI `--copy-from` 不继承指定会话，副本须显式 `--session-id` 重指定 |
+| Agent 工具 | 会话内通过 `create_signal_watcher` 创建时默认指定当前会话（LOCAL/边路会话回退每次新建并在结果中写明） |
 
 ## 轮询记录字段
 

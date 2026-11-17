@@ -45,10 +45,12 @@ export interface SignalWatcher {
   lastCheckedAt: string | null;
   lastChangedAt: string | null;
   consecutiveFailures: number;
-  /** 触发方式（V174）：NEW_SESSION=每次新建，REUSE_SESSION=复用本哨兵自己的会话。 */
+  /** 触发方式（V174/V197）：NEW_SESSION=每次新建，REUSE_SESSION=复用本哨兵自己的会话，SPECIFIED_SESSION=指定执行会话。 */
   triggerMode: SignalTriggerMode;
   /** REUSE_SESSION 模式当前复用的会话 id（系统维护，NULL=尚未自建）。 */
   reuseSessionId: number | null;
+  /** SPECIFIED_SESSION 模式的执行会话 id（用户/Agent 指定，保存时校验；NULL=未指定）。 */
+  specifiedSessionId: number | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 }
@@ -83,7 +85,7 @@ export type { SignalProbeType };
 /** 哨兵状态：ACTIVE 轮询中 / PAUSED 用户暂停 / DISABLED 连续失败自动停用。 */
 export type { SignalWatcherStatus };
 
-/** 触发方式（V174）：每次新建会话 / 复用本哨兵自己的会话。 */
+/** 触发方式（V174/V197）：每次新建会话 / 复用本哨兵自己的会话 / 指定执行会话。 */
 export type { SignalTriggerMode };
 
 export const SIGNAL_COMPARE_MODES = ['HASH', 'JSON_FIELD', 'STATUS_CODE'] as const satisfies readonly SignalCompareMode[];
@@ -109,7 +111,13 @@ export function isScriptCompareMode(value: unknown): value is SignalCompareMode 
   return typeof value === 'string' && (SCRIPT_COMPARE_MODES as readonly string[]).includes(value);
 }
 
-export const SIGNAL_TRIGGER_MODES = ['NEW_SESSION', 'REUSE_SESSION'] as const satisfies readonly SignalTriggerMode[];
+export const SIGNAL_TRIGGER_MODES = ['NEW_SESSION', 'REUSE_SESSION', 'SPECIFIED_SESSION'] as const satisfies readonly SignalTriggerMode[];
+export type SignalTriggerModeValue = (typeof SIGNAL_TRIGGER_MODES)[number];
+
+/** 契约里的每种触发方式都必须在本闭集有对应值：编译期即失败（对齐 session.repository.ts 范式）。 */
+type _AssertTriggerModeExhaustive = Exclude<SignalTriggerMode, SignalTriggerModeValue> extends never ? true : never;
+const _triggerModeExhaustive: _AssertTriggerModeExhaustive = true;
+void _triggerModeExhaustive;
 
 export function isSignalTriggerMode(value: unknown): value is SignalTriggerMode {
   return typeof value === 'string' && (SIGNAL_TRIGGER_MODES as readonly string[]).includes(value);

@@ -635,6 +635,13 @@ test.describe('Desktop - Signal watcher form', () => {
     await dialog.locator('.el-radio:has(input[value="HTTP"])').click()
     expect(dialog.locator('input[placeholder^="http://"]')).toBeVisible()
     await expect(dialog.locator('.script-path-row')).toHaveCount(0)
+
+    // 触发方式第三态（V197）：指定会话出现执行会话下拉，其余模式收起
+    await expect(dialog.locator('.el-radio:has(input[value="SPECIFIED_SESSION"])')).toBeVisible()
+    await dialog.locator('.el-radio:has(input[value="SPECIFIED_SESSION"])').click()
+    await expect(dialog.locator('input[placeholder*="消息内容搜索"]')).toBeVisible()
+    await dialog.locator('.el-radio:has(input[value="NEW_SESSION"])').click()
+    await expect(dialog.locator('input[placeholder*="消息内容搜索"]')).toHaveCount(0)
   })
 })
 

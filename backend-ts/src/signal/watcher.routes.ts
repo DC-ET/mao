@@ -18,6 +18,13 @@ function parseId(raw: number): number {
   return raw;
 }
 
+/** 指定会话 id 解析（V197）：键存在时 null=显式清空，正整数=指定，其它=非法。 */
+function parseSpecifiedSessionId(raw: unknown): number | null {
+  if (raw == null) return null;
+  if (typeof raw === 'number' && Number.isInteger(raw) && raw > 0) return raw;
+  throw new BusinessException(ErrorCode.PARAM_INVALID, 'specifiedSessionId 必须为正整数或 null');
+}
+
 /** 请求体 → WatcherInput（字段缺省时由 service 的合并逻辑补）。导出供路由层回归测试使用。 */
 export function toInput(body: Record<string, unknown>): Partial<WatcherInput> {
   // headers 与 body/jsonPath 统一口径：请求体里没带这个键就是「未下发」（undefined），
@@ -69,6 +76,10 @@ export function toInput(body: Record<string, unknown>): Partial<WatcherInput> {
     jsonPath: 'jsonPath' in body ? (typeof body.jsonPath === 'string' ? body.jsonPath : null) : undefined,
     promptTemplate: typeof body.promptTemplate === 'string' ? body.promptTemplate : undefined,
     triggerMode: typeof body.triggerMode === 'string' ? body.triggerMode : undefined,
+    // 指定会话（V197）与 scriptPath 同口径：键未下发=未下发（编辑沿用库值），键存在且
+    // null=显式清空，正整数=指定。reuseSessionId 仍刻意不解析（指针系统维护，防伪造指向
+    // 他人生效中的会话）；指定会话走本字段，归属/有效性由服务层 assertSpecifiedSession 校验。
+    specifiedSessionId: 'specifiedSessionId' in body ? parseSpecifiedSessionId(body.specifiedSessionId) : undefined,
     probeType: typeof body.probeType === 'string' ? body.probeType : undefined,
     scriptPath: 'scriptPath' in body ? (typeof body.scriptPath === 'string' ? body.scriptPath : null) : undefined,
     scriptTimeoutSeconds,
