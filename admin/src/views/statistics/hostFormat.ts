@@ -51,6 +51,16 @@ export function clampPercent(value: number): number {
   return Math.min(100, Math.max(0, value))
 }
 
+export function formatDelay(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return '—'
+  const rounded = Math.round(ms * 10) / 10
+  return Number.isInteger(rounded) ? `${rounded} ms` : `${rounded.toFixed(1)} ms`
+}
+
+export function formatCount(value: number): string {
+  return new Intl.NumberFormat('zh-CN').format(value)
+}
+
 export function diskPlace(disk: { path: string; mount: string }): string {
   if (disk.path === disk.mount) return disk.mount
   return `${disk.path} · 挂载 ${disk.mount}`

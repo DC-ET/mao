@@ -23,8 +23,16 @@ function io(overrides: Partial<HostIo> = {}): HostIo {
     osMemory: () => ({ totalBytes: 999, freeBytes: 1 }),
     pathExists: () => true,
     df: async () => DF_ROOT,
+    dfInodes: async () => null,
+    readProcStat: () => null,
+    readDiskstats: () => null,
+    processUptimeSeconds: () => 42,
+    processMemory: () => ({ rssBytes: 100, heapUsedBytes: 40, heapTotalBytes: 80 }),
+    eventLoopDelayMs: () => 1.5,
+    fileDescriptors: () => ({ open: 10, limit: 1024 }),
     listContainers: async () => [],
     probeDocker: async () => ({ ok: true }),
+    dockerSystemDf: async () => null,
     ...overrides,
   };
 }
@@ -107,15 +115,19 @@ describe('HostStatusService.snapshot', () => {
     expect(vo.disks.map((disk) => disk.label)).toEqual(['系统盘', '工作区']);
   });
 
-  it('Docker 不可用时不读容器列表', async () => {
+  it('Docker 不可用时不读容器列表，也不查镜像占用', async () => {
     const listContainers = vi.fn(async () => [{ state: 'running' as const, tracked: true, busy: false }]);
+    const dockerSystemDf = vi.fn(async () => '');
     const service = new HostStatusService(io({
       probeDocker: async () => ({ ok: false, reason: '本机未安装 Docker' }),
       listContainers,
+      dockerSystemDf,
     }), []);
     const vo = await service.snapshot();
     expect(listContainers).not.toHaveBeenCalled();
+    expect(dockerSystemDf).not.toHaveBeenCalled();
     expect(vo.containers).toMatchObject({ available: false, reason: '本机未安装 Docker', total: 0, running: 0 });
+    expect(vo.dockerDisk).toMatchObject({ available: false, reason: '本机未安装 Docker', imagesBytes: null });
   });
 
   it('容器列表失败时降级，其它指标仍在', async () => {
@@ -136,6 +148,60 @@ describe('HostStatusService.snapshot', () => {
     }), []);
     const vo = await service.snapshot();
     expect(vo.containers).toMatchObject({ available: true, running: 1, stopped: 1, untracked: 1, busy: 1, total: 2 });
+  });
+
+  it('附上进程、inode，以及间隔内的 iowait 和磁盘读写', async () => {
+    let now = 0;
+    let step = 0;
+    const service = new HostStatusService(io({
+      now: () => now,
+      sleep: async () => { now += 1000; },
+      dfInodes: async () => `Filesystem Inodes IUsed IFree IUse% Mounted on
+/dev/root 1000 400 600 40% /
+`,
+      readProcStat: () => (step === 0
+        ? 'cpu  100 0 100 700 100 0 0 0\ncpu0 1 0 1 1 1 0 0 0\n'
+        : 'cpu  200 0 200 1400 200 0 0 0\n'),
+      readDiskstats: () => {
+        const text = step === 0
+          ? ' 8 0 sda 0 0 2000 0 0 0 800 0\n 8 1 sda1 0 0 99999 0 0 0 99999 0\n'
+          : ' 8 0 sda 0 0 4000 0 0 0 1800 0\n 8 1 sda1 0 0 99999 0 0 0 99999 0\n';
+        step += 1;
+        return text;
+      },
+      dockerSystemDf: async () => 'Images\t1.5GB\t500MB (33%)\nLocal Volumes\t100kB\t0B (0%)\nBuild Cache\t2MB\t2MB\n',
+    }), [{ label: '系统盘', path: '/' }]);
+
+    const vo = await service.snapshot();
+
+    expect(vo.cpu.iowaitPercent).toBe(10);
+    expect(vo.diskIo).toEqual({ readBytesPerSec: 2000 * 512, writeBytesPerSec: 1000 * 512 });
+    expect(vo.disks[0]).toMatchObject({ inodeTotal: 1000, inodeUsed: 400, inodeUsagePercent: 40 });
+    expect(vo.process).toMatchObject({ uptimeSeconds: 42, rssBytes: 100, heapUsedBytes: 40, eventLoopDelayMs: 1.5, openFds: 10, fdLimit: 1024 });
+    expect(vo.dockerDisk).toMatchObject({
+      available: true,
+      imagesBytes: 1_500_000_000,
+      imagesReclaimableBytes: 500_000_000,
+      volumesBytes: 100_000,
+      buildCacheBytes: 2_000_000,
+    });
+  });
+});
+
+describe('HostStatusService.trend', () => {
+  it('只采样 CPU 和内存，不读磁盘也不查 Docker', async () => {
+    const df = vi.fn(async () => DF_ROOT);
+    const probeDocker = vi.fn(async () => ({ ok: true as const }));
+    const service = new HostStatusService(io({ df, probeDocker }), [{ label: '系统盘', path: '/' }]);
+
+    const sample = await service.trend();
+
+    expect(df).not.toHaveBeenCalled();
+    expect(probeDocker).not.toHaveBeenCalled();
+    expect(sample.sampledAt).toBe(1_000);
+    expect(sample.memorySource).toBe('proc');
+    expect(sample.memory.usagePercent).toBe(75);
+    expect(sample.cpu).toMatchObject({ cores: 8, usagePercent: null, load1: 0.5 });
   });
 });
 

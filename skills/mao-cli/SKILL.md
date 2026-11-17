@@ -60,7 +60,7 @@ Mao 的**产品文档唯一正文**（可独立分发）+ **REST 操作 CLI**。
 ## 尚未覆盖的 REST 能力（明确不做 / 待补）
 
 - 对话消息发送、消息队列写操作、WebSocket 流式会话
-- `/v1/statistics/overview|agents|models|users` 用量统计（管理后台 UI 可用）。主机快照例外：`mao runtime host` → `GET /v1/statistics/host`（见 [runtime.md](reference/runtime.md)）
+- `/v1/statistics/overview|agents|models|users` 用量统计（管理后台 UI 可用）。主机快照例外：`mao runtime host` → `GET /v1/statistics/host`。页面折线用的 `GET /v1/statistics/host/trend` 只返回当前这一点的 CPU 和内存，序列由浏览器暂存，CLI 不封装（见 [runtime.md](reference/runtime.md)）
 - 开放 API / Webhook 直接触发运行（`open` 已覆盖 mao_ Token 触发，预算判定同样作用于这两类来源，见 [budget.md](reference/budget.md)）
 - Agent 头像上传与设置（管理后台 UI / REST 可用，见 [reference/agent.md](reference/agent.md)）
 - Agent 系统提示词版本列表与回滚（管理后台 UI / REST 可用，见 [reference/agent.md](reference/agent.md)）

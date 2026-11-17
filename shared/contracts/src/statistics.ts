@@ -44,6 +44,8 @@ export interface OnlineDevicesVo {
 export interface HostCpuSnapshot {
   cores: number;
   usagePercent: number | null;
+  /** 采样间隔内花在等待磁盘上的时间占比。读不到 /proc/stat 时为 null */
+  iowaitPercent: number | null;
   /** 1 / 5 / 15 分钟负载 */
   load1: number;
   load5: number;
@@ -74,6 +76,45 @@ export interface HostDiskSnapshot {
   usedBytes: number;
   availableBytes: number;
   usagePercent: number;
+  /** inode 读不到时为 null（部分文件系统不提供） */
+  inodeTotal: number | null;
+  inodeUsed: number | null;
+  inodeUsagePercent: number | null;
+}
+
+/** 整机磁盘吞吐（整盘合计，不含分区，避免和整盘重复计算）。读不到 /proc/diskstats 时为 null。 */
+export interface HostDiskIoSnapshot {
+  readBytesPerSec: number | null;
+  writeBytesPerSec: number | null;
+}
+
+/** 后端进程自身。文件描述符在非 Linux 上可能为 null。 */
+export interface HostProcessSnapshot {
+  /** 进程已运行秒数，不是开机时长 */
+  uptimeSeconds: number;
+  rssBytes: number;
+  heapUsedBytes: number;
+  heapTotalBytes: number;
+  /** 距上次采样的事件循环平均延迟（毫秒）。还没有采样时为 null */
+  eventLoopDelayMs: number | null;
+  openFds: number | null;
+  /** 软上限。unlimited 或读不到时为 null */
+  fdLimit: number | null;
+}
+
+/**
+ * Docker 镜像 / 卷 / 构建缓存占用的磁盘。
+ * available=false 时各字节字段为 null，不表示占用是 0。
+ */
+export interface HostDockerDiskSnapshot {
+  available: boolean;
+  reason: string | null;
+  imagesBytes: number | null;
+  imagesReclaimableBytes: number | null;
+  volumesBytes: number | null;
+  volumesReclaimableBytes: number | null;
+  buildCacheBytes: number | null;
+  buildCacheReclaimableBytes: number | null;
 }
 
 /**
@@ -93,6 +134,18 @@ export interface HostContainerSnapshot {
 }
 
 /**
+ * GET /v1/statistics/host/trend 的一个采样点。
+ * 只含 CPU 与内存，给页面折线用；序列不落库，由打开页面的浏览器自己保留。
+ */
+export interface HostTrendSample {
+  /** 采集时刻，epoch ms */
+  sampledAt: number;
+  memorySource: 'proc' | 'os';
+  cpu: HostCpuSnapshot;
+  memory: HostMemorySnapshot;
+}
+
+/**
  * GET /v1/statistics/host 响应 data。
  * 只描述后端进程所在的这一台机器，不含远程数据库。无历史序列。
  * memorySource=proc 表示读到了 /proc/meminfo，os 表示退回 Node os 模块。
@@ -108,5 +161,9 @@ export interface HostStatusVo {
   cpu: HostCpuSnapshot;
   memory: HostMemorySnapshot;
   disks: HostDiskSnapshot[];
+  /** 整机磁盘读写速率，与上面按挂载点拆开的容量无关 */
+  diskIo: HostDiskIoSnapshot;
+  process: HostProcessSnapshot;
   containers: HostContainerSnapshot;
+  dockerDisk: HostDockerDiskSnapshot;
 }

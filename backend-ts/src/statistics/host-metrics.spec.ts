@@ -2,9 +2,17 @@ import { describe, expect, it } from 'vitest';
 import {
   cpuTimesFromCpus,
   cpuUsagePercent,
+  diskIoRates,
   dockerProbeFailure,
+  iowaitPercent,
   parseDf,
+  parseDfInodes,
+  parseDiskstats,
+  parseDockerSize,
+  parseDockerSystemDf,
+  parseFdLimit,
   parseMeminfo,
+  parseProcStat,
   selectDisks,
   summarizeContainers,
   usagePercent,
@@ -119,6 +127,51 @@ describe('summarizeContainers', () => {
       busy: 1,
       total: 3,
     });
+  });
+});
+
+describe('inode、iowait、磁盘读写、Docker 占用', () => {
+  it('Linux 与 macOS 的 df -i 都能取出 inode 使用率', () => {
+    const linux = parseDfInodes(`Filesystem Inodes IUsed IFree IUse% Mounted on
+/dev/sda1 1000 250 750 25% /data
+`);
+    expect(linux).toMatchObject({ mount: '/data', total: 1000, used: 250, usagePercent: 25 });
+
+    const mac = parseDfInodes(`Filesystem 512-blocks Used Available Capacity iused ifree %iused Mounted on
+/dev/disk3s1s1 965595304 24686304 40265616 39% 458732 201328080 12% /System/Volumes/Data
+`);
+    expect(mac).toMatchObject({
+      mount: '/System/Volumes/Data',
+      used: 458732,
+      total: 458732 + 201328080,
+      usagePercent: 12,
+    });
+  });
+
+  it('iowait 用聚合 cpu 行，磁盘读写跳过分区', () => {
+    const prev = parseProcStat('cpu  100 0 100 700 100 0 0 0\ncpu0 9 9 9 9 9 0 0 0\n');
+    const next = parseProcStat('cpu  200 0 200 1400 200 0 0 0\n');
+    expect(prev && next && iowaitPercent(prev, next)).toBe(10);
+
+    const before = parseDiskstats(' 8 0 sda 0 0 100 0 0 0 50 0\n 8 1 sda1 0 0 999 0 0 0 999 0\n');
+    const after = parseDiskstats(' 8 0 sda 0 0 200 0 0 0 50 0\n 8 1 sda1 0 0 999 0 0 0 999 0\n');
+    expect(diskIoRates(before, after, 1000)).toEqual({ readBytesPerSec: 100 * 512, writeBytesPerSec: 0 });
+  });
+
+  it('解析 Docker 容量，认不出类型时不算成功', () => {
+    expect(parseDockerSize('1.5GB')).toBe(1_500_000_000);
+    expect(parseDockerSize('500MB (33%)')).toBe(500_000_000);
+    expect(parseDockerSize('0B')).toBe(0);
+    const parsed = parseDockerSystemDf('Images\t2kB\t1kB (50%)\nContainers\t9B\t0B\n');
+    expect(parsed.recognized).toBe(true);
+    expect(parsed.imagesBytes).toBe(2000);
+    expect(parseDockerSystemDf('Containers\t9B\t0B\n').recognized).toBe(false);
+  });
+
+  it('文件描述符软上限', () => {
+    const text = 'Max open files            1024                 1048576              files\n';
+    expect(parseFdLimit(text)).toBe(1024);
+    expect(parseFdLimit('Max open files            unlimited            unlimited            files\n')).toBeNull();
   });
 });
 

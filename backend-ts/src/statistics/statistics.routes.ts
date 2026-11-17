@@ -2,13 +2,16 @@ import type { FastifyInstance } from 'fastify';
 import { requireRequestPermission, sendJson } from '../common/http-error.js';
 import { ok } from '../common/result.js';
 import type { JwtService } from '../crypto/jwt.service.js';
-import type { HostStatusVo } from '@mao/contracts';
+import type { HostStatusVo, HostTrendSample } from '@mao/contracts';
 import type { StatisticsService } from './statistics.service.js';
 
 export interface StatisticsRouteDeps {
   jwt: JwtService;
   statistics: StatisticsService;
-  hostStatus: { snapshot(): Promise<HostStatusVo> };
+  hostStatus: {
+    snapshot(): Promise<HostStatusVo>;
+    trend(): Promise<HostTrendSample>;
+  };
   permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
 }
 
@@ -43,5 +46,11 @@ export function registerStatisticsRoutes(app: FastifyInstance, deps: StatisticsR
   app.get('/v1/statistics/host', async (req, reply) => {
     await requireRequestPermission(deps.permissionService, req, 'analytics:read');
     sendJson(reply, 200, ok(await deps.hostStatus.snapshot()));
+  });
+
+  // 只含 CPU 与内存的一个点。页面折线每秒拉一次，序列不落库。
+  app.get('/v1/statistics/host/trend', async (req, reply) => {
+    await requireRequestPermission(deps.permissionService, req, 'analytics:read');
+    sendJson(reply, 200, ok(await deps.hostStatus.trend()));
   });
 }

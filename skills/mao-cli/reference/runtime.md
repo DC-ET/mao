@@ -40,15 +40,19 @@ mao runtime sessions --phase RUNNING --execution-mode LOCAL
 
 无参数。`GET /statistics/host`（需 `analytics:read`）。
 
-返回后端进程所在这一台机器的当前快照，不含远程数据库，也没有历史曲线：
+返回后端进程所在这一台机器的当前快照，不含远程数据库。管理后台的 CPU 折线和内存折线由页面自己每秒请求 `GET /statistics/host/trend` 攒出来，各画一张，只含这两个占用率，不落库，CLI 不封装这条。本命令仍是整页快照：
 
 | 字段 | 含义 |
 |------|------|
-| `cpu.usagePercent` | 相邻两次采样间的 CPU 利用率。页面约 15 秒轮询一次，CLI 连续调用时间隔即采样窗口 |
+| `cpu.usagePercent` | 相邻两次采样间的 CPU 利用率。页面折线每秒取一个点；硬盘、容器和进程是否刷新、隔多久，由页头「自动刷新」决定，默认不自动刷新。CLI 连续调用时间隔即采样窗口 |
+| `cpu.iowaitPercent` | 同一窗口里花在等待磁盘上的时间占比。读不到 `/proc/stat` 时没有这个字段 |
 | `cpu.load1` / `load5` / `load15` | 1 / 5 / 15 分钟负载 |
 | `memory` | `memorySource=proc` 时可用量是 Linux MemAvailable（含可回收缓存）。`os` 不计可回收缓存，占用率会偏高 |
-| `disks` | 系统盘，以及工作区 / 上传 / 运行时 / 用户目录 / `/var/lib/docker` 里挂载点不同的盘。同一挂载点只留一条。`usagePercent` 是 `df` 的 Capacity，不是已用除以总块数 |
+| `process` | 后端进程：已运行秒数、常驻内存、堆、事件循环平均延迟（毫秒）、已打开文件描述符和软上限。非 Linux 上文件描述符可能没有 |
+| `disks` | 系统盘，以及工作区 / 上传 / 运行时 / 用户目录 / `/var/lib/docker` 里挂载点不同的盘。同一挂载点只留一条。`usagePercent` 是 `df` 的 Capacity，不是已用除以总块数。`inodeUsagePercent` 来自 `df -i`，没有 inode 的文件系统不带这几项 |
+| `diskIo` | 整机读/写字节每秒（整盘合计，不含分区）。读不到 `/proc/diskstats` 时两项都没有 |
 | `containers` | mao 运行时容器。`available=false` 时 `reason` 说明 Docker 不可用，此时各计数为 0，不表示没有容器。`untracked` 是残留容器，`busy` 是有任务的容器，二者都含在 `total` 里 |
+| `dockerDisk` | 镜像、卷、构建缓存占用的字节，以及可回收部分。`available=false` 时字节字段没有，不表示占用是 0 |
 
 ```bash
 mao runtime host

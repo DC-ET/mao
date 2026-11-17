@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   clampPercent,
   diskPlace,
+  formatCount,
+  formatDelay,
   formatLoad,
   formatPercent,
   formatUptime,
@@ -45,5 +47,8 @@ describe('hostFormat', () => {
     expect(diskPlace({ path: '/', mount: '/' })).toBe('/')
     expect(diskPlace({ path: '/opt/mao-data/workspace', mount: '/opt/mao-data' }))
       .toBe('/opt/mao-data/workspace · 挂载 /opt/mao-data')
+    expect(formatDelay(1.24)).toBe('1.2 ms')
+    expect(formatDelay(null)).toBe('—')
+    expect(formatCount(12000)).toBe('12,000')
   })
 })
