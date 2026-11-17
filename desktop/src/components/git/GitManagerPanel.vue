@@ -29,16 +29,28 @@
 
     <!-- 仓库状态条：分支 / upstream / ahead-behind / 远端状态 + 拉取 / 推送 / 刷新（有远端时顺带 fetch --prune） -->
     <div class="git-status-bar">
-      <span v-if="gitStatus?.detachedHead" class="git-status-branch is-detached" title="detached HEAD：当前不在任何分支上，提交前请先切换分支">
-        {{ gitStatus.branch || 'HEAD' }}
+      <span
+        v-if="gitStatus?.detachedHead || gitStatus?.branch || gitLoading"
+        class="git-status-branch"
+        :class="{ 'is-detached': gitStatus?.detachedHead, 'is-muted': !gitStatus?.branch && !gitStatus?.detachedHead }"
+        :title="gitStatus?.detachedHead ? 'detached HEAD：当前不在任何分支上，提交前请先切换分支' : (gitStatus?.branch || '')"
+      >
+        <svg class="git-branch-icon" viewBox="0 0 16 16" aria-hidden="true">
+          <circle cx="4.5" cy="3.5" r="1.75" />
+          <circle cx="4.5" cy="12.5" r="1.75" />
+          <circle cx="11.5" cy="5.5" r="1.75" />
+          <path d="M4.5 5.25v5.5M11.5 7.25c0 2.5-2.25 3-5.25 4" />
+        </svg>
+        <span class="git-status-branch-name">{{ gitStatus?.branch || (gitStatus?.detachedHead ? 'HEAD' : '读取中…') }}</span>
       </span>
-      <span v-else-if="gitStatus?.branch" class="git-status-branch">{{ gitStatus.branch }}</span>
-      <span v-else-if="gitLoading" class="git-status-branch is-muted">读取中…</span>
       <template v-if="gitStatus?.isGit && !gitStatus.detachedHead">
-        <span v-if="gitStatus.upstream" class="git-status-upstream">→ {{ gitStatus.upstream }}</span>
-        <span class="git-status-counts">
-          <span v-if="(gitStatus.aheadCount ?? 0) > 0" class="git-ahead">↑{{ gitStatus.aheadCount }}</span>
-          <span v-if="(gitStatus.behindCount ?? 0) > 0" class="git-behind">↓{{ gitStatus.behindCount }}</span>
+        <span v-if="gitStatus.upstream" class="git-status-upstream" :title="`跟踪 ${gitStatus.upstream}`">
+          <svg class="git-upstream-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9M9 4.5 12.5 8 9 11.5" /></svg>
+          {{ gitStatus.upstream }}
+        </span>
+        <span v-if="(gitStatus.aheadCount ?? 0) > 0 || (gitStatus.behindCount ?? 0) > 0" class="git-status-counts">
+          <span v-if="(gitStatus.aheadCount ?? 0) > 0" class="git-ahead" :title="`领先远端 ${gitStatus.aheadCount} 个提交`">↑ {{ gitStatus.aheadCount }}</span>
+          <span v-if="(gitStatus.behindCount ?? 0) > 0" class="git-behind" :title="`落后远端 ${gitStatus.behindCount} 个提交`">↓ {{ gitStatus.behindCount }}</span>
         </span>
       </template>
       <el-tooltip v-if="gitStatus?.isGit" placement="top" :show-after="300" :content="remoteBadgeTooltip">
@@ -82,13 +94,17 @@
 
     <!-- 子导航 -->
     <div class="git-subnav">
-      <button
-        v-for="view in views"
-        :key="view.id"
-        class="git-subnav-btn"
-        :class="{ active: activeView === view.id }"
-        @click="activeView = view.id"
-      >{{ view.label }}</button>
+      <div class="git-subnav-track" role="tablist">
+        <button
+          v-for="view in views"
+          :key="view.id"
+          class="git-subnav-btn"
+          :class="{ active: activeView === view.id }"
+          role="tab"
+          :aria-selected="activeView === view.id"
+          @click="activeView = view.id"
+        >{{ view.label }}<span v-if="view.id === 'changes' && gitFiles.length > 0" class="git-subnav-count">{{ gitFiles.length }}</span></button>
+      </div>
     </div>
 
     <!-- 视图区 -->
@@ -508,8 +524,7 @@ onActivated(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--aw-divider-soft);
+  padding: 12px 16px 0;
   flex-shrink: 0;
 }
 
@@ -599,8 +614,7 @@ onActivated(() => {
 }
 
 .git-repo-badge-row {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--aw-divider-soft);
+  padding: 12px 16px 0;
   flex-shrink: 0;
 }
 
@@ -621,112 +635,221 @@ onActivated(() => {
 .git-status-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--aw-divider-soft);
+  gap: 10px;
+  padding: 12px 16px 10px;
   flex-shrink: 0;
   font-size: var(--aw-text-caption);
   min-width: 0;
 }
 
 .git-status-branch {
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
   max-width: 40%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--aw-radius-pill);
+  background: var(--aw-primary-soft);
+  box-shadow: 0 0 0 1px var(--aw-primary-line) inset;
+  color: var(--aw-ink);
+}
+
+.git-status-branch-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-fine);
   font-weight: 600;
-  color: var(--aw-ink);
+  letter-spacing: -0.01em;
+}
+
+.git-branch-icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--aw-primary);
+  stroke-width: 1.4;
+  stroke-linecap: round;
 }
 
 .git-status-branch.is-detached {
-  color: var(--aw-warning);
+  background: var(--aw-status-waiting-bg);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--aw-warning) 35%, transparent) inset;
+  color: var(--aw-status-waiting);
   cursor: help;
 }
 
+.git-status-branch.is-detached .git-branch-icon {
+  stroke: var(--aw-status-waiting);
+}
+
 .git-status-branch.is-muted {
-  font-weight: 400;
+  background: var(--aw-surface-pearl);
+  box-shadow: 0 0 0 1px var(--aw-hairline) inset;
   color: var(--aw-ink-muted-48);
 }
 
+.git-status-branch.is-muted .git-status-branch-name {
+  font-weight: 400;
+}
+
+.git-status-branch.is-muted .git-branch-icon {
+  stroke: var(--aw-ink-muted-40);
+}
+
 .git-status-upstream {
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--aw-font-mono);
   font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-48);
+}
+
+.git-upstream-icon {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.7;
 }
 
 .git-status-counts {
   flex-shrink: 0;
   display: inline-flex;
-  gap: 6px;
+  gap: 4px;
   font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-fine);
+  font-size: var(--aw-text-micro);
+  font-weight: 600;
 }
 
-.git-ahead { color: var(--aw-diff-add); }
-.git-behind { color: var(--aw-diff-del); }
+.git-ahead,
+.git-behind {
+  padding: 1px 6px;
+  border-radius: var(--aw-radius-pill);
+  line-height: 14px;
+  cursor: help;
+}
+
+.git-ahead { color: var(--aw-diff-add); background: var(--aw-diff-add-bg); }
+.git-behind { color: var(--aw-diff-del); background: var(--aw-diff-del-bg); }
 
 .git-remote-badge {
   /* 可压缩：状态条右侧有三个图标按钮，窄视口下徽标让位（省略号 + tooltip 仍能看全）而非整行溢出 */
   flex-shrink: 1;
   min-width: 0;
   max-width: 180px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-  padding: 0 6px;
-  border-radius: 7px;
   font-size: var(--aw-text-fine);
   line-height: 16px;
+  color: var(--aw-ink-muted-48);
   cursor: help;
 }
 
-.git-remote-badge.is-ok {
-  background: rgba(52, 199, 89, 0.1);
-  color: var(--aw-success);
+.git-remote-badge::before {
+  content: '';
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
-/* 确认中：中性色，区别于「不可用」的警示色 */
-.git-remote-badge.is-pending {
-  background: var(--aw-fill-subtle, rgba(120, 120, 128, 0.12));
-  color: var(--aw-text-secondary, #8e8e93);
+.git-remote-badge.is-ok::before {
+  background: var(--aw-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--aw-success) 18%, transparent);
+}
+
+/* 确认中：中性色呼吸点，区别于「不可用」的警示色 */
+.git-remote-badge.is-pending::before {
+  background: var(--aw-ink-muted-40);
+  animation: git-pulse 1.2s ease-in-out infinite;
 }
 
 .git-remote-badge.is-bad {
-  background: rgba(255, 159, 10, 0.12);
-  color: var(--aw-warning);
+  color: var(--aw-status-waiting);
 }
 
+.git-remote-badge.is-bad::before {
+  background: var(--aw-warning);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--aw-warning) 18%, transparent);
+}
+
+@keyframes git-pulse {
+  50% { opacity: 0.3; }
+}
+
+/* 拉取 / 推送 / 刷新收进一组分段按钮，hairline 描边 + 内分隔线 */
 .git-status-actions {
   margin-left: auto;
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 2px;
+  padding: 2px;
+  border-radius: var(--aw-radius-sm);
+  background: var(--aw-surface);
+  box-shadow: 0 0 0 1px var(--aw-hairline) inset, 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
-/* 状态条上的图标按钮（拉取 / 推送 / 刷新）共用外观 */
+.git-status-actions > span + span,
+.git-status-actions > span + .git-status-btn {
+  position: relative;
+}
+
+.git-status-actions > span + span::before,
+.git-status-actions > span + .git-status-btn::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  background: var(--aw-divider-soft);
+}
+
+.git-status-actions > span {
+  display: inline-flex;
+}
+
 .git-status-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--aw-btn-height);
-  height: var(--aw-btn-height);
+  width: 28px;
+  height: 24px;
   border: none;
-  border-radius: var(--aw-radius-xs);
+  border-radius: 6px;
   background: transparent;
-  color: var(--aw-ink-muted-48);
+  color: var(--aw-ink-muted-64);
   cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
 }
 
 .git-status-btn:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--aw-primary-hover);
   color: var(--aw-primary);
 }
 
 .git-status-btn:disabled {
-  opacity: 0.38;
+  opacity: 0.32;
   cursor: default;
 }
 
@@ -741,32 +864,63 @@ onActivated(() => {
 .git-subnav {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 6px 12px 0;
+  padding: 0 16px 12px;
   border-bottom: 1px solid var(--aw-divider-soft);
   flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+/* 分段控件：浅灰轨道 + 选中项浮起白卡 */
+.git-subnav-track {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--aw-canvas-parchment);
 }
 
 .git-subnav-btn {
-  padding: 5px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 14px;
   border: none;
-  border-bottom: 2px solid transparent;
-  background: none;
+  border-radius: 7px;
+  background: transparent;
   color: var(--aw-ink-muted-48);
-  font-size: var(--aw-text-caption);
+  font-size: var(--aw-text-fine);
   font-weight: 500;
+  letter-spacing: 0.01em;
   cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
+  transition: color 0.15s, background-color 0.15s, box-shadow 0.15s;
   white-space: nowrap;
 }
 
-.git-subnav-btn:hover {
+.git-subnav-btn:hover:not(.active) {
   color: var(--aw-ink);
 }
 
 .git-subnav-btn.active {
+  background: var(--aw-surface);
+  color: var(--aw-ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+}
+
+.git-subnav-count {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: var(--aw-radius-pill);
+  background: var(--aw-primary-lighter);
   color: var(--aw-primary);
-  border-bottom-color: var(--aw-primary);
+  font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-micro);
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
 }
 
 .git-view-body {
@@ -799,9 +953,6 @@ onActivated(() => {
   background: var(--aw-surface);
 }
 
-[data-theme="dark"] .git-repo-select-row,
-[data-theme="dark"] .git-repo-badge-row,
-[data-theme="dark"] .git-status-bar,
 [data-theme="dark"] .git-subnav {
   border-bottom-color: var(--aw-hairline);
 }
@@ -810,7 +961,17 @@ onActivated(() => {
   background: rgba(255, 255, 255, 0.06);
 }
 
-[data-theme="dark"] .git-status-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.06);
+[data-theme="dark"] .git-status-actions {
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: 0 0 0 1px var(--aw-hairline) inset;
+}
+
+[data-theme="dark"] .git-subnav-track {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="dark"] .git-subnav-btn.active {
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 </style>

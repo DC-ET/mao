@@ -72,7 +72,11 @@
       <button class="git-retry" @click="$emit('refresh')">重试</button>
     </div>
     <div v-else-if="loading && files.length === 0" class="git-state">加载中…</div>
-    <div v-else-if="files.length === 0" class="git-state">没有待提交的变更</div>
+    <div v-else-if="files.length === 0" class="git-state git-empty">
+      <span class="git-empty-icon"><el-icon :size="20"><CircleCheck /></el-icon></span>
+      <p class="git-empty-title">工作区很干净</p>
+      <p class="git-empty-desc">没有待提交的变更</p>
+    </div>
     <div v-else class="git-tree">
       <div class="git-tree-inner">
         <GitChangeTreeNode
@@ -113,7 +117,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
-import { Check, Download, FullScreen, MagicStick, Refresh, Upload } from '@element-plus/icons-vue'
+import { Check, CircleCheck, Download, FullScreen, MagicStick, Refresh, Upload } from '@element-plus/icons-vue'
 import { ElTooltip, ElMessage } from 'element-plus'
 import type { GitChangedFile, GitOperationType, GitTreeNode } from '../../types/git'
 import GitChangeTreeNode from './GitChangeTreeNode.vue'
@@ -349,22 +353,26 @@ function toggleDir(path: string) {
 }
 
 .git-toolbar-title {
-  font-size: var(--aw-text-caption);
+  font-size: var(--aw-text-fine);
   font-weight: 600;
-  color: var(--aw-ink);
-  letter-spacing: var(--aw-tracking);
-  text-transform: uppercase;
+  color: var(--aw-ink-muted-64);
+  letter-spacing: 0.04em;
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
 .git-count {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: var(--aw-radius-pill);
+  background: var(--aw-canvas-parchment);
   font-family: var(--aw-font-mono);
-  font-weight: 500;
+  font-size: var(--aw-text-micro);
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
   color: var(--aw-ink-muted-48);
-  text-transform: none;
-  letter-spacing: var(--aw-tracking);
 }
 
 .git-toolbar-actions {
@@ -423,21 +431,28 @@ function toggleDir(path: string) {
 .git-commit-input {
   flex: 1;
   min-width: 0;
-  min-height: 58px;
-  padding: 38px 8px 6px; /* 顶部为框内左上角悬浮的 ✨ 按钮预留 */
+  min-height: 72px;
+  padding: 10px 44px 10px 12px; /* 右侧为框内右上角悬浮的 ✨ 按钮预留 */
   border: 1px solid var(--aw-hairline);
-  border-radius: var(--aw-radius-sm);
+  border-radius: var(--aw-radius-md);
   background: var(--aw-surface-pearl);
   color: var(--aw-ink);
   font-family: var(--aw-font-mono);
   font-size: var(--aw-text-fine);
-  line-height: 1.5;
+  line-height: 1.6;
   resize: vertical;
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+}
+
+.git-commit-input::placeholder {
+  color: var(--aw-ink-muted-40);
 }
 
 .git-commit-input:focus {
   outline: none;
   border-color: var(--aw-primary);
+  background: var(--aw-surface);
+  box-shadow: 0 0 0 3px var(--aw-primary-ring);
 }
 
 /* tooltip 以 span 为锚点：绝对定位加在包裹层上，避免锚点漂到输入框右缘 */
@@ -454,13 +469,14 @@ function toggleDir(path: string) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--aw-btn-height);
-  height: var(--aw-btn-height);
-  border: 1px solid var(--aw-divider-soft);
+  width: 28px;
+  height: 28px;
+  border: none;
   border-radius: var(--aw-radius-sm);
-  background: var(--aw-surface-pearl);
-  color: var(--aw-ink-muted-48);
+  background: var(--aw-primary-soft);
+  color: var(--aw-primary);
   cursor: pointer;
+  transition: background-color 0.15s;
 }
 
 .git-commit-generate:hover:not(:disabled) {
@@ -478,21 +494,27 @@ function toggleDir(path: string) {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 6px 12px;
+  height: 32px;
+  padding: 0 14px;
   border: none;
   border-radius: var(--aw-radius-sm);
   background: var(--aw-primary);
   color: var(--aw-on-primary);
-  font-size: var(--aw-text-caption);
+  font-size: var(--aw-text-fine);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.12);
   cursor: pointer;
+  transition: filter 0.15s, opacity 0.15s;
 }
 
 .git-commit-submit:hover:not(:disabled) {
-  filter: brightness(0.95);
+  filter: brightness(1.08);
 }
 
 .git-commit-submit:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
+  box-shadow: none;
   cursor: default;
 }
 
@@ -501,6 +523,43 @@ function toggleDir(path: string) {
   text-align: center;
   color: var(--aw-ink-muted-48);
   font-size: var(--aw-text-caption);
+}
+
+.git-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 48px 16px;
+  max-height: 260px;
+}
+
+.git-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 8px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--aw-success) 10%, transparent);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--aw-success) 5%, transparent);
+  color: var(--aw-success);
+}
+
+.git-empty-title {
+  margin: 0;
+  font-size: var(--aw-text-caption);
+  font-weight: 600;
+  color: var(--aw-ink);
+}
+
+.git-empty-desc {
+  margin: 0;
+  font-size: var(--aw-text-fine);
+  color: var(--aw-ink-muted-48);
 }
 
 .git-error p {
