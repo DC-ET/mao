@@ -20,7 +20,7 @@
             target="_blank"
             rel="noopener noreferrer"
           ><GitHubMark />GitHub</a>
-          <button class="wl-btn wl-btn--primary wl-btn--sm" type="button" @click="goDocs">
+          <button class="wl-btn wl-btn--primary wl-btn--sm" type="button" @click="goDocs()">
             官方文档
           </button>
         </div>
@@ -41,7 +41,7 @@
           会话、操作与成本全量落库。
         </p>
         <div class="wl-hero__cta reveal">
-          <button class="wl-btn wl-btn--primary" type="button" @click="goDocs">
+          <button class="wl-btn wl-btn--primary" type="button" @click="goDocs()">
             浏览官方文档
           </button>
           <a
@@ -154,9 +154,9 @@ cd desktop &amp;&amp; npm install &amp;&amp; npm run dev            # 工作台 
               <li>访问 <code>/admin/</code> 完成初始管理员密码与模型 API Key 配置。</li>
             </ol>
             <div class="wl-start__links">
-              <a href="https://github.com/DC-ET/mao/blob/main/skills/mao-cli/reference/deploy.md" target="_blank" rel="noopener noreferrer">部署手册</a>
-              <a href="https://github.com/DC-ET/mao/blob/main/skills/mao-cli/reference/install.md" target="_blank" rel="noopener noreferrer">安装指南</a>
-              <a href="https://github.com/DC-ET/mao/blob/main/USER_GUIDE.md" target="_blank" rel="noopener noreferrer">用户手册</a>
+              <a href="/docs/deploy" @click.prevent="goDocs('deploy')">部署手册</a>
+              <a href="/docs/install" @click.prevent="goDocs('install')">安装指南</a>
+              <a href="/docs" @click.prevent="goDocs()">用户手册</a>
             </div>
           </div>
         </div>
@@ -175,8 +175,8 @@ cd desktop &amp;&amp; npm install &amp;&amp; npm run dev            # 工作台 
         </div>
         <nav class="wl-footer__links" aria-label="页脚导航">
           <a href="https://github.com/DC-ET/mao" target="_blank" rel="noopener noreferrer"><GitHubMark />GitHub 仓库</a>
-          <a href="https://github.com/DC-ET/mao/blob/main/skills/mao-cli/reference/deploy.md" target="_blank" rel="noopener noreferrer">私有化部署</a>
-          <a href="https://github.com/DC-ET/mao/blob/main/USER_GUIDE.md" target="_blank" rel="noopener noreferrer">用户手册</a>
+          <a href="/docs/deploy" @click.prevent="goDocs('deploy')">私有化部署</a>
+          <a href="/docs" @click.prevent="goDocs()">用户手册</a>
         </nav>
         <p class="wl-footer__copy">© 2026 Mao · MIT License</p>
       </div>
@@ -273,8 +273,8 @@ function scrollToSection(id: string) {
   el.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
-function goDocs() {
-  router.push('/docs')
+function goDocs(slug = '') {
+  router.push(slug ? `/docs/${slug}` : '/docs')
 }
 
 let observer: IntersectionObserver | null = null
