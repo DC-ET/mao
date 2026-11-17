@@ -1018,6 +1018,12 @@ pre code {
   text-decoration: line-through;
 }
 
+/* 正文图片：等比缩到容器宽（Agent 截图这类 2K/4K 大图不撑破气泡），点开仍可看原图 */
+.markdown-body img {
+  max-width: 100%;
+  height: auto;
+}
+
 /* 正文内联图片点击放大（utils/markdownZoom）：只加光标暗示，不改布局 */
 .markdown-body .md-img-zoom {
   cursor: zoom-in;
