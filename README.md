@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://mao.etarch.cn/welcome"><strong>官网</strong></a> ·
+  <a href="https://mao.etarch.cn/welcome" target="_blank"><strong>官网</strong></a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="#多端接入">多端接入</a> ·
   <a href="skills/mao-cli/reference/project.md">架构与特性</a> ·
