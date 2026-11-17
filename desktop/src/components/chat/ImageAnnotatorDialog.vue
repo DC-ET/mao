@@ -74,16 +74,21 @@
           @pointercancel="onPointerUp"
         />
         <input
-          v-if="textDraft"
-          ref="textInput"
-          v-model="textDraft.value"
+          ref="textInputEl"
+          v-model="textValue"
           class="annotator-text-input"
+          :class="{ 'is-open': !!textDraft }"
           :style="textInputStyle"
           aria-label="标注文字"
-          placeholder="输入文字，Enter 确认"
+          :aria-hidden="textDraft ? undefined : true"
+          :tabindex="textDraft ? 0 : -1"
+          placeholder="输入文字"
+          enterkeyhint="done"
+          autocomplete="off"
+          @pointerdown.stop
           @keydown.enter.stop.prevent="commitText"
           @keydown.esc.stop.prevent="cancelText"
-          @blur="commitText"
+          @blur="onTextBlur"
         />
       </div>
     </div>
@@ -105,9 +110,9 @@ import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   ANNOTATE_COLOR,
-  ANNOTATE_FONT_SIZE,
   ANNOTATE_LINE_WIDTH,
   MOSAIC_DEFAULT_RADIUS,
+  annotateTextFontSize,
   applyMosaic,
   canvasPointFromClient,
   drawOp,
@@ -140,8 +145,13 @@ const display = ref({ width: 0, height: 0 })
 const viewportEl = ref<HTMLElement>()
 const baseCanvas = ref<HTMLCanvasElement>()
 const drawCanvas = ref<HTMLCanvasElement>()
-const textDraft = ref<{ x: number; y: number; value: string } | null>(null)
+const textDraft = ref<{ x: number; y: number } | null>(null)
+const textValue = ref('')
+const textInputEl = ref<HTMLInputElement>()
 const exporting = ref(false)
+// 落点这一下的 mousedown 会把焦点抢回对话框，空输入随 blur 被清掉，看起来像点了没反应。这段手势内忽略 blur。
+let suppressTextBlur = false
+let textBlurRestore = false
 let resizeObserver: ResizeObserver | null = null
 let imageUrl: string | null = null
 // 在途笔画：pen/mosaic 累积 points，rect/arrow 记起止；pointerup 落栈
@@ -157,10 +167,14 @@ const textInputStyle = computed(() => {
   if (!draft || size.value.width <= 0 || display.value.width <= 0) return {}
   const sx = display.value.width / size.value.width
   const sy = display.value.height / size.value.height
+  const left = draft.x * sx
+  const bitmapFont = annotateTextFontSize(size.value.width, display.value.width)
   return {
-    left: `${draft.x * sx}px`,
+    left: `${left}px`,
     top: `${draft.y * sy}px`,
-    fontSize: `${Math.max(16, ANNOTATE_FONT_SIZE * sy)}px`,
+    maxWidth: `${Math.max(64, display.value.width - left)}px`,
+    fontSize: `${Math.max(16, bitmapFont * sx)}px`,
+    color: ANNOTATE_COLOR,
   }
 })
 
@@ -267,11 +281,10 @@ function onPointerDown(e: PointerEvent) {
   if (exporting.value) return
   const p = canvasPoint(e)
   if (tool.value === 'text') {
-    // 文字：点击定位输入框，Enter/失焦落笔
-    textDraft.value = { x: p.x, y: p.y, value: '' }
-    void nextTick(() => {
-      ;(document.querySelector('.annotator-text-input') as HTMLInputElement | null)?.focus()
-    })
+    // 输入框常驻 DOM，才能在这次点击里同步 focus（手机要靠用户手势唤起键盘）。
+    // preventDefault 取消紧随的 mousedown，否则对话框会抢走焦点，空输入被 blur 立刻关掉。
+    e.preventDefault()
+    openTextDraft(p)
     return
   }
   ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
@@ -346,18 +359,54 @@ function schedulePreview() {
   })
 }
 
+function openTextDraft(p: { x: number; y: number }) {
+  const previous = textDraft.value
+  const previousText = textValue.value
+  if (previous && previousText.trim() !== '') {
+    ops.value.push({ tool: 'text', x: previous.x, y: previous.y, text: previousText, color: ANNOTATE_COLOR, width: ANNOTATE_LINE_WIDTH, fontSize: annotateTextFontSize(size.value.width, display.value.width) })
+    rebuildCommitted()
+    preview()
+  }
+  textValue.value = ''
+  textDraft.value = { x: p.x, y: p.y }
+  suppressTextBlur = true
+  textInputEl.value?.focus()
+  requestAnimationFrame(() => {
+    suppressTextBlur = false
+  })
+}
+
+function onTextBlur() {
+  if (!suppressTextBlur) {
+    commitText()
+    return
+  }
+  if (textBlurRestore) return
+  textBlurRestore = true
+  const input = textInputEl.value
+  queueMicrotask(() => {
+    textBlurRestore = false
+    if (suppressTextBlur && textDraft.value && input && document.activeElement !== input) input.focus()
+  })
+}
+
 function commitText() {
   const draft = textDraft.value
+  const value = textValue.value
   if (!draft) return
   textDraft.value = null
-  if (draft.value.trim() === '') return
-  ops.value.push({ tool: 'text', x: draft.x, y: draft.y, text: draft.value, color: ANNOTATE_COLOR, width: ANNOTATE_LINE_WIDTH, fontSize: ANNOTATE_FONT_SIZE })
+  textValue.value = ''
+  textInputEl.value?.blur()
+  if (value.trim() === '') return
+  ops.value.push({ tool: 'text', x: draft.x, y: draft.y, text: value, color: ANNOTATE_COLOR, width: ANNOTATE_LINE_WIDTH, fontSize: annotateTextFontSize(size.value.width, display.value.width) })
   rebuildCommitted()
   preview()
 }
 
 function cancelText() {
   textDraft.value = null
+  textValue.value = ''
+  textInputEl.value?.blur()
 }
 
 async function confirmExport() {
@@ -488,14 +537,26 @@ async function confirmExport() {
 
 .annotator-text-input {
   position: absolute;
-  min-width: 120px;
+  z-index: 2;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  min-width: 80px;
+  max-width: 100%;
   font-size: 16px;
-  color: var(--aw-ink);
+  color: #e5484d;
   background: var(--aw-surface-code);
   border: 1px dashed var(--aw-primary);
   border-radius: 4px;
   padding: 2px 4px;
   outline: none;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.annotator-text-input.is-open {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .annotator-footer {

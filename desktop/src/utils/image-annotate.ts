@@ -68,6 +68,16 @@ export function fitDisplaySize(
 }
 
 /**
+ * 文字字号（位图像素）。屏幕上至少 base 像素：图被缩小显示时把字号放大，
+ * 导出后再按同一比例缩回去，仍和输入框里看到的一样大。1:1 时就是 base。
+ */
+export function annotateTextFontSize(bitmapEdge: number, displayEdge: number, base = ANNOTATE_FONT_SIZE): number {
+  if (bitmapEdge <= 0 || displayEdge <= 0) return base
+  const scale = Math.min(1, displayEdge / bitmapEdge)
+  return Math.max(base, Math.round(base / scale))
+}
+
+/**
  * 指针坐标从 CSS 显示盒子换算到位图像素。
  * 显示被缩小后，getBoundingClientRect 是屏幕尺寸，笔迹必须落在位图上，导出才和看到的一致。
  */

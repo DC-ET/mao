@@ -4,6 +4,7 @@ import {
   ANNOTATE_LINE_WIDTH,
   applyMosaic,
   drawOp,
+  annotateTextFontSize,
   canvasPointFromClient,
   fitDisplaySize,
   fitImageSize,
@@ -199,6 +200,22 @@ describe('fitDisplaySize', () => {
 
   it('宽图按宽度收缩', () => {
     expect(fitDisplaySize(2000, 500, 400, 800)).toEqual({ width: 400, height: 100 })
+  })
+})
+
+describe('annotateTextFontSize', () => {
+  it('1:1 显示保持基准字号', () => {
+    expect(annotateTextFontSize(800, 800)).toBe(16)
+  })
+
+  it('缩小显示时放大位图字号，缩回屏幕仍约 16px', () => {
+    const bitmap = annotateTextFontSize(1170, 307)
+    expect(bitmap).toBeGreaterThan(16)
+    expect(bitmap * (307 / 1170)).toBeCloseTo(16, 0)
+  })
+
+  it('边长无效时回落到基准字号', () => {
+    expect(annotateTextFontSize(0, 100)).toBe(16)
   })
 })
 
