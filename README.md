@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/client.png" alt="Mao 工作台" width="960" />
+  <img src="docs/assets/client2.png" alt="Mao 工作台" width="960" />
 </p>
 
 ---
