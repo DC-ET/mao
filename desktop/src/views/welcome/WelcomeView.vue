@@ -20,8 +20,8 @@
             target="_blank"
             rel="noopener noreferrer"
           >GitHub</a>
-          <button class="wl-btn wl-btn--primary wl-btn--sm" type="button" @click="enterWorkspace">
-            进入工作台
+          <button class="wl-btn wl-btn--primary wl-btn--sm" type="button" @click="goDocs">
+            官方文档
           </button>
         </div>
       </div>
@@ -41,8 +41,8 @@
           会话、操作与成本全量落库。
         </p>
         <div class="wl-hero__cta reveal">
-          <button class="wl-btn wl-btn--primary" type="button" @click="enterWorkspace">
-            立即进入工作台
+          <button class="wl-btn wl-btn--primary" type="button" @click="goDocs">
+            浏览官方文档
           </button>
           <a
             class="wl-btn wl-btn--ghost"
@@ -50,7 +50,7 @@
             target="_blank"
             rel="noopener noreferrer"
           >
-            查看部署文档
+            GitHub 仓库
           </a>
         </div>
         <ul class="wl-hero__badges reveal" aria-label="产品要点">
@@ -272,8 +272,8 @@ function scrollToSection(id: string) {
   el.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
-function enterWorkspace() {
-  router.push('/')
+function goDocs() {
+  router.push('/docs')
 }
 
 let observer: IntersectionObserver | null = null
