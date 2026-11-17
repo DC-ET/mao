@@ -236,6 +236,8 @@ const emit = defineEmits<{
   'open-branch-diff': [payload: { base: string; target: string; file: GitChangedFile; repoPath?: string }]
   'add-file-to-chat': [filePath: string]
   'add-commit-to-chat': [text: string]
+  /** 写操作或手动刷新之后：右侧检查器的 Git 摘要与本面板不是同一份状态，需要单独重读 */
+  'git-changed': []
 }>()
 
 const views: Array<{ id: GitManagerView; label: string }> = [
@@ -353,8 +355,10 @@ const remoteBadgeText = computed(() => {
   return status.remoteStatusError || '远端不可用'
 })
 
-/** 手动刷新 / 写操作后：刷仓库列表 + 选中仓库状态（含远端）+ 已加载视图数据 */
+/** 手动刷新 / 写操作后：刷仓库列表 + 选中仓库状态（含远端）+ 已加载视图数据。
+ *  同时通知检查器重读：切换分支、提交、拉取等只更新本面板，侧边栏摘要会停在旧分支。 */
 async function handleRefreshAll() {
+  emit('git-changed')
   await refreshRepos()
   if (gitEnabled.value) await refreshGitRemote()
   await refreshLoadedViews()

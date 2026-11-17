@@ -52,6 +52,7 @@
         @open-git-diff="handleOpenGitDiff"
         @open-commit-diff="handleOpenCommitDiff"
         @open-branch-diff="handleOpenBranchDiff"
+        @git-changed="refreshInspectorGit"
         @use-for-new-task="handleUseForNewTask"
         @open-file-manager="openWorkspaceFileManagerTab"
       />
@@ -793,10 +794,11 @@ function handleOpenFile(payload: { path: string; title: string; workspaceRoot?: 
   openFileTab(payload.path, payload.title, payload.workspaceRoot)
 }
 
-/** 右侧边栏实例：文件管理器写操作后刷新文件树、定位目标路径 */
+/** 右侧边栏实例：文件管理器写操作后刷新文件树、定位目标路径；Git 管理器变更后重读摘要 */
 interface TaskInspectorInstance {
   revealInFileTree(relPath: string): Promise<void>
   refreshFileTree(): void
+  refreshGitStatus(): void
 }
 const inspectorRef = ref<TaskInspectorInstance | null>(null)
 
@@ -884,6 +886,11 @@ function confirmAgentSwitch(title: string, notes: string[]) {
 
 function refreshFileTree() {
   inspectorRef.value?.refreshFileTree()
+}
+
+/** Git 管理器切换分支 / 提交 / 拉取等之后，检查器工作区摘要与变更清单重读当前 HEAD。 */
+function refreshInspectorGit() {
+  inspectorRef.value?.refreshGitStatus()
 }
 
 function revealInFileTree(relPath: string) {

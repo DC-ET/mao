@@ -854,7 +854,12 @@ function refreshFileTree() {
   fileTree.value?.refresh()
 }
 
-defineExpose({ revealInFileTree, refreshFileTree })
+/** Git 管理器写操作后同步摘要。本地状态即可反映新分支与增删行数，不必再 fetch（管理器自己会确认远端）。 */
+function refreshGitStatus() {
+  void refreshAll(false)
+}
+
+defineExpose({ revealInFileTree, refreshFileTree, refreshGitStatus })
 
 function handleOpenGitDiff(file: GitChangedFile) {
   emit('open-git-diff', file, multiRepoMode.value ? selectedRepoPath.value : undefined)
@@ -1324,15 +1329,9 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
   line-height: 18px;
 }
 
-/* 摘要行是中央 Git 管理器 Tab 的入口：整行可点（键盘 enter 同效），hover 给可点反馈 */
+/* 摘要行是中央 Git 管理器 Tab 的入口：整行可点（键盘 enter 同效） */
 .git-summary-row {
   cursor: pointer;
-  border-radius: var(--aw-radius-xs);
-  transition: background 0.15s;
-}
-
-.git-summary-row:hover {
-  background: var(--aw-canvas-parchment);
 }
 
 .git-summary-row:focus-visible {
@@ -1709,10 +1708,6 @@ function onResizeStart(e: MouseEvent | TouchEvent) {
 [data-theme="dark"] .workspace-copy-btn:hover {
   background: rgba(255, 255, 255, 0.06);
   color: var(--aw-primary);
-}
-
-[data-theme="dark"] .git-summary-row:hover {
-  background: rgba(255, 255, 255, 0.04);
 }
 
 [data-theme="dark"] .phase-badge-action:hover {

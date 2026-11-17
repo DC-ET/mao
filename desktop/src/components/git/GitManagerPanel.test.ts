@@ -37,7 +37,21 @@ vi.mock('element-plus', () => ({
 // ---- mock 子视图（断言只关心状态条按钮）----
 vi.mock('../task/GitChangeList.vue', () => ({ default: { name: 'GitChangeList', render() { return null } } }))
 vi.mock('./GitHistoryView.vue', () => ({ default: { name: 'GitHistoryView', render() { return null } } }))
-vi.mock('./GitBranchesView.vue', () => ({ default: { name: 'GitBranchesView', render() { return null } } }))
+vi.mock('./GitBranchesView.vue', async () => {
+  const { h } = await import('vue')
+  return {
+    default: {
+      name: 'GitBranchesView',
+      emits: ['switch'],
+      setup(_: unknown, { emit }: { emit: (event: 'switch', name: string, create: boolean) => void }) {
+        return () => h('button', {
+          class: 'git-branch-switch-stub',
+          onClick: () => emit('switch', 'main', false),
+        }, 'switch-stub')
+      },
+    },
+  }
+})
 vi.mock('./GitStashView.vue', () => ({ default: { name: 'GitStashView', render() { return null } } }))
 vi.mock('./GitCompareView.vue', async () => {
   const { h } = await import('vue')
@@ -109,11 +123,15 @@ vi.mock('../../composables/useGitOperations', async () => {
 
 import GitManagerPanel from './GitManagerPanel.vue'
 
-function mountPanel() {
+function mountPanel(events?: { onGitChanged?: () => void }) {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const app = createApp({
-    render: () => h(GitManagerPanel as any, { sessionId: 's1', gitProvider: {} } as any),
+    render: () => h(GitManagerPanel as any, {
+      sessionId: 's1',
+      gitProvider: {},
+      onGitChanged: events?.onGitChanged,
+    } as any),
   })
   app.mount(host)
   return { host, app }
@@ -294,6 +312,23 @@ describe('GitManagerPanel 顶部拉取 / 推送按钮', () => {
 })
 
 // 对比视图入口（0.0.376）：子导航第五项「对比」，点击切到 GitCompareView。
+describe('GitManagerPanel 分支切换同步侧边栏', () => {
+  it('切换分支后发出 git-changed，让检查器重读当前分支', async () => {
+    state.status = { isGit: true, branch: 'feat_cli_auto', hasRemote: true }
+    let notified = 0
+    const { host, app } = mountPanel({ onGitChanged: () => { notified += 1 } })
+    const branchTab = [...host.querySelectorAll('.git-subnav-btn')]
+      .find(b => (b.textContent || '').trim() === '分支') as HTMLButtonElement
+    branchTab.click()
+    await nextTick()
+    ;(host.querySelector('.git-branch-switch-stub') as HTMLButtonElement).click()
+    await settle()
+    expect(state.calls).toEqual(['switch'])
+    expect(notified).toBe(1)
+    app.unmount()
+  })
+})
+
 describe('GitManagerPanel 对比视图入口', () => {
   it('子导航含第五项「对比」，点击切到对比视图', async () => {
     const { host, app } = mountPanel()

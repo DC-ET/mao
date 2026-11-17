@@ -62,6 +62,7 @@
         @open-git-diff="(file, repoPath) => emit('open-git-diff', file, repoPath)"
         @open-commit-diff="emit('open-commit-diff', $event)"
         @open-branch-diff="emit('open-branch-diff', $event)"
+        @git-changed="emit('git-changed')"
         @add-file-to-chat="emit('add-file-to-chat', $event)"
         @add-commit-to-chat="emit('add-commit-to-chat', $event)"
       />
@@ -114,6 +115,7 @@ const emit = defineEmits<{
   'open-git-diff': [file: GitChangedFile, repoPath?: string]
   'open-commit-diff': [payload: { hash: string; file: GitChangedFile; repoPath?: string }]
   'open-branch-diff': [payload: { base: string; target: string; file: GitChangedFile; repoPath?: string }]
+  'git-changed': []
   'use-for-new-task': [entry: WorkspaceOverviewEntry]
   'open-file-manager': [entry: WorkspaceOverviewEntry]
 }>()
