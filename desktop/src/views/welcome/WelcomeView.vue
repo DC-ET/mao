@@ -61,9 +61,6 @@
       </div>
       <div class="wl-hero__shot reveal">
         <div class="wl-shot">
-          <div class="wl-shot__bar" aria-hidden="true">
-            <span /><span /><span />
-          </div>
           <img :src="heroShot" alt="Mao 工作台界面" class="wl-shot__img" />
         </div>
       </div>
@@ -528,21 +525,6 @@ onUnmounted(() => {
   border: 1px solid var(--aw-divider);
   box-shadow: var(--aw-shadow-product);
   overflow: hidden;
-}
-.wl-shot__bar {
-  display: flex;
-  gap: 7px;
-  align-items: center;
-  height: 38px;
-  padding: 0 16px;
-  background: var(--aw-surface-pearl);
-  border-bottom: 1px solid var(--aw-divider);
-}
-.wl-shot__bar span {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--aw-surface-chip);
 }
 .wl-shot__img {
   display: block;
