@@ -19,7 +19,7 @@
             href="https://github.com/DC-ET/mao"
             target="_blank"
             rel="noopener noreferrer"
-          >GitHub</a>
+          ><GitHubMark />GitHub</a>
           <button class="wl-btn wl-btn--primary wl-btn--sm" type="button" @click="goDocs">
             官方文档
           </button>
@@ -50,7 +50,7 @@
             target="_blank"
             rel="noopener noreferrer"
           >
-            GitHub 仓库
+            <GitHubMark />GitHub 仓库
           </a>
         </div>
         <ul class="wl-hero__badges reveal" aria-label="产品要点">
@@ -174,7 +174,7 @@ cd desktop &amp;&amp; npm install &amp;&amp; npm run dev            # 工作台 
           </div>
         </div>
         <nav class="wl-footer__links" aria-label="页脚导航">
-          <a href="https://github.com/DC-ET/mao" target="_blank" rel="noopener noreferrer">GitHub 仓库</a>
+          <a href="https://github.com/DC-ET/mao" target="_blank" rel="noopener noreferrer"><GitHubMark />GitHub 仓库</a>
           <a href="https://github.com/DC-ET/mao/blob/main/skills/mao-cli/reference/deploy.md" target="_blank" rel="noopener noreferrer">私有化部署</a>
           <a href="https://github.com/DC-ET/mao/blob/main/USER_GUIDE.md" target="_blank" rel="noopener noreferrer">用户手册</a>
         </nav>
@@ -192,6 +192,7 @@ import {
 } from '@element-plus/icons-vue'
 import appIcon from '../../assets/app-icon-small.png'
 import heroShot from '../../assets/welcome-hero.jpg'
+import GitHubMark from '../../components/common/GitHubMark.vue'
 import feishuLogo from '../../assets/feishu-logo.svg'
 import dingtalkLogo from '../../assets/dingtalk-logo.svg'
 import weixinLogo from '../../assets/weixin-logo.png'

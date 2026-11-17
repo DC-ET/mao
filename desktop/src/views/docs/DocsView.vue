@@ -13,7 +13,7 @@
         href="https://github.com/DC-ET/mao"
         target="_blank"
         rel="noopener noreferrer"
-      >GitHub</a>
+      ><GitHubMark />GitHub</a>
       <button
         class="dt-bar__menu"
         type="button"
@@ -43,9 +43,15 @@
               <span>{{ currentGroupTitle }}</span>
             </p>
             <h1 class="dt-head__title">{{ currentDoc.title }}</h1>
-            <a class="dt-head__source" :href="GITHUB_BLOB_BASE + currentDoc.sourcePath" target="_blank" rel="noopener noreferrer">
-              在 GitHub 上查看源文件
-            </a>
+            <div class="dt-head__actions">
+              <button class="dt-action" type="button" @click="copyMarkdown">
+                {{ copied ? '已复制' : '复制 Markdown' }}
+              </button>
+              <button class="dt-action" type="button" @click="downloadMarkdown">下载 Markdown</button>
+              <a class="dt-action" :href="GITHUB_BLOB_BASE + currentDoc.sourcePath" target="_blank" rel="noopener noreferrer">
+                <GitHubMark />在 GitHub 上查看源文件
+              </a>
+            </div>
           </div>
           <MarkdownContent
             :key="currentDoc.slug"
@@ -117,6 +123,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { List } from '@element-plus/icons-vue'
 import MarkdownContent from '../../components/common/MarkdownContent.vue'
+import GitHubMark from '../../components/common/GitHubMark.vue'
 import DocsNav from './DocsNav.vue'
 import { docGroups } from './docsCatalog'
 import type { DocsNavGroup } from './docsCatalog'
@@ -130,6 +137,8 @@ interface DocEntry {
   slug: string
   title: string
   body: string
+  /** 仓库同源的完整 markdown 原文（含 H1 标题），复制 / 下载用 */
+  raw: string
   sourcePath: string
 }
 
@@ -148,11 +157,12 @@ const docsMap: Record<string, DocEntry> = {}
 for (const [path, raw] of Object.entries(rawModules)) {
   const slug = (path.split('/').pop() || '').replace(/\.md$/, '')
   const { title, body } = splitTitle(raw)
-  docsMap[slug] = { slug, title, body, sourcePath: `skills/mao-cli/reference/${slug}.md` }
+  docsMap[slug] = { slug, title, body, raw, sourcePath: `skills/mao-cli/reference/${slug}.md` }
 }
 docsMap['business_process'] = {
   slug: 'business_process',
   ...splitTitle(businessProcessRaw),
+  raw: businessProcessRaw,
   sourcePath: 'skills/mao-cli/business_process.md'
 }
 
@@ -199,6 +209,58 @@ const drawerVisible = ref(false)
 function goDoc(slug: string, fromDrawer = false) {
   if (fromDrawer) drawerVisible.value = false
   router.push(slug ? `/docs/${slug}` : '/docs')
+}
+
+// ---- 复制 / 下载 Markdown 原文 ----
+const copied = ref(false)
+let copiedTimer: ReturnType<typeof setTimeout> | null = null
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    // 剪贴板 API 不可用（非安全上下文等）→ textarea 兜底
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    let ok = false
+    try {
+      ok = document.execCommand('copy')
+    } catch {
+      ok = false
+    }
+    document.body.removeChild(ta)
+    return ok
+  }
+}
+
+async function copyMarkdown() {
+  const doc = currentDoc.value
+  if (!doc) return
+  if (!(await copyText(doc.raw))) return
+  copied.value = true
+  if (copiedTimer) clearTimeout(copiedTimer)
+  copiedTimer = setTimeout(() => {
+    copied.value = false
+  }, 1600)
+}
+
+function downloadMarkdown() {
+  const doc = currentDoc.value
+  if (!doc) return
+  const blob = new Blob([doc.raw], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${doc.slug}.md`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 // ---- 标题锚点与本页目录 ----
@@ -358,6 +420,7 @@ onBeforeUnmount(() => {
   observer?.disconnect()
   observer = null
   if (enhanceTimer) clearTimeout(enhanceTimer)
+  if (copiedTimer) clearTimeout(copiedTimer)
 })
 </script>
 
@@ -490,15 +553,31 @@ onBeforeUnmount(() => {
   letter-spacing: -0.01em;
   color: var(--aw-ink);
 }
-.dt-head__source {
-  display: inline-block;
-  margin-top: 12px;
-  font-size: 12.5px;
-  color: var(--aw-ink-muted);
-  text-decoration: none;
+.dt-head__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
 }
-.dt-head__source:hover {
-  color: var(--aw-primary);
+.dt-action {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--aw-border);
+  border-radius: var(--aw-radius-pill);
+  background: transparent;
+  color: var(--aw-ink-muted-64);
+  font-size: 13px;
+  font-family: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.dt-action:hover {
+  color: var(--aw-ink);
+  border-color: var(--aw-ink-muted-40);
 }
 
 /* ---------- 正文排版（与 FileViewer 的 .markdown-body 同一套字号节奏） ---------- */
