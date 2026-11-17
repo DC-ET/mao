@@ -12,6 +12,12 @@ const routes: RouteRecordRaw[] = [
     meta: { public: true }
   },
   {
+    path: '/docs/:slug?',
+    name: 'Docs',
+    component: () => import('../views/docs/DocsView.vue'),
+    meta: { public: true }
+  },
+  {
     path: '/share/public/:token',
     name: 'PublicShare',
     component: () => import('../views/share/ShareView.vue'),
