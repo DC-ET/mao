@@ -263,12 +263,12 @@
         <h2 class="wl-band__title">部署一次，让全员用上团队 AI</h2>
         <p class="wl-band__lead">MIT 开源，模型密钥、会话与经验都留在你自己的服务器上。</p>
         <div class="wl-band__cta">
-          <button class="wl-btn wl-btn--light" type="button" @click="goDocs('deploy')">
+          <button class="wl-btn wl-btn--primary" type="button" @click="goDocs('deploy')">
             开始部署
             <el-icon :size="15"><Right /></el-icon>
           </button>
           <a
-            class="wl-btn wl-btn--outline-light"
+            class="wl-btn wl-btn--ghost"
             href="https://github.com/DC-ET/mao"
             target="_blank"
             rel="noopener noreferrer"
@@ -821,19 +821,18 @@ onUnmounted(() => {
   border-radius: 28px;
   overflow: hidden;
   text-align: center;
-  color: #fff;
+  color: var(--aw-ink);
   background:
-    radial-gradient(60% 120% at 0% 0%, rgba(255, 255, 255, 0.22), transparent 60%),
-    radial-gradient(50% 100% at 100% 100%, rgba(0, 0, 0, 0.22), transparent 60%),
-    var(--aw-primary);
-  box-shadow: 0 30px 70px -36px rgba(var(--aw-accent-rgb), 0.8);
+    radial-gradient(70% 90% at 50% 0%, rgba(var(--aw-accent-rgb), 0.1), transparent 70%),
+    var(--aw-canvas-parchment);
+  border: 1px solid var(--aw-divider);
 }
 .wl-band__deco {
   position: absolute;
   inset: 0;
-  background: radial-gradient(rgba(255, 255, 255, 0.22) 1px, transparent 1.2px) 0 0 / 20px 20px;
-  -webkit-mask-image: radial-gradient(50% 90% at 50% 50%, transparent 30%, #000);
-  mask-image: radial-gradient(50% 90% at 50% 50%, transparent 30%, #000);
+  background: radial-gradient(rgba(var(--aw-accent-rgb), 0.16) 1px, transparent 1.2px) 0 0 / 20px 20px;
+  -webkit-mask-image: radial-gradient(55% 90% at 50% 50%, transparent 35%, #000);
+  mask-image: radial-gradient(55% 90% at 50% 50%, transparent 35%, #000);
   pointer-events: none;
 }
 .wl-band__logo {
@@ -841,7 +840,7 @@ onUnmounted(() => {
   width: 56px;
   height: 56px;
   border-radius: 15px;
-  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 10px 24px -12px rgba(0, 0, 0, 0.35);
 }
 .wl-band__title {
   position: relative;
@@ -850,7 +849,7 @@ onUnmounted(() => {
   font-size: clamp(26px, 3.2vw, 36px);
   font-weight: 700;
   letter-spacing: -0.01em;
-  color: #fff;
+  color: var(--aw-ink);
   text-wrap: balance;
 }
 .wl-band__lead {
@@ -859,7 +858,7 @@ onUnmounted(() => {
   max-width: 520px;
   font-size: 16px;
   line-height: 1.7;
-  color: rgba(255, 255, 255, 0.82);
+  color: var(--aw-ink-muted-64);
 }
 .wl-band__cta {
   position: relative;
@@ -868,23 +867,6 @@ onUnmounted(() => {
   flex-wrap: wrap;
   gap: 12px;
   margin-top: 30px;
-}
-.wl-btn--light {
-  background: #fff;
-  color: #1d1d1f;
-  box-shadow: 0 8px 22px -10px rgba(0, 0, 0, 0.4);
-}
-.wl-btn--light:hover {
-  background: #f5f5f7;
-}
-.wl-btn--outline-light {
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
-  border-color: rgba(255, 255, 255, 0.45);
-}
-.wl-btn--outline-light:hover {
-  background: rgba(255, 255, 255, 0.16);
-  border-color: #fff;
 }
 .wl-section__inner {
   max-width: 1160px;
