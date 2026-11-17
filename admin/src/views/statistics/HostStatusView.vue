@@ -3,10 +3,20 @@
     <el-card>
       <template #header>
         <div class="card-header">
-          <span>主机状态</span>
+          <div class="title-block">
+            <div class="title-line">
+              <span class="title">主机状态</span>
+              <span v-if="vo" class="host-meta">{{ vo.hostname }} · {{ platformLabel(vo.platform) }} · 开机 {{ formatUptime(vo.uptimeSeconds) }}</span>
+            </div>
+            <div class="title-note">
+              CPU、内存每秒采样，只留最近 5 分钟，不写入数据库
+              <el-tooltip placement="top" :content="samplingHint">
+                <el-icon class="hint-info" aria-label="采样说明"><InfoFilled /></el-icon>
+              </el-tooltip>
+            </div>
+          </div>
           <div class="header-actions">
-            <span class="card-hint">CPU 和内存打开本页后每秒采样，只保留最近 5 分钟。自动刷新只作用于硬盘、容器和进程，默认关闭。不含远程数据库。硬盘同一挂载点只计一次；容器只计这台机器上的 mao 运行时，未在册是进程重启后留下的残留</span>
-            <span v-if="lastUpdatedText" class="card-hint">更新于 {{ lastUpdatedText }}</span>
+            <span v-if="lastUpdatedText" class="updated">更新于 {{ lastUpdatedText }}</span>
             <span class="auto-refresh-label">自动刷新</span>
             <el-select
               v-model="autoRefreshMs"
@@ -33,99 +43,184 @@
         <el-button size="small" @click="fetchVo">重试</el-button>
       </el-alert>
       <template v-else>
-        <div v-if="vo" class="host-meta">{{ vo.hostname }} · {{ platformLabel(vo.platform) }} · 开机 {{ formatUptime(vo.uptimeSeconds) }}</div>
-
-        <div class="trend-grid">
-          <section class="trend-card">
-            <div class="metric-label">CPU</div>
-            <div class="metric-value" :class="levelClass(cpu?.usagePercent)">
-              {{ cpu == null || cpu.usagePercent == null ? '采样中' : formatPercent(cpu.usagePercent) }}
-            </div>
-            <template v-if="cpu">
-              <div class="metric-sub">{{ cpu.cores }} 核 · 负载 {{ formatLoad(cpu.load1, cpu.load5, cpu.load15) }}</div>
-              <div class="metric-note">负载为 1 / 5 / 15 分钟</div>
-              <div v-if="cpu.iowaitPercent != null" class="metric-note">等待磁盘 {{ formatPercent(cpu.iowaitPercent) }}</div>
-            </template>
-            <BaseChart :option="cpuTrendOption" :height="180" :empty="trendPoints.length === 0" empty-text="正在采样" />
-          </section>
-          <section class="trend-card">
-            <div class="metric-label">内存</div>
-            <div class="metric-value" :class="levelClass(memory?.usagePercent)">
-              {{ memory == null ? '采样中' : formatPercent(memory.usagePercent) }}
-            </div>
-            <template v-if="memory">
-              <div class="metric-sub">已用 {{ formatSize(memory.usedBytes) }} / 共 {{ formatSize(memory.totalBytes) }}</div>
-              <div class="metric-sub">可用 {{ formatSize(memory.availableBytes) }} · {{ memoryHint(memorySource) }}</div>
-              <div v-if="memory.swapTotalBytes != null && memory.swapUsedBytes != null" class="metric-note">
-                交换区 已用 {{ formatSize(memory.swapUsedBytes) }} / 共 {{ formatSize(memory.swapTotalBytes) }}
+        <div class="chart-grid">
+          <section class="panel">
+            <div class="chart-head">
+              <div class="kpi">
+                <span class="kpi-label">CPU</span>
+                <span class="kpi-value" :class="levelClass(cpu?.usagePercent)">
+                  {{ cpu == null || cpu.usagePercent == null ? '采样中' : formatPercent(cpu.usagePercent) }}
+                </span>
               </div>
-            </template>
-            <BaseChart :option="memoryTrendOption" :height="180" :empty="trendPoints.length === 0" empty-text="正在采样" />
-          </section>
-        </div>
-        <div class="metric-note trend-footnote">打开本页后每秒各记一个点，只保留最近 5 分钟。离开页面即停止，不写入数据库</div>
-
-        <div v-if="vo" class="metric-grid">
-
-          <section class="metric-card">
-            <div class="metric-label">后端进程</div>
-            <div class="metric-value">{{ formatSize(vo.process.rssBytes) }}</div>
-            <div class="metric-sub">常驻内存 · 已运行 {{ formatUptime(vo.process.uptimeSeconds) }}</div>
-            <div class="metric-sub">堆 {{ formatSize(vo.process.heapUsedBytes) }} / {{ formatSize(vo.process.heapTotalBytes) }}</div>
-            <div class="metric-sub">事件循环 {{ vo.process.eventLoopDelayMs == null ? '采样中' : formatDelay(vo.process.eventLoopDelayMs) }}</div>
-            <div v-if="vo.process.openFds != null" class="metric-sub" :class="levelClass(fdPercent)">
-              文件描述符 {{ formatCount(vo.process.openFds) }}<template v-if="vo.process.fdLimit != null"> / {{ formatCount(vo.process.fdLimit) }}</template>
+              <dl v-if="cpu" class="facts">
+                <div>
+                  <dt>核数</dt>
+                  <dd>{{ cpu.cores }}</dd>
+                </div>
+                <div>
+                  <dt>负载 1 / 5 / 15 分</dt>
+                  <dd>{{ formatLoad(cpu.load1, cpu.load5, cpu.load15) }}</dd>
+                </div>
+                <div v-if="cpu.iowaitPercent != null">
+                  <dt>等待磁盘</dt>
+                  <dd :class="levelClass(cpu.iowaitPercent)">{{ formatPercent(cpu.iowaitPercent) }}</dd>
+                </div>
+              </dl>
             </div>
+            <BaseChart :option="cpuTrendOption" :height="148" :empty="trendPoints.length === 0" empty-text="正在采样" />
           </section>
 
-          <section class="metric-card">
-            <div class="metric-label">容器</div>
-            <template v-if="vo.containers.available">
-              <div class="metric-value">{{ vo.containers.running }}</div>
-              <div class="metric-sub">运行中 · 共 {{ vo.containers.total }}</div>
-              <div class="metric-sub">已停止 {{ vo.containers.stopped }} · 未在册 {{ vo.containers.untracked }} · 有任务 {{ vo.containers.busy }}</div>
-              <template v-if="vo.dockerDisk.available">
-                <div class="metric-sub">镜像 {{ formatSize(vo.dockerDisk.imagesBytes) }} · 可回收 {{ formatSize(vo.dockerDisk.imagesReclaimableBytes) }}</div>
-                <div class="metric-sub">卷 {{ formatSize(vo.dockerDisk.volumesBytes) }} · 可回收 {{ formatSize(vo.dockerDisk.volumesReclaimableBytes) }}</div>
-                <div class="metric-sub">构建缓存 {{ formatSize(vo.dockerDisk.buildCacheBytes) }} · 可回收 {{ formatSize(vo.dockerDisk.buildCacheReclaimableBytes) }}</div>
-              </template>
-              <div v-else class="metric-note">{{ vo.dockerDisk.reason || 'Docker 磁盘占用读不到' }}</div>
-            </template>
-            <template v-else>
-              <div class="metric-value is-muted">不可用</div>
-              <div class="metric-sub">{{ vo.containers.reason || '无法连接 Docker' }}</div>
-            </template>
-            <el-button v-if="canOpenSettings" class="settings-link" link type="primary" @click="router.push('/settings')">
-              在系统设置中管理容器
-            </el-button>
+          <section class="panel">
+            <div class="chart-head">
+              <div class="kpi">
+                <span class="kpi-label">内存</span>
+                <span class="kpi-value" :class="levelClass(memory?.usagePercent)">
+                  {{ memory == null ? '采样中' : formatPercent(memory.usagePercent) }}
+                </span>
+              </div>
+              <dl v-if="memory" class="facts">
+                <div>
+                  <dt>已用 / 共</dt>
+                  <dd>{{ formatSize(memory.usedBytes) }} / {{ formatSize(memory.totalBytes) }}</dd>
+                </div>
+                <div>
+                  <dt>可用</dt>
+                  <dd>{{ formatSize(memory.availableBytes) }}<span class="extra">{{ memoryHint(memorySource) }}</span></dd>
+                </div>
+                <div>
+                  <dt>交换区</dt>
+                  <dd v-if="memory.swapTotalBytes != null && memory.swapUsedBytes != null">
+                    {{ formatSize(memory.swapUsedBytes) }} / {{ formatSize(memory.swapTotalBytes) }}
+                  </dd>
+                  <dd v-else>无</dd>
+                </div>
+              </dl>
+            </div>
+            <BaseChart :option="memoryTrendOption" :height="148" :empty="trendPoints.length === 0" empty-text="正在采样" />
           </section>
         </div>
 
-        <div v-if="vo" class="disk-section">
-          <div class="disk-head">
-            <span class="disk-title">硬盘</span>
-            <span v-if="vo.diskIo.readBytesPerSec != null && vo.diskIo.writeBytesPerSec != null" class="metric-note">
+        <div v-if="vo" class="detail-grid">
+          <section class="panel">
+            <div class="panel-title">后端进程</div>
+            <dl class="stat-strip">
+              <div>
+                <dt>常驻内存</dt>
+                <dd>{{ formatSize(vo.process.rssBytes) }}</dd>
+              </div>
+              <div>
+                <dt>已运行</dt>
+                <dd>{{ formatUptime(vo.process.uptimeSeconds) }}</dd>
+              </div>
+              <div>
+                <dt>堆</dt>
+                <dd>{{ formatSize(vo.process.heapUsedBytes) }}<span class="extra"> / {{ formatSize(vo.process.heapTotalBytes) }}</span></dd>
+              </div>
+              <div>
+                <dt>事件循环</dt>
+                <dd>{{ vo.process.eventLoopDelayMs == null ? '采样中' : formatDelay(vo.process.eventLoopDelayMs) }}</dd>
+              </div>
+              <div v-if="vo.process.openFds != null">
+                <dt>文件描述符</dt>
+                <dd :class="levelClass(fdPercent)">
+                  {{ formatCount(vo.process.openFds) }}<span v-if="vo.process.fdLimit != null" class="extra"> / {{ formatCount(vo.process.fdLimit) }}</span>
+                </dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <span class="panel-title">容器</span>
+              <el-button v-if="canOpenSettings" link type="primary" @click="router.push('/settings')">管理</el-button>
+            </div>
+            <template v-if="vo.containers.available">
+              <dl class="stat-strip">
+                <div>
+                  <dt>运行中</dt>
+                  <dd>{{ vo.containers.running }}<span class="extra"> / {{ vo.containers.total }}</span></dd>
+                </div>
+                <div>
+                  <dt>已停止</dt>
+                  <dd>{{ vo.containers.stopped }}</dd>
+                </div>
+                <div>
+                  <dt>未在册</dt>
+                  <dd>{{ vo.containers.untracked }}</dd>
+                </div>
+                <div>
+                  <dt>有任务</dt>
+                  <dd>{{ vo.containers.busy }}</dd>
+                </div>
+                <template v-if="vo.dockerDisk.available">
+                  <div>
+                    <dt>镜像</dt>
+                    <dd>{{ formatSize(vo.dockerDisk.imagesBytes) }}<span class="extra">可回收 {{ formatSize(vo.dockerDisk.imagesReclaimableBytes) }}</span></dd>
+                  </div>
+                  <div>
+                    <dt>卷</dt>
+                    <dd>{{ formatSize(vo.dockerDisk.volumesBytes) }}<span class="extra">可回收 {{ formatSize(vo.dockerDisk.volumesReclaimableBytes) }}</span></dd>
+                  </div>
+                  <div>
+                    <dt>构建缓存</dt>
+                    <dd>{{ formatSize(vo.dockerDisk.buildCacheBytes) }}<span class="extra">可回收 {{ formatSize(vo.dockerDisk.buildCacheReclaimableBytes) }}</span></dd>
+                  </div>
+                </template>
+              </dl>
+              <p v-if="!vo.dockerDisk.available" class="reason">{{ vo.dockerDisk.reason || 'Docker 磁盘占用读不到' }}</p>
+            </template>
+            <p v-else class="reason">不可用 · {{ vo.containers.reason || '无法连接 Docker' }}</p>
+          </section>
+        </div>
+
+        <section v-if="vo" class="panel disk-panel">
+          <div class="panel-head">
+            <span class="panel-title">硬盘</span>
+            <span v-if="vo.diskIo.readBytesPerSec != null && vo.diskIo.writeBytesPerSec != null" class="io-rate">
               读 {{ formatSize(vo.diskIo.readBytesPerSec) }}/s · 写 {{ formatSize(vo.diskIo.writeBytesPerSec) }}/s
             </span>
           </div>
-          <div v-if="vo.disks.length === 0" class="metric-note">没有读到磁盘占用</div>
-          <div v-for="disk in vo.disks" :key="disk.mount" class="disk-row">
-            <div class="disk-head">
-              <span class="disk-label">{{ disk.label }}</span>
-              <span class="disk-percent" :class="levelClass(disk.usagePercent)">{{ formatPercent(disk.usagePercent) }}</span>
-            </div>
-            <el-progress
-              :percentage="clampPercent(disk.usagePercent)"
-              :color="usageColor"
-              :stroke-width="8"
-              :show-text="false"
-            />
-            <div class="metric-note">{{ diskPlace(disk) }} · 已用 {{ formatSize(disk.usedBytes) }} / 共 {{ formatSize(disk.totalBytes) }} · 可用 {{ formatSize(disk.availableBytes) }}</div>
-            <div v-if="disk.inodeUsagePercent != null" class="metric-note" :class="levelClass(disk.inodeUsagePercent)">
-              inode {{ formatPercent(disk.inodeUsagePercent) }}<template v-if="disk.inodeUsed != null && disk.inodeTotal != null"> · {{ formatCount(disk.inodeUsed) }} / {{ formatCount(disk.inodeTotal) }}</template>
-            </div>
+          <p v-if="vo.disks.length === 0" class="reason">没有读到磁盘占用</p>
+          <div v-else class="disk-scroll">
+            <table class="disk-table">
+              <thead>
+                <tr>
+                  <th>挂载</th>
+                  <th>占用</th>
+                  <th class="bar-col"><span class="sr-only">用量条</span></th>
+                  <th>已用 / 共</th>
+                  <th>inode</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="disk in vo.disks" :key="disk.mount">
+                  <th scope="row">
+                    <span class="disk-name">{{ disk.label }}</span>
+                    <span class="disk-path" :title="diskPlace(disk)">{{ diskPlace(disk) }}</span>
+                  </th>
+                  <td class="disk-pct" :class="levelClass(disk.usagePercent)">{{ formatPercent(disk.usagePercent) }}</td>
+                  <td class="bar-col">
+                    <el-progress
+                      class="disk-bar"
+                      :percentage="clampPercent(disk.usagePercent)"
+                      :color="usageColor"
+                      :stroke-width="6"
+                      :show-text="false"
+                    />
+                  </td>
+                  <td class="disk-cap">{{ formatSize(disk.usedBytes) }} / {{ formatSize(disk.totalBytes) }}</td>
+                  <td class="disk-inode" :class="levelClass(disk.inodeUsagePercent)">
+                    <template v-if="disk.inodeUsagePercent != null">
+                      {{ formatPercent(disk.inodeUsagePercent) }}
+                      <template v-if="disk.inodeUsed != null && disk.inodeTotal != null"> · {{ formatCount(disk.inodeUsed) }}</template>
+                    </template>
+                    <template v-else>—</template>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
-        </div>
+        </section>
       </template>
     </el-card>
   </div>
@@ -134,7 +229,7 @@
 <script setup lang="ts">
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Refresh } from '@element-plus/icons-vue'
+import { InfoFilled, Refresh } from '@element-plus/icons-vue'
 import type { HostStatusVo, HostTrendSample } from '@mao/contracts'
 import BaseChart from '../../components/BaseChart.vue'
 import { api } from '../../api'
@@ -155,6 +250,8 @@ import {
   usageColor,
   usageLevel
 } from './hostFormat'
+
+const samplingHint = '不含远程数据库，数字只代表后端所在的这台机器。硬盘同一挂载点只计一次。容器只计本机 mao 运行时，未在册是进程重启后留下的残留。自动刷新只作用于硬盘、容器和进程，默认关闭，离开页面不记住。'
 
 /** 0=关闭。只作用于硬盘、容器和进程，不持久化，默认关闭。CPU 和内存另按每秒采样。 */
 const AUTO_REFRESH_OPTIONS = [
@@ -283,33 +380,53 @@ onBeforeUnmount(stopTimers)
 .card-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 16px;
+}
+
+.title-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--mao-ink);
+}
+
+.host-meta,
+.title-note,
+.updated,
+.auto-refresh-label,
+.io-rate,
+.reason {
+  font-size: 12px;
+  color: var(--mao-muted);
+  line-height: 1.5;
+}
+
+.title-note {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.hint-info {
+  color: var(--mao-muted);
+  cursor: help;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  flex: 1;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px 12px;
   min-width: 0;
-}
-
-.card-hint {
-  font-size: 12px;
-  color: var(--mao-muted);
-  line-height: 1.5;
-}
-
-.header-actions .card-hint:first-child {
-  flex: 1 1 280px;
-}
-
-.auto-refresh-label {
-  font-size: 13px;
-  color: var(--mao-muted);
 }
 
 .auto-refresh-select {
@@ -324,130 +441,242 @@ onBeforeUnmount(stopTimers)
   font-variant-numeric: tabular-nums;
 }
 
-.host-meta {
-  margin-bottom: 16px;
+.chart-grid,
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.detail-grid {
+  margin-top: 12px;
+}
+
+.panel {
+  min-width: 0;
+  padding: 12px 14px 8px;
+  border: 1px solid var(--mao-border);
+  border-radius: 8px;
+  background: var(--mao-surface);
+}
+
+.disk-panel {
+  margin-top: 12px;
+  padding-bottom: 4px;
+}
+
+.chart-head,
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.panel-head {
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.panel-title {
   font-size: 13px;
-  color: var(--el-text-color-regular);
+  font-weight: 600;
+  color: var(--mao-ink);
 }
 
-.trend-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+.kpi {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
-.trend-card {
-  padding: 16px;
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 8px;
-  min-width: 0;
-}
-
-.trend-footnote {
-  margin: 8px 0 16px;
-}
-
-.metric-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.metric-card {
-  padding: 16px;
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 8px;
-  min-width: 0;
-}
-
-.metric-label {
+.kpi-label {
   font-size: 13px;
   color: var(--mao-muted);
 }
 
-.metric-value {
-  margin: 6px 0 10px;
-  font-size: 28px;
+.kpi-value {
+  font-size: 26px;
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
+  color: var(--mao-ink);
 }
 
-.metric-value.is-warm,
-.disk-percent.is-warm,
-.metric-sub.is-warm,
-.metric-note.is-warm {
+.facts,
+.stat-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.facts {
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+.facts > div,
+.stat-strip > div {
+  min-width: 0;
+}
+
+.facts dt,
+.stat-strip dt {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--mao-muted);
+}
+
+.facts dd,
+.stat-strip dd {
+  margin: 1px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+  color: var(--mao-ink);
+}
+
+.stat-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+  gap: 10px 12px;
+}
+
+.stat-strip dd {
+  font-size: 15px;
+}
+
+.extra {
+  display: block;
+  max-width: 11em;
+  margin-top: 1px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--mao-muted);
+}
+
+.reason {
+  margin: 4px 0 8px;
+}
+
+.kpi-value.is-warm,
+.facts dd.is-warm,
+.stat-strip dd.is-warm,
+.disk-pct.is-warm,
+.disk-inode.is-warm {
   color: var(--el-color-warning);
 }
 
-.metric-value.is-hot,
-.disk-percent.is-hot,
-.metric-sub.is-hot,
-.metric-note.is-hot {
+.kpi-value.is-hot,
+.facts dd.is-hot,
+.stat-strip dd.is-hot,
+.disk-pct.is-hot,
+.disk-inode.is-hot {
   color: var(--el-color-danger);
 }
 
-.metric-value.is-muted {
-  font-size: 22px;
-  color: var(--mao-muted);
+.disk-scroll {
+  overflow-x: auto;
 }
 
-.metric-sub {
-  margin-top: 8px;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.metric-note {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--mao-muted);
-  line-height: 1.5;
-}
-
-.settings-link {
-  margin-top: 8px;
-  padding-left: 0;
-}
-
-.disk-section {
-  margin-top: 20px;
-}
-
-.disk-title {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.disk-row + .disk-row {
-  margin-top: 14px;
-}
-
-.disk-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-  margin-bottom: 6px;
-}
-
-.disk-label {
-  font-size: 13px;
-}
-
-.disk-percent {
+.disk-table {
+  width: 100%;
+  border-collapse: collapse;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 
-@media (max-width: 700px) {
-  .card-header {
+.disk-table th,
+.disk-table td {
+  padding: 7px 10px 7px 0;
+  text-align: left;
+  vertical-align: middle;
+  border-top: 1px solid var(--mao-border);
+  font-weight: 400;
+}
+
+.disk-table thead th {
+  border-top: none;
+  padding-top: 0;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--mao-muted);
+}
+
+.disk-table tbody th {
+  font-weight: 600;
+  color: var(--mao-ink);
+}
+
+.disk-name,
+.disk-path {
+  display: block;
+}
+
+.disk-path,
+.disk-cap,
+.disk-inode {
+  color: var(--mao-muted);
+}
+
+.disk-path {
+  max-width: 280px;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.disk-pct {
+  font-weight: 600;
+  color: var(--mao-ink);
+  white-space: nowrap;
+}
+
+.bar-col {
+  width: 28%;
+  min-width: 96px;
+}
+
+.disk-bar {
+  width: 100%;
+}
+
+.disk-bar :deep(.el-progress-bar__outer) {
+  background: var(--mao-canvas);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 760px) {
+  .card-header,
+  .chart-head {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .trend-grid,
-  .metric-grid {
+  .facts {
+    justify-content: flex-start;
+  }
+
+  .chart-grid,
+  .detail-grid {
     grid-template-columns: 1fr;
   }
 }

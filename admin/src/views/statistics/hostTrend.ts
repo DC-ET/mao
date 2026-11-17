@@ -63,7 +63,7 @@ export function hostTrendOption(points: readonly HostTrendPoint[], field: 'cpu' 
         return `${title}<br/>${name} ${formatPercent(seriesValue(rows[0]?.value))}`
       }
     },
-    grid: { left: 44, right: 12, top: 12, bottom: 24 },
+    grid: { left: 40, right: 8, top: 8, bottom: 20 },
     xAxis: {
       type: 'time',
       min: newest - span,
