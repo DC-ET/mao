@@ -124,7 +124,7 @@ function confirmCreate() {
   padding: 24px 16px;
   text-align: center;
   color: var(--aw-ink-muted-48);
-  font-size: var(--aw-text-caption);
+  font-size: var(--git-fs-row, 13px);
 }
 
 .git-error p {
@@ -136,7 +136,8 @@ function confirmCreate() {
   background: transparent;
   color: var(--aw-primary);
   cursor: pointer;
-  font-size: var(--aw-text-caption);
+  font-size: var(--git-fs-meta, 12px);
+  font-weight: 500;
 }
 
 .git-branch-group {
@@ -148,7 +149,7 @@ function confirmCreate() {
   top: 0;
   z-index: 1;
   padding: 10px 12px 6px;
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta, 12px);
   font-weight: 600;
   letter-spacing: var(--aw-tracking);
   color: var(--aw-ink-muted-48);
@@ -163,7 +164,8 @@ function confirmCreate() {
   background: transparent;
   color: var(--aw-primary);
   cursor: pointer;
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta, 12px);
+  font-weight: 500;
   padding: 0 2px;
 }
 
@@ -181,24 +183,26 @@ function confirmCreate() {
 .git-branch-create-input {
   flex: 1;
   min-width: 0;
-  height: 26px;
-  padding: 0 8px;
-  font-size: var(--aw-text-fine);
-  font-family: var(--aw-font-mono);
+  height: 28px;
+  padding: 0 10px;
+  font-size: var(--git-fs-meta, 12px);
   color: var(--aw-ink);
-  background: var(--aw-surface);
-  border: 1px solid var(--aw-divider-soft);
-  border-radius: var(--aw-radius-xs);
+  background: var(--aw-surface-pearl);
+  border: 1px solid var(--aw-hairline);
+  border-radius: var(--aw-radius-sm);
   outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
 }
 
 .git-branch-create-input:focus {
   border-color: var(--aw-primary);
+  background: var(--aw-surface);
+  box-shadow: 0 0 0 3px var(--aw-primary-ring);
 }
 
 .git-branch-create-error {
   flex-shrink: 0;
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta, 12px);
   color: var(--aw-danger);
 }
 
@@ -220,19 +224,16 @@ function confirmCreate() {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta, 12px);
 }
 
-/* 等宽字体同字号下明显比正文大，分支名与头部分支胶囊、历史 hash 统一用 fine 档 */
 .git-branch-name {
   flex-shrink: 0;
   max-width: 40%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-fine);
-  font-weight: 500;
+  font-size: var(--git-fs-row, 13px);
   color: var(--aw-ink);
 }
 
@@ -251,7 +252,6 @@ function confirmCreate() {
 
 .git-branch-upstream {
   flex-shrink: 0;
-  font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-48);
 }
 
@@ -260,7 +260,7 @@ function confirmCreate() {
   display: inline-flex;
   gap: 4px;
   font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-code, 11px);
 }
 
 .git-ahead { color: var(--aw-diff-add); }
@@ -272,13 +272,13 @@ function confirmCreate() {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-48);
 }
 
 .git-branch-commit-hash {
   flex-shrink: 0;
   font-family: var(--aw-font-mono);
+  font-size: var(--git-fs-code, 11px);
 }
 
 .git-branch-commit-title {
@@ -295,7 +295,8 @@ function confirmCreate() {
   border-radius: var(--aw-radius-sm);
   background: transparent;
   color: var(--aw-primary);
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta, 12px);
+  font-weight: 500;
   cursor: pointer;
 }
 

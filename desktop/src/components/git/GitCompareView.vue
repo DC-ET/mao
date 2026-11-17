@@ -223,8 +223,7 @@ function handleOpenDiff(file: GitChangedFile) {
 
 .git-compare-select :deep(.el-select__selected-item),
 .git-compare-select :deep(.el-select__input) {
-  font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta, 12px);
 }
 
 .git-compare-swap {
@@ -262,7 +261,7 @@ function handleOpenDiff(file: GitChangedFile) {
   padding: 24px 16px;
   text-align: center;
   color: var(--aw-ink-muted-48);
-  font-size: var(--aw-text-caption);
+  font-size: var(--git-fs-row, 13px);
 }
 
 .git-error p {
@@ -274,7 +273,8 @@ function handleOpenDiff(file: GitChangedFile) {
   background: transparent;
   color: var(--aw-primary);
   cursor: pointer;
-  font-size: var(--aw-text-caption);
+  font-size: var(--git-fs-meta, 12px);
+  font-weight: 500;
 }
 
 .git-compare-summary {
@@ -284,7 +284,7 @@ function handleOpenDiff(file: GitChangedFile) {
   flex-wrap: wrap;
   padding: 8px 12px;
   border-bottom: 1px solid var(--aw-divider-soft);
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta, 12px);
   color: var(--aw-ink-muted-48);
   flex-shrink: 0;
 }
@@ -297,7 +297,7 @@ function handleOpenDiff(file: GitChangedFile) {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-family: var(--aw-font-mono);
+  font-weight: 500;
   color: var(--aw-ink);
   max-width: 100%;
   overflow: hidden;
@@ -317,6 +317,7 @@ function handleOpenDiff(file: GitChangedFile) {
   display: inline-flex;
   gap: 6px;
   font-family: var(--aw-font-mono);
+  font-size: var(--git-fs-code, 11px);
 }
 
 .git-compare-lines .add {

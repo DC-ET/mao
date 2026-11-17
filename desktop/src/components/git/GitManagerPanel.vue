@@ -488,7 +488,13 @@ onActivated(() => {
 </script>
 
 <style scoped>
+/* Git 管理器字号三档，子视图引用（侧边栏单独用 GitChangeList 时走各处同值兜底）：
+ * row 一级列表主文本 / 空状态；meta 次要信息、二级明细、输入框、按钮；code 等宽标识（hash、ref、增删数）。
+ * 等宽字体只用于 code 档：等宽字形同字号下明显偏大，分支名、文件名、仓库名一律用正文字体。 */
 .git-manager-panel {
+  --git-fs-row: 13px;
+  --git-fs-meta: var(--aw-text-fine);
+  --git-fs-code: 11px;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -531,8 +537,7 @@ onActivated(() => {
 
 .git-repo-select :deep(.el-select__selected-item),
 .git-repo-select :deep(.el-select__input) {
-  font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta);
 }
 
 :global(.git-repo-select-popper.el-select__popper) {
@@ -570,7 +575,6 @@ onActivated(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--aw-font-mono);
   color: var(--aw-ink);
 }
 
@@ -581,7 +585,6 @@ onActivated(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--aw-ink-muted-48);
-  font-family: var(--aw-font-mono);
 }
 
 :global(.git-repo-select-popper .el-select-dropdown__item.is-selected .git-repo-option-name),
@@ -604,8 +607,7 @@ onActivated(() => {
   border-radius: var(--aw-radius-sm);
   background: var(--aw-surface-pearl);
   color: var(--aw-ink-muted-64);
-  font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta);
 }
 
 .git-status-bar {
@@ -614,7 +616,7 @@ onActivated(() => {
   gap: 10px;
   padding: 12px 16px 10px;
   flex-shrink: 0;
-  font-size: var(--aw-text-caption);
+  font-size: var(--git-fs-meta);
   min-width: 0;
 }
 
@@ -638,10 +640,8 @@ onActivated(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta);
   font-weight: 600;
-  letter-spacing: -0.01em;
 }
 
 .git-branch-icon {
@@ -687,8 +687,7 @@ onActivated(() => {
   gap: 4px;
   overflow: hidden;
   white-space: nowrap;
-  font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta);
   color: var(--aw-ink-muted-48);
 }
 
@@ -733,7 +732,10 @@ onActivated(() => {
   align-items: center;
   gap: 6px;
   overflow: hidden;
-  font-size: var(--aw-text-fine);
+  /* 圆点外圈 3px 光晕会被 overflow 裁掉：左侧留出同宽内边距，再用负外边距抵消位移 */
+  padding-left: 3px;
+  margin-left: -3px;
+  font-size: var(--git-fs-meta, 12px);
   line-height: 16px;
   color: var(--aw-ink-muted-48);
 }
@@ -915,7 +917,7 @@ onActivated(() => {
   padding: 24px 16px;
   text-align: center;
   color: var(--aw-ink-muted-48);
-  font-size: var(--aw-text-caption);
+  font-size: var(--git-fs-row);
 }
 
 .git-state p {
@@ -927,7 +929,8 @@ onActivated(() => {
   background: transparent;
   color: var(--aw-primary);
   cursor: pointer;
-  font-size: var(--aw-text-caption);
+  font-size: var(--git-fs-meta);
+  font-weight: 500;
 }
 
 [data-theme="dark"] .git-manager-panel {

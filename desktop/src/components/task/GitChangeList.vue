@@ -353,7 +353,7 @@ function toggleDir(path: string) {
 }
 
 .git-toolbar-title {
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta, 12px);
   font-weight: 600;
   color: var(--aw-ink-muted-64);
   letter-spacing: 0.04em;
@@ -437,8 +437,8 @@ function toggleDir(path: string) {
   border-radius: var(--aw-radius-md);
   background: var(--aw-surface-pearl);
   color: var(--aw-ink);
-  font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-fine);
+  font-family: inherit;
+  font-size: var(--git-fs-row, 13px);
   line-height: 1.6;
   resize: vertical;
   transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
@@ -500,9 +500,8 @@ function toggleDir(path: string) {
   border-radius: var(--aw-radius-sm);
   background: var(--aw-primary);
   color: var(--aw-on-primary);
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta, 12px);
   font-weight: 600;
-  letter-spacing: 0.02em;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.12);
   cursor: pointer;
   transition: filter 0.15s, opacity 0.15s;
@@ -522,7 +521,7 @@ function toggleDir(path: string) {
   padding: 24px 16px;
   text-align: center;
   color: var(--aw-ink-muted-48);
-  font-size: var(--aw-text-caption);
+  font-size: var(--git-fs-row, 13px);
 }
 
 .git-empty {
@@ -551,14 +550,14 @@ function toggleDir(path: string) {
 
 .git-empty-title {
   margin: 0;
-  font-size: var(--aw-text-caption);
+  font-size: var(--git-fs-row, 13px);
   font-weight: 600;
   color: var(--aw-ink);
 }
 
 .git-empty-desc {
   margin: 0;
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta, 12px);
   color: var(--aw-ink-muted-48);
 }
 
@@ -571,7 +570,8 @@ function toggleDir(path: string) {
   background: transparent;
   color: var(--aw-primary);
   cursor: pointer;
-  font-size: var(--aw-text-caption);
+  font-size: var(--git-fs-meta, 12px);
+  font-weight: 500;
 }
 
 .git-tree {

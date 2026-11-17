@@ -71,7 +71,7 @@ async function confirmDrop(ref: string) {
   padding: 24px 16px;
   text-align: center;
   color: var(--aw-ink-muted-48);
-  font-size: var(--aw-text-caption);
+  font-size: var(--git-fs-row, 13px);
 }
 
 .git-error p {
@@ -83,7 +83,8 @@ async function confirmDrop(ref: string) {
   background: transparent;
   color: var(--aw-primary);
   cursor: pointer;
-  font-size: var(--aw-text-caption);
+  font-size: var(--git-fs-meta, 12px);
+  font-weight: 500;
 }
 
 .git-stash-list {
@@ -110,7 +111,7 @@ async function confirmDrop(ref: string) {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: var(--aw-text-caption);
+  font-size: var(--git-fs-row, 13px);
 }
 
 .git-stash-ref {
@@ -118,7 +119,8 @@ async function confirmDrop(ref: string) {
   padding: 0 6px;
   border-radius: 7px;
   font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-code, 11px);
+  line-height: 16px;
   background: var(--aw-primary-lighter);
   color: var(--aw-primary);
 }
@@ -134,7 +136,7 @@ async function confirmDrop(ref: string) {
 
 .git-stash-date {
   flex-shrink: 0;
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta, 12px);
   color: var(--aw-ink-muted-48);
   font-variant-numeric: tabular-nums;
 }
@@ -152,7 +154,8 @@ async function confirmDrop(ref: string) {
   border-radius: var(--aw-radius-sm);
   background: transparent;
   color: var(--aw-primary);
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta, 12px);
+  font-weight: 500;
   cursor: pointer;
 }
 

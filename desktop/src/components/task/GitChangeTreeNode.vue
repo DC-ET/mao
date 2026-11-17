@@ -184,8 +184,7 @@ function typeClass(type: string) {
 
 .git-node-name {
   flex-shrink: 0;
-  font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-caption);
+  font-size: var(--git-fs-row, 13px);
   color: var(--aw-ink);
   line-height: 18px;
   white-space: nowrap;
@@ -206,8 +205,7 @@ function typeClass(type: string) {
 
 .git-file-old {
   flex-shrink: 0;
-  font-family: var(--aw-font-mono);
-  font-size: 11px;
+  font-size: var(--git-fs-meta, 12px);
   color: var(--aw-ink-muted-48);
   text-decoration: line-through;
   white-space: nowrap;
@@ -217,7 +215,7 @@ function typeClass(type: string) {
 .git-lines {
   flex-shrink: 0;
   font-family: var(--aw-font-mono);
-  font-size: 11px;
+  font-size: var(--git-fs-code, 11px);
   display: inline-flex;
   gap: 4px;
   align-items: center;

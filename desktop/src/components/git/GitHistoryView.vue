@@ -166,7 +166,7 @@ function badgeClass(type: string): string {
   padding: 24px 16px;
   text-align: center;
   color: var(--aw-ink-muted-48);
-  font-size: var(--aw-text-caption);
+  font-size: var(--git-fs-row, 13px);
 }
 
 .git-error p {
@@ -178,7 +178,8 @@ function badgeClass(type: string): string {
   background: transparent;
   color: var(--aw-primary);
   cursor: pointer;
-  font-size: var(--aw-text-caption);
+  font-size: var(--git-fs-meta, 12px);
+  font-weight: 500;
 }
 
 .git-log-list {
@@ -201,7 +202,7 @@ function badgeClass(type: string): string {
   gap: 8px;
   padding: 7px 12px;
   cursor: pointer;
-  font-size: var(--aw-text-caption);
+  font-size: var(--git-fs-row, 13px);
 }
 
 .git-log-main:hover {
@@ -216,7 +217,7 @@ function badgeClass(type: string): string {
 .git-log-hash {
   flex-shrink: 0;
   font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-code, 11px);
   color: var(--aw-primary);
   cursor: copy;
 }
@@ -236,7 +237,7 @@ function badgeClass(type: string): string {
   align-items: center;
   gap: 6px;
   max-width: 50%;
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta, 12px);
   color: var(--aw-ink-muted-48);
 }
 
@@ -254,7 +255,8 @@ function badgeClass(type: string): string {
 .git-log-ref {
   padding: 0 5px;
   border-radius: 7px;
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-code, 11px);
+  font-weight: 500;
   line-height: 16px;
   white-space: nowrap;
   background: rgba(0, 0, 0, 0.05);
@@ -283,7 +285,7 @@ function badgeClass(type: string): string {
 
 .git-commit-files-state {
   padding: 6px 0;
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta, 12px);
   color: var(--aw-ink-muted-48);
 }
 
@@ -293,7 +295,7 @@ function badgeClass(type: string): string {
   gap: 8px;
   padding: 4px 6px;
   border-radius: var(--aw-radius-xs);
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta, 12px);
   cursor: pointer;
 }
 
@@ -306,7 +308,9 @@ function badgeClass(type: string): string {
   width: 26px;
   text-align: center;
   border-radius: 4px;
+  font-family: var(--aw-font-mono);
   font-size: 10px;
+  font-weight: 700;
   line-height: 15px;
   background: rgba(0, 0, 0, 0.05);
   color: var(--aw-ink-muted-48);
@@ -323,7 +327,6 @@ function badgeClass(type: string): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--aw-font-mono);
   color: var(--aw-ink);
 }
 
@@ -332,6 +335,7 @@ function badgeClass(type: string): string {
   display: inline-flex;
   gap: 6px;
   font-family: var(--aw-font-mono);
+  font-size: var(--git-fs-code, 11px);
 }
 
 .git-add { color: var(--aw-diff-add); }
@@ -347,7 +351,8 @@ function badgeClass(type: string): string {
   border-radius: var(--aw-radius-sm);
   background: transparent;
   color: var(--aw-primary);
-  font-size: var(--aw-text-caption);
+  font-size: var(--git-fs-meta, 12px);
+  font-weight: 500;
   padding: 5px 16px;
   cursor: pointer;
 }
@@ -362,7 +367,7 @@ function badgeClass(type: string): string {
 }
 
 .git-log-end {
-  font-size: var(--aw-text-fine);
+  font-size: var(--git-fs-meta, 12px);
   color: var(--aw-ink-muted-48);
 }
 
@@ -393,22 +398,25 @@ function badgeClass(type: string): string {
 .git-filter-input {
   flex: 1;
   min-width: 0;
-  height: 24px;
-  padding: 0 8px;
-  font-size: var(--aw-text-caption);
+  height: 28px;
+  padding: 0 10px;
+  font-size: var(--git-fs-meta, 12px);
   color: var(--aw-ink);
-  background: var(--aw-surface);
-  border: 1px solid var(--aw-divider-soft);
-  border-radius: var(--aw-radius-xs);
+  background: var(--aw-surface-pearl);
+  border: 1px solid var(--aw-hairline);
+  border-radius: var(--aw-radius-sm);
   outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
 }
 
 .git-filter-input:focus {
   border-color: var(--aw-primary);
+  background: var(--aw-surface);
+  box-shadow: 0 0 0 3px var(--aw-primary-ring);
 }
 
 .git-filter-input::placeholder {
-  color: var(--aw-ink-muted-48);
+  color: var(--aw-ink-muted-40);
 }
 
 /* 行级「添加到对话」：hover 显现，不改变行高与布局 */
@@ -441,8 +449,9 @@ function badgeClass(type: string): string {
   border-radius: var(--aw-radius-xs);
   background: var(--aw-surface);
   border: 1px solid var(--aw-divider-soft);
-  font-family: var(--aw-font-mono);
-  font-size: var(--aw-text-fine);
+  font-family: inherit;
+  font-size: var(--git-fs-meta, 12px);
+  line-height: 1.6;
   color: var(--aw-ink-muted-80);
   white-space: pre-wrap;
   word-break: break-word;
