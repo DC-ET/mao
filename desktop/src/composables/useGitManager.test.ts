@@ -172,7 +172,7 @@ describe('useGitManager', () => {
     expect(manager.commitFiles.value.has('hash0')).toBe(true)
   });
 
-  it('远端列表读取失败不冒泡错误，徽章 tooltip 缺省降级', async () => {
+  it('远端列表读取失败不冒泡错误，历史装饰退回兜底', async () => {
     const { provider } = fakeProvider({
       getRemotes: vi.fn(async () => { throw new Error('offline') }),
     } as unknown as Partial<WorkspaceGitProvider>)
@@ -248,7 +248,7 @@ describe('useGitManager', () => {
         expect(second.calls.getStashes).toBe(1)
         expect(manager.stashes.value.length).toBe(1)
       }
-      // 远端列表状态条徽标常驻：切仓库后一并重取
+      // 历史装饰需要远端名：切仓库后一并重取
       expect(second.calls.getRemotes).toBe(1)
     }
   });

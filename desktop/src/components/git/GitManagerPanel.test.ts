@@ -254,6 +254,21 @@ describe('GitManagerPanel 顶部拉取 / 推送按钮', () => {
     app.unmount()
   })
 
+  it('远端徽标直接展示状态，不再弹出地址提示', () => {
+    state.status = { ...fullStatus }
+    const { host, app } = mountPanel()
+    expect(host.querySelector('.git-remote-badge-text')?.textContent).toBe('远端可用')
+    expect(state.tooltips.some((tip) => tip.includes('fetch:'))).toBe(false)
+    app.unmount()
+
+    state.tooltips = []
+    state.status = { ...fullStatus, remoteStatusAvailable: false, remoteStatusError: '凭证失效' }
+    const again = mountPanel()
+    expect(again.host.querySelector('.git-remote-badge-text')?.textContent).toBe('凭证失效')
+    expect(state.tooltips.some((tip) => tip.includes('fetch:'))).toBe(false)
+    again.app.unmount()
+  })
+
   it('未配置 upstream / 远端状态未确认时按钮禁用并说明原因', () => {
     state.status = { ...fullStatus, upstream: undefined, remoteStatusAvailable: false, remoteStatusError: 'fetch 失败' }
     const { host, app } = mountPanel()

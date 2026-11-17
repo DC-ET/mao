@@ -288,7 +288,7 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
     }
   }
 
-  /** 远端列表：状态条徽章 tooltip 用；force=true 时重复加载也会刷新。 */
+  /** 远端列表：历史提交的 refs 按远端名着色；force=true 时重复加载也会刷新。 */
   async function loadRemotes(force = false) {
     if (remotesLoaded.value && !force) return
     const p = provider.value
@@ -301,7 +301,7 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
       remotesLoaded.value = true
     } catch {
       if (seq !== remotesSeq) return
-      // 远端列表读取失败不打扰主流程：徽章 tooltip 缺省展示远端名即可
+      // 远端列表读取失败不打扰主流程：历史装饰退回「路径里含 / 即视为远端」
       remotes.value = []
     }
   }
@@ -342,7 +342,7 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
   // provider 代表工作区 / 仓库身份：变化时丢弃全部面板数据，防新旧数据串扰；
   // 丢弃后必须按当前视图重载——否则切仓库后停在历史 / 分支 / Stash 视图会看到
   // 「尚无提交 / 暂无分支」的空态（watch(activeView) 不触发，面板不会自愈）。
-  // 远端列表状态条徽标常驻可见，切仓库后一并重取（失败静默降级，不打扰主流程）
+  // 历史视图用远端名给 refs 着色，切仓库后一并重取（失败静默降级，不打扰主流程）
   watch(provider, () => {
     resetAll()
     loadActiveView()

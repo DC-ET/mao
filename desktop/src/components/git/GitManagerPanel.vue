@@ -53,15 +53,9 @@
           <span v-if="(gitStatus.behindCount ?? 0) > 0" class="git-behind" :title="`落后远端 ${gitStatus.behindCount} 个提交`">↓ {{ gitStatus.behindCount }}</span>
         </span>
       </template>
-      <el-tooltip v-if="gitStatus?.isGit" placement="top" :show-after="300" :content="remoteBadgeTooltip">
-        <span
-          class="git-remote-badge"
-          :class="remoteBadgeState"
-          @mouseenter="ensureRemotes"
-        >
-          {{ remoteBadgeText }}
-        </span>
-      </el-tooltip>
+      <span v-if="gitStatus?.isGit" class="git-remote-badge" :class="remoteBadgeState">
+        <span class="git-remote-badge-text">{{ remoteBadgeText }}</span>
+      </span>
       <!-- 同步操作统一收敛到状态条：拉取 / 推送 / 刷新（含 fetch），变更工具栏不再重复放 -->
       <div class="git-status-actions">
         <template v-if="gitStatus?.isGit">
@@ -226,7 +220,7 @@ import { useGitRepos } from '../../composables/useGitRepos'
 import { useGitStatus } from '../../composables/useGitStatus'
 import { useGitManager, type GitManagerView } from '../../composables/useGitManager'
 import { useGitOperations } from '../../composables/useGitOperations'
-import { sanitizeRemoteUrl, gitPullDisabledReason, gitPushDisabledReason, type GitSyncState } from '../../utils/git-manager'
+import { gitPullDisabledReason, gitPushDisabledReason, type GitSyncState } from '../../utils/git-manager'
 
 const props = defineProps<{
   sessionId: string
@@ -322,7 +316,7 @@ const {
   branches, branchesLoading, branchesError, loadBranches,
   compareBase, compareTarget, compareResult, compareLoading, compareError, loadCompare,
   stashes, stashesLoading, stashesError, loadStashes,
-  remotes, loadRemotes, refreshLoadedViews,
+  remotes, refreshLoadedViews,
 } = manager
 
 const { operation, run } = useGitOperations(statusProviderRef)
@@ -342,20 +336,6 @@ const repoName = computed(() => {
   return parts[parts.length - 1] || root
 })
 
-const remoteBadgeTooltip = computed(() => {
-  const status = gitStatus.value
-  if (!status) return ''
-  if (!status.remoteStatusAvailable) {
-    // 首屏确认在途（fetch 尚未返回）：这是「还没问过远端」，不是故障
-    if (gitRemoteLoading.value && !status.remoteStatusError) return '正在确认远端状态（fetch --prune）…'
-    return status.remoteStatusError || '远端状态不可用'
-  }
-  if (remotes.value.length === 0) return '远端状态可用'
-  return remotes.value
-    .map((r) => `${r.name}\nfetch: ${sanitizeRemoteUrl(r.fetchUrl)}\npush: ${sanitizeRemoteUrl(r.pushUrl)}`)
-    .join('\n\n')
-})
-
 /** 徽标三态：确认中（中性）> 可用（绿）> 不可用（橙，带真实原因）。 */
 const remoteBadgeState = computed(() => {
   const status = gitStatus.value
@@ -372,10 +352,6 @@ const remoteBadgeText = computed(() => {
   if (gitRemoteLoading.value && !status.remoteStatusError) return '确认远端中…'
   return status.remoteStatusError || '远端不可用'
 })
-
-function ensureRemotes() {
-  void loadRemotes()
-}
 
 /** 手动刷新 / 写操作后：刷仓库列表 + 选中仓库状态（含远端）+ 已加载视图数据 */
 async function handleRefreshAll() {
@@ -749,7 +725,7 @@ onActivated(() => {
 .git-behind { color: var(--aw-diff-del); background: var(--aw-diff-del-bg); }
 
 .git-remote-badge {
-  /* 可压缩：状态条右侧有三个图标按钮，窄视口下徽标让位（省略号 + tooltip 仍能看全）而非整行溢出 */
+  /* 可压缩：状态条右侧有三个图标按钮，窄视口下徽标让位（省略号）而非整行溢出 */
   flex-shrink: 1;
   min-width: 0;
   max-width: 180px;
@@ -757,11 +733,16 @@ onActivated(() => {
   align-items: center;
   gap: 6px;
   overflow: hidden;
-  white-space: nowrap;
   font-size: var(--aw-text-fine);
   line-height: 16px;
   color: var(--aw-ink-muted-48);
-  cursor: help;
+}
+
+.git-remote-badge-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .git-remote-badge::before {

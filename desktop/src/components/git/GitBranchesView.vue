@@ -147,11 +147,10 @@ function confirmCreate() {
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 8px 12px 4px;
+  padding: 10px 12px 6px;
   font-size: var(--aw-text-fine);
   font-weight: 600;
   letter-spacing: var(--aw-tracking);
-  text-transform: uppercase;
   color: var(--aw-ink-muted-48);
   background: var(--aw-surface);
   display: flex;
@@ -176,7 +175,7 @@ function confirmCreate() {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 12px 8px 18px;
+  padding: 4px 12px 8px;
 }
 
 .git-branch-create-input {
@@ -184,7 +183,7 @@ function confirmCreate() {
   min-width: 0;
   height: 26px;
   padding: 0 8px;
-  font-size: var(--aw-text-caption);
+  font-size: var(--aw-text-fine);
   font-family: var(--aw-font-mono);
   color: var(--aw-ink);
   background: var(--aw-surface);
@@ -207,7 +206,7 @@ function confirmCreate() {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 12px 5px 18px;
+  padding: 7px 12px;
   border-bottom: 1px solid var(--aw-divider-soft);
 }
 
@@ -221,9 +220,10 @@ function confirmCreate() {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: var(--aw-text-caption);
+  font-size: var(--aw-text-fine);
 }
 
+/* 等宽字体同字号下明显比正文大，分支名与头部分支胶囊、历史 hash 统一用 fine 档 */
 .git-branch-name {
   flex-shrink: 0;
   max-width: 40%;
@@ -231,11 +231,13 @@ function confirmCreate() {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-fine);
+  font-weight: 500;
   color: var(--aw-ink);
 }
 
 .git-branch-name.current {
-  font-weight: 700;
+  font-weight: 600;
   color: var(--aw-primary);
 }
 
