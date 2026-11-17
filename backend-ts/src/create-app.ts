@@ -177,6 +177,7 @@ import type { WatcherService } from './signal/watcher.service.js';
 import { assembleOpenApiServices } from './app-openapi-services.js';
 import { assembleWeixinServices } from './app-weixin-services.js';
 import { assembleFeishuHandler } from './app-feishu-handler.js';
+import { createHostIo, HostStatusService, hostDiskProbes } from './statistics/host-status.service.js';
 import { assembleFeishuMessaging } from './app-feishu-messaging.js';
 import { assembleLifecycle } from './app-lifecycle.js';
 import { assembleWeixinMcpServices } from './app-weixin-mcp-services.js';
@@ -940,6 +941,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     pushFinalReply: (sessionId: number) => scheduledService.pushFinalReplyIfApplicable(sessionId),
   });
 
+  const hostStatus = new HostStatusService(createHostIo(() => containerRegistry.listEntries()), hostDiskProbes({
+    workspaceRoot: cfg.app.harness.workspaceRoot,
+    uploadDir: cfg.app.file.uploadDir,
+    runtimeDir: cfg.app.harness.runtimeDir,
+    userHomeDir: cfg.app.harness.userHomeDir,
+  }));
+
   await registerAllRoutes({
     app, db, cfg, apiPrefix, jwt, agentRuntimeCfg,
     authService, feishu, ecpAuth, userService, userRepo, permissionService,
@@ -966,7 +974,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     openRunService, apiTokenService, webhookTriggerService, outboundSubscriptionService,
     openApiRateLimiter, callLogService,
     watcherService, signalWatcherRepo,
-    analyticsService, statisticsService, adminAnalytics,
+    analyticsService, statisticsService, hostStatus, adminAnalytics,
     feedbackService,
     memoryService,
     approvalRuleService,

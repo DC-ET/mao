@@ -153,6 +153,7 @@ import { registerSignalWatcherRoutes } from './signal/watcher.routes.js';
 import { registerSignalAdminRoutes } from './signal/signal-admin.routes.js';
 import { registerAnalyticsRoutes } from './analytics/analytics.routes.js';
 import { registerStatisticsRoutes } from './statistics/statistics.routes.js';
+import type { HostStatusService } from './statistics/host-status.service.js';
 import { registerFeedbackRoutes } from './feedback/feedback.routes.js';
 import { registerMemoryRoutes } from './memory/memory.routes.js';
 import { registerApprovalRuleRoutes, type ApprovalRuleAuditInput } from './approval-rule/approval-rule.routes.js';
@@ -294,6 +295,7 @@ export interface RouteDeps {
   // analytics
   analyticsService: AnalyticsService;
   statisticsService: StatisticsService;
+  hostStatus: HostStatusService;
   adminAnalytics: AdminAnalyticsService;
 
   // feedback
@@ -369,7 +371,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     openRunService, apiTokenService, webhookTriggerService, outboundSubscriptionService,
     openApiRateLimiter, callLogService,
     watcherService, signalWatcherRepo,
-    analyticsService, statisticsService, adminAnalytics,
+    analyticsService, statisticsService, hostStatus, adminAnalytics,
     feedbackService,
     memoryService,
     approvalRuleService,
@@ -645,7 +647,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       },
     });
     registerAnalyticsRoutes(api, { analytics: analyticsService, jwt, permissionService });
-    registerStatisticsRoutes(api, { statistics: statisticsService, jwt, permissionService });
+    registerStatisticsRoutes(api, { statistics: statisticsService, hostStatus, jwt, permissionService });
     registerFeedbackRoutes(api, { feedback: feedbackService, jwt, permissionService });
     registerMemoryRoutes(api, { memoryService });
     registerApprovalRuleRoutes(api, {

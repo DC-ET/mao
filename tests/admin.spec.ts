@@ -458,6 +458,7 @@ test.describe('Sidebar Navigation', () => {
     const navItems = [
       { label: '用量分析', url: /\/analytics$/ },
       { label: '在线设备', url: /\/online-devices$/ },
+      { label: '主机状态', url: /\/host-status$/ },
       { label: 'Agent 管理', url: /\/agents$/ },
       { label: '模型管理', url: /\/models$/ },
       { label: '飞书机器人', url: /\/feishu-bots$/ },

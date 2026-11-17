@@ -22,7 +22,8 @@ import {
   Key,
   Aim,
   Operation,
-  Cellphone
+  Cellphone,
+  Cpu
 } from '@element-plus/icons-vue'
 
 export interface MenuItemDef {
@@ -46,7 +47,8 @@ export const menuGroups: MenuGroupDef[] = [
     label: '',
     items: [
       { index: '/analytics', label: '用量分析', icon: TrendCharts, permission: 'analytics:read' },
-      { index: '/online-devices', label: '在线设备', icon: Cellphone, permission: 'analytics:read' }
+      { index: '/online-devices', label: '在线设备', icon: Cellphone, permission: 'analytics:read' },
+      { index: '/host-status', label: '主机状态', icon: Cpu, permission: 'analytics:read' }
     ]
   },
   {

@@ -75,7 +75,7 @@ const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
   permission      权限点列表
   skill-docs      全局 Skill 文档；assign 写入指定用户的个人技能
   admin-session   管理端会话检索与失败会话恢复
-  runtime         运行监控
+  runtime         运行监控（会话列表 / 主机快照）
   analytics       分析汇总 / 分维度
   llm-call        LLM 调用流水
   audit           审计日志

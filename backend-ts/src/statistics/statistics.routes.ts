@@ -2,11 +2,13 @@ import type { FastifyInstance } from 'fastify';
 import { requireRequestPermission, sendJson } from '../common/http-error.js';
 import { ok } from '../common/result.js';
 import type { JwtService } from '../crypto/jwt.service.js';
+import type { HostStatusVo } from '@mao/contracts';
 import type { StatisticsService } from './statistics.service.js';
 
 export interface StatisticsRouteDeps {
   jwt: JwtService;
   statistics: StatisticsService;
+  hostStatus: { snapshot(): Promise<HostStatusVo> };
   permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
 }
 
@@ -35,5 +37,11 @@ export function registerStatisticsRoutes(app: FastifyInstance, deps: StatisticsR
   app.get('/v1/statistics/online-devices', async (req, reply) => {
     await requireRequestPermission(deps.permissionService, req, 'analytics:read');
     sendJson(reply, 200, ok(await deps.statistics.getOnlineDevices()));
+  });
+
+  // 后端所在机器的当前资源快照（CPU / 内存 / 硬盘 / 运行时容器）
+  app.get('/v1/statistics/host', async (req, reply) => {
+    await requireRequestPermission(deps.permissionService, req, 'analytics:read');
+    sendJson(reply, 200, ok(await deps.hostStatus.snapshot()));
   });
 }

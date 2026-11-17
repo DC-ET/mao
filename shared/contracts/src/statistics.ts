@@ -1,7 +1,7 @@
 /**
  * 管理后台统计域 VO（@mao/contracts 的 statistics.ts 模块）。
  *
- * 消费方：backend-ts/src/statistics/、admin/src/views/statistics/OnlineDevicesView.vue。
+ * 消费方：backend-ts/src/statistics/、admin/src/views/statistics/。
  * 本模块零运行时，仅类型。
  */
 import type { WsClientType } from './ws';
@@ -38,4 +38,75 @@ export interface OnlineDevicesVo {
     displayName: string | null;
     connections: OnlineDeviceConnection[];
   }>;
+}
+
+/** CPU 快照（GET /v1/statistics/host）。usagePercent 为相邻两次采样的利用率；首次尚无差值时为 null。 */
+export interface HostCpuSnapshot {
+  cores: number;
+  usagePercent: number | null;
+  /** 1 / 5 / 15 分钟负载 */
+  load1: number;
+  load5: number;
+  load15: number;
+}
+
+/** 内存快照。proc 来源的 available 是 MemAvailable；os 来源是操作系统报告的空闲内存。 */
+export interface HostMemorySnapshot {
+  totalBytes: number;
+  availableBytes: number;
+  usedBytes: number;
+  /** 0–100，一位小数 */
+  usagePercent: number;
+  /** 无交换区时为 null */
+  swapTotalBytes: number | null;
+  swapUsedBytes: number | null;
+}
+
+/** 一块已挂载磁盘。同一挂载点只出现一次。 */
+export interface HostDiskSnapshot {
+  /** 系统盘 / 工作区 / 上传目录 / 运行时目录 / 用户目录 / Docker 数据 */
+  label: string;
+  /** 采样路径 */
+  path: string;
+  /** df 报告的挂载点 */
+  mount: string;
+  totalBytes: number;
+  usedBytes: number;
+  availableBytes: number;
+  usagePercent: number;
+}
+
+/**
+ * mao 运行时容器计数。
+ * running / stopped / untracked / busy 在 available=false 时均为 0，不表示「没有容器」。
+ * untracked、busy 是 total 的子集，不是额外的容器。
+ */
+export interface HostContainerSnapshot {
+  available: boolean;
+  /** available=false 时的原因；否则为 null */
+  reason: string | null;
+  running: number;
+  stopped: number;
+  untracked: number;
+  busy: number;
+  total: number;
+}
+
+/**
+ * GET /v1/statistics/host 响应 data。
+ * 只描述后端进程所在的这一台机器，不含远程数据库。无历史序列。
+ * memorySource=proc 表示读到了 /proc/meminfo，os 表示退回 Node os 模块。
+ */
+export interface HostStatusVo {
+  hostname: string;
+  platform: string;
+  /** 系统已运行秒数（开机时长，不是后端进程时长） */
+  uptimeSeconds: number;
+  /** 采集时刻，epoch ms */
+  sampledAt: number;
+  memorySource: 'proc' | 'os';
+  cpu: HostCpuSnapshot;
+  memory: HostMemorySnapshot;
+  disks: HostDiskSnapshot[];
+  containers: HostContainerSnapshot;
 }

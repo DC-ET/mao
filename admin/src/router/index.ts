@@ -97,6 +97,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '在线设备', keepAlive: true, permission: 'analytics:read' }
       },
       {
+        path: 'host-status',
+        name: 'HostStatus',
+        component: () => import('../views/statistics/HostStatusView.vue'),
+        meta: { title: '主机状态', keepAlive: true, permission: 'analytics:read' }
+      },
+      {
         path: 'llm-calls',
         name: 'LlmCalls',
         component: () => import('../views/llm-call/LlmCallView.vue'),
