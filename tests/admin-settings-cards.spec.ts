@@ -32,7 +32,9 @@ test('plain categories render as card forms', async ({ page }) => {
   await expect(page.locator('[id="setting-cat-会话"] .group-title')).toBeVisible()
 
   // 模型选择卡：代码/会话分类用下拉，初始带值
-  const codeCard = page.locator('.group-card', { hasText: '代码' })
+  // 注意用分类锚点而非 .group-card+文本：「容器管理」卡片也含「代码版本」字样，
+  // hasText 会同时命中两张卡（曾有 5 个 el-select 的误判）。
+  const codeCard = page.locator('#setting-cat-代码')
   await expect(codeCard.locator('.el-select')).toHaveCount(1)
 
   // 运行环境：workspace.root/skills.dir 只读展示，runtime.mode 可编辑（V160 起带保存按钮）

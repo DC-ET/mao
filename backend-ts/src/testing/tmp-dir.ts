@@ -46,8 +46,9 @@ export function useTmpDir(prefix: string): string {
 
 /**
  * 仓库外夹具：仅供「目录不能落在任何 git 仓库内」的用例（git 状态探测、
- * 环境信息探测）使用 —— 这类断言只看版本库边界，与路径沙箱允许根无关，
- * 因此放系统临时目录即可；放进仓库内会向上发现 .git 使断言翻转。
+ * 环境信息探测），以及「路径长度本身受约束」的用例（Unix socket sun_path
+ * 预算）使用 —— 放进仓库内会向上发现 .git 使前者断言翻转，而深层检出路径
+ * 会让后者的夹具前提直接超预算。系统临时目录根路径短且不在任何仓库内。
  */
 export function useTmpDirOutsideRepo(prefix: string): string {
   return withAutoCleanup(mkdtempSync(join(tmpdir(), prefix)));

@@ -3,7 +3,7 @@ import { connect } from 'node:net';
 import { lstatSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { RuntimeChannelServer } from './runtime-channel-server.js';
-import { useTmpDir } from '../../testing/tmp-dir.js';
+import { useTmpDirOutsideRepo } from '../../testing/tmp-dir.js';
 
 /**
  * 宿主机侧每容器 socket 监听的生命周期回归（2026-11-12 线上故障）：
@@ -11,6 +11,11 @@ import { useTmpDir } from '../../testing/tmp-dir.js';
  * ss 可见却无法 connect（容器侧 ENOENT），且旧实现只查内存 map，永不重建。
  * 修复后：ensureListening 校验 socket 文件存在性（缺失自愈），并用
  * 「临时路径 listen → rename 原子替换」避免出现「已删除而新未建立」的空窗。
+ *
+ * 夹具必须用仓库外的系统临时目录：socket 路径本身受 sun_path 长度预算约束
+ * （macOS 104 / Linux 108 字节），而工作区可能被检出到很深的路径下——本用例
+ * 的断言（含「路径超预算退化为直听」的 101 字符垫长）以短根目录为前提，
+ * 若继承仓库内 .tmp-test 的长路径，连直听都超预算，属于夹具前提不成立。
  */
 function connectOk(socketPath: string, timeoutMs = 2000): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -35,7 +40,7 @@ describe('RuntimeChannelServer ensureListening', () => {
   }
 
   it('监听后 socket 文件存在且可连接', async () => {
-    const root = useTmpDir('mao-channel-');
+    const root = useTmpDirOutsideRepo('mao-channel-');
     const server = makeServer(root);
     const socketPath = await server.ensureListening(7, 5);
 
@@ -45,7 +50,7 @@ describe('RuntimeChannelServer ensureListening', () => {
   });
 
   it('幂等：重复调用复用同一监听（inode 不变）', async () => {
-    const root = useTmpDir('mao-channel-');
+    const root = useTmpDirOutsideRepo('mao-channel-');
     const server = makeServer(root);
     const first = await server.ensureListening(7, 5);
     const inode = lstatSync(first).ino;
@@ -55,7 +60,7 @@ describe('RuntimeChannelServer ensureListening', () => {
   });
 
   it('自愈：socket 文件被外部删除后重新监听恢复（线上回归）', async () => {
-    const root = useTmpDir('mao-channel-');
+    const root = useTmpDirOutsideRepo('mao-channel-');
     const server = makeServer(root);
     const socketPath = await server.ensureListening(7, 5);
 
@@ -68,7 +73,7 @@ describe('RuntimeChannelServer ensureListening', () => {
   });
 
   it('非 socket 残留文件被原子替换为可用监听', async () => {
-    const root = useTmpDir('mao-channel-');
+    const root = useTmpDirOutsideRepo('mao-channel-');
     mkdirSync(join(root, '7', '5'), { recursive: true });
     writeFileSync(join(root, '7', '5', 'runtime.sock'), 'stale');
 
@@ -83,7 +88,7 @@ describe('RuntimeChannelServer ensureListening', () => {
     // sun_path 限制（macOS 104 / Linux 108，含 NUL）：tmp 后缀叠加在 socket 路径上超预算时，
     // 内核会静默截断 bind 路径——listen 回调照常触发但文件落在截断名上，rename 必然 ENOENT。
     // 该回归用例把 socket 路径垫到 ~101 字符（原子分支预算外、直听预算内），锁定退化分支。
-    const root = useTmpDir('mao-channel-');
+    const root = useTmpDirOutsideRepo('mao-channel-');
     const baseSocket = join(root, '7', '5', 'runtime.sock');
     const padLen = 101 - baseSocket.length;
     expect(padLen).toBeGreaterThan(0);

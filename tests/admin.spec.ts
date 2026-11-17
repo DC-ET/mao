@@ -553,6 +553,9 @@ test.describe('Governance Console', () => {
     const dialog = page.locator('.el-dialog', { hasText: '管理成员' })
     await expect(dialog).toBeVisible()
     await expect(dialog.locator('.member-summary')).toContainText('当前成员')
+    // 弹窗默认只列「当前成员」（0.0.4xx 起），普通用户角色初始无成员；
+    // 本用例要管理 admin 的加入状态，先切到「全部用户」列表。
+    await dialog.locator('.el-radio-button:has(input[value="all"])').click()
     const adminRow = dialog.locator('.el-table__row', { hasText: 'admin' })
     await expect(adminRow).toBeVisible({ timeout: 10_000 })
 
