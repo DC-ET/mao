@@ -26,6 +26,10 @@
   <img src="docs/assets/client2.png" alt="Mao 工作台" width="960" />
 </p>
 
+<p align="center">
+  <img src="docs/assets/admin.png" alt="Mao 管理后台" width="960" />
+</p>
+
 ---
 
 大多数 Agent 工具是为个人设计的：装在各自电脑上，密钥散落，换台设备或换个人就得从头配起。
