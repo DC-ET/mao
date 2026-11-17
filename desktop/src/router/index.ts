@@ -6,6 +6,12 @@ import { readRedirectQuery } from '../utils/login-redirect'
 
 const routes: RouteRecordRaw[] = [
   {
+    path: '/welcome',
+    name: 'Welcome',
+    component: () => import('../views/welcome/WelcomeView.vue'),
+    meta: { public: true }
+  },
+  {
     path: '/share/public/:token',
     name: 'PublicShare',
     component: () => import('../views/share/ShareView.vue'),
