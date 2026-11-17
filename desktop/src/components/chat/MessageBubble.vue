@@ -1075,6 +1075,8 @@ async function copyMessage() {
   align-items: center;
   padding: 6px 12px;
   background: var(--aw-surface-code-header);
+  /* 正文与标题行同色后，工具栏只能靠这条下沿界线分出（五个宿主同改，勿漏） */
+  border-bottom: 1px solid var(--aw-divider-soft);
   font-size: var(--aw-text-fine);
 }
 

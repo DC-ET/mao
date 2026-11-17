@@ -139,6 +139,7 @@ const emit = defineEmits<{
   align-items: center;
   padding: 6px 12px;
   background: var(--aw-surface-code-header);
+  border-bottom: 1px solid var(--aw-divider-soft);
   font-size: var(--aw-text-fine);
 }
 
