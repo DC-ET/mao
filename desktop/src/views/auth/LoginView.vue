@@ -219,7 +219,10 @@ async function handleLogin() {
     formRef.value?.clearValidate()
     await finishLogin()
   } catch (error: any) {
-    // /auth/login 的 401 拦截器不弹 toast，这里兜底展示失败原因
+    // 登录失败按仓库约定是 HTTP 200 + code≠0，响应拦截器已经弹过同一条并打了 toastShown
+    // 标记；这里不判标记再弹就是两条（管理后台 stores/auth.ts 的 skipErrorToast 是同一处坑）。
+    // 只有拦截器静默的失败（如 /auth/login 的 401）才需要这行兜底。
+    if (error?.toastShown) return
     ElMessage.error(error?.response?.data?.message || error?.message || '登录失败，请检查用户名和密码')
   } finally {
     passwordLoading.value = false

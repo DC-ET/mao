@@ -43,7 +43,10 @@ async function completeLogin() {
     }, 400)
   } catch (error: any) {
     statusText.value = '登录失败'
-    ElMessage.error(error?.response?.data?.message || error?.message || '飞书登录失败')
+    // 业务失败（HTTP 200 + code≠0）拦截器已弹过同一条并标记 toastShown，再弹就是两条
+    if (!error?.toastShown) {
+      ElMessage.error(error?.response?.data?.message || error?.message || '飞书登录失败')
+    }
     await router.replace('/login')
   }
 }
