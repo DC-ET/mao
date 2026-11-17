@@ -322,7 +322,11 @@ html.android-capacitor .terminal-keybar-btn {
   --aw-surface-glass: rgba(28, 28, 30, 0.86);
   --aw-surface-pearl: #202024;
   --aw-surface-black: #1c1c1e;
-  --aw-surface-code: #1a1a1e;
+  /* 代码块底色必须与页面底色 --aw-canvas 拉开可感知差距（暗色按与亮色 #f5f5f7/白 同等
+     的明度差取 #131316：canvas #1c1c1e 上对比约 1.08:1，旧值 #1a1a1e 仅 1.01:1，
+     肉眼与页面糊成一片，代码块完全失去边界）。宿主还有 parchment/surface 等更亮的底，
+     一律只深不浅，单一取值在所有宿主上都分得开 */
+  --aw-surface-code: #131316;
   --aw-surface-code-header: #2c2c32;
   --aw-text-code: #d0d0d4;
 
