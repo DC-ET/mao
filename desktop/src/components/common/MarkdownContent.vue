@@ -24,6 +24,7 @@ import { renderMarkdown } from '../../composables/useMarkdown'
 import { insertMermaidDiagrams } from '../../utils/mermaid-renderer'
 import { enhanceCodeBlocks, ensureCodeBlockDelegation } from '../../utils/codeBlockCollapse'
 import { markZoomableImages, pickZoomImage } from '../../utils/markdownZoom'
+import { decorateMarkdownImages, type MarkdownImageContext } from '../../utils/markdownImages'
 import { useTheme } from '../../utils/theme'
 
 const props = withDefaults(defineProps<{
@@ -36,14 +37,25 @@ const props = withDefaults(defineProps<{
   /** 消息宿主专用：渲染完成后增强代码块（>30 行折叠 / 换行开关，utils/codeBlockCollapse）。
    *  缺省 false——trace / 文件预览 / 技能页等其它宿主渲染产物逐字节不变（技术方案 D6） */
   codeBlockEnhance?: boolean
+  /** 正文相对图片解析用的会话 ID：CLOUD 会话的工作区文件经后端按会话归属读取。
+   *  缺省不解析（图片加载失败回退为「📎 原路径」文本） */
+  sessionId?: string
+  /** 该会话执行模式：LOCAL 会话的工作区在本机、服务端读不到，不做地址改写 */
+  sessionExecutionMode?: string
 }>(), {
   bodyClass: 'markdown-body',
   codeBlockEnhance: false,
+  sessionId: '',
+  sessionExecutionMode: '',
 })
 
 const { isDark } = useTheme()
 const html = ref('')
 const root = ref<HTMLElement | null>(null)
+/** 正文图片解析上下文：没有会话 ID 时传 null（保持原 src，交给失败回退） */
+const imageContext = computed<MarkdownImageContext | null>(() =>
+  props.sessionId ? { sessionId: props.sessionId, executionMode: props.sessionExecutionMode } : null,
+)
 // 渲染代际序号：流式高频触发 + 异步 renderMarkdown（Monaco 高亮较慢），
 // 慢的旧帧后到会覆盖新内容导致文本闪回，用代际丢弃过期渲染结果
 let renderGen = 0
@@ -73,6 +85,11 @@ watch(
     // 派发事件供外层（如会话恢复后的自动滚动）在高度变化后重新测量/滚动到底部。
     nextTick(() => {
       window.dispatchEvent(new CustomEvent('mao:markdown-rendered'))
+      // 正文相对图片（Agent 截图等）改写为可访问地址 + 失败回退文本：流式期间也处理，
+      // 否则半截图片会一直显示破图图标（utils/markdownImages）。
+      if (root.value) {
+        decorateMarkdownImages(root.value, imageContext.value)
+      }
       // v-html 重建后占位需重新渲染；流式期间跳过，streaming 翻转（含 false→渲染完成）
       // 必触发本回调补渲染（C6：流结束时 content 可能不再变化，仅靠 content watch 会漏）。
       // 过期占位由 mermaid-renderer 的 isConnected/源码校验丢弃（C4）。
@@ -92,4 +109,11 @@ watch(
   },
   { immediate: true },
 )
+
+// 会话上下文晚到（历史消息先渲染、会话实体后加载）时补一次图片解析：
+// 重解析整段 Markdown 只为换 src 不划算，直接在现有 DOM 上重写地址。
+watch([() => props.sessionId, () => props.sessionExecutionMode], async () => {
+  await nextTick()
+  if (root.value) decorateMarkdownImages(root.value, imageContext.value)
+})
 </script>

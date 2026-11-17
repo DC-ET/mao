@@ -1022,3 +1022,19 @@ pre code {
 .markdown-body .md-img-zoom {
   cursor: zoom-in;
 }
+
+/* 正文图片加载失败的回退（utils/markdownImages）：显示原始路径文本，不留破图图标 */
+.markdown-body .md-img-broken {
+  display: inline-block;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid var(--aw-hairline);
+  border-radius: 6px;
+  background: var(--aw-surface-code);
+  color: var(--aw-ink-muted-48);
+  font-family: var(--aw-font-mono);
+  font-size: var(--aw-text-fine);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  vertical-align: middle;
+}

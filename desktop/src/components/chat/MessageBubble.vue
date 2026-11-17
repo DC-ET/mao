@@ -131,6 +131,8 @@
             :content="seg.content"
             :cite-map="citeMap"
             :streaming="isAssistantRunning"
+            :session-id="sessionId"
+            :session-execution-mode="sessionExecutionMode"
             body-class="assistant-text markdown-body"
             code-block-enhance
           />
@@ -149,6 +151,8 @@
           :content="message.content"
           :cite-map="citeMap"
           :streaming="isAssistantRunning"
+          :session-id="sessionId"
+          :session-execution-mode="sessionExecutionMode"
           body-class="assistant-text markdown-body"
           code-block-enhance
         />
@@ -433,6 +437,10 @@ function handleConfirm() {
 }
 
 const sessionStore = useSessionStore()
+/** 正文图片解析用的会话执行模式（CLOUD 才经后端读工作区文件） */
+const sessionExecutionMode = computed(() =>
+  props.sessionId ? sessionStore.getSessionEntity(props.sessionId)?.executionMode : undefined,
+)
 const locateFlashId = inject(LOCATE_FLASH_KEY, ref<string | null>(null))
 const messageDomId = computed(() => {
   const id = props.message.id
