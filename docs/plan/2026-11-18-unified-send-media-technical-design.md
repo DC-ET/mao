@@ -1,6 +1,6 @@
 # 统一发送图片 / 文件技术方案（send_image / send_file）
 
-- 状态：草案（2026-11-18；§3 决策为拟定口径，评审通过后定案）
+- 状态：草案（2026-11-18；§3 决策为拟定口径，评审通过后定案。**2026-11-19 可行性评审：方案与需求均可行**——能力底座的全部代码事实逐条核实（工具名 `send_wechat_*` / `feishu_send_*` / `dingtalk_send_*`、dispatcher 三集合、`filterToolsForSession` 通道标记互斥、`loadSendFileBytes`、三通道上限、TOOL 消息落库 + 刷新时 `chatMessage.ts` 把 TOOL content 回填进 `toolCall.result`、`persistFinalAssistant` metadata 写 null、`localFileBytes.cjs` 校验、微信多联系人拒绝猜测）。评审补充：边路任务通道解析回落父会话、mao-agent 路由入口、中止轮次副本丢失的如实表述、副本扩展名 / mime 推导、执行端允许根收窄、LOCAL 超时文案、安全边界节，见各节「评审补充」标注）
 - 日期：2026-11-18
 - 修订：2026-11-18。会话类型只在创建时绑定外部通道，之后同一条会话会在网页、桌面、安卓和该 IM 里被打开。发送改为「会话记录始终留一份副本，绑定了外部通道再额外推一份」，两侧独立成败。
 - 关联方案：
@@ -98,6 +98,8 @@
 
 没有外部通道的桌面 / 网页 / 安卓会话只做副本，不推送。
 
+**已知边界（评审补充）**：用户中止本轮时，工具已执行、通道可能已发出，但该轮的 TOOL 消息与最终回复都不落库（agent-loop 取消分支 `rollbackIncompleteRound` 会丢弃 `pendingToolSaves`）——刷新后对话页没有这张图 / 这份文件，飞书 / 微信 / 钉钉那边却有。这与文字回复中止丢失是同一现状，不为本方案单独加急落库。
+
 ## 3. 技术选型（待评审确认后定案）
 
 | # | 决策点 | 拟定 | 理由 |
@@ -106,7 +108,7 @@
 | D2 | 推送目标 | **副本始终写。外部通道按 `projectKey` / `workspace` 判定，顺序为微信、钉钉、飞书；没有则为 `chat`，不推送** | 与 `filterToolsForSession` 的判定一致（`harness-service.ts:739-750`）。参数里不接受通道名。不向其他通道扩散 |
 | D3 | 执行位置 | **两个工具都放进 `SERVER_ONLY_TOOLS`**，并留在 `SEND_BYTES_TOOLS`、`RUNTIME_SCOPED_TOOLS` | 飞书 / 钉钉今天不在 `SERVER_ONLY_TOOLS`，LOCAL 会误派发（`tool-dispatcher.ts:327`）。读字节仍要按轮快照的 `agentId` 进容器（`:465-480`） |
 | D4 | 子代理 | **加入 `SUBAGENT_EXCLUDED_TOOLS`，不改投父会话** | 子会话继承父通道身份（`subagent-invocation.service.ts:42-44`）。若允许发送，微信分支在「账号只有一个联系人」时会真的发到用户微信（`media-tool-support.ts:47-56`）。子代理没有自己的对话页。边路任务是用户正在看的会话，不排除 |
-| D5 | 副本的事实来源 | **工具结果里的 `delivery` 对象**。不新写消息列，不新发 WebSocket 事件 | TOOL 消息已经落库，`tool_call_result` 已经推到前端。再写 `metadata.deliveries` 要赶在最终助手消息插入之后合并（`persistFinalAssistant` 现把 metadata 写成 null，`harness-service.ts:227-245`），中止时还会丢。结果 JSON 在工具返回时就在 |
+| D5 | 副本的事实来源 | **工具结果里的 `delivery` 对象**。不新写消息列，不新发 WebSocket 事件 | TOOL 消息已经落库，`tool_call_result` 已经推到前端，刷新时历史映射（`chatMessage.ts`）把 TOOL content 回填进 `toolCall.result`，收集逻辑实时与刷新共用。再写 `metadata.deliveries` 要赶在最终助手消息插入之后合并（`persistFinalAssistant` 现把 metadata 写成 null，`harness-service.ts:227-245`）。**评审补充的措辞修正**：TOOL 消息在中止轮次同样不落库（与 metadata 同丢），delivery 的真正优势是「随结果实时推送、无合并时序问题」，不是「中止不丢」；中止边界见 §2.3 |
 | D6 | 对话页位置 | **从本轮全部工具结果收集 `delivery`，画在最终回复下方、文件变更面板同一层**（折叠区之外） | 只画在工具卡旁边会被 `ChatRoundList` 折进「已执行 N 个步骤」。文件变更已经是这个位置（`ChatRoundList.vue:75-79`）。飞书任务的网页页用的是同一套轮次组件 |
 | D7 | 副本落点 | **所有会话都写入 `uploads/{userId}/`，URL 口径与文生图相同** | 网页和安卓要在执行端离线、也不打开飞书的情况下仍能看。复用 `materializeImageApiResult` 的目录与 origin 拼接（`generate-image-tool.ts:69-79`），文件名用新前缀 `send-` |
 | D8 | 两侧成败 | **独立。`success` 在至少一侧成功时为 true；`error` 只在有一侧失败时出现** | 飞书超限不应抹掉网页上的图，网页落盘失败也不应假装飞书没发出去。模型靠 `delivery` / `channelStatus` 知道哪一侧已经完成，避免重发 |
@@ -206,6 +208,8 @@ return combine(copy, push)
 
 边路任务继承父会话的 `projectKey` / `workspace`（`streaming-ws-handler.ts:1459`）。副本画在边路自己的回复区。父会话是飞书时，边路再额外推到飞书；父会话是桌面任务时，`channelStatus` 为 `skipped`。
 
+**推送目标解析的回落（评审补充，P1）**：通道解析不是纯函数判定——飞书要查 `feishu_session_channel` 表（按 sessionId，`message.repository.ts:323`）、微信要查该会话的对端绑定（`getWeixinSessionPeer`）。边路会话不是 bot 入站创建的，这两张表里**没有边路的行**，直接按边路 sessionId 解析必然落空，与上一段「边路再额外推到飞书」矛盾（钉钉按继承的 workspace 判定，恰好能解析）。三个通道统一加一步回落：本会话解析不到绑定（飞书 channel 行 / 微信对端）且会话 `parentSessionId` 非空（SIDE_TASK）时，用父会话 id 再解析一次；飞书的 `findLatestInboundMessageId` 同样用父会话（reply 才落得进父聊天）。解析仍失败则按「未绑定」失败，副本保留。子代理不受影响（D4 已排除工具）。
+
 ### 4.4 子代理
 
 `SUBAGENT_EXCLUDED_TOOLS` 改为 `ask_user_questions`、`send_image`、`send_file`。删掉两个钉钉旧名。`buildSubContext` 与 `buildRetryContext` 都走这一个集合（`background-subagent-manager.ts:1047-1053`、`:1065-1078`），重试路径不会把工具交回来。
@@ -220,10 +224,13 @@ return combine(copy, push)
 
 1. 字节已经在内存（`loadSendFileBytes` 或 §6 的执行端回传）。读取上限等于副本上限：图片 20MB，文件 30MB。
 2. 副本校验通过后写入 `uploads/{userId}/send-{uuid}{ext}`。`userId` 用运行身份（与 `RUNTIME_SCOPED_TOOLS` 一致）。`userId` 为空时退到平坦 `uploads/`，与文生图相同。
+   **扩展名与 mime 推导（评审补充）**：`ext` 取来源路径 `path.extname`，白名单化 `^[A-Za-z0-9]{1,10}$`（不含点；不在白名单一律 `.bin`）；http(s) 来源先取 URL 路径 extname，取不到再按响应 `content-type` 的 mime→扩展名映射，最终仍 `.bin`。`delivery.mime`：http 用真实响应 content-type（去参数），本地按扩展名映射表，未知一律 `application/octet-stream`——`el-image` 预览与文件图标都靠它，不能缺省。
 3. URL 用 `toStaticUploadBase` 的 origin + `/uploads/{userId}/文件名`。origin 为空时视为副本失败，`error` 说明对话页没有可打开的地址；通道推送仍照常尝试。
 4. 工具结果带上 §4.1 的 `delivery`。不要把 base64 放进结果，避免工具消息和压缩归档膨胀（现有 `admin-message-compact` 会剥 `data_uri`，这里从源头不写）。
 
 副本校验失败（超限、图片格式不在并集里）时不写文件，`delivery` 不出现，通道推送仍用同一份字节按通道自己的规则尝试。通道往往更严，这种情况下两侧通常一起失败。
+
+**不去重、不清理（评审补充，P2）**：同一文件重发 N 次落 N 份 `send-*`（uuid 文件名互不覆盖）；不做内容哈希去重，也不做副本保留期 / 清理——与 `generate_image` 的 `gen-*` 落盘同口径。磁盘增长由使用频度决定，后续要做再单独立项。
 
 ### 5.2 前端
 
@@ -279,9 +286,9 @@ CLOUD 会话不走 `delivery_fetch`。安卓会话都是 CLOUD。读失败时还
 | 服务端 → 执行端 `delivery_fetch` | `{ type, sessionId, data: { requestId, path, workspace, maxBytes } }` |
 | 执行端 → 服务端 `delivery_fetch_result` | `{ type, sessionId, requestId, seq, total, data }`，`data` 为该片 base64，`seq` 从 1 起 |
 
-常量：每片 512KB 原始字节（base64 后约 699KB，低于 900KB 与 1MB）；单文件上限取副本上限（图片 20MB，文件 30MB），超限在发起拉取前拒绝；总超时 20 秒。投递落空、执行端未连接、超时，工具返回 `{ "error": "执行端不在线，无法读取本机文件" }`，不挂起本轮。
+常量：每片 512KB 原始字节（base64 后约 699KB，低于 900KB 与 1MB）；单文件上限取副本上限（图片 20MB，文件 30MB），超限在发起拉取前拒绝；总超时 20 秒。投递落空、执行端未连接、超时，工具返回 `{ "error": "执行端不在线或版本过旧，无法读取本机文件" }`，不挂起本轮。**评审补充**：旧执行端不认识 `delivery_fetch` 会静默忽略该帧，20 秒超时与「执行端真的不在线」呈现为同一现象，文案合并成这一句才诚实；旧桌面 dist 对未知流事件本就忽略（与 `file_fetch` 同机制）。
 
-执行端校验：相对路径或「解析后仍在该会话 workspace / 允许根内」的绝对路径、普通文件、非符号链接、不超过 `maxBytes`。失败只打日志，不回错误帧（未绑定会话会广播给该用户的多个执行端，错误帧会抢先毁掉合法分片）。服务端靠超时收口。拼装规则与正文图片方案相同：首片锁定来源连接，异源分片丢掉。
+执行端校验：相对路径或「解析后仍在该会话 workspace / 允许根内」的绝对路径、普通文件、非符号链接、不超过 `maxBytes`。失败只打日志，不回错误帧（未绑定会话会广播给该用户的多个执行端，错误帧会抢先毁掉合法分片）。服务端靠超时收口。拼装规则与正文图片方案相同：首片锁定来源连接，异源分片丢掉。**评审补充**：执行端侧的「允许根」就是本机会话 workspace（mao-agent 为本地信任根）——服务端的 `uploads/{userId}` / runtime 语义在用户机器上不存在，不要把服务端那套根集合照搬到执行端校验里。
 
 桌面走新 IPC：`workspace + path` 在主进程里拼路径并做 containment，再复用现有 `localFileBytes.cjs` 的普通文件 / 符号链接校验。不复用按绝对路径直通的 `local-read-bytes`。
 
@@ -297,6 +304,14 @@ mao-agent 在 `executor.ts` 增加 `delivery_fetch` 分支，先过现有 `resol
 | 文件类型 | 图片白名单 | 图片或任意文件（受 §4.2 副本上限限制） |
 
 两套帧可以并存。读路径上的 containment 以后可以抽成同一个函数，本期不把两份方案做成互相阻塞的前置。
+
+## 6.4 安全边界（评审补充）
+
+- **副本 URL**：与 `generate_image` 同口径——`send-{uuid}{ext}` 文件名不可枚举，`/uploads/` 为同源静态路径，拿到 URL 即可读。比文生图多出的暴露面只有「URL 出现在工具结果里」，而工具结果本来就有 `image_path` 等本机路径。跨用户读他人副本仍走文件名猜测，uuid 概率上不可行，不另加鉴权。
+- **跨成员路径预检**：`loadSendFileBytes` 现有的 `foreignPathMessage` 保留在第一道（他人 `runtime/{uid}` / `uploads/{uid}` 命中即拒绝，含公开 URL 提示），执行端回传路径（§6）不绕过这道闸。
+- **通道凭据不进容器 / 执行端**：副本落盘在服务端，通道推送继续在宿主机进程内调用现有 support（appSecret /飞书 app 票不进容器、不进桌面端、不进 mao-agent），与现状同一不变量。
+- **执行端读取的边界**：`delivery_fetch` 与 `file_op_request` / `file_fetch` 同一信任模型——workspace containment + 普通文件 + 非符号链接，不进审批、不进工具时间线；发送工具本身无审批卡，与六个旧工具一致（§2.2 明确）。
+- **模型上下文**：结果只有短 JSON（`delivery.url` / `channelStatus` / `error`），字节不进上下文，压缩归档与 `admin-message-compact` 无新增剥离项。
 
 ## 7. 提示词
 
@@ -318,7 +333,7 @@ mao-agent 在 `executor.ts` 增加 `delivery_fetch` 分支，先过现有 `resol
 3. `tool-dispatcher.ts`：`SERVER_ONLY_TOOLS`、`SEND_BYTES_TOOLS`、`RUNTIME_SCOPED_TOOLS` 换成新名字。确认 `dispatchWithRoundAgent` 仍包住它们。
 4. `filterToolsForSession` 不再按通道标记剔除发送工具（标记随旧类一起消失）。`feishu_download_file` 的飞书标记保留，过滤逻辑保留。
 5. `SUBAGENT_EXCLUDED_TOOLS` 按 §4.4 修改。
-6. 会话副本落盘与 `delivery` / `channelStatus`。LOCAL 的 `delivery_fetch` 放在 `harness/local/`，复用 `LocalToolSessionRegistry` 的 future / 断线失败，不进审批、不进工具时间线。
+6. 会话副本落盘与 `delivery` / `channelStatus`。LOCAL 的 `delivery_fetch` 放在 `harness/local/`，复用 `LocalToolSessionRegistry` 的 future / 断线失败（`sendToolRequest` 的 eventType 参数已支持任意帧名，`file_fetch` 先例），不进审批、不进工具时间线。
 7. `prompt-engine.ts`、`generate-image-tool.ts`、`edit-image-tool.ts` 的提示。
 8. `tool-result-summarizer.ts` 按 §5.4。六个旧 `case` 留着。
 9. `no-progress-notice.ts` 按 §5.3 归一化。
@@ -333,6 +348,8 @@ mao-agent 在 `executor.ts` 增加 `delivery_fetch` 分支，先过现有 `resol
 ### 8.3 mao-agent
 
 `executor.ts` 增加 `delivery_fetch`。信任收窄、containment、分片、失败不回包。旧 CLI 忽略未知帧。
+
+**路由入口（评审补充，P1）**：`delivery_fetch` 必须同时加进 `commands/local.ts` 的 `DAEMON_ROUTED_EVENTS` 与 `session-runner.ts` 的 `acceptEvent` 分支（与 `file_op_request` 完全同口径），否则 daemon 与交互 REPL 都会把帧当作未知事件忽略，executor 分支永远收不到。会话过滤语义天然成立：`delivery_fetch` 只会由当前正在执行的会话发出，与「REPL 只处理当前订阅会话」不冲突。桌面侧同理：`useStreamWS` 的收帧分支加 `delivery_fetch` case（走新 IPC），不需要 capabilities 声明——新后端只对 `executionMode === 'LOCAL'` 且读字节失败的路径发该帧。
 
 ### 8.4 文档
 
@@ -356,6 +373,10 @@ mao-agent 在 `executor.ts` 增加 `delivery_fetch` 分支，先过现有 `resol
 - 结果里没有 base64。
 - 无进展：同一 `filename` + 相同 `channelStatus`、不同 `url` 视为无进展；`channelStatus` 从 `failed` 变为 `sent` 视为有进展。
 - 摘要：成功、部分成功、失败、缺参；旧名字的既有用例不删。
+- 边路任务回落父会话（评审补充）：飞书父会话的边路里 `findSessionChannel(边路id)` 为 null、用父会话 id 命中后推送成功；微信父会话同理；无父会话绑定时的失败文案与「未绑定」一致。
+- 中止轮次副本不落库（评审补充，锁定现状）：发送成功后取消本轮，`message` 表无该 TOOL 行，刷新后无 `delivery`（与文字回复中止丢失同现状）。
+- 扩展名 / mime 推导（评审补充）：本地路径 `~/报告.PDF` → ext `.pdf`、`send-*.pdf`；URL 无扩展名且 content-type `image/png` → ext `.png`；白名单外扩展名（含路径穿越样式）回落 `.bin` 且 mime 为 `application/octet-stream`。
+- daemon / REPL 路由（评审补充）：`delivery_fetch` 在 `DAEMON_ROUTED_EVENTS` 与 `acceptEvent` 分支中可达 executor；交互 REPL 对当前订阅会话的帧正常回包。
 
 前端：
 
