@@ -53,13 +53,11 @@
                   <el-icon :size="14"><VideoPlay v-if="watcher.status !== 'ACTIVE'" /><VideoPause v-else /></el-icon>
                 </button>
               </el-tooltip>
-              <button
-                class="action-btn action-btn-danger"
-                :title="confirmDeleteId === watcher.id ? '确认删除' : '删除'"
-                @click="confirmDelete(watcher)"
-              >
-                <el-icon :size="14"><Delete /></el-icon>
-              </button>
+              <el-tooltip content="删除" :show-after="300">
+                <button class="action-btn action-btn-danger" aria-label="删除" @click="confirmDelete(watcher)">
+                  <el-icon :size="14"><Delete /></el-icon>
+                </button>
+              </el-tooltip>
             </div>
           </div>
           <div class="item-meta">
@@ -404,7 +402,6 @@ const watchers = ref<SignalWatcherView[]>([])
 const agents = ref<AgentOption[]>([])
 const loading = ref(false)
 const testingId = ref<number | null>(null)
-const confirmDeleteId = ref<number | null>(null)
 
 const dialogVisible = ref(false)
 const editing = ref(false)
@@ -812,10 +809,6 @@ async function toggleStatus(watcher: SignalWatcherView): Promise<void> {
 }
 
 async function confirmDelete(watcher: SignalWatcherView): Promise<void> {
-  if (confirmDeleteId.value !== watcher.id) {
-    confirmDeleteId.value = watcher.id
-    return
-  }
   try {
     await ElMessageBox.confirm(
       `删除「${watcher.name}」将同时清除其轮询记录，已产生的会话不会被删除。`,
@@ -823,10 +816,8 @@ async function confirmDelete(watcher: SignalWatcherView): Promise<void> {
       { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
     )
   } catch {
-    confirmDeleteId.value = null
     return
   }
-  confirmDeleteId.value = null
   try {
     await deleteSignalWatcher(watcher.id)
     ElMessage.success('哨兵已删除')

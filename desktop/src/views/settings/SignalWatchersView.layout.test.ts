@@ -153,6 +153,17 @@ describe('信号哨兵触发方式与复制', () => {
     expect(src.slice(btnAt, src.indexOf('>', btnAt))).not.toContain('disabled')
   })
 
+  it('删除第一次点击就弹出确认框，不再先改 title 空点一次', () => {
+    const fn = scriptBlock().slice(
+      scriptBlock().indexOf('async function confirmDelete'),
+      scriptBlock().indexOf('async function openChecks')
+    )
+    expect(fn).toContain('ElMessageBox.confirm')
+    expect(fn).not.toContain('confirmDeleteId')
+    expect(src).not.toContain('confirmDeleteId')
+    expect(src).toContain('aria-label="删除"')
+  })
+
   it('列表提供复制按钮（tooltip 说明敏感字段自动继承）', () => {
     expect(src).toContain('openCopyDialog(watcher)')
     expect(src).toContain('复制（预填新建，敏感请求头与请求体自动继承）')
