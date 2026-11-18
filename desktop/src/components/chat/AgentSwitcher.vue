@@ -2,8 +2,10 @@
   <el-popover
     ref="popoverRef"
     trigger="click"
-    :width="300"
+    width="auto"
     placement="left-start"
+    popper-class="agent-switch-popper"
+    :popper-style="popperStyle"
     @before-enter="ensureAgents"
   >
     <template #reference>
@@ -20,6 +22,7 @@
           type="button"
           class="agent-row"
           :class="{ selected: String(agent.id) === String(agentId ?? '') }"
+          :title="agent.name"
           @click="handleSelect(agent)"
         >
           <img
@@ -53,6 +56,13 @@ const emit = defineEmits<{
 const popoverRef = ref()
 const agentStore = useAgentStore()
 const filter = ref('')
+
+// 外壳按内容收缩。min/max 含 12px 内边距和 1px 边框，比内容区多 26px
+const popperStyle = {
+  width: 'max-content',
+  minWidth: 'min(206px, calc(100vw - 16px))',
+  maxWidth: 'min(346px, calc(100vw - 16px))',
+}
 
 const filteredAgents = computed(() => {
   const q = filter.value.trim().toLowerCase()
@@ -102,16 +112,24 @@ function handleSelect(agent: Agent) {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* 宽度跟着最长名称走。搜索框 width:0 + min-width:100%，不参与撑宽 */
+  width: max-content;
+  min-width: min(180px, 100%);
+  max-width: 100%;
 }
 
 .agent-filter {
   flex-shrink: 0;
+  width: 0;
+  min-width: 100%;
 }
 
 .agent-list {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  width: 100%;
+  min-width: 0;
   max-height: 280px;
   overflow-y: auto;
 }
@@ -121,6 +139,8 @@ function handleSelect(agent: Agent) {
   align-items: center;
   gap: 10px;
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   padding: 6px 10px;
   border: none;
   border-radius: var(--aw-radius-sm);
@@ -157,8 +177,12 @@ function handleSelect(agent: Agent) {
 }
 
 .agent-row-name {
+  min-width: 0;
+  overflow: hidden;
   font-size: var(--aw-text-caption);
   color: var(--aw-body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-empty {
