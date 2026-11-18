@@ -5,7 +5,7 @@ import { promptHidden, promptVisible } from '../ui/hidden-prompt';
 
 export async function cmdLogin(
   rest: RestClient,
-  opts: { username?: string; password?: string },
+  opts: { username?: string; password?: string; /** 登录成功后继续当前命令，不再提示「之后可直接运行」。 */ continued?: boolean },
 ): Promise<void> {
   const username = opts.username || (await promptVisible('用户名: '));
   const password = opts.password || (await promptHidden('密码: '));
@@ -18,5 +18,5 @@ export async function cmdLogin(
     user: vo.user,
   });
   const name = vo.user?.displayName || vo.user?.username || username;
-  process.stderr.write(`✔ 已登录 ${name}\n之后可直接运行 mao-agent。\n`);
+  process.stderr.write(opts.continued ? `✔ 已登录 ${name}\n` : `✔ 已登录 ${name}\n之后可直接运行 mao-agent。\n`);
 }

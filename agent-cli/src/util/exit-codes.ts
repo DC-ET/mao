@@ -13,10 +13,13 @@ export type ExitCode = (typeof EXIT)[keyof typeof EXIT];
 
 export class CliError extends Error {
   readonly exitCode: number;
+  /** 服务端业务码（Result.code）。网络错误和本地校验没有这个字段。 */
+  readonly businessCode?: number;
 
-  constructor(message: string, exitCode: number = EXIT.GENERAL) {
+  constructor(message: string, exitCode: number = EXIT.GENERAL, businessCode?: number) {
     super(message);
     this.name = 'CliError';
     this.exitCode = exitCode;
+    this.businessCode = businessCode;
   }
 }

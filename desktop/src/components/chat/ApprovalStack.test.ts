@@ -4,6 +4,8 @@
 // 审批键盘流（批次 29 提案 4）：Y=执行 / N=拒绝。键流与按钮点击走同一 confirm() / handledIds，
 // 守卫链（isComposing / repeat / isTypingTarget / .el-overlay / isConnected）逐项直测，
 // 不依赖 KeepAlive 集成（isConnected 用容器摘除模拟停活态）。
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { nextTick, h, ref } from 'vue'
 import { createApp } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -225,5 +227,15 @@ describe('ApprovalStack 审批键盘流', () => {
     expect(always?.getAttribute('title')).toBe('本会话总是允许以 npm run 开头的命令')
     expect(always?.hasAttribute('aria-keyshortcuts')).toBe(false)
     expect(always?.querySelector('kbd')).toBeNull()
+  })
+
+  it('移动端 / 窄屏不在按钮里显示 Y / N 键帽', () => {
+    // jsdom 下 import.meta.url 不是 file: scheme，按测试进程 cwd（desktop/）读源码
+    const src = readFileSync(join(process.cwd(), 'src/components/chat/ApprovalStack.vue'), 'utf8')
+    const css = src.slice(src.indexOf('<style'))
+    expect(css).toContain('@media (max-width: 768px), (pointer: coarse)')
+    const rule = css.slice(css.indexOf('@media (max-width: 768px), (pointer: coarse)'))
+    expect(rule).toContain('.action-btn kbd')
+    expect(rule).toContain('display: none')
   })
 })

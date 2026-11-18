@@ -25,7 +25,7 @@ npm link            # 本地安装 mao-agent 命令
 | `src/commands/` | 子命令入口：chat / local / login / logout / ls / status / update |
 | `src/session/` | `SessionRunner`：一轮任务的生命周期、忙碌重试、退出码 |
 | `src/ws/` | WebSocket 客户端、事件类型与过滤 |
-| `src/rest/` | REST 客户端（401 静默续期、幂等方法重试） |
+| `src/rest/` | REST 客户端（401 静默续期、refresh 失效时交互终端重新登录、幂等方法重试） |
 | `src/tui/` | 交互层：`keydecode`（按键解码）、`line-editor`（行编辑状态机）、`input-controller`（输入区状态机）、`layout`（高度预算）、`modal-controller`（提问/审批）、`ink-renderer`（编排 + 帧合并）、`app.tsx` / `widgets.tsx` / `input-box.tsx`（Ink 渲染树） |
 | `src/render/` | 非交互输出：text / json / stream-json |
 | `src/repl/` | 斜杠命令分发（`handleSlash`） |

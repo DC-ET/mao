@@ -1,5 +1,23 @@
 import type { LoginVO } from '../rest/types';
+import { CliError } from '../util/exit-codes';
 import { loadAuth, resolveRefreshToken, resolveToken, saveAuth, tokenFromEnv } from './auth-store';
+
+/**
+ * 刷新令牌失效时服务端用业务码返回，HTTP 仍是 200，不会走进 401 重试。
+ * 1001 未登录，1003 Token 已过期，1004 Token 无效。
+ */
+const AUTH_RECOVERY_CODES = new Set([1001, 1003, 1004]);
+
+export function isAuthRecoveryError(err: unknown): err is CliError {
+  if (!(err instanceof CliError)) return false;
+  if (err.businessCode != null && AUTH_RECOVERY_CODES.has(err.businessCode)) return true;
+  return err.message.startsWith('未登录或登录已过期');
+}
+
+function withLoginHint(err: CliError): CliError {
+  if (err.message.includes('mao-agent login')) return err;
+  return new CliError(`${err.message}\n请执行 mao-agent login 后重试。`, err.exitCode, err.businessCode);
+}
 
 const REFRESH_SKEW_MS = 5 * 60 * 1000;
 
@@ -66,8 +84,25 @@ export interface TokenResolver {
 export function createTokenResolver(opts: {
   cliToken?: string;
   refresh: (refreshToken: string) => Promise<LoginVO>;
+  /**
+   * 交互终端下，本地登录态无法刷新时用用户名密码重新登录。
+   * 返回新的 access token。`--token` / `MAO_TOKEN` 不会走到这里。
+   */
+  relogin?: () => Promise<string | null>;
 }): TokenResolver {
   const persistable = !opts.cliToken && !tokenFromEnv();
+  let reloginInflight: Promise<string | null> | null = null;
+
+  function loginAgain(): Promise<string | null> {
+    if (!opts.relogin || !persistable) return Promise.resolve(null);
+    if (!reloginInflight) {
+      const pending = opts.relogin().finally(() => {
+        if (reloginInflight === pending) reloginInflight = null;
+      });
+      reloginInflight = pending;
+    }
+    return reloginInflight;
+  }
 
   async function refreshIfNeeded(force: boolean): Promise<string | null> {
     if (opts.cliToken) return opts.cliToken;
@@ -78,17 +113,31 @@ export function createTokenResolver(opts: {
       return access;
     }
     const refreshToken = resolveRefreshToken();
-    if (!refreshToken) return access;
-    const vo = await opts.refresh(refreshToken);
-    if (persistable) {
-      saveAuth({
-        accessToken: vo.accessToken,
-        refreshToken: vo.refreshToken || refreshToken,
-        expiresIn: vo.expiresIn,
-        user: vo.user ?? auth?.user ?? null,
-      });
+    if (!refreshToken) {
+      // 从未登录，或 401 之后没有 refresh 可用。交互终端直接问密码。
+      if (force || !access) {
+        const next = await loginAgain();
+        if (next) return next;
+      }
+      return access;
     }
-    return vo.accessToken;
+    try {
+      const vo = await opts.refresh(refreshToken);
+      if (persistable) {
+        saveAuth({
+          accessToken: vo.accessToken,
+          refreshToken: vo.refreshToken || refreshToken,
+          expiresIn: vo.expiresIn,
+          user: vo.user ?? auth?.user ?? null,
+        });
+      }
+      return vo.accessToken;
+    } catch (err) {
+      if (!isAuthRecoveryError(err)) throw err;
+      const next = await loginAgain();
+      if (next) return next;
+      throw withLoginHint(err);
+    }
   }
 
   return {

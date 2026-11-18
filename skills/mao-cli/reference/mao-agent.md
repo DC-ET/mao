@@ -301,7 +301,7 @@ LOCAL 审批链：工作区信任（含 `read_file` / `glob_search` / `grep_sear
 | 5 | `ask_user_questions` 且 `--on-question=fail` |
 | 124 | `--max-duration` 超时 |
 
-accessToken 24h，refreshToken 7 天；长期 CI 需轮换 `MAO_TOKEN`。
+accessToken 24h，refreshToken 7 天。交互终端里两者都失效，或本地还没有登录态时，会提示「未登录或登录已过期，请重新登录。」并直接询问用户名和密码（密码无回显）；登录成功后继续刚才的命令，密码错误最多再试 2 次。非交互场景（CI、管道、`local --serve` 放后台）以及 `--token` / `MAO_TOKEN` 不会询问，仍报错并提示执行 `mao-agent login`。长期 CI 需轮换 `MAO_TOKEN`。
 
 ## 与 mao-cli 的关系
 

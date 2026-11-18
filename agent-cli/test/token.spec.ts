@@ -274,6 +274,117 @@ describe('createTokenResolver', () => {
     await expect(r.getAccessToken()).resolves.toBeNull();
   });
 
+  it('asks for a new login when the refresh token is expired', async () => {
+    writeAuth({
+      accessToken: jwt(Date.now() - 1000),
+      refreshToken: 'dead-refresh',
+      savedAt: new Date().toISOString(),
+    });
+    const { createTokenResolver } = await tokenMod();
+    const { CliError } = await import('../src/util/exit-codes');
+    const { loadAuth, saveAuth } = await import('../src/auth/auth-store');
+    const refresh = vi.fn(async () => {
+      throw new CliError('业务错误 code=1003: Token 已过期', 1, 1003);
+    });
+    const fresh = jwt(Date.now() + 3600_000);
+    const relogin = vi.fn(async () => {
+      saveAuth({ accessToken: fresh, refreshToken: 'new-refresh', expiresIn: 86400 });
+      return fresh;
+    });
+    const r = createTokenResolver({ refresh, relogin });
+    await expect(r.getAccessToken()).resolves.toBe(fresh);
+    expect(refresh).toHaveBeenCalledWith('dead-refresh');
+    expect(relogin).toHaveBeenCalledTimes(1);
+    await expect(r.getAccessToken()).resolves.toBe(fresh);
+    expect(relogin).toHaveBeenCalledTimes(1);
+    expect(loadAuth()?.refreshToken).toBe('new-refresh');
+  });
+
+  it('does not ask to log in again for a network failure', async () => {
+    writeAuth({ accessToken: jwt(Date.now() - 1000), refreshToken: 'file-refresh' });
+    const { createTokenResolver } = await tokenMod();
+    const { CliError } = await import('../src/util/exit-codes');
+    const relogin = vi.fn(async () => 'should-not-run');
+    const r = createTokenResolver({
+      refresh: async () => {
+        throw new CliError('连接被拒绝: https://mao.test');
+      },
+      relogin,
+    });
+    await expect(r.getAccessToken()).rejects.toThrow(/连接被拒绝/);
+    expect(relogin).not.toHaveBeenCalled();
+  });
+
+  it('points at mao-agent login when nobody can type a password', async () => {
+    writeAuth({ accessToken: jwt(Date.now() - 1000), refreshToken: 'dead-refresh' });
+    const { createTokenResolver } = await tokenMod();
+    const { CliError } = await import('../src/util/exit-codes');
+    const r = createTokenResolver({
+      refresh: async () => {
+        throw new CliError('业务错误 code=1003: Token 已过期', 1, 1003);
+      },
+    });
+    await expect(r.getAccessToken()).rejects.toThrow(/mao-agent login/);
+  });
+
+  it('asks to log in when a 401 has no refresh token', async () => {
+    writeAuth({ accessToken: 'stale-access', refreshToken: null });
+    const { createTokenResolver } = await tokenMod();
+    const refresh = vi.fn(async () => loginVo());
+    const relogin = vi.fn(async () => 'relogin-access');
+    const r = createTokenResolver({ refresh, relogin });
+    await expect(r.onUnauthorized()).resolves.toBe('relogin-access');
+    expect(refresh).not.toHaveBeenCalled();
+    expect(relogin).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks to log in when there is no saved auth', async () => {
+    const { createTokenResolver } = await tokenMod();
+    const relogin = vi.fn(async () => 'relogin-access');
+    const r = createTokenResolver({ refresh: async () => loginVo(), relogin });
+    await expect(r.getAccessToken()).resolves.toBe('relogin-access');
+    expect(relogin).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not ask to log in again for a CLI or env token', async () => {
+    const { createTokenResolver } = await tokenMod();
+    const { CliError } = await import('../src/util/exit-codes');
+    const relogin = vi.fn(async () => 'relogin-access');
+    const refresh = vi.fn(async () => {
+      throw new CliError('业务错误 code=1003: Token 已过期', 1, 1003);
+    });
+    const fromCli = createTokenResolver({ cliToken: 'cli-token', refresh, relogin });
+    await expect(fromCli.getAccessToken()).resolves.toBe('cli-token');
+    process.env.MAO_TOKEN = 'env-token';
+    const fromEnv = createTokenResolver({ refresh, relogin });
+    await expect(fromEnv.onUnauthorized()).resolves.toBe('env-token');
+    expect(relogin).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('shares one login prompt across overlapping refreshes', async () => {
+    writeAuth({ accessToken: jwt(Date.now() - 1000), refreshToken: 'dead-refresh' });
+    const { createTokenResolver } = await tokenMod();
+    const { CliError } = await import('../src/util/exit-codes');
+    let release: (token: string) => void = () => {};
+    const relogin = vi.fn(() => new Promise<string>((resolve) => {
+      release = resolve;
+    }));
+    const r = createTokenResolver({
+      refresh: async () => {
+        throw new CliError('业务错误 code=1004: Token 无效', 1, 1004);
+      },
+      relogin,
+    });
+    const first = r.getAccessToken();
+    const second = r.onUnauthorized();
+    await vi.waitFor(() => expect(relogin).toHaveBeenCalledTimes(1));
+    release('shared-access');
+    await expect(first).resolves.toBe('shared-access');
+    await expect(second).resolves.toBe('shared-access');
+    expect(relogin).toHaveBeenCalledTimes(1);
+  });
+
   it('refreshes with the env refresh token when only that is set', async () => {
     process.env.MAO_REFRESH_TOKEN = 'env-refresh';
     writeAuth({ accessToken: jwt(Date.now() + 30_000), refreshToken: 'file-refresh' });

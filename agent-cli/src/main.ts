@@ -6,6 +6,7 @@ import { cleanupRuntimeDir, resolveConfig } from './config/config-store';
 import { BASE_URL_SETUP_HINT, persistTransientBaseUrl, setupBaseUrlInteractive } from './config/base-url';
 import { createTokenResolver } from './auth/token';
 import { currentTokenSource } from './auth/token';
+import { loadAuth } from './auth/auth-store';
 import { RestClient } from './rest/rest-client';
 import { cmdLogin } from './commands/login';
 import { cmdLogout } from './commands/logout';
@@ -128,11 +129,34 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       timeoutMs: cfg.timeoutMs,
       debug: cfg.debug ? (m, extra) => logger.debug(m, extra) : undefined,
     });
+    // 登录、登出自己处理凭据。其余命令在交互终端里，access / refresh 都失效时直接问用户名密码。
+    const canRelogin = cfg.stdinIsTty && cfg.stdoutIsTty && cfg.command !== 'login' && cfg.command !== 'logout';
+    let rest!: RestClient;
     const tokens = createTokenResolver({
       cliToken: cfg.token,
       refresh: (rt) => restPreview.refresh(rt),
+      relogin: canRelogin
+        ? async () => {
+            process.stderr.write('未登录或登录已过期，请重新登录。\n');
+            for (let attempt = 0; ; attempt++) {
+              try {
+                await cmdLogin(rest, {
+                  // 命令行带的密码只试一次，错了就改问，避免同一条错误密码连打三次。
+                  username: attempt === 0 ? cfg.username : undefined,
+                  password: attempt === 0 ? cfg.password : undefined,
+                  continued: true,
+                });
+                return loadAuth()?.accessToken ?? null;
+              } catch (err) {
+                const wrongPassword = err instanceof CliError && err.businessCode === 1005;
+                if (!wrongPassword || attempt >= 2) throw err;
+                process.stderr.write(`${err.message}\n`);
+              }
+            }
+          }
+        : undefined,
     });
-    const rest = new RestClient({
+    rest = new RestClient({
       baseUrl,
       getToken: () => tokens.getAccessToken(),
       onUnauthorized: () => tokens.onUnauthorized(),

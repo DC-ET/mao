@@ -148,6 +148,21 @@ describe('RestClient result unwrapping', () => {
   });
 });
 
+describe('RestClient business errors', () => {
+  it('keeps the business code so callers can tell an expired token apart', async () => {
+    const c = client();
+    responder = () => new Response(JSON.stringify({
+      code: 1003,
+      message: 'Token 已过期',
+      timestamp: 0,
+    }), { status: 200 });
+    const err = await c.refresh('rt').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CliError);
+    expect((err as CliError).businessCode).toBe(1003);
+    expect((err as CliError).message).toBe('业务错误 code=1003: Token 已过期');
+  });
+});
+
 describe('RestClient 401 handling', () => {
   it('retries once with the refreshed token', async () => {
     let token = 'stale';

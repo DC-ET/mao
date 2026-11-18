@@ -400,6 +400,13 @@ async function copyText(text: string) {
   line-height: 1;
 }
 
+/* 移动端 / 窄屏按钮只留「拒绝 / 执行」文案；Y/N 仍可通过外接键盘触发，title 与 aria-keyshortcuts 保留 */
+@media (max-width: 768px), (pointer: coarse) {
+  .action-btn kbd {
+    display: none;
+  }
+}
+
 .action-btn:hover {
   transform: scale(1.04);
 }

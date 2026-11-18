@@ -188,7 +188,7 @@ export class RestClient {
 
     if (json && typeof json === 'object' && Object.prototype.hasOwnProperty.call(json, 'code')) {
       if (json.code !== 0) {
-        throw new CliError(`业务错误 code=${json.code}: ${json.message || '未知错误'}`, EXIT.GENERAL);
+        throw new CliError(`业务错误 code=${json.code}: ${json.message || '未知错误'}`, EXIT.GENERAL, json.code);
       }
       return json.data as T;
     }
