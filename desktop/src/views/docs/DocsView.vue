@@ -127,8 +127,7 @@ import GitHubMark from '../../components/common/GitHubMark.vue'
 import DocsNav from './DocsNav.vue'
 import { docGroups } from './docsCatalog'
 import type { DocsNavGroup } from './docsCatalog'
-import { isExternalMarkdownLink, resolveMarkdownLink } from '../../utils/markdown-link'
-import { openExternalUrl } from '../../utils/capacitor'
+import { resolveDocsClick } from './docsLink'
 import appIcon from '../../assets/app-icon-small.png'
 import businessProcessRaw from '../../../../skills/mao-cli/business_process.md?raw'
 
@@ -165,6 +164,7 @@ docsMap['business_process'] = {
   raw: businessProcessRaw,
   sourcePath: 'skills/mao-cli/business_process.md'
 }
+const knownSlugs = new Set(Object.keys(docsMap))
 
 const route = useRoute()
 const router = useRouter()
@@ -358,33 +358,24 @@ function scrollToHeading(anchor: string) {
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
-// ---- 站内相对链接（文档互链 / 锚点）拦截；外链交给 document 级委托 ----
+// ---- 站内文档链接与锚点；外链仍交给 document 级委托。对不上文档集的文件留在当前页。 ----
 function onContentClick(e: MouseEvent) {
   const target = e.target as HTMLElement | null
   const anchor = target?.closest?.('a') as HTMLAnchorElement | null
   if (!anchor) return
   const href = anchor.getAttribute('href')
   if (!href) return
-  if (isExternalMarkdownLink(href)) return
+  const decision = resolveDocsClick(href, currentDoc.value?.sourcePath ?? null, knownSlugs)
+  if (decision.type === 'ignore') return
 
   e.preventDefault()
-  const hashIdx = href.indexOf('#')
-  const pathPart = hashIdx >= 0 ? href.slice(0, hashIdx) : href
-  const fragment = hashIdx >= 0 ? href.slice(hashIdx + 1) : ''
-  if (!pathPart) {
-    if (fragment) scrollToHeading(fragment)
+  e.stopPropagation()
+  if (decision.type === 'none') return
+  if (decision.type === 'anchor') {
+    scrollToHeading(decision.id)
     return
   }
-  const resolved = resolveMarkdownLink(currentDoc.value?.sourcePath ?? 'skills/mao-cli', href)
-  if (!resolved) return
-  const match = resolved.match(/([^/]+)\.md$/)
-  const slug = match?.[1] ?? ''
-  if (slug && docsMap[slug]) {
-    router.push({ path: `/docs/${slug}`, hash: fragment ? `#${encodeURIComponent(fragment)}` : '' })
-    return
-  }
-  // 不在文档集里的相对文件（脚本、配置样例等）→ 打开 GitHub 源文件
-  void openExternalUrl(`https://github.com/DC-ET/mao/blob/main/${resolved}`)
+  router.push({ path: decision.path, hash: decision.hash })
 }
 
 watch(currentSlug, () => {

@@ -186,9 +186,9 @@
               <thead>
                 <tr>
                   <th>挂载</th>
-                  <th>占用</th>
-                  <th class="bar-col"><span class="sr-only">用量条</span></th>
-                  <th>已用 / 共</th>
+                  <th>剩余</th>
+                  <th class="bar-col"><span class="sr-only">已用比例</span></th>
+                  <th>共</th>
                   <th>inode</th>
                 </tr>
               </thead>
@@ -198,7 +198,7 @@
                     <span class="disk-name">{{ disk.label }}</span>
                     <span class="disk-path" :title="diskPlace(disk)">{{ diskPlace(disk) }}</span>
                   </th>
-                  <td class="disk-pct" :class="levelClass(disk.usagePercent)">{{ formatPercent(disk.usagePercent) }}</td>
+                  <td class="disk-pct" :class="levelClass(disk.usagePercent)">{{ formatSize(disk.availableBytes) }}</td>
                   <td class="bar-col">
                     <el-progress
                       class="disk-bar"
@@ -208,7 +208,7 @@
                       :show-text="false"
                     />
                   </td>
-                  <td class="disk-cap">{{ formatSize(disk.usedBytes) }} / {{ formatSize(disk.totalBytes) }}</td>
+                  <td class="disk-cap">{{ formatSize(disk.totalBytes) }}<span class="extra">已用 {{ formatSize(disk.usedBytes) }}</span></td>
                   <td class="disk-inode" :class="levelClass(disk.inodeUsagePercent)">
                     <template v-if="disk.inodeUsagePercent != null">
                       {{ formatPercent(disk.inodeUsagePercent) }}
