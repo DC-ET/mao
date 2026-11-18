@@ -126,6 +126,7 @@ import { ShellSessionManager, OutputManager } from './harness/shell/shell-sessio
 import { SessionTodoMapper } from './harness/todo/session-todo.mapper.js';
 import { LocalSkillRegistry } from './harness/skill/local-skill-registry.js';
 import { LocalToolSessionRegistry } from './harness/local/local-tool-session-registry.js';
+import { LocalFileFetchService } from './harness/local/local-file-fetch.service.js';
 import { LocalToolExecutor } from './harness/local/local-tool-executor.js';
 import { AgentDefinitionRegistry } from './harness/delegate/agent-definition-registry.js';
 import { SubagentExecutionMapper } from './harness/delegate/subagent-execution.mapper.js';
@@ -656,6 +657,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     wsRegistry, resolveEmbedPageToolTimeoutMs(cfg.app.harness.embedPageToolTimeoutSeconds),
   );
   const localToolSessions = new LocalToolSessionRegistry(wsRegistry, sessionMap);
+  // LOCAL 正文图片按需委托读取（方案 2026-11-18）：file routes 的 workspace-download 分流与 WS file_fetch_result 拼装共用
+  const localFileFetch = new LocalFileFetchService(localToolSessions);
   // 通知渠道与开放接口（触发器/订阅 secret）共用的 AES-GCM 密文工具（APP_NOTIFICATION_WEBHOOK_SECRET）
   const notifCipher = new WebhookSecretCipher(cfg.app.taskNotification.secretKey);
   // 开放接口出站订阅（P3）：先于 inboxService 构造，question.pending 分发经 InboxService
@@ -867,7 +870,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const openCallSettle: { current: ((callLogId: number, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED', queueWaitMs: number | null, messageId: number | null) => Promise<void>) | null } = { current: null };
   const wsHandler = assembleWsHandler({
     cfg, jwt, wsRegistry, sessionTitleService, harnessService: harness, agentLoop, compactionSignalBus, sessionService, taskTerminal,
-    messageQueueService, embedPageToolRegistry, localToolSessions, askUserQuestionsRegistry,
+    messageQueueService, embedPageToolRegistry, localToolSessions, localFileFetch, askUserQuestionsRegistry,
     treeSignalPublisher, approvalRegistry, approvalRuleService, activityService,
     approvalEscalationSuppressor: {
       suppressByRequest: (sessionId, requestId) =>
@@ -968,6 +971,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     approvalRegistry, askUserQuestionsRegistry, inFlightToolRegistry, treeSignalPublisher,
     failedSessionRecovery,
     workspaceBrowse, terminalManager, workspaceGit, gitCommitMsg, gitWrite, runtimeResolver,
+    localFileFetch,
     ossSts,
     skillBundleService, userSkillService, skillDocService,
     scheduledService,

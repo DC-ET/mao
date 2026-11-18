@@ -69,6 +69,7 @@ describe('StreamingWsHandler', () => {
     setTargetForSession: vi.fn(), resolveTarget: vi.fn(async () => null), isConnected: vi.fn(), failAllForSession: vi.fn(), failAllForUser: vi.fn(), failAllForDevice: vi.fn(), failAllForSocket: vi.fn(),
     completeToolRequest: vi.fn(), completeToolRequestError: vi.fn(),
   };
+  const localFileFetchService = { handleChunk: vi.fn() };
   const embedPageToolRegistry = {
     request: vi.fn(), complete: vi.fn(() => true), failSession: vi.fn(), isEmbedSession: vi.fn(() => false),
     hasBoundConnection: vi.fn(() => false), pendingCount: vi.fn(() => 0),
@@ -109,7 +110,7 @@ describe('StreamingWsHandler', () => {
   const handler = new StreamingWsHandler({
     registry, titleService, harnessService, sessionService, taskTerminalService, messageQueueService,
     onScheduledTaskQueueConsumed,
-    localToolSessionRegistry, askUserQuestionsRegistry, embedPageToolRegistry, treeSignalPublisher, approvalRegistry, activityService,
+    localToolSessionRegistry, localFileFetchService, askUserQuestionsRegistry, embedPageToolRegistry, treeSignalPublisher, approvalRegistry, activityService,
     activityHeartbeat, sessionTodoMapper, agentLoop, shellSessionManager, skillSyncService,
     localSkillRegistry, localAgentsMdRegistry, mcpSyncService, mcpClientManager, agentMapper,
     llmModelMapper, jwtService, agentExecutor: (fn) => executor.submit(fn), mcpSyncTimeoutSeconds: 60,
@@ -749,6 +750,27 @@ describe('StreamingWsHandler', () => {
       await handler.handleTextMessage(ws, JSON.stringify({ type: 'reorder_queue_message', sessionId: 11, data: { queueId: 4, targetIndex } }));
     }
     expect(messageQueueService.moveToIndex).not.toHaveBeenCalled();
+  });
+
+  // 方案 2026-11-18：file_fetch_result 与 tool_result 同口径——归属校验 + 字段透传（拼装由 service 负责）
+  it('fileFetchResultRequiresOwnershipAndForwardsFrameWithSocketId', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'IDLE'));
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'file_fetch_result', sessionId: 11, requestId: 'r1', seq: 1, total: 2, data: 'aGk=' }));
+    expect(localFileFetchService.handleChunk).toHaveBeenCalledWith(11, 'r1', { seq: 1, total: 2, data: 'aGk=', error: undefined }, 'ws-1');
+    localFileFetchService.handleChunk.mockClear();
+
+    // 非归属会话（他人会话）：拒绝
+    sessionService.getSession.mockResolvedValue({ ...session('LOCAL', 'IDLE'), userId: 99 });
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'file_fetch_result', sessionId: 11, requestId: 'r1', seq: 1, total: 2, data: 'aGk=' }));
+    expect(localFileFetchService.handleChunk).not.toHaveBeenCalled();
+    localFileFetchService.handleChunk.mockClear();
+
+    // 缺 requestId：忽略
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'IDLE'));
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'file_fetch_result', sessionId: 11, seq: 1, total: 2, data: 'aGk=' }));
+    expect(localFileFetchService.handleChunk).not.toHaveBeenCalled();
   });
 
   it('subscribeSendsSnapshotForWaitingApproval', async () => {
@@ -2520,6 +2542,7 @@ describe('StreamingWsHandler tool_approval.alwaysAllow（V135）', () => {
     setTargetForSession: vi.fn(), resolveTarget: vi.fn(async () => null), isConnected: vi.fn(), failAllForSession: vi.fn(), failAllForUser: vi.fn(), failAllForDevice: vi.fn(), failAllForSocket: vi.fn(),
     completeToolRequest: vi.fn(), completeToolRequestError: vi.fn(),
   };
+  const localFileFetchService = { handleChunk: vi.fn() };
   const embedPageToolRegistry = { request: vi.fn(), complete: vi.fn(), failSession: vi.fn(), isEmbedSession: vi.fn(() => false) };
   const askUserQuestionsRegistry = { failAllForSession: vi.fn(), getPendingForSession: vi.fn(() => []), complete: vi.fn() };
   const treeSignalPublisher = { publishIfSideTask: vi.fn(), publishForSession: vi.fn() };

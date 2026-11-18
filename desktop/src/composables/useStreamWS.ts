@@ -14,6 +14,7 @@ import { notifyInboxSystemUpdate, setupDesktopNotifyBridge } from './useInboxSys
 import { ensureDesktopShellBridgeFromWs } from './useDesktopShell'
 import { resolveFileChangeWorkspace } from '../utils/file-change-workspace'
 import { getToolInputPreview } from '../utils/toolDisplay'
+import { handleLocalFileFetch } from '../utils/local-file-fetch'
 import {
   clearApprovalVoted,
   clearLocallyReleased,
@@ -1349,6 +1350,19 @@ export function useStreamWS() {
             })
         }
         // Non-Electron clients (browser tabs) silently ignore — let Electron handle it
+        break
+      }
+
+      case 'file_fetch': {
+        // LOCAL 正文图片按需委托读取（方案 2026-11-18）：浏览器标签页不会收到该帧
+        // （服务端 LOCAL_ONLY 投递只发 electron/cli 连接），仍保留 electronAPI 存在性守卫。
+        // fire-and-forget：routeEvent 是同步函数，20 片发送循环不得阻塞同连接后续帧。
+        if (!sessionId || !data) break
+        if (typeof window === 'undefined' || !(window as any).electronAPI?.localReadWorkspaceBytes) break
+        void handleLocalFileFetch(data, Number(sessionId), {
+          readBytes: (payload) => (window as any).electronAPI.localReadWorkspaceBytes(payload),
+          send: sendReliable,
+        })
         break
       }
 

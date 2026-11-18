@@ -47,6 +47,8 @@ export interface WsHandlerDeps {
   taskTerminal: TaskTerminalService;
   messageQueueService: MessageQueueService;
   embedPageToolRegistry: EmbedPageToolRegistry;
+  /** LOCAL 正文图片按需委托读取（方案 2026-11-18） */
+  localFileFetch: import('./harness/local/local-file-fetch.service.js').LocalFileFetchService;
   localToolSessions: LocalToolSessionRegistry;
   askUserQuestionsRegistry: AskUserQuestionsRegistry;
   treeSignalPublisher: SessionTreeSignalPublisher;
@@ -79,7 +81,7 @@ export interface WsHandlerDeps {
 export function assembleWsHandler(deps: WsHandlerDeps): StreamingWsHandler {
   const {
     cfg, jwt, wsRegistry, sessionTitleService, harnessService, agentLoop, compactionSignalBus, sessionService, taskTerminal,
-    messageQueueService, embedPageToolRegistry, localToolSessions, askUserQuestionsRegistry,
+    messageQueueService, embedPageToolRegistry, localToolSessions, localFileFetch, askUserQuestionsRegistry,
     treeSignalPublisher, approvalRegistry, approvalRuleService, approvalEscalationSuppressor, activityService,
     activityHeartbeat, todoMapper, backgroundSubagentManager, shellManager,
     skillSync, localSkills, localAgentsMd, mcpSync, routingMcpClient,
@@ -96,6 +98,7 @@ export function assembleWsHandler(deps: WsHandlerDeps): StreamingWsHandler {
     messageQueueService,
     embedPageToolRegistry,
     localToolSessionRegistry: localToolSessions,
+    localFileFetchService: localFileFetch,
     askUserQuestionsRegistry,
     treeSignalPublisher,
     approvalRegistry,

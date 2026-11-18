@@ -1,20 +1,22 @@
 /**
  * 正文 Markdown 图片的地址解析与失败回退。
  *
- * 背景：Agent 在 CLOUD 会话里把截图写到工作区后，回复中会带 `![标题](screenshots/x.png)`
+ * 背景：Agent 把截图写到工作区后，回复中会带 `![标题](screenshots/x.png)`
  * 这类相对路径。浏览器按页面地址解析它（/screenshots/x.png → 404），于是正文里出现破图。
  * 这里把「无协议、非站内绝对路径」的 src 视为工作区相对路径，改写成带鉴权的
- * 文件下载地址（query token 与既有下载接口同口径）；改写不了或加载失败时，
- * 由 decorateMarkdownImages 把 img 换成「📎 原路径」文本，至少不再显示破图图标。
+ * 文件下载地址（query token 与既有下载接口同口径）——CLOUD 会话后端直读服务器工作区，
+ * LOCAL 会话后端按需委托执行端读取（方案 2026-11-18），对前端完全同构；
+ * 改写不了或加载失败时，由 decorateMarkdownImages 把 img 换成「📎 原路径」文本，
+ * 至少不再显示破图图标。
  */
 import { getToken } from './auth-storage'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1'
 
 export interface MarkdownImageContext {
-  /** 会话 ID：CLOUD 会话的工作区文件经后端按会话归属读取 */
+  /** 会话 ID：会话的工作区文件经后端按会话归属读取（LOCAL 由后端按需委托执行端，方案 2026-11-18） */
   sessionId: string
-  /** 会话执行模式；LOCAL 会话的工作区在本机，服务端读不到，不做改写 */
+  /** 会话执行模式：仅作 P2 桌面直读快路径的预留开关位，当前 LOCAL / CLOUD 走同一 URL 形态 */
   executionMode?: string
 }
 
@@ -33,14 +35,15 @@ export function workspaceImageRelativePath(src: string): string {
 }
 
 /**
- * 工作区相对图片 → 后端文件下载地址。不满足条件（非 CLOUD 会话 / 绝对 URL / 空路径）返回 null，
- * 由调用方保留原 src 并交给失败回退。
+ * 工作区相对图片 → 后端文件下载地址。不满足条件（绝对 URL / 空路径 / 无会话）返回 null，
+ * 由调用方保留原 src 并交给失败回退。CLOUD / LOCAL 同一 URL 形态：LOCAL 由后端在
+ * workspace-download 内按需委托执行端读取（方案 2026-11-18），前端不按模式分叉。
  */
 export function toWorkspaceImageUrl(
   src: string | null | undefined,
   ctx: MarkdownImageContext | null | undefined,
 ): string | null {
-  if (!ctx || !ctx.sessionId || ctx.executionMode === 'LOCAL') return null
+  if (!ctx || !ctx.sessionId) return null
   if (!isWorkspaceRelativeImageSrc(src)) return null
   const path = workspaceImageRelativePath(src as string)
   if (!path) return null
@@ -86,6 +89,8 @@ export function decorateMarkdownImages(
     const resolved = toWorkspaceImageUrl(original, ctx)
     if (resolved && img.getAttribute('src') !== resolved) {
       img.setAttribute('src', resolved)
+      // 长消息多图时削峰（方案 D7/D11）：视口外的图片延迟请求，避免一次性几十个委托请求
+      img.setAttribute('loading', 'lazy')
     }
     bindFallback(img)
   }

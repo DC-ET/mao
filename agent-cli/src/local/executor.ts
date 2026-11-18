@@ -9,6 +9,7 @@ import {
   type ApprovalRequest,
 } from './approval';
 import { isWorkspaceWithin } from './sandbox';
+import { chunkBuffer, FILE_FETCH_MAX_CHUNKS, readWorkspaceImageBytes } from './file-fetch';
 import { persistToolResult } from './truncate';
 import { handleEditFile, handleReadFile, handleWriteFile, handleWriteLocalTextFile } from './tools/files';
 import { handleGlobSearch, handleGrepSearch } from './tools/search';
@@ -180,6 +181,8 @@ export class LocalExecutor {
     try {
       if (evt.type === 'tool_execute') {
         await this.onToolExecute(sessionId, d);
+      } else if (evt.type === 'file_fetch') {
+        await this.onFileFetch(sessionId, d);
       } else if (evt.type === 'skill_sync_required') {
         if (this.isOutsideTrust(d.workspace)) return;
         await this.onSkillSync(sessionId, d);
@@ -233,6 +236,37 @@ export class LocalExecutor {
   private isOutsideTrust(raw: unknown): boolean {
     if (typeof raw !== 'string' || raw.trim() === '') return false;
     return !isWorkspaceWithin(raw, this.opts.workspace);
+  }
+
+  /**
+   * LOCAL 正文图片按需委托读取（方案 2026-11-18 §5.3）：读工作区图片字节并分片回传。
+   * 一切失败静默不回包（对齐 isOutsideTrust 口径）：未绑定会话是用户级广播，异机多执行端
+   * 都会收到 file_fetch，失败回包会与合法执行端的分片竞争误杀拼装；服务端 15s 超时自然收敛。
+   * 分片单片序列化后 < 900KB（ws-client serializePayload 对 data 键不截断、超限整体替换为存根）。
+   */
+  private async onFileFetch(sessionId: number, d: Record<string, unknown>): Promise<void> {
+    try {
+      const requestId = typeof d.requestId === 'string' ? d.requestId : '';
+      const relativePath = typeof d.path === 'string' ? d.path : '';
+      if (!requestId || relativePath.trim() === '') return;
+      const workspace = this.resolveWorkspace(d.workspace);
+      const bytes = await readWorkspaceImageBytes(workspace, relativePath);
+      const chunks = chunkBuffer(bytes);
+      if (chunks.length === 0 || chunks.length > FILE_FETCH_MAX_CHUNKS) return; // 10MB / 512KB = 20 片，超限静默
+      for (let seq = 1; seq <= chunks.length; seq++) {
+        const sent = await this.opts.ws.sendReliable({
+          type: 'file_fetch_result',
+          sessionId,
+          requestId,
+          seq,
+          total: chunks.length,
+          data: chunks[seq - 1].toString('base64'),
+        });
+        if (!sent) return;
+      }
+    } catch (e) {
+      console.warn(`[file_fetch] ignored: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   private async onToolExecute(sessionId: number, d: Record<string, unknown>): Promise<void> {

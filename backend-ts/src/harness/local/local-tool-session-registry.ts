@@ -10,6 +10,9 @@ import type { ApprovalHint } from '../approval/approval-hint.js';
  */
 export const LOCAL_CLIENT_OFFLINE_TOOL_ERROR = '本地执行端未连接，请确保桌面客户端正在运行';
 
+/** 本地执行端未连接时文件读取（file_fetch）的失败回执。与工具文案分开，图片下载场景用户可见。 */
+export const LOCAL_EXECUTOR_OFFLINE_FILE_ERROR = '本地执行端未连接，无法读取本地文件';
+
 export interface PendingLocalToolRequest {
   requestId: string | null;
   future: Promise<string>;
@@ -164,6 +167,55 @@ export class LocalToolSessionRegistry {
     dangerReason: string | null,
     approvalHint: ApprovalHint | null = null,
   ): Promise<PendingLocalToolRequest> {
+    return this.dispatchRequest(
+      sessionId,
+      'tool_execute',
+      LOCAL_CLIENT_OFFLINE_TOOL_ERROR,
+      (requestId) => {
+        const payload: Record<string, unknown> = {
+          requestId,
+          toolName,
+          arguments: argumentsJson ?? '{}',
+          workspace: workspace ?? '',
+          needApproval,
+        };
+        if (dangerReason != null) payload.dangerReason = dangerReason;
+        // 「总是允许」hint（V135）：仅增量字段，旧壳忽略未知字段不受影响
+        if (approvalHint != null) payload.approvalHint = approvalHint;
+        return payload;
+      },
+    );
+  }
+
+  /**
+   * LOCAL 正文图片按需读取（方案 2026-11-18）：向绑定执行端下发 `file_fetch` 请求，
+   * 复用工具委托的全套簿记（requestId / pendingRequests / 投递落空立即报错 / 断线 failAll）。
+   * 结果分片经 `file_fetch_result` 回传，由 LocalFileFetchService 拼装后 completeToolRequest 回填。
+   * 与工具调用无关：无审批、无工具卡、不落库。
+   */
+  async sendFileRequest(
+    sessionId: number | null,
+    relativePath: string,
+    workspace: string | null | undefined,
+  ): Promise<PendingLocalToolRequest> {
+    return this.dispatchRequest(
+      sessionId,
+      'file_fetch',
+      LOCAL_EXECUTOR_OFFLINE_FILE_ERROR,
+      (requestId) => ({ requestId, path: relativePath, workspace: workspace ?? '' }),
+    );
+  }
+
+  /**
+   * 工具 / 文件读取委托的公共下发路径：目标解析 → 可达性判定 → requestId 簿记 →
+   * 定向（绑定设备）或用户级广播（未绑定）投递 → 投递落空立即回错。
+   */
+  private async dispatchRequest(
+    sessionId: number | null,
+    eventType: 'tool_execute' | 'file_fetch',
+    offlineError: string,
+    buildPayload: (requestId: string) => Record<string, unknown>,
+  ): Promise<PendingLocalToolRequest> {
     const target = await this.resolveTarget(sessionId);
     const reachable = target != null && (target.deviceId != null
       ? this.streamingWsRegistry.hasDeviceConnection(target.userId, target.deviceId)
@@ -171,7 +223,7 @@ export class LocalToolSessionRegistry {
     if (target == null || !reachable) {
       return {
         requestId: null,
-        future: Promise.resolve(JSON.stringify({ error: LOCAL_CLIENT_OFFLINE_TOOL_ERROR })),
+        future: Promise.resolve(JSON.stringify({ error: offlineError })),
         resolve: () => {},
       };
     }
@@ -192,17 +244,7 @@ export class LocalToolSessionRegistry {
       }
       map.set(requestId, { resolve, socket: dispatchedSocket });
     }
-    const payload: Record<string, unknown> = {
-      requestId,
-      toolName,
-      arguments: argumentsJson ?? '{}',
-      workspace: workspace ?? '',
-      needApproval,
-    };
-    if (dangerReason != null) payload.dangerReason = dangerReason;
-    // 「总是允许」hint（V135）：仅增量字段，旧壳忽略未知字段不受影响
-    if (approvalHint != null) payload.approvalHint = approvalHint;
-    const event = wsEvent('tool_execute', sessionId, payload);
+    const event = wsEvent(eventType, sessionId, buildPayload(requestId));
     let delivered = true;
     if (deviceId != null) {
       const dispatch = this.streamingWsRegistry.sendToDevice(userId, deviceId, event);
@@ -215,10 +257,10 @@ export class LocalToolSessionRegistry {
     }
     if (!delivered) {
       if (sessionId != null) this.pendingRequests.get(sessionId)?.delete(requestId);
-      harnessLog('warn', `Local tool dispatch delivered to nobody: session=${sessionId}, device=${deviceId}`);
+      harnessLog('warn', `Local dispatch delivered to nobody: type=${eventType}, session=${sessionId}, device=${deviceId}`);
       return {
         requestId: null,
-        future: Promise.resolve(JSON.stringify({ error: LOCAL_CLIENT_OFFLINE_TOOL_ERROR })),
+        future: Promise.resolve(JSON.stringify({ error: offlineError })),
         resolve: () => {},
       };
     }

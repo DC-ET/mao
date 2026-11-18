@@ -262,6 +262,8 @@ export interface RouteDeps {
   /** 当前执行连接的 clientType（electron / cli）；会话 VO 的 executorClientType 快照用。 */
   getExecutorClientType?: (userId: number, deviceId: string) => string | null;
   treeSignalPublisher: SessionTreeSignalPublisher;
+  /** LOCAL 正文图片按需委托读取（方案 2026-11-18） */
+  localFileFetch: import('./harness/local/local-file-fetch.service.js').LocalFileFetchService;
   workspaceBrowse: WorkspaceBrowseService;
   terminalManager: TerminalManager;
   workspaceGit: WorkspaceGitService;
@@ -364,7 +366,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     agentRepo, modelRepo, todoRepo, pathSandbox, subagentExecutionRepo,
     sessionCompactionEventService, sessionCompactionService, runTraceService, runTraceRecordService,
     approvalRegistry, askUserQuestionsRegistry, inFlightToolRegistry, treeSignalPublisher,
-    workspaceBrowse, terminalManager, workspaceGit, gitCommitMsg, gitWrite, runtimeResolver,
+    workspaceBrowse, terminalManager, workspaceGit, gitCommitMsg, gitWrite, runtimeResolver, localFileFetch,
     ossSts,
     skillBundleService, userSkillService, skillDocService,
     scheduledService,
@@ -592,7 +594,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       fileService, sessionService, workspaceBrowseService: workspaceBrowse,
       workspaceGitService: workspaceGit, gitCommitMessageService: gitCommitMsg,
       gitWriteOperationService: gitWrite, workspaceWriteService: workspaceWrite,
-      workspaceOverviewService, pathSandbox,
+      workspaceOverviewService, localFileFetchService: localFileFetch, pathSandbox,
       experienceDirForAgent,
       getUploadBaseUrl: async () => (await settingService.getUploadConfig()).baseUrl,
       runtimeDataResolver: runtimeResolver,

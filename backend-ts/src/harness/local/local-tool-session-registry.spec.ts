@@ -270,4 +270,53 @@ describe('LocalToolSessionRegistry', () => {
     registry.completeToolRequest(32, pending.requestId!, '{"ok":true}');
     expect(await pending.future).toBe('{"ok":true}');
   });
+
+  // 方案 2026-11-18：LOCAL 正文图片按需委托读取——sendFileRequest 与 sendToolRequest 共用簿记
+  it('sendFileRequestDispatchesFileFetchFrameAndReusesBookkeeping', async () => {
+    const wsRegistry = {
+      hasLocalClientConnection: vi.fn(() => true),
+      hasDeviceConnection: vi.fn(() => true),
+      sendToLocalClients: vi.fn(),
+      sendToDevice: vi.fn(() => ({ targetCount: 1, successCount: 1, failureCount: 0 })),
+      getDeviceExecutorSocket: vi.fn(() => ({ id: 'ws-live' })),
+    } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
+    const registry = new LocalToolSessionRegistry(wsRegistry, { selectById: vi.fn() } as unknown as SessionMapper);
+    registry.setTargetForSession(40, 7, 'dev-a');
+
+    const pending = await registry.sendFileRequest(40, 'screenshots/a.png', '/repo');
+    expect(wsRegistry.sendToDevice).toHaveBeenCalledWith(7, 'dev-a', expect.objectContaining({ type: 'file_fetch' }));
+    const event = wsRegistry.sendToDevice.mock.calls[0][2] as { data: Record<string, unknown> };
+    expect(event.data.path).toBe('screenshots/a.png');
+    expect(event.data.workspace).toBe('/repo');
+    expect('needApproval' in event.data).toBe(false);
+    expect('toolName' in event.data).toBe(false);
+
+    // 拼装完成后经 completeToolRequest 回填（LocalFileFetchService 的完成路径）
+    registry.completeToolRequest(40, pending.requestId!, '{"base64":"aGk="}');
+    expect(await pending.future).toBe('{"base64":"aGk="}');
+
+    // 绑定设备离线：file fetch 专属文案（与工具文案区分）
+    wsRegistry.hasDeviceConnection.mockReturnValue(false);
+    const offline = await registry.sendFileRequest(40, 'a.png', '/repo');
+    expect(offline.requestId).toBeNull();
+    expect(await offline.future).toContain('本地执行端未连接，无法读取本地文件');
+  });
+
+  it('sendFileRequestUserBroadcastFailsAllOnDisconnect', async () => {
+    const wsRegistry = {
+      hasLocalClientConnection: vi.fn(() => true),
+      sendToLocalClients: vi.fn(),
+    } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
+    const registry = new LocalToolSessionRegistry(wsRegistry, { selectById: vi.fn() } as unknown as SessionMapper);
+    registry.setTargetForSession(41, 7);
+    const pending = await registry.sendFileRequest(41, 'a.png', '/repo');
+    expect(wsRegistry.sendToLocalClients).toHaveBeenCalledWith(7, expect.objectContaining({ type: 'file_fetch' }));
+    registry.failAllForSocket({ id: 'ws-x' }); // 该连接没有在途请求，不误杀
+    let done = false;
+    void pending.future.then(() => { done = true; });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(done).toBe(false);
+    registry.completeToolRequest(41, pending.requestId!, '{"base64":"aGk="}');
+    expect(await pending.future).toBe('{"base64":"aGk="}');
+  });
 });

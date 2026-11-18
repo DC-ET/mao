@@ -14,6 +14,7 @@ import type { WorkspaceWriteService } from './workspace-write.service.js';
 import type { WorkspaceOverviewService } from './workspace-overview.service.js';
 import { RuntimeDataResolver } from '../harness/runtime/runtime-data-resolver.js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { Buffer } from 'node:buffer';
 import { join } from 'node:path';
 import { useTmpDir } from '../testing/tmp-dir.js';
 
@@ -85,6 +86,7 @@ describe('file routes', () => {
       } as unknown as WorkspaceWriteService,
       runtimeDataResolver,
       experienceDirForAgent: (agentId: number) => `/share/agent-experience/${agentId}`,
+      localFileFetchService: { fetch: vi.fn() },
     });
     const get = async (url: string) => JSON.parse((await app.inject({ method: 'GET', url })).body);
     const post = async (url: string, payload: object) => JSON.parse((await app.inject({ method: 'POST', url, payload })).body);
@@ -477,6 +479,118 @@ describe('file routes', () => {
     expect((await post('/v1/files/workspace-git-switch-branch', { sessionId: 1, branch: 'main', create: true })).data.branch).toBe('main');
     expect(vi.mocked(gitWriteOperationService.switchBranch).mock.calls[0][3]).toBe(true);
     expect((await post('/v1/files/workspace-git-stash', { sessionId: 1, action: 'pop', ref: 'stash@{0}' })).data.message).toBe('已应用 stash@{0}');
+
+    await app.close();
+  });
+
+  // 方案 2026-11-18：workspace-download 的 LOCAL 分流——按需委托执行端，绝不直读服务器文件系统
+  it('servesLocalWorkspaceDownloadViaDelegation', async () => {
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    app.addHook('preHandler', (req, _r, done) => {
+      req.userId = 7;
+      done();
+    });
+    const localSession = { id: 2, userId: 7, workspace: 'D:\proj', agentId: 9, executionMode: 'LOCAL' };
+    const sessionService = { getSession: vi.fn(async () => localSession) } as unknown as SessionService;
+    const downloadFile = vi.fn();
+    const workspaceBrowseService = { downloadFile } as unknown as WorkspaceBrowseService;
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const localFileFetchService = {
+      fetch: vi.fn(async () => ({ ok: true as const, bytes: pngBytes, fileName: 'shot.png', mime: 'image/png' })),
+    };
+    registerFileRoutes(app, {
+      fileService: {} as FileService,
+      sessionService,
+      workspaceBrowseService,
+      workspaceGitService: {} as WorkspaceGitService,
+      gitCommitMessageService: {} as GitCommitMessageService,
+      gitWriteOperationService: {} as import('./git-write-operation.service.js').GitWriteOperationService,
+      workspaceWriteService: {} as WorkspaceWriteService,
+      workspaceOverviewService: {} as import('./workspace-overview.service.js').WorkspaceOverviewService,
+      localFileFetchService,
+      pathSandbox: { getWorkspaceRoot: () => '/tmp/ws' } as PathSandbox,
+    });
+
+    // 成功：字节 + mime + attachment，且绝不触碰服务器文件系统（downloadFile 不得被调用）
+    const okRes = await app.inject({ method: 'GET', url: '/v1/files/workspace-download?sessionId=2&path=screenshots/x.png' });
+    expect(okRes.statusCode).toBe(200);
+    expect(okRes.rawPayload).toEqual(pngBytes); // inject 的 body 按 UTF-8 解码，字节比对用 rawPayload
+    expect(okRes.headers['content-type']).toContain('image/png');
+    expect(String(okRes.headers['content-disposition'])).toContain('shot.png');
+    expect(localFileFetchService.fetch).toHaveBeenCalledWith(2, 7, 'screenshots/x.png', 'D:\proj');
+    expect(downloadFile).not.toHaveBeenCalled();
+
+    // 委托失败：HTTP 200 + 错误信封（code≠0），文案透传
+    localFileFetchService.fetch.mockResolvedValueOnce({ ok: false as const, error: '本地执行端未连接，无法读取本地文件' });
+    const errRes = await app.inject({ method: 'GET', url: '/v1/files/workspace-download?sessionId=2&path=x.png' });
+    expect(errRes.statusCode).toBe(200);
+    const errVo = JSON.parse(errRes.body) as { code: number; message: string };
+    expect(errVo.code).not.toBe(0);
+    expect(errVo.message).toBe('本地执行端未连接，无法读取本地文件');
+    expect(downloadFile).not.toHaveBeenCalled();
+
+    // 非白名单路径在服务内拒绝（路由只透传）
+    localFileFetchService.fetch.mockResolvedValueOnce({ ok: false as const, error: '图片路径不合法' });
+    const badRes = await app.inject({ method: 'GET', url: '/v1/files/workspace-download?sessionId=2&path=..%2Fa.png' });
+    expect(JSON.parse(badRes.body).code).not.toBe(0);
+    expect(downloadFile).not.toHaveBeenCalled();
+
+    // 同级 workspace 端点族对 LOCAL 一律拒绝（requireCloudWorkspace）：LOCAL workspace 服务端不校验，
+    // 直读服务器路径是目录读取缺口，整族关闭（评审 P1-1）
+    for (const url of [
+      '/v1/files/workspace-list?sessionId=2',
+      '/v1/files/workspace-directory?sessionId=2',
+      '/v1/files/workspace-search?sessionId=2&pattern=a',
+      '/v1/files/workspace-read?sessionId=2&path=a.txt',
+      '/v1/files/workspace-preview?sessionId=2&path=a.pdf',
+      '/v1/files/workspace-download-zip?sessionId=2&path=dir',
+    ]) {
+      const res = await app.inject({ method: 'GET', url });
+      expect(JSON.parse(res.body).code).not.toBe(0);
+      expect(JSON.parse(res.body).message).toBe('本地模式不支持服务端文件管理');
+    }
+    const zipRes = await app.inject({ method: 'POST', url: '/v1/files/workspace-download-multi-zip', payload: { sessionId: 2, paths: ['a'] } });
+    expect(JSON.parse(zipRes.body).message).toBe('本地模式不支持服务端文件管理');
+    expect(downloadFile).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  // CLOUD 会话走原路径回归（方案 §8-1）
+  it('servesCloudWorkspaceDownloadViaServerPath', async () => {
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    app.addHook('preHandler', (req, _r, done) => {
+      req.userId = 7;
+      done();
+    });
+    const cloudSession = { id: 3, userId: 7, workspace: '/tmp/ws-cloud', agentId: 9, executionMode: 'CLOUD' };
+    const sessionService = { getSession: vi.fn(async () => cloudSession) } as unknown as SessionService;
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const downloadFile = vi.fn(() => ({ path: '/tmp/ws-cloud/x.png', fileName: 'x.png', size: pngBytes.length }));
+    const workspaceBrowseService = { downloadFile } as unknown as WorkspaceBrowseService;
+    const localFileFetchService = { fetch: vi.fn() };
+    registerFileRoutes(app, {
+      fileService: {} as FileService,
+      sessionService,
+      workspaceBrowseService,
+      workspaceGitService: {} as WorkspaceGitService,
+      gitCommitMessageService: {} as GitCommitMessageService,
+      gitWriteOperationService: {} as import('./git-write-operation.service.js').GitWriteOperationService,
+      workspaceWriteService: {} as WorkspaceWriteService,
+      workspaceOverviewService: {} as import('./workspace-overview.service.js').WorkspaceOverviewService,
+      localFileFetchService,
+      pathSandbox: { getWorkspaceRoot: () => '/tmp/ws' } as PathSandbox,
+    });
+    // sendFile 从磁盘流式读取：放一个真实文件
+    mkdirSync('/tmp/ws-cloud', { recursive: true });
+    writeFileSync('/tmp/ws-cloud/x.png', pngBytes);
+    const res = await app.inject({ method: 'GET', url: '/v1/files/workspace-download?sessionId=3&path=x.png' });
+    expect(res.statusCode).toBe(200);
+    expect(res.rawPayload).toEqual(pngBytes);
+    expect(downloadFile).toHaveBeenCalledTimes(1);
+    expect(localFileFetchService.fetch).not.toHaveBeenCalled();
 
     await app.close();
   });

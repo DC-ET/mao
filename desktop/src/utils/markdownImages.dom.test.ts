@@ -54,8 +54,12 @@ describe('toWorkspaceImageUrl', () => {
     expect(url).toContain('token=jwt-token')
   })
 
-  it('LOCAL 会话 / 缺会话 / 绝对 URL / 空路径不改写', () => {
-    expect(toWorkspaceImageUrl('a.png', { sessionId: '1', executionMode: 'LOCAL' })).toBeNull()
+  it('LOCAL 会话与 CLOUD 同构：改写同一下载地址（LOCAL 由后端按需委托执行端读取）', () => {
+    const url = toWorkspaceImageUrl('a.png', { sessionId: '1', executionMode: 'LOCAL' })
+    expect(url).toBe('http://localhost:9080/api/v1/files/workspace-download?sessionId=1&path=a.png')
+  })
+
+  it('缺会话 / 绝对 URL / 空路径不改写', () => {
     expect(toWorkspaceImageUrl('a.png', null)).toBeNull()
     expect(toWorkspaceImageUrl('https://a.com/x.png', CLOUD)).toBeNull()
     expect(toWorkspaceImageUrl('./', CLOUD)).toBeNull()
@@ -82,13 +86,23 @@ describe('decorateMarkdownImages', () => {
     expect(placeholder.getAttribute('title')).toBe('图片未加载：screenshots/x.png')
   })
 
-  it('无会话上下文（LOCAL / 历史分享）：src 不动，失败同样回退文本', () => {
+  it('LOCAL 会话：改写为委托下载地址并带 lazy（执行端离线时由后端报错 → 回退文本）', () => {
     const root = imgRoot('screenshots/x.png')
     decorateMarkdownImages(root, { sessionId: '1', executionMode: 'LOCAL' })
     const img = root.querySelector('img')!
-    expect(img.getAttribute('src')).toBe('screenshots/x.png')
+    expect(img.getAttribute('src')).toContain('/files/workspace-download?sessionId=1&path=screenshots%2Fx.png')
+    expect(img.getAttribute('loading')).toBe('lazy')
     img.dispatchEvent(new Event('error'))
     expect(root.querySelector(`.${BROKEN_IMAGE_CLASS}`)?.textContent).toBe('📎 screenshots/x.png')
+  })
+
+  it('改写成功的图片补 loading=lazy（长消息多图削峰）', () => {
+    const root = document.createElement('div')
+    root.innerHTML = '<img src="a.png"><img src="https://a.com/x.png">'
+    decorateMarkdownImages(root, CLOUD)
+    const imgs = root.querySelectorAll('img')
+    expect(imgs[0].getAttribute('loading')).toBe('lazy') // 工作区相对图片改写后带 lazy
+    expect(imgs[1].hasAttribute('loading')).toBe(false) // 站外图片不改写也不加 lazy
   })
 
   it('幂等：重复处理不重复拼地址、不重复挂监听', () => {
