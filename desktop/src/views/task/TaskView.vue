@@ -117,7 +117,8 @@ import { ref, computed, provide, onMounted, onUnmounted, watch, nextTick, h } fr
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAgentStore } from '../../stores/agent'
-import { useSessionStore, type TaskPhase, type SubagentItem } from '../../stores/session'
+import { useSessionStore, type LocalWorkspaceSummary, type TaskPhase, type SubagentItem } from '../../stores/session'
+import { isElectronClient } from '../../utils/platform'
 import { persistedContextWindow } from '../../stores/session/context-window'
 import { useDraftStore } from '../../stores/draft'
 import { usePanelLayout } from '../../composables/usePanelLayout'
@@ -177,6 +178,9 @@ const newTaskWorkspaceMode = ref<string>('new')
 const newTaskGitCloneUrl = ref('')
 const newTaskGitBranch = ref('')
 const newTaskCloudProjects = ref<Array<{ name: string; path: string; isGit: boolean }>>([])
+// 已有本地工作区条目（技术方案 2026-11-17）：浏览器新建本地任务的下拉与守卫数据源，
+// 镜像 newTaskCloudProjects 的 provide → ChatPanel → ChatInput 链路
+const newTaskLocalWorkspaces = ref<LocalWorkspaceSummary[]>([])
 const newTaskModelId = ref<number | undefined>()
 const lastViewedSession = ref<{ agentId: string; executionMode: string; workspace?: string; cloudProjectKey?: string; permissionLevel?: string; modelId?: number } | null>(null)
 // 任务索引加载失败（静默失败可见化）：门住 isNewTaskMode 不再静默掉进「新建任务」态（D6）
@@ -208,6 +212,7 @@ provide('newTaskWorkspaceMode', newTaskWorkspaceMode)
 provide('newTaskGitCloneUrl', newTaskGitCloneUrl)
 provide('newTaskGitBranch', newTaskGitBranch)
 provide('newTaskCloudProjects', newTaskCloudProjects)
+provide('newTaskLocalWorkspaces', newTaskLocalWorkspaces)
 provide('initialLoading', initialLoading)
 provide('currentPhase', currentPhase)
 // ChatPanel 据此压制「空会话」引导，避免中央错误卡下方再渲染假空态
@@ -1269,7 +1274,22 @@ async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
   const resolved = await resolveNewTaskDefaults(defaults)
   if (generation !== newTaskModeGeneration) return
 
-  const mode = normalizeNewTaskMode(resolved.executionMode)
+  // 浏览器新建本地任务（技术方案 2026-11-17 D8）：拉取已有本地工作区，供 LOCAL radio /
+  // 工作区下拉与发送时设备沿用解析；Electron 走目录选择，不需要该数据。默认 LOCAL 但
+  // 无任何已有工作区 → 静默回落 CLOUD，避免「选不了目录」死路。
+  let mode = normalizeNewTaskMode(resolved.executionMode)
+  if (!isElectronClient()) {
+    newTaskLocalWorkspaces.value = await sessionStore.fetchLocalWorkspaces()
+    if (generation !== newTaskModeGeneration) return
+    if (mode === 'LOCAL' && newTaskLocalWorkspaces.value.length === 0) {
+      // 回落必须同时清掉 defaults 的 LOCAL 预填：reuseWorkspace 带入的本机路径若残留，
+      // 会被下方的 newTaskWorkspacePrefill('CLOUD', resolved) 当作 CLOUD 显式工作区，
+      // 发送时被 assertOwnedSessionWorkspace 拒收（评审 P1-1）
+      mode = 'CLOUD'
+      resolved.workspace = undefined
+      resolved.reuseWorkspace = undefined
+    }
+  }
   newTaskAgentId.value = resolved.agentId ? String(resolved.agentId) : null
   newTaskMode.value = mode
   newTaskWorkspace.value = newTaskWorkspacePrefill(mode, resolved) || ''
@@ -1653,6 +1673,15 @@ watch(getRouteWatchState, async (state, prev) => {
           newTaskModelId.value = previous.modelId
         } else {
           loadDefaultModel()
+        }
+        // 浏览器新建本地任务（技术方案 2026-11-17）：预填 LOCAL 时拉取已有本地工作区，
+        // 供下拉 / 守卫与发送时设备沿用解析（Electron 走目录选择，不需要）
+        if (!isElectronClient() && newTaskMode.value === 'LOCAL') {
+          void sessionStore.fetchLocalWorkspaces().then((list) => {
+            if (!sessionIdParam.value && !indexError.value) {
+              newTaskLocalWorkspaces.value = list
+            }
+          })
         }
       } else {
         await enterNewTaskMode()

@@ -16,6 +16,7 @@
       :git-clone-url="gitCloneUrl"
       :git-branch="gitBranch"
       :cloud-projects="cloudProjects"
+      :local-workspaces="localWorkspaces"
       :is-new-task="isNewTask"
       :disabled="disabled"
       :is-mobile="true"
@@ -32,7 +33,7 @@
 <script setup lang="ts">
 import AgentChip from './AgentChip.vue'
 import WorkspaceChip from './WorkspaceChip.vue'
-import type { CloudProject } from '../../stores/session'
+import type { CloudProject, LocalWorkspaceSummary } from '../../stores/session'
 
 defineProps<{
   isNewTask: boolean
@@ -48,6 +49,8 @@ defineProps<{
   gitCloneUrl: string | undefined
   gitBranch: string | undefined
   cloudProjects: CloudProject[]
+  /** 已有本地工作区条目（技术方案 2026-11-17）：浏览器新建 LOCAL 的下拉与守卫数据源 */
+  localWorkspaces: LocalWorkspaceSummary[]
   handleModeChange: (mode: string) => void
   onCloudProjectKeyChange: (value: string) => void
   onWorkspaceModeChange: (mode: string) => void

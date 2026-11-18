@@ -35,8 +35,8 @@
             type="button"
             class="mode-btn"
             :class="{ active: executionMode === 'LOCAL' }"
-            :disabled="!isElectronClient"
-            :title="isElectronClient ? '工具在本地电脑执行' : '浏览器端不支持本地模式'"
+            :disabled="!isElectronClient && localWorkspaces.length === 0"
+            :title="localButtonTitle"
             @click="switchMode('LOCAL')"
           >
             <el-icon :size="12"><Monitor /></el-icon> 本地
@@ -50,6 +50,7 @@
           :git-clone-url="gitCloneUrl"
           :git-branch="gitBranch"
           :cloud-projects="cloudProjects"
+          :local-workspaces="localWorkspaces"
           @update:cloud-project-key="onCloudProjectKeyChange"
           @update:workspace-mode="onWorkspaceModeChange"
           @update:git-clone-url="onGitCloneUrlChange"
@@ -92,7 +93,8 @@
               type="button"
               class="mode-btn"
               :class="{ active: executionMode === 'LOCAL' }"
-              :disabled="!isElectronClient"
+              :disabled="!isElectronClient && localWorkspaces.length === 0"
+              :title="localButtonTitle"
               @click="switchMode('LOCAL')"
             >
               <el-icon :size="12"><Monitor /></el-icon> 本地
@@ -107,6 +109,7 @@
             :git-clone-url="gitCloneUrl"
             :git-branch="gitBranch"
             :cloud-projects="cloudProjects"
+            :local-workspaces="localWorkspaces"
             @update:cloud-project-key="onCloudProjectKeyChange"
             @update:workspace-mode="onWorkspaceModeChange"
             @update:git-clone-url="onGitCloneUrlChange"
@@ -124,6 +127,7 @@ import { ref, computed } from 'vue'
 import { ArrowDown, Cloudy, FolderOpened, Monitor, WarningFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { cloudWorkspaceIndicator, extractGitRepoSlug, isChannelWorkspacePath, workspaceTailLabel } from '../../utils/cloud-project'
+import type { LocalWorkspaceSummary } from '../../stores/session'
 import WorkspaceConfigFields from './WorkspaceConfigFields.vue'
 
 const props = withDefaults(defineProps<{
@@ -135,6 +139,8 @@ const props = withDefaults(defineProps<{
   gitCloneUrl?: string
   gitBranch?: string
   cloudProjects?: Array<{ name: string; path: string; isGit: boolean }>
+  /** 已有本地工作区条目（技术方案 2026-11-17）：浏览器新建 LOCAL 的下拉与守卫数据源 */
+  localWorkspaces?: LocalWorkspaceSummary[]
   isNewTask?: boolean
   disabled?: boolean
   isMobile?: boolean
@@ -145,6 +151,7 @@ const props = withDefaults(defineProps<{
   gitCloneUrl: '',
   gitBranch: '',
   cloudProjects: () => [],
+  localWorkspaces: () => [],
   isNewTask: false,
   disabled: false,
   isMobile: false,
@@ -161,6 +168,13 @@ const emit = defineEmits<{
 
 const isElectronClient = typeof window !== 'undefined' && !!(window as any).electronAPI
 const configVisible = ref(false)
+
+/** LOCAL 按钮的 title 按端分叉（技术方案 2026-11-17）：Electron 本机执行；浏览器复用已有工作区 */
+const localButtonTitle = computed(() => {
+  if (isElectronClient) return '工具在本地电脑执行'
+  if (props.localWorkspaces.length === 0) return '浏览器端暂无已有本地工作区，请先在桌面客户端创建本地任务'
+  return '在已有本地工作区新建任务，由其绑定的设备执行'
+})
 
 const displayLabel = computed(() => {
   if (props.executionMode === 'LOCAL') {
@@ -204,8 +218,10 @@ function openConfig() {
 }
 
 function switchMode(mode: string) {
-  if (mode === 'LOCAL' && !isElectronClient) {
-    ElMessage.warning('浏览器端不支持本地模式，请使用桌面客户端')
+  // 浏览器切 LOCAL（技术方案 2026-11-17）：有已有本地工作区条目时放行（复用工作区新建），
+  // 无条目仍拦（远程无法挑选/新建本地目录）
+  if (mode === 'LOCAL' && !isElectronClient && props.localWorkspaces.length === 0) {
+    ElMessage.warning('浏览器端暂无已有本地工作区，请先在桌面客户端创建本地任务')
     return
   }
   if (mode !== props.executionMode) {

@@ -1,5 +1,6 @@
 .workspace-mode-select-dropdown.el-select-dropdown,
-.cloud-project-select-dropdown.el-select-dropdown {
+.cloud-project-select-dropdown.el-select-dropdown,
+.local-workspace-select-dropdown.el-select-dropdown {
   border-radius: var(--aw-radius-md);
 }
 
@@ -15,8 +16,40 @@
 
 /* 与「模型选择」列表对齐：选中项不用加粗主色，改用淡蓝底 + 深色文字 */
 .workspace-mode-select-dropdown .el-select-dropdown__item.is-selected,
-.cloud-project-select-dropdown .el-select-dropdown__item.is-selected {
+.cloud-project-select-dropdown .el-select-dropdown__item.is-selected,
+.local-workspace-select-dropdown .el-select-dropdown__item.is-selected {
   font-weight: 400;
   color: var(--aw-body);
   background: var(--aw-primary-lighter);
+}
+
+/* 浏览器新建 LOCAL（技术方案 2026-11-17）：下拉条目两行（目录名 + 设备·在线态），放开固定行高。
+   ws-local-* 用独立 popper（ws-local-field-select-dropdown），避免影响同 popper 的 CLOUD 单行条目 */
+.local-workspace-select-dropdown .el-select-dropdown__item,
+.ws-local-field-select-dropdown .el-select-dropdown__item {
+  height: auto;
+  line-height: normal;
+  padding: 4px 12px;
+  font-weight: 400;
+  color: var(--aw-body);
+}
+
+.local-workspace-select-dropdown .local-workspace-option,
+.ws-local-field-select-dropdown .ws-local-option {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.local-workspace-select-dropdown .local-workspace-option-name,
+.ws-local-field-select-dropdown .ws-local-option-name {
+  font-size: var(--aw-text-caption);
+  color: var(--aw-body);
+}
+
+.local-workspace-select-dropdown .local-workspace-option-sub,
+.ws-local-field-select-dropdown .ws-local-option-sub {
+  font-size: var(--aw-text-micro);
+  color: var(--aw-ink-muted-48);
 }

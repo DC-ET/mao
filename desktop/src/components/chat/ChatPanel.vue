@@ -39,6 +39,7 @@
           :git-clone-url="newTaskGitCloneUrl"
           :git-branch="newTaskGitBranch"
           :cloud-projects="newTaskCloudProjects"
+          :local-workspaces="newTaskLocalWorkspaces"
           :waiting-for-save="waitingForSave"
           :draft-key="currentDraftKey"
           @send="handleSend"
@@ -217,6 +218,7 @@
         :git-clone-url="isNewTaskMode ? newTaskGitCloneUrl : ''"
         :git-branch="isNewTaskMode ? newTaskGitBranch : ''"
         :cloud-projects="isNewTaskMode ? newTaskCloudProjects : []"
+        :local-workspaces="newTaskLocalWorkspaces"
         :waiting-for-save="waitingForSave"
         :draft-key="currentDraftKey"
         @send="handleSend"
@@ -250,7 +252,7 @@ import { useChatQueue } from '../../composables/useChatQueue'
 import { useCurrentDevice } from '../../composables/useCurrentDevice'
 import { LOCATE_FLASH_KEY, useMessageLocate } from '../../composables/useMessageLocate'
 import { useAgentStore } from '../../stores/agent'
-import { useSessionStore, type TaskPhase } from '../../stores/session'
+import { useSessionStore, type LocalWorkspaceSummary, type TaskPhase } from '../../stores/session'
 import { useDraftStore } from '../../stores/draft'
 import { api } from '../../api'
 import { ElMessage } from 'element-plus'
@@ -283,6 +285,7 @@ const newTaskWorkspaceMode = inject<Ref<string>>('newTaskWorkspaceMode')!
 const newTaskGitCloneUrl = inject<Ref<string>>('newTaskGitCloneUrl')!
 const newTaskGitBranch = inject<Ref<string>>('newTaskGitBranch')!
 const newTaskCloudProjects = inject<Ref<Array<{ name: string; path: string; isGit: boolean }>>>('newTaskCloudProjects')!
+const newTaskLocalWorkspaces = inject<Ref<LocalWorkspaceSummary[]>>('newTaskLocalWorkspaces')!
 const initialLoading = inject<Ref<boolean>>('initialLoading')!
 const currentPhase = inject<Ref<TaskPhase>>('currentPhase')!
 

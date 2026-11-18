@@ -22,11 +22,13 @@
       :cloud-project-key="cloudProjectKey"
       :git-clone-url="gitCloneUrl"
       :cloud-projects="cloudProjects"
+      :local-workspaces="localWorkspaces"
       :selected-agent-id="selectedAgentId"
       :handle-mode-change="handleModeChange"
       :on-workspace-mode-change="onWorkspaceModeChange"
       :on-cloud-project-key-change="onCloudProjectKeyChange"
       :on-git-clone-url-change="onGitCloneUrlChange"
+      :on-local-workspace-change="onLocalWorkspaceChange"
       :select-workspace="selectWorkspace"
       @update:selected-agent-id="(id: string | null) => emit('update:selectedAgentId', id)"
     />
@@ -106,6 +108,7 @@
       :git-clone-url="gitCloneUrl"
       :git-branch="gitBranch"
       :cloud-projects="cloudProjects"
+      :local-workspaces="localWorkspaces"
       :cloud-indicator-label="cloudIndicatorLabel"
       :dir-name="dirName"
       :permission-level="permissionLevel"
@@ -147,6 +150,7 @@
       :git-clone-url="gitCloneUrl"
       :git-branch="gitBranch"
       :cloud-projects="cloudProjects"
+      :local-workspaces="localWorkspaces"
       :handle-mode-change="handleModeChange"
       :on-cloud-project-key-change="onCloudProjectKeyChange"
       :on-workspace-mode-change="onWorkspaceModeChange"
@@ -179,7 +183,7 @@ import { FileReferenceNode } from './tiptap/FileReferenceNode'
 import { refreshFileQuoteStaleFlags } from './file-quote-stale'
 import { useEditorTagPanels, type EditorPanelHandle } from '../../composables/useEditorTagPanels'
 import type { Agent } from '../../stores/agent'
-import { useSessionStore, type CloudProject } from '../../stores/session'
+import { useSessionStore, type CloudProject, type LocalWorkspaceSummary } from '../../stores/session'
 import { useDraftStore, type DraftEntry } from '../../stores/draft'
 import {
   capReplyQuote,
@@ -222,6 +226,8 @@ const props = withDefaults(defineProps<{
   gitCloneUrl?: string
   gitBranch?: string
   cloudProjects?: CloudProject[]
+  /** 已有本地工作区条目（技术方案 2026-11-17）：浏览器新建 LOCAL 的下拉与守卫数据源 */
+  localWorkspaces?: LocalWorkspaceSummary[]
   waitingForSave?: boolean
   /** 注册到「添加到聊天」的输入框 key：主会话默认 'chat'，边路任务传 tabId（如 'side:123'） */
   registerKey?: string
@@ -250,6 +256,7 @@ const props = withDefaults(defineProps<{
   gitCloneUrl: '',
   gitBranch: '',
   cloudProjects: () => [],
+  localWorkspaces: () => [],
   waitingForSave: false,
   registerKey: 'chat',
   draftKey: null,
@@ -868,10 +875,10 @@ function handleRefDrop(e: DragEvent) {
 
 async function handleSend() {
   if (props.disabled || !canSend.value || !editor.value) return
-  if (props.executionMode === 'LOCAL' && !isElectronClient && props.isNewTask) {
-    // 浏览器不能新建 LOCAL 会话（技术方案 2026-11-05 §4.1-3）：本地任务必须在桌面端创建；
-    // 已有 LOCAL 会话允许浏览器接管对话（执行端仍是绑定设备）。
-    ElMessage.error('浏览器端不能新建本地任务，请在桌面客户端创建；已有本地任务可直接继续对话')
+  if (props.executionMode === 'LOCAL' && !isElectronClient && props.isNewTask && !props.workspace) {
+    // 浏览器新建 LOCAL（技术方案 2026-11-17）：只能复用已有本地工作区；未选定工作区
+    // （远程新建本地目录）不可用。已有 LOCAL 会话允许浏览器接管对话（执行端仍是绑定设备）。
+    ElMessage.error('请先选择一个已有本地工作区（浏览器只能复用桌面端已创建过的目录）')
     return
   }
   // 绑定设备离线时前端先拦（技术方案 2026-11-05 §4.1-7，快照语义）；服务端发送校验仍是权威兜底。
@@ -927,11 +934,18 @@ function handleContinue() {
 }
 
 function handleModeChange(mode: string) {
-  if (mode === 'LOCAL' && !isElectronClient) {
-    ElMessage.warning('浏览器端不支持本地模式，请使用桌面客户端')
+  // 浏览器切 LOCAL（技术方案 2026-11-17）：有已有本地工作区条目时放行（复用工作区新建），
+  // 无条目仍拦（远程无法挑选/新建本地目录）
+  if (mode === 'LOCAL' && !isElectronClient && props.localWorkspaces.length === 0) {
+    ElMessage.warning('浏览器端暂无已有本地工作区，请先在桌面客户端创建本地任务')
     return
   }
   emit('update:executionMode', mode)
+}
+
+/** 浏览器在已有本地工作区下拉选中（技术方案 2026-11-17）：与 selectWorkspace 同一出口 */
+function onLocalWorkspaceChange(workspace: string) {
+  emit('update:workspace', workspace)
 }
 
 async function selectWorkspace() {

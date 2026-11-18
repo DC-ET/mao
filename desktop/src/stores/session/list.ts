@@ -6,7 +6,7 @@ import { sortByFocusPriority, sessionToFocusCandidate } from '../../utils/focusS
 import { clientSessionSource } from '../../utils/platform'
 import { getLocalDeviceInfo } from '../../utils/device-info'
 import { normalizeId, normalizeSession, persistLastSession, LAST_SESSION_KEY, ACTIVE_PHASES, DEFAULT_GROUP_PREVIEW, DEFAULT_GROUP_PAGE_SIZE } from './types'
-import type { Session, SessionEnvironmentInfo, SessionGroupMeta, CloudProject, TaskPhase } from './types'
+import type { Session, SessionEnvironmentInfo, SessionGroupMeta, CloudProject, LocalWorkspaceSummary, TaskPhase } from './types'
 import { persistedContextWindow } from './context-window'
 import type { ContextWindowInfo } from '../../types/chat'
 
@@ -522,7 +522,9 @@ export function createSessionListModule(ctx: {
     cloudProjectKey?: string,
     workspaceMode?: string,
     gitCloneUrl?: string,
-    gitBranch?: string
+    gitBranch?: string,
+    /** 浏览器创建 LOCAL 的显式设备回显（技术方案 2026-11-17）：Electron 缺省走本机设备身份。 */
+    browserLocalTarget?: { deviceId: string; deviceName: string } | null
   ) {
     const payload: Record<string, unknown> = {
       agentId,
@@ -539,14 +541,16 @@ export function createSessionListModule(ctx: {
     }
     if (executionMode === 'LOCAL') {
       payload.workspace = workspace || undefined
-      // 本机设备身份（技术方案 2026-11-05 D5）：桌面端创建 LOCAL 会话即绑定执行端设备，
-      // 之后只能由该设备执行。浏览器拿不到设备身份（本就不允许浏览器新建 LOCAL 会话）。
-      // deviceId 与 mao-agent 共用同一份设备文件，服务端把该设备下的所有本地连接
-      // 都视为可接手执行端，桌面端与 CLI 谁在线都能应答技能 / MCP 同步。
+      // 执行端绑定（技术方案 2026-11-05 D5）：桌面端绑定本机设备身份（与 mao-agent 共用同一份
+      // 设备文件，桌面端与 CLI 谁在线都能应答技能 / MCP 同步）；浏览器创建（技术方案 2026-11-17）
+      // 显式回显所选工作区的绑定设备，缺省不传（服务端 normalize 白名单校验，创建即定不可改绑）。
       const device = await getLocalDeviceInfo()
       if (device) {
         payload.targetDeviceId = device.id
         if (device.name) payload.targetDeviceName = device.name
+      } else if (browserLocalTarget?.deviceId) {
+        payload.targetDeviceId = browserLocalTarget.deviceId
+        if (browserLocalTarget.deviceName) payload.targetDeviceName = browserLocalTarget.deviceName
       }
     } else if (executionMode === 'CLOUD') {
       payload.workspaceMode = workspaceMode || 'new'
@@ -588,6 +592,20 @@ export function createSessionListModule(ctx: {
     } catch {
       return []
     }
+  }
+
+  /** 已有本地工作区条目（技术方案 2026-11-17）：新建下拉与浏览器创建回显共用；
+   *  端点不可用（旧后端）或请求失败时清空——浏览器新建 LOCAL 入口随之禁用，回到既有口径。 */
+  const localWorkspaces = ref<LocalWorkspaceSummary[]>([])
+
+  async function fetchLocalWorkspaces(): Promise<LocalWorkspaceSummary[]> {
+    try {
+      const { data } = await api.get('/sessions/local-workspaces')
+      localWorkspaces.value = (data || []) as LocalWorkspaceSummary[]
+    } catch {
+      localWorkspaces.value = []
+    }
+    return localWorkspaces.value
   }
 
   function setActiveSession(id: string | null) {
@@ -895,6 +913,8 @@ export function createSessionListModule(ctx: {
     fetchSession,
     createSession,
     fetchCloudProjects,
+    localWorkspaces,
+    fetchLocalWorkspaces,
     setActiveSession,
     getLastSessionId,
     forgetLastSession,

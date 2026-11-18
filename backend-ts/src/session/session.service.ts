@@ -52,6 +52,7 @@ import type {
   MessageSearchGroup,
   MessageSearchHit,
   MessageSearchResult,
+  LocalWorkspaceSummaryRow,
   Session,
   SessionGroupBucket,
   SessionGroupPage,
@@ -323,6 +324,14 @@ export class SessionService {
   async listSessions(userId: number, keyword?: string | null, status?: string | null): Promise<Session[]> {
     const { whereSql, params } = this.baseSessionListQuery(userId, keyword, status);
     return this.sessionRepo.list(whereSql, params, 'ORDER BY updated_at DESC, id DESC');
+  }
+
+  /**
+   * 浏览器端在已有本地工作区新建本地任务（技术方案 2026-11-17）：按工作区聚合该用户
+   * LOCAL 主会话的设备绑定与环境快照，作为新建下拉与创建回显的数据源（见仓库层口径注释）。
+   */
+  async listLocalWorkspaceSummaries(userId: number): Promise<LocalWorkspaceSummaryRow[]> {
+    return this.sessionRepo.listLocalWorkspaceSummaries(userId);
   }
 
   async listSessionGroups(userId: number, keyword: string | null | undefined, status: string | null | undefined, previewLimit: number): Promise<SessionGroupBucket[]> {

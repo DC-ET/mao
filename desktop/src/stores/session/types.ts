@@ -30,6 +30,31 @@ export interface CloudProject {
   archivedSessions?: number | null
 }
 
+/** 已有本地工作区条目（GET /v1/sessions/local-workspaces，技术方案 2026-11-17）：
+ *  该用户 LOCAL 主会话按 workspace 聚合，代表会话（优先已绑定、再最近活跃）提供
+ *  设备绑定与环境快照的沿用来源；浏览器新建本地任务据此回显创建参数。 */
+export interface LocalWorkspaceSummary {
+  /** 存储原样路径（创建时原样回传 workspace）。 */
+  workspace: string
+  /** 路径尾段（后端算好）。 */
+  name: string
+  sessionCount: number
+  activeSessions: number
+  archivedSessions: number
+  lastActiveAt?: string | null
+  /** 代表会话的设备绑定；工作区无任何绑定为 null（新会话未绑定，首发走惰性认领）。 */
+  targetDeviceId: string | null
+  targetDeviceName: string | null
+  /** 请求时在线快照；未绑定为 null。 */
+  targetDeviceOnline: boolean | null
+  executorClientType: string | null
+  /** 代表会话的环境快照（platform 是惰性认领平台校验的输入）。 */
+  platform: string | null
+  shell: string | null
+  osVersion: string | null
+  isGit: boolean | null
+}
+
 export interface Session {
   id: string
   agentId: string

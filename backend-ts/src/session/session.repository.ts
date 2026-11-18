@@ -7,7 +7,7 @@ import { escapeLike, messageRoleClause } from './message-search.js';
 import type { MessageSearchScope } from './message-search.js';
 import type { SessionSource as ContractSessionSource } from '@mao/contracts';
 import { ACTIVE_PHASE_SQL_LIST } from './util/session-group-key.js';
-import type { FileChange, Message, Session, SessionGroupPage } from './types.js';
+import type { FileChange, LocalWorkspaceSummaryRow, Message, Session, SessionGroupPage } from './types.js';
 
 // 来源语义（事实标签，非授权依据）：
 // - 'web'：浏览器访问（桌面 / Web / 移动浏览器曾共用；本期起桌面壳自报 desktop、安卓壳自报
@@ -761,6 +761,58 @@ export class SessionRepository {
       });
     }
     return map;
+  }
+
+  /**
+   * 按工作区聚合该用户 LOCAL 主会话（技术方案 2026-11-17：浏览器端在已有本地工作区新建本地任务）。
+   * 每个工作区一条「代表会话」提供沿用来源：优先取已绑定设备（target_device_id 非空），
+   * 再按最近活跃（updated_at DESC，id DESC 兜底并列确定性）；绑定与环境快照同源，不会错配。
+   * 口径：排除软删、SIDE_TASK / SUBAGENT（session_type='NORMAL'）、embed / signal 来源
+   * （对齐前端分组口径，utils/cloud-project.ts 的 cloudGroupKey）；归档会话计入条目
+   * （目录仍有效、可继续建任务），代表会话不限 status（绑定不随归档失效）。
+   */
+  async listLocalWorkspaceSummaries(userId: number): Promise<LocalWorkspaceSummaryRow[]> {
+    const localScope = `user_id = ? AND execution_mode = 'LOCAL' AND session_type = 'NORMAL'
+         AND workspace IS NOT NULL AND workspace <> '' AND deleted = 0
+         AND source NOT IN ('embed', 'signal')`;
+    return this.db.query<LocalWorkspaceSummaryRow>(
+      `SELECT agg.workspace,
+              agg.sessionCount,
+              agg.activeSessions,
+              agg.archivedSessions,
+              agg.lastActiveAt,
+              rep.target_device_id AS targetDeviceId,
+              rep.target_device_name AS targetDeviceName,
+              rep.platform AS platform,
+              rep.shell_path AS shellPath,
+              rep.os_version AS osVersion,
+              rep.is_git AS isGit
+       FROM (
+         SELECT workspace,
+                COUNT(*) AS sessionCount,
+                SUM(CASE WHEN status <> 'ARCHIVED' THEN 1 ELSE 0 END) AS activeSessions,
+                SUM(CASE WHEN status = 'ARCHIVED' THEN 1 ELSE 0 END) AS archivedSessions,
+                MAX(updated_at) AS lastActiveAt
+         FROM \`session\`
+         WHERE ${localScope}
+         GROUP BY workspace
+       ) agg
+       JOIN (
+         SELECT workspace, target_device_id, target_device_name, platform, shell_path, os_version, is_git
+         FROM (
+           SELECT workspace, target_device_id, target_device_name, platform, shell_path, os_version, is_git,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY workspace
+                    ORDER BY (target_device_id IS NULL) ASC, updated_at DESC, id DESC
+                  ) AS rn
+           FROM \`session\`
+           WHERE ${localScope}
+         ) t
+         WHERE t.rn = 1
+       ) rep ON rep.workspace = agg.workspace
+       ORDER BY agg.lastActiveAt DESC, agg.workspace ASC`,
+      [userId, userId],
+    );
   }
 
   /**

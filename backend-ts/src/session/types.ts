@@ -307,6 +307,24 @@ export interface SessionGroupBucket {
   sessions: Session[];
 }
 
+/** LOCAL 工作区聚合行（技术方案 2026-11-17）：listLocalWorkspaceSummaries 的原始查询行。 */
+export interface LocalWorkspaceSummaryRow {
+  workspace: string;
+  sessionCount: number;
+  activeSessions: number;
+  archivedSessions: number;
+  /** MAX(updated_at)，dateStrings 连接下为字符串。 */
+  lastActiveAt: string | null;
+  /** 代表会话（优先已绑定、再最近活跃）的沿用来源；无任何绑定为 null。 */
+  targetDeviceId: string | null;
+  targetDeviceName: string | null;
+  platform: string | null;
+  shellPath: string | null;
+  osVersion: string | null;
+  /** TINYINT 0/1，dateStrings 下仍为数值。 */
+  isGit: number | null;
+}
+
 export interface SessionGroupPage {
   items: Session[];
   total: number;

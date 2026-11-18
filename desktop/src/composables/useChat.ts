@@ -42,6 +42,7 @@ import { uploadImages } from '../utils/imageUpload'
 import { uploadPendingFiles } from '../utils/chatFileUpload'
 import { copyLocalPendingFiles, type LocalPendingFile } from '../utils/chatLocalAttach'
 import { generateUUID } from '../utils/uuid'
+import { resolveBrowserLocalTarget } from '../utils/local-workspace'
 import { validateHttpsGitUrl } from '../utils/cloud-project'
 import { nowDateTime } from '../utils/datetime'
 import type { ApprovalHint } from '../components/chat/ApprovalStack.vue'
@@ -390,10 +391,10 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
     sending.value = true
     startedAt.value = new Date().toISOString()
 
-    // 浏览器只能接管已有 LOCAL 会话对话，不能新建本地任务（技术方案 2026-11-05 §4.1-3）；
-    // 执行端始终是会话绑定的设备，浏览器只是消息入口。
-    if (executionMode.value === 'LOCAL' && !isElectron && !sessionId.value) {
-      ElMessage.error('浏览器端不能新建本地任务，请在桌面客户端创建；已有本地任务可直接继续对话')
+    // 浏览器新建 LOCAL 的边界（技术方案 2026-11-17）：只能复用已有本地工作区（执行端沿用
+    // 工作区绑定设备，浏览器只是消息入口）；未选定工作区（远程新建本地目录）仍不可用。
+    if (executionMode.value === 'LOCAL' && !isElectron && !sessionId.value && !workspace.value) {
+      ElMessage.error('请先选择一个已有本地工作区（浏览器只能复用桌面端已创建过的目录）')
       sending.value = false
       return null
     }
@@ -435,6 +436,18 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
         if (executionMode.value === 'LOCAL' && isElectron && (window as any).electronAPI?.getEnvironmentInfo) {
           environmentInfo = await (window as any).electronAPI.getEnvironmentInfo(workspace.value || undefined)
         }
+        // 浏览器新建 LOCAL（技术方案 2026-11-17）：设备绑定与环境快照沿用所选工作区
+        // （端点条目 → 会话实体回退 → 全无则未绑定，交服务端惰性认领）；Electron 原路径不变。
+        let browserLocalTarget: { deviceId: string; deviceName: string } | null = null
+        if (executionMode.value === 'LOCAL' && !isElectron) {
+          const resolved = resolveBrowserLocalTarget(workspace.value, sessionStore.localWorkspaces, sessionStore.sessions)
+          if (resolved) {
+            environmentInfo = resolved.environmentInfo
+            if (resolved.deviceId) {
+              browserLocalTarget = { deviceId: resolved.deviceId, deviceName: resolved.deviceName ?? '' }
+            }
+          }
+        }
 
         if (executionMode.value === 'CLOUD' && workspaceMode.value === 'git') {
           const gitError = validateHttpsGitUrl(gitCloneUrl.value)
@@ -460,7 +473,8 @@ export function useChat(agentId: Ref<string>, executionMode: Ref<string>, select
             executionMode.value === 'CLOUD' ? cloudProjectKey.value || undefined : undefined,
             executionMode.value === 'CLOUD' ? workspaceMode.value : undefined,
             executionMode.value === 'CLOUD' && workspaceMode.value === 'git' ? gitCloneUrl.value : undefined,
-            executionMode.value === 'CLOUD' && workspaceMode.value === 'git' ? (gitBranch.value || undefined) : undefined
+            executionMode.value === 'CLOUD' && workspaceMode.value === 'git' ? (gitBranch.value || undefined) : undefined,
+            browserLocalTarget
           )
           sessionId.value = sessionData.id
           sessionStore.setActiveSession(sessionData.id)

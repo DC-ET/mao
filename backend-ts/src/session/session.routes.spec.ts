@@ -12,7 +12,7 @@ import type { SessionCompactionService } from './session-compaction.service.js';
 import type { RunTraceService } from './run-trace.service.js';
 import type { RunTraceRecordService } from './run-trace-record.service.js';
 import type { SessionTodoRepository, SubagentExecutionRepository } from './activity.repository.js';
-import type { AgentLookup, LlmModelLookup, UserLookup } from './types.js';
+import type { AgentLookup, LlmModelLookup, LocalWorkspaceSummaryRow, UserLookup } from './types.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
 import type { OssStsService } from '../oss/oss-sts.service.js';
 import { useTmpDir } from '../testing/tmp-dir.js';
@@ -41,6 +41,7 @@ describe('session and admin routes', () => {
     participated?: boolean;
     hasDeviceConnection?: (userId: number, deviceId: string) => boolean;
     getExecutorClientType?: (userId: number, deviceId: string) => string | null;
+    localWorkspaceRows?: LocalWorkspaceSummaryRow[];
   } = {}) {
     const fastify = Fastify();
     fastify.setErrorHandler(handleError);
@@ -52,6 +53,7 @@ describe('session and admin routes', () => {
       createSession: vi.fn(async () => session()),
       getSession: vi.fn(async () => session()),
       listSessions: vi.fn(async () => [session()]),
+      listLocalWorkspaceSummaries: vi.fn(async () => options.localWorkspaceRows ?? []),
       listSessionGroups: vi.fn(async () => []),
       listSessionsByGroup: vi.fn(),
       listSessionsByFilter: vi.fn(async () => ({ items: [session({ source: 'embed' })], total: 1, offset: 0, limit: 20, hasMore: false })),
@@ -1041,6 +1043,96 @@ describe('session and admin routes', () => {
     const res = await plain.fastify.inject({ method: 'GET', url: '/v1/sessions/1' });
     expect(JSON.parse(res.body).data.targetDeviceOnline).toBeUndefined();
     await plain.fastify.close();
+  });
+
+  it('GET /sessions/local-workspaces 聚合条目：路径尾段 / 设备沿用 / 在线三态 / isGit 归一；路由先于 :id 匹配', async () => {
+    const rows: LocalWorkspaceSummaryRow[] = [
+      {
+        workspace: 'D:\\code\\proj-a',
+        sessionCount: 3,
+        activeSessions: 2,
+        archivedSessions: 1,
+        lastActiveAt: '2026-11-17 10:00:00',
+        targetDeviceId: 'dev-a',
+        targetDeviceName: 'DEV-A',
+        platform: 'win32',
+        shellPath: 'powershell.exe',
+        osVersion: '11',
+        isGit: 1,
+      },
+      {
+        workspace: '/home/u/proj-b',
+        sessionCount: 1,
+        activeSessions: 0,
+        archivedSessions: 1,
+        lastActiveAt: '2026-11-16 09:00:00',
+        targetDeviceId: null,
+        targetDeviceName: null,
+        platform: 'darwin',
+        shellPath: '/bin/zsh',
+        osVersion: '15',
+        isGit: null,
+      },
+    ];
+    const { fastify, sessionService } = await app({
+      hasDeviceConnection: (_uid, deviceId) => deviceId === 'dev-a',
+      getExecutorClientType: (_uid, deviceId) => (deviceId === 'dev-a' ? 'electron' : null),
+      localWorkspaceRows: rows,
+    });
+    const res = await fastify.inject({ method: 'GET', url: '/v1/sessions/local-workspaces' });
+    expect(res.statusCode).toBe(200);
+    const data = JSON.parse(res.body).data;
+    // 路由顺序回归：聚合端点命中静态段，未落进 /sessions/:id（getSession 未被调用）
+    expect(sessionService.getSession).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionService.listLocalWorkspaceSummaries).mock.calls[0]).toEqual([7]);
+    expect(data).toHaveLength(2);
+    expect(data[0].workspace).toBe('D:\\code\\proj-a');
+    expect(data[0].name).toBe('proj-a');
+    expect(data[0].sessionCount).toBe(3);
+    expect(data[0].activeSessions).toBe(2);
+    expect(data[0].archivedSessions).toBe(1);
+    expect(data[0].lastActiveAt).toBe('2026-11-17 10:00:00');
+    expect(data[0].targetDeviceId).toBe('dev-a');
+    expect(data[0].targetDeviceName).toBe('DEV-A');
+    expect(data[0].targetDeviceOnline).toBe(true);
+    expect(data[0].executorClientType).toBe('electron');
+    expect(data[0].platform).toBe('win32');
+    expect(data[0].shell).toBe('powershell.exe');
+    expect(data[0].osVersion).toBe('11');
+    expect(data[0].isGit).toBe(true);
+    // 未绑定工作区：设备 / 在线 / 执行端类型为空（序列化省略 null 字段），环境快照仍随代表会话带出
+    expect(data[1].targetDeviceId ?? null).toBeNull();
+    expect(data[1].targetDeviceOnline).toBeUndefined();
+    expect(data[1].executorClientType).toBeUndefined();
+    expect(data[1].isGit).toBeUndefined();
+    expect(data[1].platform).toBe('darwin');
+    expect(data[1].name).toBe('proj-b');
+    await fastify.close();
+  });
+
+  it('GET /sessions/local-workspaces 未注入设备回调：在线态缺省，条目仍返回', async () => {
+    const { fastify } = await app({
+      localWorkspaceRows: [{
+        workspace: '/home/u/proj-c',
+        sessionCount: 1,
+        activeSessions: 1,
+        archivedSessions: 0,
+        lastActiveAt: '2026-11-15 08:00:00',
+        targetDeviceId: 'dev-c',
+        targetDeviceName: null,
+        platform: null,
+        shellPath: null,
+        osVersion: null,
+        isGit: 0,
+      }],
+    });
+    const res = await fastify.inject({ method: 'GET', url: '/v1/sessions/local-workspaces' });
+    const data = JSON.parse(res.body).data;
+    expect(data).toHaveLength(1);
+    expect(data[0].targetDeviceId).toBe('dev-c');
+    expect(data[0].targetDeviceOnline).toBeUndefined();
+    expect(data[0].isGit).toBe(false);
+    await fastify.close();
   });
 
   it('GET /sessions/:id 回显 executorClientType：执行连接一致，离线/未绑定/未注入缺省', async () => {

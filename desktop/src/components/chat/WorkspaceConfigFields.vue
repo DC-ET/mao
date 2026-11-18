@@ -56,7 +56,29 @@
 
     <template v-else>
       <div class="ws-section-title">本地目录</div>
-      <button type="button" class="local-dir-btn" @click="selectWorkspace">
+      <!-- 浏览器新建 LOCAL（技术方案 2026-11-17）：只能复用已有本地工作区，下拉展示绑定设备与在线态 -->
+      <el-select
+        v-if="!isElectron"
+        :model-value="workspace"
+        placeholder="选择已有本地工作区"
+        :size="fieldSize"
+        class="ws-field"
+        popper-class="ws-local-field-select-dropdown"
+        @update:model-value="(v: string) => emit('update:workspace', v || '')"
+      >
+        <el-option
+          v-for="lw in localWorkspaces"
+          :key="lw.workspace"
+          :label="lw.name"
+          :value="lw.workspace"
+        >
+          <div class="ws-local-option">
+            <span class="ws-local-option-name">{{ lw.name }}</span>
+            <span class="ws-local-option-sub">{{ localWorkspaceDeviceLabel(lw) }}</span>
+          </div>
+        </el-option>
+      </el-select>
+      <button v-else type="button" class="local-dir-btn" @click="selectWorkspace">
         <el-icon :size="14">
           <WarningFilled v-if="!workspace" />
           <FolderOpened v-else />
@@ -71,8 +93,10 @@
 import { computed } from 'vue'
 import { FolderOpened, WarningFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import type { LocalWorkspaceSummary } from '../../stores/session'
+import { localWorkspaceDeviceLabel } from '../../utils/local-workspace'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   executionMode: string
   workspace?: string
   cloudProjectKey?: string
@@ -80,12 +104,19 @@ const props = defineProps<{
   gitCloneUrl?: string
   gitBranch?: string
   cloudProjects?: Array<{ name: string; path: string; isGit: boolean }>
+  /** 已有本地工作区条目（技术方案 2026-11-17）：浏览器新建 LOCAL 的下拉数据源 */
+  localWorkspaces?: LocalWorkspaceSummary[]
   /** 移动端底部抽屉：表单控件放大到触屏可用尺寸（输入框 40px，与智能体搜索框一致） */
   isMobile?: boolean
-}>()
+}>(), {
+  localWorkspaces: () => [],
+})
 
 /** 触屏抽屉用大号控件（40px / 14px），桌面 popover 保持 small（24px） */
 const fieldSize = computed(() => (props.isMobile ? 'large' : 'small'))
+
+// 浏览器新建 LOCAL（技术方案 2026-11-17）：无 electronAPI 时本地目录区渲染「已有工作区」下拉
+const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
 
 const emit = defineEmits<{
   'update:cloudProjectKey': [key: string]

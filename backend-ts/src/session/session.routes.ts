@@ -132,6 +132,36 @@ function normalizeTargetDeviceName(value: unknown): string | null {
   return trimmed;
 }
 
+/** LOCAL 工作区聚合条目（技术方案 2026-11-17）：GET /v1/sessions/local-workspaces 的响应结构。 */
+export interface LocalWorkspaceSummaryVO {
+  /** 存储原样路径（创建时原样回传 workspace）。 */
+  workspace: string;
+  /** 路径尾段（服务端算好，前端免拆；兼容 \ 与 / 分隔）。 */
+  name: string;
+  sessionCount: number;
+  activeSessions: number;
+  archivedSessions: number;
+  lastActiveAt: string | null;
+  /** 代表会话（优先已绑定、再最近活跃）的设备绑定；工作区无任何绑定为 null。 */
+  targetDeviceId: string | null;
+  targetDeviceName: string | null;
+  /** 绑定设备的实时在线快照；未绑定为 null（请求时快照，权威判定在发送校验）。 */
+  targetDeviceOnline: boolean | null;
+  /** 绑定设备的执行连接类型；未绑定或类型不明为 null。 */
+  executorClientType: 'electron' | 'cli' | null;
+  /** 代表会话的环境快照（创建回显沿用；platform 是惰性认领平台校验的输入）。 */
+  platform: string | null;
+  shell: string | null;
+  osVersion: string | null;
+  isGit: boolean | null;
+}
+
+/** 工作区路径尾段：兼容 \ 与 / 分隔（Windows 本机路径与存储变体），空段过滤后取末段。 */
+function workspaceTailName(workspace: string): string {
+  const parts = workspace.replace(/\\/g, '/').split('/').filter(Boolean);
+  return parts[parts.length - 1] || workspace;
+}
+
 export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDeps): void {
   const approvalRegistry = deps.approvalRegistry ?? emptyApprovalRegistry();
   const questionRegistry = deps.askUserQuestionsRegistry ?? emptyQuestionRegistry();
@@ -250,6 +280,42 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
       }
     }
     return sendOk(reply, projects);
+  });
+
+  // 浏览器端在已有本地工作区新建本地任务（技术方案 2026-11-17 §4.1-2）：该用户 LOCAL 主会话
+  // 的工作区聚合，作为新建下拉与创建回显的数据源。注册在 /v1/sessions/:id 之前（find-my-way
+  // 静态段本就恒先于参数段，此处沿惯例），防回归见 session.routes.spec.ts。
+  app.get('/v1/sessions/local-workspaces', async (request, reply) => {
+    const userId = requireUserId(request);
+    const rows = await sessionService.listLocalWorkspaceSummaries(userId);
+    const hasDeviceConnection = deps.hasDeviceConnection;
+    const readExecutor = deps.getExecutorClientType;
+    const vos: LocalWorkspaceSummaryVO[] = rows.map((row) => {
+      const deviceId = row.targetDeviceId != null && row.targetDeviceId !== '' ? row.targetDeviceId : null;
+      const online = hasDeviceConnection != null && deviceId != null
+        ? hasDeviceConnection(userId, deviceId)
+        : null;
+      const type = readExecutor != null && deviceId != null
+        ? readExecutor(userId, deviceId)
+        : null;
+      return {
+        workspace: row.workspace,
+        name: workspaceTailName(row.workspace),
+        sessionCount: Number(row.sessionCount),
+        activeSessions: Number(row.activeSessions),
+        archivedSessions: Number(row.archivedSessions),
+        lastActiveAt: row.lastActiveAt,
+        targetDeviceId: deviceId,
+        targetDeviceName: row.targetDeviceName,
+        targetDeviceOnline: online,
+        executorClientType: type === 'electron' || type === 'cli' ? type : null,
+        platform: row.platform,
+        shell: row.shellPath,
+        osVersion: row.osVersion,
+        isGit: row.isGit == null ? null : Number(row.isGit) === 1,
+      };
+    });
+    return sendOk(reply, vos);
   });
 
   app.get('/v1/sessions/groups', async (request, reply) => {

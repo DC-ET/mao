@@ -5,6 +5,7 @@ import { isCurrentChatSession, isAbsoluteFileRef, resolveFileRefPaths, useChat }
 import { api } from '../api'
 import { ElMessage } from 'element-plus'
 import { useSessionStore } from '../stores/session'
+import { getLocalDeviceInfo } from '../utils/device-info'
 
 const ws = vi.hoisted(() => ({
   connect: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn(),
@@ -17,7 +18,8 @@ vi.mock('./useStreamWS', () => ({ useStreamWS: () => ws }))
 vi.mock('./useToolApprovals', () => ({ useToolApprovals: () => ({
   pendingApprovals: ref([]), clearPendingApprovals: vi.fn(),
 }) }))
-vi.mock('../api', () => ({ api: { get: vi.fn() } }))
+vi.mock('../api', () => ({ api: { get: vi.fn(), post: vi.fn() } }))
+vi.mock('../utils/device-info', () => ({ getLocalDeviceInfo: vi.fn(async () => null) }))
 vi.mock('element-plus', () => ({ ElMessage: { warning: vi.fn(), error: vi.fn() } }))
 vi.mock('../utils/localSkills', () => ({ collectLocalUnsyncedSkills: vi.fn(async () => []) }))
 vi.mock('../utils/agentsMd', () => ({ collectAgentsMdContent: vi.fn(async () => undefined) }))
@@ -506,21 +508,50 @@ describe('resolveFileRefPaths 绝对路径跳过（含 Windows 盘符）', () =>
   })
 })
 
-// 技术方案 2026-11-05 §4.1-3：浏览器不能新建 LOCAL 任务，但可接管已有 LOCAL 会话对话
+// 技术方案 2026-11-17：浏览器可复用已有本地工作区新建 LOCAL 任务；未选定工作区仍拦截
 describe('LOCAL 模式浏览器边界', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
     ws.connect.mockResolvedValue(undefined)
     vi.mocked(api.get).mockResolvedValue({ data: [] } as never)
+    vi.mocked(api.post).mockResolvedValue({
+      data: { id: '55', agentId: '9', executionMode: 'LOCAL', workspace: 'D:\\proj', targetDeviceId: 'dev-a', targetDeviceName: 'DEV-A' },
+    } as never)
   })
 
-  it('浏览器新建 LOCAL 任务被拦截（不建连、不建会话）', async () => {
+  it('浏览器新建 LOCAL 任务未选工作区被拦截（不建连、不建会话）', async () => {
     const chat = useChat(ref('1'), ref('LOCAL'))
     await chat.sendMessage('hi')
 
-    expect(ElMessage.error).toHaveBeenCalledWith(expect.stringContaining('不能新建本地任务'))
+    expect(ElMessage.error).toHaveBeenCalledWith(expect.stringContaining('请先选择一个已有本地工作区'))
     expect(ws.connect).not.toHaveBeenCalled()
+  })
+
+  it('浏览器复用已有本地工作区新建 LOCAL：放行并回显绑定设备与环境快照', async () => {
+    const sessionStore = useSessionStore()
+    sessionStore.localWorkspaces = [{
+      workspace: 'D:\\proj', name: 'proj', sessionCount: 2, activeSessions: 2, archivedSessions: 0,
+      lastActiveAt: '2026-11-17 10:00:00',
+      targetDeviceId: 'dev-a', targetDeviceName: 'DEV-A', targetDeviceOnline: true, executorClientType: 'electron',
+      platform: 'win32', shell: 'powershell.exe', osVersion: '11', isGit: true,
+    }]
+    const chat = useChat(ref('1'), ref('LOCAL'))
+    chat.workspace.value = 'D:\\proj'
+    // 发送链路在建会话后因 WS mock 不完整而收敛，断言只看创建 payload（守卫与回显是本用例目标）
+    await chat.sendMessage('hi')
+
+    expect(ElMessage.error).not.toHaveBeenCalledWith(expect.stringContaining('请先选择一个已有本地工作区'))
+    expect(api.post).toHaveBeenCalled()
+    const [url, payload] = (vi.mocked(api.post).mock.calls[0] ?? []) as [string, Record<string, unknown>]
+    expect(url).toBe('/sessions')
+    expect(payload.executionMode).toBe('LOCAL')
+    expect(payload.workspace).toBe('D:\\proj')
+    expect(payload.targetDeviceId).toBe('dev-a')
+    expect(payload.targetDeviceName).toBe('DEV-A')
+    expect(payload.platform).toBe('win32')
+    expect(payload.shell).toBe('powershell.exe')
+    expect(payload.isGit).toBe(true)
   })
 
   it('浏览器继续已有 LOCAL 会话时放行到发送链路', async () => {
@@ -535,8 +566,39 @@ describe('LOCAL 模式浏览器边界', () => {
     ws.connect.mockRejectedValueOnce(new Error('stop here'))
     await chat.sendMessage('hi')
 
-    expect(ElMessage.error).not.toHaveBeenCalledWith(expect.stringContaining('不能新建本地任务'))
+    expect(ElMessage.error).not.toHaveBeenCalledWith(expect.stringContaining('请先选择一个已有本地工作区'))
     expect(ws.connect).toHaveBeenCalled()
+  })
+
+  it('Electron 创建 LOCAL 回归：设备与环境仍来自本机，浏览器回显分支不影响（方案 §7-5）', async () => {
+    vi.mocked(getLocalDeviceInfo).mockResolvedValueOnce({ id: 'dev-local', name: 'MY-PC', platform: 'win32' })
+    // 本文件运行于 node 环境（无 window）：stub 一个带 electronAPI 的 window 使 isElectron 为真
+    vi.stubGlobal('window', {
+      electronAPI: {
+        onToolApprovalRequest: vi.fn(),
+        onToolApprovalDismiss: vi.fn(),
+        selectDirectory: async () => 'D:\\proj',
+        getEnvironmentInfo: async () => ({ isGit: false, platform: 'win32', shell: 'cmd.exe', osVersion: '11' }),
+      },
+    })
+    try {
+      const chat = useChat(ref('1'), ref('LOCAL'))
+      // 发送链路在建会话后因 WS mock 不完整而收敛，断言只看创建 payload（Electron 口径回归）
+      await chat.sendMessage('hi')
+
+      expect(api.post).toHaveBeenCalled()
+      const [url, payload] = (vi.mocked(api.post).mock.calls[0] ?? []) as [string, Record<string, unknown>]
+      expect(url).toBe('/sessions')
+      expect(payload.executionMode).toBe('LOCAL')
+      expect(payload.workspace).toBe('D:\\proj')
+      expect(payload.targetDeviceId).toBe('dev-local')
+      expect(payload.targetDeviceName).toBe('MY-PC')
+      expect(payload.platform).toBe('win32')
+      expect(payload.shell).toBe('cmd.exe')
+      expect(payload.isGit).toBe(false)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
 

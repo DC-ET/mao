@@ -13,8 +13,8 @@
               <el-icon :size="12"><Cloudy /></el-icon> 云端模式
             </el-radio-button>
           </el-tooltip>
-          <el-tooltip content="工具在你本地电脑上执行，可直接访问本地文件和开发环境，需要桌面应用保持连接" placement="top" :show-after="400">
-            <el-radio-button value="LOCAL" :disabled="!isElectronClient">
+          <el-tooltip :content="localTooltip" placement="top" :show-after="400">
+            <el-radio-button value="LOCAL" :disabled="!isElectronClient && localWorkspaces.length === 0">
               <el-icon :size="12"><Monitor /></el-icon> 本地模式
             </el-radio-button>
           </el-tooltip>
@@ -35,8 +35,30 @@
           :value="opt.value"
         />
       </el-select>
+      <!-- 浏览器新建 LOCAL（技术方案 2026-11-17）：只能复用已有本地工作区，下拉展示绑定设备与在线态 -->
+      <el-select
+        v-if="executionMode === 'LOCAL' && !isElectronClient"
+        :model-value="workspace"
+        placeholder="选择已有本地工作区"
+        size="small"
+        class="local-workspace-select"
+        popper-class="local-workspace-select-dropdown"
+        @update:model-value="onLocalWorkspaceChange"
+      >
+        <el-option
+          v-for="lw in localWorkspaces"
+          :key="lw.workspace"
+          :label="lw.name"
+          :value="lw.workspace"
+        >
+          <div class="local-workspace-option">
+            <span class="local-workspace-option-name">{{ lw.name }}</span>
+            <span class="local-workspace-option-sub">{{ localWorkspaceSubtitle(lw) }}</span>
+          </div>
+        </el-option>
+      </el-select>
       <div
-        v-if="executionMode === 'LOCAL'"
+        v-if="executionMode === 'LOCAL' && isElectronClient"
         class="workspace-selector"
         :class="{ 'has-workspace': !!workspace }"
         @click="selectWorkspace"
@@ -108,8 +130,9 @@
 import { computed } from 'vue'
 import { Cloudy, Monitor, WarningFilled, FolderOpened } from '@element-plus/icons-vue'
 import AgentSelector from '../task/AgentSelector.vue'
-import type { CloudProject } from '../../stores/session'
+import type { CloudProject, LocalWorkspaceSummary } from '../../stores/session'
 import { formatSize } from '../../utils/file-manager'
+import { localWorkspaceDeviceLabel } from '../../utils/local-workspace'
 
 const props = defineProps<{
   isNewTask: boolean
@@ -124,13 +147,29 @@ const props = defineProps<{
   cloudProjectKey: string | undefined
   gitCloneUrl: string | undefined
   cloudProjects: CloudProject[]
+  /** 已有本地工作区条目（技术方案 2026-11-17）：浏览器新建 LOCAL 的下拉与 radio 可用性数据源 */
+  localWorkspaces: LocalWorkspaceSummary[]
   selectedAgentId: string | null
   handleModeChange: (mode: string) => void
   onWorkspaceModeChange: (mode: string) => void
   onCloudProjectKeyChange: (value: string) => void
   onGitCloneUrlChange: (value: string) => void
+  /** 浏览器下拉选中已有本地工作区（Electron 仍走 selectWorkspace 选目录） */
+  onLocalWorkspaceChange: (workspace: string) => void
   selectWorkspace: () => void
 }>()
+
+/** LOCAL radio 的 tooltip 按端分叉：Electron 本机执行；浏览器复用已有工作区（绑定设备执行） */
+const localTooltip = computed(() => {
+  if (props.isElectronClient) return '工具在你本地电脑上执行，可直接访问本地文件和开发环境，需要桌面应用保持连接'
+  if (props.localWorkspaces.length === 0) return '浏览器端暂无已有本地工作区，请先在桌面客户端创建本地任务'
+  return '在已有本地工作区新建任务，由其绑定的设备执行，需该设备在线'
+})
+
+/** 浏览器本地工作区下拉条目副标题：绑定设备 + 在线态（未绑定按惰性认领口径提示） */
+function localWorkspaceSubtitle(entry: LocalWorkspaceSummary): string {
+  return localWorkspaceDeviceLabel(entry)
+}
 
 /** 新建态带入的显式工作区（总览「用于新任务」）：无 cloudProjectKey 时以只读条目展示，
  *  有项目键时仍走「现有工作区」下拉（路径与 projects/{key} 一致，下拉才是可控入口） */
@@ -178,6 +217,22 @@ const emit = defineEmits<{
   flex-direction: column;
   gap: 1px;
   min-width: 0;
+}
+
+.local-workspace-option {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.local-workspace-option-name {
+  font-size: var(--aw-text-caption);
+}
+
+.local-workspace-option-sub {
+  font-size: var(--aw-text-micro);
+  color: var(--aw-ink-muted-48);
 }
 
 .cloud-project-option-name {

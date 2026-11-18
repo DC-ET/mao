@@ -327,4 +327,38 @@ describe('SessionRepository failed-session recovery queries', () => {
     expect(String(sql)).toContain('deleted = 0');
     expect(params).toEqual([431, 473]);
   });
+
+  it('listLocalWorkspaceSummaries 聚合口径：LOCAL 主会话 / 软删与 embed+signal 排除 / 代表会话优先绑定再最新', async () => {
+    const row = {
+      workspace: 'D:\\code\\proj-a',
+      sessionCount: 3,
+      activeSessions: 2,
+      archivedSessions: 1,
+      lastActiveAt: '2026-11-17 10:00:00',
+      targetDeviceId: 'dev-a',
+      targetDeviceName: 'DEV-A',
+      platform: 'win32',
+      shellPath: 'powershell.exe',
+      osVersion: '11',
+      isGit: 1,
+    };
+    const db = mockDb(null, [row]);
+    const repo = new SessionRepository(db as never);
+    expect(await repo.listLocalWorkspaceSummaries(7)).toEqual([row]);
+    const [sql, params] = db.query.mock.calls[0];
+    const text = String(sql);
+    // 聚合层与代表层同一 LOCAL 主会话口径（两处占位参数 → [userId, userId]）
+    expect(text.match(/user_id = \?/g)).toHaveLength(2);
+    expect(text.match(/execution_mode = 'LOCAL'/g)).toHaveLength(2);
+    expect(text.match(/session_type = 'NORMAL'/g)).toHaveLength(2);
+    expect(text.match(/deleted = 0/g)).toHaveLength(2);
+    expect(text.match(/source NOT IN \('embed', 'signal'\)/g)).toHaveLength(2);
+    expect(text).toContain('GROUP BY workspace');
+    // 代表会话：窗口函数取 rn=1，优先已绑定（IS NULL ASC）再按 updated_at DESC、id DESC 兜底
+    expect(text).toContain('ROW_NUMBER() OVER');
+    expect(text).toContain('(target_device_id IS NULL) ASC, updated_at DESC, id DESC');
+    expect(text).toContain('WHERE t.rn = 1');
+    expect(text).toContain('ORDER BY agg.lastActiveAt DESC, agg.workspace ASC');
+    expect(params).toEqual([7, 7]);
+  });
 });

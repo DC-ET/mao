@@ -1,6 +1,6 @@
 # 安卓 APP
 
-基于 **Capacitor 7** WebView 壳，包名 `cn.etarch.mao.app`。**仅 CLOUD 模式**（无 `electronAPI`，自动禁用 LOCAL）。
+基于 **Capacitor 7** WebView 壳，包名 `cn.etarch.mao.app`。无 `electronAPI`：不能挑选本地目录、本地终端等桌面能力不可用；LOCAL 模式可复用已有本地工作区新建任务（2026-11-18 起，执行端为该工作区绑定的桌面设备），其余场景仍以 CLOUD 为主。
 
 生产环境**远程加载**与 Web/Electron 相同的桌面 Web URL（你部署的站点，如 `https://mao.example.com`），前端改动**无需打 APK**——部署 Web 后顶栏刷新或等待 `version.json` 提示即可。
 
