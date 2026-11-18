@@ -270,7 +270,13 @@ export function useStreamWS() {
       void getLocalDeviceInfo().then((device) => {
         // 等待期间连接可能已被更新的连接 / disconnect() 取代，或已断开
         if (socket !== ws || socket.readyState !== WebSocket.OPEN) return
-        socket.send(JSON.stringify({ type: 'auth', token, client, ...(device ? { device } : {}) }))
+        // 客户端能力声明（技术方案 2026-11-18 D2）：renderer 有 file_op 执行器，显式声明
+        // 让服务端分层投递走档 1；浏览器 clientType 为 browser，本就不是投递候选，无需声明。
+        socket.send(JSON.stringify({
+          type: 'auth', token, client,
+          ...(device ? { device } : {}),
+          capabilities: ['file_op'],
+        }))
       })
     }
 

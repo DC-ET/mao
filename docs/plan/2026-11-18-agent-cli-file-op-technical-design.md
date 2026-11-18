@@ -1,6 +1,6 @@
 # 终端 CLI（mao-agent）实现文件代理技术方案（CLI 绑定 LOCAL 会话的远程文件浏览）
 
-- 状态：草案（2026-11-18；2026-11-18 已按代码逐条核实并修订：投递档序修正（显式声明优先于 legacy 推断，修复「旧桌面 + 新 CLI」白等超时）、CLI 图片不缩放与桌面的行为差异如实标注、capabilities 解析边界与四 op DTO 字段细节补全、executor / file-ops 的收窄分工与行号校正）
+- 状态：已实施（2026-11-18 落地；评审修订：投递档序修正（显式声明优先于 legacy 推断，修复「旧桌面 + 新 CLI」白等超时）、CLI 图片不缩放与桌面的行为差异如实标注、capabilities 解析边界与四 op DTO 字段细节补全、executor / file-ops 的收窄分工与行号校正）
 - 日期：2026-11-18
 - 关联方案：
   - [2026-11-17-local-file-tree-remote-proxy-technical-design.md](./2026-11-17-local-file-tree-remote-proxy-technical-design.md)（已落地：LOCAL 会话文件树远程代理主体。本方案是其 §9-5 开放问题的立项，补齐 CLI 执行端）

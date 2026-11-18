@@ -68,6 +68,8 @@ describe('WsClient', () => {
     expect((server.received[authIndex] as { device?: unknown }).device).toEqual({
       id: 'dev-test', name: 'Test Host', platform: 'linux',
     });
+    // 客户端能力声明（技术方案 2026-11-18 D2）：服务端按连接分层投递文件代理请求
+    expect((server.received[authIndex] as { capabilities?: string[] }).capabilities).toEqual(['file_op']);
     expect(subscribeIndex).toBeGreaterThan(authIndex);
     client.close();
   });

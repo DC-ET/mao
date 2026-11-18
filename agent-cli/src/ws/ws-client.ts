@@ -243,6 +243,8 @@ export class WsClient {
         this.send({
           type: 'auth', token, client,
           device,
+          // 客户端能力声明（技术方案 2026-11-18 D2）：服务端按连接定向投递文件代理等能力感知请求
+          capabilities: ['file_op'],
         });
         this.startHeartbeat();
         for (const sid of this.subscribed) {

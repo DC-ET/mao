@@ -33,13 +33,16 @@ export interface WsDeliveryResult {
 }
 
 /**
- * 文件代理请求投递结果（技术方案 2026-11-17 D11）：client-type 感知的三态。
- * delivered 携带实际接收连接（断线清理按「请求 → 下发连接」精确失败）。
+ * 文件代理请求投递结果（技术方案 2026-11-17 D11 / 2026-11-18 分层改造）：四态。
+ * delivered 携带实际接收连接（断线清理按「请求 → 下发连接」精确失败）；
+ * cliOnly = 仅剩旧版 CLI（未声明能力，升级提示）；noCapable = 连接都在且均显式声明
+ * 但无 file_op（版本过旧提示）；offline = 设备无任何可写连接。
  */
 export type FileCapableDelivery =
   | { status: 'delivered'; socket: WsSocket }
   | { status: 'offline' }
-  | { status: 'cliOnly' };
+  | { status: 'cliOnly' }
+  | { status: 'noCapable' };
 
 export function delivered(result: WsDeliveryResult): boolean {
   return result.successCount > 0;
@@ -150,6 +153,8 @@ export class StreamingWsRegistry {
   private readonly embedConnectionSessions = new Map<string, Set<number>>();
   /** 连接级页面操作能力声明：socket.id → pageEnabled（auth 首帧定格，缺省 true）。 */
   private readonly sessionPageEnabled = new Map<string, boolean>();
+  /** 连接级客户端能力声明（auth 帧 capabilities，技术方案 2026-11-18）：socket.id → 能力名集合（缺省空集 = 旧客户端未声明）。 */
+  private readonly connectionCapabilities = new Map<string, Set<string>>();
 
   constructor(outboundQueueCapacity = 10000) {
     this.capacity = outboundQueueCapacity;
@@ -188,6 +193,7 @@ export class StreamingWsRegistry {
     metadata?: WsAuthMetadata,
     pageEnabled = true,
     device?: WsDeviceInfo | null,
+    capabilities?: ReadonlySet<string>,
   ): void {
     if (this.closedConnections.has(session)) return;
     // 同一 socket 重复 auth / 重连注册：先释放旧设备映射，避免旧 deviceId 指向已失效连接
@@ -204,6 +210,7 @@ export class StreamingWsRegistry {
     const normalizedClientType = this.normalizeClientType(clientType);
     this.sessionToClientType.set(session.id, normalizedClientType);
     this.sessionPageEnabled.set(session.id, pageEnabled);
+    this.connectionCapabilities.set(session.id, capabilities ? new Set(capabilities) : new Set());
     this.connectionConnectedAt.set(session.id, Date.now());
     let set = this.userSessions.get(userId);
     if (!set) {
@@ -231,6 +238,7 @@ export class StreamingWsRegistry {
     if (auth?.timer) clearTimeout(auth.timer);
     this.connectionAuth.delete(session.id);
     this.sessionPageEnabled.delete(session.id);
+    this.connectionCapabilities.delete(session.id);
     this.connectionConnectedAt.delete(session.id);
     this.releaseEmbedConnection(session);
     this.releaseDevice(session);
@@ -522,12 +530,18 @@ export class StreamingWsRegistry {
     return this.connectionDevice.get(session.id)?.id ?? null;
   }
 
+  /** 连接 auth 帧声明的能力（技术方案 2026-11-18 D2）：未声明 / 旧客户端为空集。 */
+  hasCapability(session: WsSocket, name: string): boolean {
+    return this.connectionCapabilities.get(session.id)?.has(name) ?? false;
+  }
+
   /**
-   * 文件代理请求投递（技术方案 2026-11-17 D11）：只投给执行端设备上的 Electron renderer 连接。
+   * 文件代理请求投递（技术方案 2026-11-17 D11 / 2026-11-18 分层改造）：只投给执行端设备上
+   * 声明了 file_op 能力的连接；electron 未声明任何能力时按 legacy 回退视为可投递
+   * （11-17~now 桌面端有 handler 但 auth 帧不带 capabilities）。档序见 FileCapableDelivery。
    * deviceExecutors 每设备只存一条执行连接（同 deviceId 最新覆盖），Electron 与 CLI 并存时
    * 该槽可能被 CLI 占住——直接 sendToDevice 会把 file_op_request 发给 CLI 被静默忽略、
-   * 白等超时。因此这里扫描该设备的全部存活连接：优先执行连接（若为 electron），其次任意
-   * electron 连接；仅剩 CLI 连接时返回 cliOnly（代理层回专用文案）；无连接返回 offline。
+   * 白等超时。因此这里扫描该设备的全部存活连接按档取首条命中；无连接返回 offline。
    */
   sendToFileCapableDevice(userId: number, deviceId: string, event: WsEvent): FileCapableDelivery {
     const connections = [...(this.userSessions.get(userId) ?? [])].filter((s) =>
@@ -542,16 +556,24 @@ export class StreamingWsRegistry {
     } catch {
       return { status: 'offline' };
     }
-    const executor = this.deviceExecutors.get(userId)?.get(deviceId);
-    const target = connections.find((s) => s === executor && this.sessionToClientType.get(s.id) === 'electron')
-      ?? connections.find((s) => this.sessionToClientType.get(s.id) === 'electron');
-    if (target == null) return { status: 'cliOnly' };
-    try {
-      target.send(json);
-      return { status: 'delivered', socket: target };
-    } catch {
-      return { status: 'offline' };
+    // 档序（技术方案 2026-11-18 §4.1-3）：显式声明优先于 legacy 推断，声明端内部 electron 优先。
+    // 若 legacy electron 先于声明的 cli 命中，同机「旧桌面（无 handler）+ 新 CLI」会白等超时。
+    const typeOf = (s: WsSocket) => this.sessionToClientType.get(s.id);
+    const declared = (s: WsSocket) => (this.connectionCapabilities.get(s.id)?.size ?? 0) > 0;
+    const target = connections.find((s) => typeOf(s) === 'electron' && this.hasCapability(s, 'file_op'))
+      ?? connections.find((s) => typeOf(s) === 'cli' && this.hasCapability(s, 'file_op'))
+      ?? connections.find((s) => typeOf(s) === 'electron' && !declared(s));
+    if (target != null) {
+      try {
+        target.send(json);
+        return { status: 'delivered', socket: target };
+      } catch {
+        return { status: 'offline' };
+      }
     }
+    // 档 4：仅剩旧版 CLI（未声明）→ 升级提示；档 5：连接都在且都显式声明但均无 file_op → 版本过旧
+    if (connections.some((s) => typeOf(s) === 'cli' && !declared(s))) return { status: 'cliOnly' };
+    return { status: 'noCapable' };
   }
 
   /** 连接自报的设备信息（浏览器 / 旧客户端返回 null）。 */

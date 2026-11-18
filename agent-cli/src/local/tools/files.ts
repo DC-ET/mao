@@ -31,7 +31,8 @@ export function extractFilePath(args: Record<string, unknown>): string | undefin
   return typeof v === 'string' ? v : undefined;
 }
 
-function mimeFromPath(filePath: string): string | null {
+/** 图片扩展名 → mime：read_file 与文件代理 read op（file-ops.ts）共用（技术方案 2026-11-18 §4.2-2）。 */
+export function mimeFromPath(filePath: string): string | null {
   const lower = filePath.toLowerCase();
   for (const [ext, mime] of Object.entries(IMAGE_EXT)) {
     if (lower.endsWith(ext)) return mime;
@@ -57,7 +58,8 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function readImage(resolvedPath: string, filePath: string): Record<string, unknown> {
+/** 图片字节读取（5MB 上限、不缩放）：read_file 与文件代理 read op 共用。 */
+export function readImage(resolvedPath: string, filePath: string): Record<string, unknown> {
   const sizeBytes = fs.statSync(resolvedPath).size;
   if (sizeBytes > MAX_IMAGE_BYTES) {
     return readError(

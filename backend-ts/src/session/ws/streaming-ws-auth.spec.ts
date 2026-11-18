@@ -189,3 +189,57 @@ describe('WS SSO authentication lifecycle', () => {
     expect(requestCancel).not.toHaveBeenCalled();
   });
 });
+
+describe('auth 帧客户端能力声明（capabilities，技术方案 2026-11-18 D2）', () => {
+  let registry: StreamingWsRegistry;
+  let handler: StreamingWsHandler;
+  let ws: WsSocket;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    registry = new StreamingWsRegistry();
+    ws = socket('caps');
+    const jwtService = {
+      getAccessTokenMetadata: vi.fn(() => ({ userId: 7, authSource: 'local', expiresAt: NOW + 1000 })),
+      getTokenType: vi.fn(() => 'access'),
+    };
+    handler = new StreamingWsHandler({
+      registry, jwtService,
+      localToolSessionRegistry: { failAllForUser: vi.fn(), failAllForSocket: vi.fn() },
+      embedPageToolRegistry: { failSession: vi.fn(), complete: vi.fn(() => true) },
+    } as unknown as WsHandlerDeps);
+  });
+
+  afterEach(() => {
+    registry.shutdown();
+    vi.useRealTimers();
+  });
+
+  async function authWith(capabilities: unknown): Promise<void> {
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'auth', token: 'old', client: 'cli',
+      device: { id: 'dev-1', name: 'Mac', platform: 'darwin' },
+      ...(capabilities === undefined ? {} : { capabilities }),
+    }));
+  }
+
+  it('acceptsValidCapabilityListAndDeduplicates', async () => {
+    await authWith(['file_op', ' file_op ', 'other']);
+    expect(registry.hasCapability(ws, 'file_op')).toBe(true);
+    expect(registry.hasCapability(ws, 'other')).toBe(true);
+  });
+
+  it('treatsInvalidShapesAsNoCapabilities（整体判非法）', async () => {
+    for (const bad of ['file_op', 42, ['file_op', 42], ['file_op', '   '], Array.from({ length: 17 }, (_, i) => `c${i}`)]) {
+      await authWith(bad);
+      expect(registry.hasCapability(ws, 'file_op')).toBe(false);
+    }
+  });
+
+  it('treatsMissingCapabilitiesAsEmptySet（旧客户端照常注册）', async () => {
+    await authWith(undefined);
+    expect(registry.hasCapability(ws, 'file_op')).toBe(false);
+    expect(registry.getDeviceId(ws)).toBe('dev-1');
+  });
+});

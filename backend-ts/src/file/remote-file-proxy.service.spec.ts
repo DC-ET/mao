@@ -101,7 +101,13 @@ describe('RemoteFileProxyService', () => {
   it('设备仅有 CLI 连接（cliOnly）：回 D11 专用文案，不空等超时', async () => {
     wsRegistry.sendToFileCapableDevice.mockReturnValue({ status: 'cliOnly' });
     await expect(proxy.execute(localSession(), 'list', {}))
-      .rejects.toThrow('该任务由终端 CLI（mao-agent）执行，暂不支持远程浏览本地文件');
+      .rejects.toThrow('该任务由终端 CLI（mao-agent）执行，当前版本暂不支持远程浏览本地文件，请升级 mao-agent 后重试');
+  });
+
+  it('连接均显式声明但无 file_op（noCapable）：回版本过旧文案', async () => {
+    wsRegistry.sendToFileCapableDevice.mockReturnValue({ status: 'noCapable' });
+    await expect(proxy.execute(localSession(), 'list', {}))
+      .rejects.toThrow('执行端客户端不支持远程浏览本地文件，请升级桌面客户端或 mao-agent 后重试');
   });
 
   it('投递零成功（offline）：立即回离线文案，不进 pending', async () => {

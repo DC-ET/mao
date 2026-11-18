@@ -458,8 +458,18 @@ describe('StreamingWsRegistry listConnections（管理后台在线设备页）',
   });
 });
 
-describe('sendToFileCapableDevice（文件代理投递，技术方案 2026-11-17 D11）', () => {
+describe('sendToFileCapableDevice（文件代理分层投递，技术方案 2026-11-17 D11 / 2026-11-18）', () => {
   let registry: StreamingWsRegistry;
+
+  const DEVICE = { id: 'dev-1', name: 'Mac', platform: 'darwin' };
+  const FILE_OP = new Set(['file_op']);
+  const OTHER = new Set(['other_tool']);
+
+  function reg(id: string, clientType: string, capabilities?: ReadonlySet<string>, userId = 7, sendImpl?: (data: string) => void): WsSocket {
+    const socket = mockSocket(id, sendImpl);
+    registry.register(socket, userId, clientType, undefined, true, DEVICE, capabilities);
+    return socket;
+  }
 
   beforeEach(() => {
     registry = new StreamingWsRegistry(10);
@@ -469,34 +479,69 @@ describe('sendToFileCapableDevice（文件代理投递，技术方案 2026-11-17
     registry.shutdown();
   });
 
-  it('deliversToElectronConnectionOfTheBoundDevice', () => {
-    const socket = mockSocket('ws-1');
-    registry.register(socket, 7, 'electron', undefined, true, { id: 'dev-1', name: 'Mac', platform: 'darwin' });
+  it('deliversToElectronConnectionOfTheBoundDevice（显式声明档 1）', () => {
+    const socket = reg('ws-1', 'electron', FILE_OP);
     const result = registry.sendToFileCapableDevice(7, 'dev-1', wsEvent('file_op_request', 11, { requestId: 'r1' }));
     expect(result.status).toBe('delivered');
     expect(socket.send).toHaveBeenCalledTimes(1);
     expect(JSON.parse(socket.send.mock.calls[0][0] as string).type).toBe('file_op_request');
   });
 
-  it('prefersElectronConnectionEvenWhenExecutorSlotIsHeldByCli', () => {
-    // 同机 Electron + CLI 并存共用 deviceId：deviceExecutors 执行连接槽被 CLI 覆盖后，
-    // file_op_request 仍必须投给 electron renderer（CLI 收到会静默忽略、白等超时）
-    const electronSocket = mockSocket('ws-electron');
-    const cliSocket = mockSocket('ws-cli');
-    registry.register(electronSocket, 7, 'electron', undefined, true, { id: 'dev-1', name: 'Mac', platform: 'darwin' });
-    registry.register(cliSocket, 7, 'cli', undefined, true, { id: 'dev-1', name: 'Mac', platform: 'darwin' });
+  it('deliversToCliConnectionThatDeclaresFileOp（档 2：CLI 显式声明可投递）', () => {
+    const cliSocket = reg('ws-cli', 'cli', FILE_OP);
+    const result = registry.sendToFileCapableDevice(7, 'dev-1', wsEvent('file_op_request', 11, { requestId: 'r1' }));
+    expect(result.status).toBe('delivered');
+    expect((result as { socket: WsSocket }).socket.id).toBe('ws-cli');
+    expect(cliSocket.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('prefersDeclaredElectronOverDeclaredCli（档 1 先于档 2：声明端内部 electron 优先）', () => {
+    const electronSocket = reg('ws-electron', 'electron', FILE_OP);
+    const cliSocket = reg('ws-cli', 'cli', FILE_OP);
     const result = registry.sendToFileCapableDevice(7, 'dev-1', wsEvent('file_op_request', 11, { requestId: 'r1' }));
     expect(result.status).toBe('delivered');
     expect((result as { socket: WsSocket }).socket.id).toBe('ws-electron');
     expect(cliSocket.send).not.toHaveBeenCalled();
   });
 
-  it('reportsCliOnlyWhenDeviceHasNoElectronConnection', () => {
-    const cliSocket = mockSocket('ws-cli');
-    registry.register(cliSocket, 7, 'cli', undefined, true, { id: 'dev-1', name: 'Mac', platform: 'darwin' });
+  it('deliversToLegacyElectronWithoutCapabilities（档 3：11-17~now 桌面端 legacy 回退）', () => {
+    const socket = reg('ws-legacy', 'electron');
+    const result = registry.sendToFileCapableDevice(7, 'dev-1', wsEvent('file_op_request', 11, { requestId: 'r1' }));
+    expect(result.status).toBe('delivered');
+    expect((result as { socket: WsSocket }).socket.id).toBe('ws-legacy');
+  });
+
+  it('prefersDeclaredCliOverLegacyElectron（档序核心：同机旧桌面 + 新 CLI 投 CLI 不投旧桌面）', () => {
+    // 旧桌面（<11-17，无 handler 且未声明）若先命中会白等 15s 超时；显式声明的 cli 必须先于 legacy electron
+    const legacyElectron = reg('ws-old-desktop', 'electron');
+    const newCli = reg('ws-new-cli', 'cli', FILE_OP);
+    const result = registry.sendToFileCapableDevice(7, 'dev-1', wsEvent('file_op_request', 11, { requestId: 'r1' }));
+    expect(result.status).toBe('delivered');
+    expect((result as { socket: WsSocket }).socket.id).toBe('ws-new-cli');
+    expect(legacyElectron.send).not.toHaveBeenCalled();
+    // 11-17 桌面（legacy 但有 handler）+ 新 CLI 并存：同样改投 CLI（两端 DTO 与归一化同形，UI 无感）
+    registry.shutdown();
+    registry = new StreamingWsRegistry(10);
+    reg('ws-desktop-1117', 'electron');
+    const cli2 = reg('ws-cli-1118', 'cli', FILE_OP);
+    const again = registry.sendToFileCapableDevice(7, 'dev-1', wsEvent('file_op_request', 11, { requestId: 'r2' }));
+    expect(again.status).toBe('delivered');
+    expect((again as { socket: WsSocket }).socket.id).toBe('ws-cli-1118');
+    expect(cli2.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('reportsCliOnlyWhenDeviceOnlyHasLegacyCli（档 4：旧版 CLI 升级提示）', () => {
+    const cliSocket = reg('ws-cli', 'cli');
     const result = registry.sendToFileCapableDevice(7, 'dev-1', wsEvent('file_op_request', 11, { requestId: 'r1' }));
     expect(result.status).toBe('cliOnly');
     expect(cliSocket.send).not.toHaveBeenCalled();
+  });
+
+  it('reportsNoCapableWhenAllConnectionsDeclareWithoutFileOp（档 5：版本过旧提示）', () => {
+    reg('ws-electron', 'electron', OTHER);
+    reg('ws-cli', 'cli', OTHER);
+    const result = registry.sendToFileCapableDevice(7, 'dev-1', wsEvent('file_op_request', 11, { requestId: 'r1' }));
+    expect(result.status).toBe('noCapable');
   });
 
   it('reportsOfflineWhenDeviceHasNoAliveConnection', () => {
@@ -514,8 +559,18 @@ describe('sendToFileCapableDevice（文件代理投递，技术方案 2026-11-17
   });
 
   it('reportsOfflineWhenSendThrows', () => {
-    const socket = mockSocket('ws-1', () => { throw new Error('broken pipe'); });
-    registry.register(socket, 7, 'electron', undefined, true, { id: 'dev-1', name: 'Mac', platform: 'darwin' });
+    reg('ws-1', 'electron', FILE_OP, 7, () => { throw new Error('broken pipe'); });
     expect(registry.sendToFileCapableDevice(7, 'dev-1', wsEvent('file_op_request', 11, {})).status).toBe('offline');
+  });
+
+  it('clearsCapabilitiesOnUnregisterAndOverwrite', () => {
+    const socket = reg('ws-1', 'cli', FILE_OP);
+    expect(registry.hasCapability(socket, 'file_op')).toBe(true);
+    // 同 socket 重复注册不带能力：先清后写
+    registry.register(socket, 7, 'cli', undefined, true, DEVICE);
+    expect(registry.hasCapability(socket, 'file_op')).toBe(false);
+    registry.register(socket, 7, 'cli', undefined, true, DEVICE, FILE_OP);
+    registry.unregister(socket);
+    expect(registry.hasCapability(socket, 'file_op')).toBe(false);
   });
 });

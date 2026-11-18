@@ -10,6 +10,7 @@ import {
 } from './approval';
 import { isWorkspaceWithin } from './sandbox';
 import { persistToolResult } from './truncate';
+import { executeFileOp } from './file-ops';
 import { handleEditFile, handleReadFile, handleWriteFile, handleWriteLocalTextFile } from './tools/files';
 import { handleGlobSearch, handleGrepSearch } from './tools/search';
 import { createCliShellRuntime, type LocalShellRuntime } from './tools/shell';
@@ -180,6 +181,8 @@ export class LocalExecutor {
     try {
       if (evt.type === 'tool_execute') {
         await this.onToolExecute(sessionId, d);
+      } else if (evt.type === 'file_op_request') {
+        await this.onFileOpRequest(sessionId, d);
       } else if (evt.type === 'skill_sync_required') {
         if (this.isOutsideTrust(d.workspace)) return;
         await this.onSkillSync(sessionId, d);
@@ -193,6 +196,8 @@ export class LocalExecutor {
       const message = e instanceof Error ? e.message : String(e);
       if (evt.type === 'tool_execute' && typeof d.requestId === 'string') {
         await this.failTool(sessionId, d.requestId, message);
+      } else if (evt.type === 'file_op_request' && typeof d.requestId === 'string') {
+        await this.failFileOp(sessionId, d.requestId, message);
       } else if (evt.type === 'skill_sync_required') {
         await this.opts.ws.sendReliable({
           type: 'skill_sync_done',
@@ -672,6 +677,35 @@ export class LocalExecutor {
 
   private async failTool(sessionId: number, requestId: string, error: string): Promise<void> {
     await this.opts.ws.sendReliable({ type: 'tool_error', sessionId, requestId, error });
+  }
+
+  /**
+   * 文件代理请求（技术方案 2026-11-18 §4.2-3）：信任收窄后交给 file-ops 模块执行并回帧。
+   * 只读 op，无审批弹窗（与桌面一致）；requestId 缺失直接忽略（与 onToolExecute 同款）。
+   */
+  private async onFileOpRequest(sessionId: number, d: Record<string, unknown>): Promise<void> {
+    const requestId = typeof d.requestId === 'string' ? d.requestId : '';
+    if (!requestId) return;
+    let workspace: string;
+    try {
+      workspace = this.resolveWorkspace(d.workspace);
+    } catch (e) {
+      await this.failFileOp(sessionId, requestId, e instanceof Error ? e.message : String(e));
+      return;
+    }
+    const params = d.params != null && typeof d.params === 'object' && !Array.isArray(d.params)
+      ? d.params as Record<string, unknown>
+      : {};
+    const op = typeof d.op === 'string' ? d.op : '';
+    const frame = await executeFileOp(sessionId, { requestId, op: op as never, params, workspace });
+    const sent = await this.opts.ws.sendReliable(frame);
+    if (!sent) {
+      console.error(`Failed to send file_op_result session=${sessionId} requestId=${requestId}`);
+    }
+  }
+
+  private async failFileOp(sessionId: number, requestId: string, error: string): Promise<void> {
+    await this.opts.ws.sendReliable({ type: 'file_op_result', sessionId, requestId, ok: false, error });
   }
 
   /**
