@@ -5,6 +5,7 @@ import { WsClient, type WsClientOptions } from '../ws/ws-client';
 import { LocalExecutor } from '../local/executor';
 import { ensureWorkspaceTrusted } from '../local/trust';
 import { resolveDeviceIdentity, type DeviceIdentity } from '../local/device-identity';
+import { TerminalHost, type TerminalHostOptions } from '../local/terminal-host';
 import { DEFAULT_REMOTE_APPROVAL_TIMEOUT_MS, type ApprovalPolicy } from '../local/approval';
 import { CliError, EXIT } from '../util/exit-codes';
 
@@ -62,6 +63,8 @@ export interface DaemonHooks {
   onSignal?: (name: 'SIGINT' | 'SIGTERM', fn: () => void) => void;
   stdout?: (line: string) => void;
   stderr?: (line: string) => void;
+  /** 终端主机（技术方案 2026-11-18 §4.7）：测试注入 / 返回 null 关闭 */
+  createTerminalHost?: (opts: TerminalHostOptions) => TerminalHost | null;
 }
 
 /**
@@ -161,6 +164,16 @@ export async function cmdLocal(ctx: ChatContext, hooks: DaemonHooks = {}): Promi
   const stopped = new Promise<number>((resolve) => {
     release = resolve;
   });
+  // 终端主机（技术方案 2026-11-18 §4.7）：PTY 与这条连接都在本进程。PTY 不能迁进程，
+  // 所以不复用 WsClient 的重连；主机 socket 断开由服务器 60 秒宽限兜底。
+  const terminalHost = (hooks.createTerminalHost ?? ((opts: TerminalHostOptions) => new TerminalHost(opts)))({
+    baseUrl: ctx.baseUrl,
+    getToken: ctx.getToken,
+    deviceId: device.id,
+    workspace: trustRoot,
+    debug: cfg.debug ? (message) => ctx.logger.debug(message) : undefined,
+  });
+  terminalHost?.start();
   const shutdown = () => {
     if (stopping) return;
     stopping = true;
@@ -172,6 +185,11 @@ export async function cmdLocal(ctx: ChatContext, hooks: DaemonHooks = {}): Promi
       }
       try {
         ws.close();
+      } catch {
+        // ignore
+      }
+      try {
+        terminalHost?.shutdown();
       } catch {
         // ignore
       }

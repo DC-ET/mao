@@ -146,8 +146,8 @@
 
 | 现象 | 排查 |
 |------|------|
-| 终端按钮置灰 | 悬浮看 tooltip：未打开任务 / 无 `terminal:use` 权限（默认只授管理员）/ 任务工作区不可用 / LOCAL 任务在 Web 或安卓上不支持 |
-| 新建终端报「仅云端任务支持远程终端」 | 当前任务是 LOCAL；LOCAL 终端只在 Electron 里可用 |
+| 终端按钮置灰 | 悬浮看 tooltip：未打开任务 / 无 `terminal:use` 权限（默认只授管理员）/ 任务工作区不可用 / 未登记执行端 / 执行端设备离线 / 当前桌面客户端版本不支持远程终端（请升级）/ 当前 mao-agent 版本不支持远程终端（请升级） |
+| 新建终端报「仅云端任务支持远程终端」 | 当前任务既非 CLOUD 也未装配中继（LOCAL 终端走执行端的桌面客户端或 mao-agent 主机，需已升级的执行端在线） |
 | 新建终端报数量上限 | 达到 `terminal.maxSessionsPerTask` / `terminal.maxSessionsGlobal`，关掉不用的终端或调大配置（需重启后端） |
 | 打开终端后立刻报错/后端 `npm ci` 失败 | 服务器缺 `python3 make g++`，`node-pty` 原生模块没编译成功，装好后重新 `npm ci && npm run build` |
 | 终端全部消失 | 后端重启不恢复终端（预期）；或触发空闲/存活回收（`terminal.idleTimeoutMinutes`、`terminal.maxLifetimeHours`；切走任务或收起面板后终端开始计空闲）；任务被删除也会关闭其终端 |

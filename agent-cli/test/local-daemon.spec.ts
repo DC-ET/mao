@@ -93,6 +93,9 @@ describe('local daemon', () => {
         reconnectInitialMs: 30,
         reconnectMaxMs: 50,
       }),
+      // 终端主机（技术方案 2026-11-18 §4.7）会自己连 WS 并消耗 getToken 序列：
+      // 本用例只测 daemon 路由，不注入主机（baseUrl 也指向假服务器，真实连接无意义）
+      createTerminalHost: () => null,
     });
     try {
       await waitFor(() => server!.received.some((m) => (m as { type?: string }).type === 'auth'));

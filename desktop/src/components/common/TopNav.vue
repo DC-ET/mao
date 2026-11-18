@@ -153,6 +153,8 @@ import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useVersionCheck } from '../../composables/useVersionCheck'
 import { readScreenFillingWindow, reserveMacTrafficLightInset as shouldReserveMacTrafficLightInset } from '../../utils/macTrafficLightInset'
 import { isElectronClient } from '../../utils/platform'
+import { terminalAvailability as computeTerminalAvailability } from '../../utils/terminal-availability'
+import { getLocalDeviceId } from '../../utils/device-info'
 import { goBackToWorkbench } from '../../utils/workbench-nav'
 import SessionSearchPopover from '../search/SessionSearchPopover.vue'
 import UsageBell from '../usage/UsageBell.vue'
@@ -215,18 +217,17 @@ const paletteCenterTabs = useCenterTabs(computed(() => sessionStore.activeSessio
 const { isOpen: terminalOpen, togglePanel } = useTerminal()
 const { toggleLeft, toggleRight } = usePanelLayout()
 
-/** 终端按钮可用性矩阵：CLOUD 走云端终端（需 terminal:use），LOCAL 仅 Electron 可用。 */
+/** 本机设备 id（技术方案 2026-11-05 共享设备文件）：执行端判定用，异步取一次缓存。 */
+const localDeviceId = ref<string | null>(null)
+void getLocalDeviceId().then((id) => { localDeviceId.value = id })
+
+/** 终端按钮可用性矩阵（技术方案 2026-11-18 §4.2）：判定抽在 utils/terminal-availability 纯函数里。 */
 const terminalAvailability = computed<{ enabled: boolean; tooltip: string }>(() => {
-  const session = sessionStore.activeSession
-  if (!session) return { enabled: false, tooltip: '请先打开一个任务' }
-  if (session.executionMode === 'CLOUD') {
-    if (!authStore.hasPermission('terminal:use')) return { enabled: false, tooltip: '没有终端使用权限' }
-    if (!session.workspace) return { enabled: false, tooltip: '任务工作区不可用' }
-    return { enabled: true, tooltip: '终端 (Ctrl+`)' }
-  }
-  // LOCAL：Web 与安卓 Capacitor 都没有 electronAPI，无法开本机终端
-  if (!isElectronClient()) return { enabled: false, tooltip: '本地任务的终端仅在桌面客户端可用' }
-  return { enabled: true, tooltip: '终端 (Ctrl+`)' }
+  return computeTerminalAvailability(sessionStore.activeSession, {
+    isElectronClient: isElectronClient(),
+    hasTerminalUsePermission: authStore.hasPermission('terminal:use'),
+    localDeviceId: localDeviceId.value,
+  })
 })
 
 function toggleTerminal() {

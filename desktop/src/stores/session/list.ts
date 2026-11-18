@@ -1,3 +1,5 @@
+import type { TerminalHostAvailability } from '@mao/contracts'
+import { TERMINAL_HOST_AVAILABILITIES } from '@mao/contracts'
 import { computed, ref } from 'vue'
 import { api } from '../../api'
 import { useDraftStore } from '../draft'
@@ -673,25 +675,34 @@ export function createSessionListModule(ctx: {
     online: boolean,
     deviceName?: string | null,
     clientType?: string | null,
+    terminalHost?: string | null,
   ): number {
     if (!deviceId) return 0
     const explicitType = clientType === 'electron' || clientType === 'cli' ? clientType : undefined
+    // 终端主机快照（技术方案 2026-11-18 §4.8）：帧里没带 / 脏值时保持原值；离线帧一律清回 null
+    const frameHost = typeof terminalHost === 'string'
+      && (TERMINAL_HOST_AVAILABILITIES as readonly string[]).includes(terminalHost)
+      ? terminalHost as TerminalHostAvailability
+      : undefined
     let changed = 0
     for (const entity of [...sessionEntities.value.values()]) {
       if (entity.executionMode !== 'LOCAL') continue
       if ((entity.targetDeviceId ?? '') !== deviceId) continue
       const nextName = deviceName != null && deviceName !== '' ? deviceName : entity.targetDeviceName
       const nextType = explicitType ?? entity.executorClientType
+      const nextHost = !online ? null : frameHost !== undefined ? frameHost : entity.terminalHost
       if (
         entity.targetDeviceOnline === online
         && entity.targetDeviceName === nextName
         && entity.executorClientType === nextType
+        && entity.terminalHost === nextHost
       ) continue
       upsertSessionEntity({
         ...entity,
         targetDeviceOnline: online,
         targetDeviceName: nextName,
         executorClientType: nextType,
+        terminalHost: nextHost,
       })
       changed++
     }

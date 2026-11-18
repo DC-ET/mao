@@ -141,6 +141,9 @@ import { registerAdminSessionRoutes } from './session/admin-session.routes.js';
 import type { FailedSessionRecoveryService } from './session/failed-session-recovery.service.js';
 import { registerAdminSessionFilesRoutes } from './session/admin-session-files.routes.js';
 import { registerTerminalRoutes } from './session/terminal.routes.js';
+import type { TerminalHostAvailability } from '@mao/contracts';
+import type { LocalTerminalRelay } from './harness/terminal/local-terminal-relay.js';
+import type { TerminalHostHandler } from './harness/terminal/terminal-host-handler.js';
 import { WorkspaceWriteService } from './file/workspace-write.service.js';
 import { WorkspaceOverviewService } from './file/workspace-overview.service.js';
 import { registerFileRoutes } from './file/file.routes.js';
@@ -347,6 +350,12 @@ export interface RouteDeps {
   // ws
   wsHandler: StreamingWsHandler;
   terminalWsHandler: TerminalWsHandler;
+  /** 本地任务中继终端注册表（技术方案 2026-11-18）；未装配时 LOCAL 创建按未支持拒绝。 */
+  terminalRelay?: LocalTerminalRelay | null;
+  /** 终端主机连接管理：/ws/terminal-host 路由与 terminalHost 快照共用。 */
+  terminalHostHandler?: TerminalHostHandler | null;
+  /** 绑定设备的终端主机可用性（session 快照回调用）。 */
+  getTerminalHost?: (userId: number, deviceId: string) => TerminalHostAvailability | null;
 }
 
 export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
@@ -390,6 +399,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     dingtalk,
     notifPref,
     wsHandler, terminalWsHandler,
+    terminalRelay, terminalHostHandler,
   } = deps;
 
   await app.register(async (api) => {
@@ -532,6 +542,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       existsSessionUnderWorkspace: (userId: number, path: string) => sessionRepo.existsSessionUnderWorkspace(userId, path),
       hasDeviceConnection: deps.hasDeviceConnection,
       getExecutorClientType: deps.getExecutorClientType,
+      getTerminalHost: deps.getTerminalHost,
     });
     const sessionShareService = new SessionShareService(
       new MysqlSessionShareRepository(db),
@@ -588,6 +599,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     });
     registerTerminalRoutes(api, {
       terminalManager,
+      relay: terminalRelay,
       sessionService,
       permissionService,
       userLookup: { findById: (id: number) => userRepo.findById(id) as Promise<{ username: string } | null> },
@@ -732,6 +744,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       handler: wsHandler,
       idleTimeoutMs: agentRuntimeCfg.wsIdleTimeoutMs,
       terminalHandler: terminalWsHandler,
+      terminalHostHandler: terminalHostHandler ?? undefined,
     });
   }, { prefix: apiPrefix });
 }

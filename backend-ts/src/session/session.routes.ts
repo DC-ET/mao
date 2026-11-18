@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
+import type { TerminalHostAvailability } from '@mao/contracts';
 import { join, resolve, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { BusinessException } from '../common/business-exception.js';
@@ -76,6 +77,11 @@ export interface SessionRouteDeps {
    * 不把 WS registry 塞进 HTTP 层；缺省为 null。
    */
   getExecutorClientType?: (userId: number, deviceId: string) => string | null;
+  /**
+   * 绑定设备的终端主机可用性（技术方案 2026-11-18 §4.5）。与 hasDeviceConnection 一样
+   * 回调注入；缺省 / 未绑定 / 离线 / 宽限中为 null（前端不据此禁用，点击由 REST 给具体文案）。
+   */
+  getTerminalHost?: (userId: number, deviceId: string) => TerminalHostAvailability | null;
 }
 
 interface CreateSessionRequest {
@@ -223,6 +229,13 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
       } else {
         const type = readExecutor(ownerId, deviceId);
         vo.executorClientType = type === 'electron' || type === 'cli' ? type : null;
+      }
+      const readHost = deps.getTerminalHost;
+      if (readHost == null || deviceId == null || deviceId === '' || ownerId == null
+        || vo.targetDeviceOnline !== true) {
+        vo.terminalHost = null;
+      } else {
+        vo.terminalHost = readHost(ownerId, deviceId);
       }
     });
     const mainIds = sessions.map((s) => s.id!).filter((id) => id != null);

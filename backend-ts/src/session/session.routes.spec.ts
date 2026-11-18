@@ -41,6 +41,7 @@ describe('session and admin routes', () => {
     participated?: boolean;
     hasDeviceConnection?: (userId: number, deviceId: string) => boolean;
     getExecutorClientType?: (userId: number, deviceId: string) => string | null;
+    getTerminalHost?: (userId: number, deviceId: string) => string | null;
     localWorkspaceRows?: LocalWorkspaceSummaryRow[];
   } = {}) {
     const fastify = Fastify();
@@ -139,6 +140,7 @@ describe('session and admin routes', () => {
       existsSessionUnderWorkspace: vi.fn(async () => options.participated ?? false),
       hasDeviceConnection: options.hasDeviceConnection,
       getExecutorClientType: options.getExecutorClientType,
+      getTerminalHost: options.getTerminalHost,
     });
     registerAdminSessionRoutes(fastify, {
       sessionService,
@@ -1042,6 +1044,40 @@ describe('session and admin routes', () => {
     );
     const res = await plain.fastify.inject({ method: 'GET', url: '/v1/sessions/1' });
     expect(JSON.parse(res.body).data.targetDeviceOnline).toBeUndefined();
+    await plain.fastify.close();
+  });
+
+  it('GET /sessions/:id 回显 terminalHost：设备在线且有主机 → 值；离线 / 未绑定 → null（P2-15）', async () => {
+    const { fastify, sessionService } = await app({
+      hasDeviceConnection: (_uid, deviceId) => deviceId === 'dev-a',
+      getTerminalHost: (_uid, deviceId) => (deviceId === 'dev-a' ? 'enabled' : null),
+    });
+    const get = () => fastify.inject({ method: 'GET', url: '/v1/sessions/1' });
+
+    // 在线 + 主机 enabled：快照带值
+    vi.mocked(sessionService.getSession).mockResolvedValueOnce(
+      session({ executionMode: 'LOCAL', targetDeviceId: 'dev-a' }) as never,
+    );
+    expect(JSON.parse((await get()).body).data.terminalHost).toBe('enabled');
+
+    // 设备离线（hasDeviceConnection false）：强制 null；JSON 序列化按 Jackson 口径省略 null 字段
+    vi.mocked(sessionService.getSession).mockResolvedValueOnce(
+      session({ executionMode: 'LOCAL', targetDeviceId: 'dev-b' }) as never,
+    );
+    expect(JSON.parse((await get()).body).data).not.toHaveProperty('terminalHost');
+
+    // 未绑定：同样省略
+    vi.mocked(sessionService.getSession).mockResolvedValueOnce(session({ executionMode: 'LOCAL' }) as never);
+    expect(JSON.parse((await get()).body).data).not.toHaveProperty('terminalHost');
+    await fastify.close();
+
+    // 未注入回调（非 WS 装配场景）：字段缺省
+    const plain = await app();
+    vi.mocked(plain.sessionService.getSession).mockResolvedValueOnce(
+      session({ executionMode: 'LOCAL', targetDeviceId: 'dev-a' }) as never,
+    );
+    const res = await plain.fastify.inject({ method: 'GET', url: '/v1/sessions/1' });
+    expect(JSON.parse(res.body).data.terminalHost).toBeUndefined();
     await plain.fastify.close();
   });
 

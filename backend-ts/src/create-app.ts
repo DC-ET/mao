@@ -139,6 +139,10 @@ import { StreamingWsRegistry } from './session/ws/streaming-ws-registry.js';
 import { EmbedPageToolRegistry, resolveEmbedPageToolTimeoutMs } from './harness/embed-page-tool-registry.js';
 import { TerminalManager } from './harness/terminal/terminal-manager.js';
 import { TerminalWsHandler } from './harness/terminal/terminal-ws-handler.js';
+import type { RemoteTerminalInfo } from './harness/terminal/remote-terminal.js';
+import type { TerminalCloseReason } from './harness/terminal/terminal-manager.js';
+import { LocalTerminalRelay } from './harness/terminal/local-terminal-relay.js';
+import { TerminalHostHandler } from './harness/terminal/terminal-host-handler.js';
 import { WebhookSecretCipher } from './notification/task/webhook-secret-cipher.js';
 import { LlmUsageRepository, LlmUsageService } from './usage/llm-usage.service.js';
 import { LlmCallRepository } from './usage/llm-call.repository.js';
@@ -205,6 +209,10 @@ export interface AppContext {
   notifyFeishuPendingMismatch: ((pending: { appId: number; event: FeishuNormalizedMessage }) => Promise<void>) | undefined;
   /** 终端管理器：会话删除回调延迟解引用。 */
   terminalManagerRef: TerminalManager | null;
+  /** 本地任务中继终端注册表：构造晚于 SessionService，会话删除回调延迟解引用（2026-11-18 §4.3）。 */
+  terminalRelayRef: LocalTerminalRelay | null;
+  /** 终端主机连接管理：构造晚于 wsHandler，device_status 广播回调延迟解引用。 */
+  terminalHostHandlerRef: TerminalHostHandler | null;
   /** 定时任务清理回调：会话删除路径延迟解引用。 */
   deleteScheduledTasksForSession: ((sessionId: number) => Promise<void>) | null;
   /** MCP 同步服务：会话删除路径延迟解引用。 */
@@ -225,6 +233,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     pendingBindingProcessor: undefined,
     notifyFeishuPendingMismatch: undefined,
     terminalManagerRef: null,
+    terminalRelayRef: null,
+    terminalHostHandlerRef: null,
     deleteScheduledTasksForSession: null,
     mcpSyncRef: null,
     containerRuntimeActive: false,
@@ -519,7 +529,19 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
     pathSandbox, envInfo, commandService, gitOps, sessionCompactionService, sessionCompactionEventService, todoRepo,
     runtimeSessionCleanup(runtimeRoot),
-    (sessionId) => { ctx.terminalManagerRef?.closeBySession(sessionId); },
+    (sessionId) => {
+      // 云端与中继一起关（技术方案 2026-11-18 §4.3）：某一边抛错不影响另一边
+      try {
+        ctx.terminalManagerRef?.closeBySession(sessionId);
+      } catch (e) {
+        console.error(`云端终端随会话删除关闭失败 sessionId=${sessionId}`, e);
+      }
+      try {
+        ctx.terminalRelayRef?.closeBySession(sessionId);
+      } catch (e) {
+        console.error(`中继终端随会话删除关闭失败 sessionId=${sessionId}`, e);
+      }
+    },
     // 会话删除后清理绑定资源：定时任务 + CLOUD MCP 快照（技术方案 §4.5 第 3 点，
     // 快照存活期是会话级，只在会话删除路径回收）。mcpSync 晚于本 service 构造，故延迟解引用。
     async (sessionId) => {
@@ -641,8 +663,21 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     ptyFactory: containerPtyFactory,
   });
   ctx.terminalManagerRef = terminalManager;
+  // 中继注册表构造晚于 wsHandler，观看通道经目录门面延迟解引用（技术方案 2026-11-18 §4.4）：
+  // get = cloud ?? relay，onClosed 两边都订阅——接管 / 背压 / 回放 / 回收通知对中继同样生效
+  const terminalRelayRef: { current: LocalTerminalRelay | null } = { current: null };
+  // onClosed 观察者登记早于中继构造（P0-2 评审修复）：先缓存，中继就位后补挂——
+  // 否则中继的 HOST_LOST / RECLAIM / SESSION_DELETED 通知永远到不了观看端
+  const pendingClosedListeners: Array<(info: RemoteTerminalInfo, reason: TerminalCloseReason) => void> = [];
   const terminalWsHandler = new TerminalWsHandler({
-    terminalManager,
+    terminalManager: {
+      get: (terminalId) => terminalManager.get(terminalId) ?? terminalRelayRef.current?.get(terminalId) ?? null,
+      onClosed: (listener) => {
+        pendingClosedListeners.push(listener);
+        terminalManager.onClosed(listener);
+        terminalRelayRef.current?.onClosed(listener);
+      },
+    },
     jwtService: jwt,
     permissionService,
     audit: terminalAudit,
@@ -886,6 +921,41 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     openTriggerSettle, openCallSettle,
   });
 
+  // 本地任务中继终端 + 主机连接（技术方案 2026-11-18 §4.5）：两者互相引用
+  // （relay 经 host 发帧、host 经 relay 对账/回包），主机侧用 adapter 延迟解引用打破装配环。
+  // 配额、空闲回收与删除级联读同一个 terminalCfg / terminalManager。
+  const terminalHostHandler = new TerminalHostHandler({
+    jwtService: jwt,
+    relay: {
+      handleOpened: (host, frame) => ctx.terminalRelayRef?.handleOpened(host, frame),
+      handleOpenFailed: (host, frame) => ctx.terminalRelayRef?.handleOpenFailed(host, frame),
+      handleHostOutput: (host, terminalId, data) => ctx.terminalRelayRef?.handleHostOutput(host, terminalId, data),
+      handleHostExit: (host, terminalId, exitCode) => ctx.terminalRelayRef?.handleHostExit(host, terminalId, exitCode),
+      reconcileForDevice: (userId, deviceId, terminalIds) =>
+        ctx.terminalRelayRef?.reconcileForDevice(userId, deviceId, terminalIds),
+      handleHostLost: (userId, deviceId) => ctx.terminalRelayRef?.handleHostLost(userId, deviceId),
+      failPendingForDevice: (userId, deviceId) => ctx.terminalRelayRef?.failPendingForDevice(userId, deviceId),
+    },
+    streamTypes: wsRegistry,
+    onStatusChanged: (userId, deviceId) => {
+      wsHandler.notifyTerminalHostChanged(userId, deviceId, (u, d) => terminalHostHandler.getStatus(u, d));
+    },
+  });
+  const localTerminalRelay = new LocalTerminalRelay({
+    terminalManager,
+    config: terminalCfg,
+    host: terminalHostHandler,
+    hostStatus: { resolve: (userId, deviceId) => terminalHostHandler.getStatus(userId, deviceId) },
+    audit: terminalAudit,
+  });
+  terminalRelayRef.current = localTerminalRelay;
+  // 补挂构造期登记的观察者（TerminalWsHandler 的 handleClosed 依赖它收敛前端状态）
+  for (const listener of pendingClosedListeners) {
+    localTerminalRelay.onClosed(listener);
+  }
+  ctx.terminalRelayRef = localTerminalRelay;
+  ctx.terminalHostHandlerRef = terminalHostHandler;
+
   const containerScriptProbe = new ContainerScriptProbe({
     enabledFor: (userId) => dockerRouter.enabledFor(userId),
     ensureRunning: (userId, agentId) => containerRegistry.ensureRunning(userId, agentId),
@@ -996,6 +1066,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     dingtalk,
     notifPref,
     wsHandler, terminalWsHandler,
+    terminalRelay: localTerminalRelay,
+    terminalHostHandler,
     hasDeviceConnection: (userId: number, deviceId: string) => wsRegistry.hasDeviceConnection(userId, deviceId),
     getExecutorClientType: (userId: number, deviceId: string) => {
       const socket = wsRegistry.getDeviceExecutorSocket(userId, deviceId);
@@ -1003,6 +1075,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       const type = wsRegistry.getClientType(socket);
       return type === 'electron' || type === 'cli' ? type : null;
     },
+    getTerminalHost: (userId: number, deviceId: string) => terminalHostHandler.getStatus(userId, deviceId),
   });
 
   const { closeApp } = assembleLifecycle({
@@ -1012,7 +1085,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     genericWebhookSender,
     agentExecutor, inboxCleanupStore, callLogService, callLogCleanup,
     ecpSessionRepo, weixinMonitor, feishuMonitor, dingtalk, pendingBindingMessages,
-    shellManager, terminalManager, wsHandler, subagentMapper, sessionMap, sessionSvc,
+    shellManager, terminalManager, localTerminalRelay, wsHandler, subagentMapper, sessionMap, sessionSvc,
     compactionSvc, definitionRegistry, backgroundSubagentManager, agentLoop: holder.loop!, visibility,
     localToolSessions, subagentResultDelivery, taskTerminal, harness: holder.harness!, wsRegistry,
     activityService, activityHeartbeat, todoMapper, modelRepo, feishuProgressCardRepo,

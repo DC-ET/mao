@@ -176,8 +176,9 @@ CLI 只读诊断：`mao file workspace-*`（见 [file.md](file.md)）。
 | 任务模式 | 客户端 | 是否可用 |
 |----------|--------|----------|
 | CLOUD | Electron / Web / 安卓 | 可用（服务端 bash，需 `terminal:use` 权限） |
-| LOCAL | Electron | 可用（本机 shell） |
-| LOCAL | Web / 安卓 | 不可用（提示「本地任务的终端仅在桌面客户端可用」） |
+| LOCAL | 本机是执行端的 Electron | 可用（本机 shell，走本机 IPC） |
+| LOCAL | 绑定设备的桌面客户端或 mao-agent 在线 | 可用（中继终端：shell 在执行端那台电脑上，2026-11-19 起，不另设本机允许开关） |
+| LOCAL | 其余 | 不可用（按钮按原因置灰：未登记执行端 / 执行端设备离线 / 桌面客户端过旧 / mao-agent 过旧；点击后的具体文案以接口为准） |
 
 **云端终端**：跑在后端服务器上的交互式 bash，工作目录为任务工作区，环境变量与 Agent 的 Shell 工具一致（虚拟 HOME、`GIT_TOKEN_*`、`GIT_ASKPASS`、`MAO_TOKEN`、`ECP_TOKEN`（有 ECP 票时）、`MAO_TASK_NAME`），首次使用写入默认 `.bashrc`。其中 `GIT_TOKEN_*` 只注入「用户凭据域 ∩ 当前 Agent 允许域」（2026-11-06 起）；**收紧白名单或切换 Agent 后，已打开的终端不会自动刷新，需重开终端才生效**。权限 `terminal:use` 默认只授管理员角色；无权限时按钮置灰并提示原因。
 
@@ -193,6 +194,8 @@ CLI 只读诊断：`mao file workspace-*`（见 [file.md](file.md)）。
 - **移动端输入法**：xterm 的隐藏输入框会累积已输入内容，移动端输入法提交字符时可能被整段重发（[xterm.js#6078](https://github.com/xtermjs/xterm.js/issues/6078)）。触屏端已安装清扫器（`desktop/src/utils/terminal-ime-guard.ts`）在按键后清空该累积值，桌面端保持 xterm 原生行为。
 
 云端终端没有路径沙箱与命令白名单，权限等同后端服务账号，仅应授予受信任的管理员。
+
+**中继终端（2026-11-19 起）**：LOCAL 任务在非执行端打开的终端，PTY 跑在绑定设备的桌面客户端（Electron 主进程）或 mao-agent 进程上，`cwd` 固定是该会话在那台机器上的工作区，观看协议（接管 / 回放过滤 / 背压 / 安卓虚拟键）与云端终端一致；不需要 `terminal:use`。同设备同时有桌面客户端与 mao-agent 时新建落在桌面客户端；主机进程退出 / 后端重启后中继终端不保留（与云端终端同一预期）。同机双开时，桌面正在用的本机终端与手机开的中继终端互不串扰。
 
 ## 设置
 

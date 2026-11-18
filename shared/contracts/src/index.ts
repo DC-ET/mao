@@ -82,3 +82,5 @@ export type {
   EmbedSessionPage,
   EmbedMessageVO,
 } from './ws';
+export type { TerminalHostAvailability } from './terminal';
+export { TERMINAL_HOST_AVAILABILITIES } from './terminal';

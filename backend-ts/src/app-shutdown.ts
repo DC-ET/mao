@@ -10,6 +10,8 @@ import type { CrashRecoveryRunner } from './harness/core/crash-recovery-runner.j
 import type { DeployDrainWatcher } from './harness/core/deploy-drain-watcher.js';
 import type { ShellSessionManager } from './harness/shell/shell-session-manager.js';
 import type { TerminalManager } from './harness/terminal/terminal-manager.js';
+import type { LocalTerminalRelay } from './harness/terminal/local-terminal-relay.js';
+import type { TerminalHostHandler } from './harness/terminal/terminal-host-handler.js';
 import type { RuntimeChannelServer } from './harness/container/runtime-channel-server.js';
 import type { ContainerRegistry } from './harness/container/container-registry.js';
 import type { PtyChannelHub } from './harness/container/pty-bridge.js';
@@ -49,6 +51,9 @@ export interface ShutdownDeps {
   ecpRenewScheduler: EcpRenewScheduler;
   shellManager: ShellSessionManager;
   terminalManager: TerminalManager;
+  /** 本地任务中继终端（技术方案 2026-11-18）：关停时与云端终端同口径清空。 */
+  localTerminalRelay?: LocalTerminalRelay | null;
+  terminalHostHandler?: TerminalHostHandler | null;
   ptyChannelHubs: Map<number, PtyChannelHub>;
   ptyHubGeneration: Map<number, number>;
   containerRegistry: ContainerRegistry;
@@ -70,7 +75,7 @@ export function createShutdownHandler(deps: ShutdownDeps): () => Promise<void> {
     weixinMonitor, feishuMonitor, dingtalk, weixinInboundHandler, feishuInboundProcessor,
     scheduler, deliveryScheduler, callLogService, callLogCleanup,
     watcherScheduler, signalCheckCleanup, ecpRenewScheduler,
-    shellManager, terminalManager, ptyChannelHubs, ptyHubGeneration,
+    shellManager, terminalManager, localTerminalRelay, terminalHostHandler, ptyChannelHubs, ptyHubGeneration,
     containerRegistry, channelServer, runtimeCleanup, activityHeartbeat, wsRegistry,
     agentLoop, wsHandler, sessionService,
   } = deps;
@@ -127,6 +132,9 @@ export function createShutdownHandler(deps: ShutdownDeps): () => Promise<void> {
       shellManager.stopCleanup();
       terminalManager.stopCleanup();
       terminalManager.closeAll();
+      localTerminalRelay?.stopCleanup();
+      localTerminalRelay?.closeAll();
+      terminalHostHandler?.closeAll();
       for (const hub of ptyChannelHubs.values()) hub.dispose();
       ptyChannelHubs.clear();
       ptyHubGeneration.clear();

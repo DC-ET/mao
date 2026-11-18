@@ -4,6 +4,8 @@ import type { StreamingWsHandler } from './streaming-ws-handler.js';
 import type { WsSocket } from './streaming-ws-registry.js';
 import { WS_OPEN } from './streaming-ws-registry.js';
 import type { TerminalSocket, TerminalWsHandler } from '../../harness/terminal/terminal-ws-handler.js';
+import type { TerminalHostHandler } from '../../harness/terminal/terminal-host-handler.js';
+import { HOST_FRAME_MAX_BYTES } from '../../harness/terminal/local-terminal-relay.js';
 import { resolveIp } from '../../audit/audit.interceptor.js';
 
 export interface AttachWebSocketDeps {
@@ -11,6 +13,9 @@ export interface AttachWebSocketDeps {
   idleTimeoutMs?: number;
   terminalHandler: TerminalWsHandler;
   terminalIdleTimeoutMs?: number;
+  /** 终端主机通道（技术方案 2026-11-18 §4.5）：Electron 主进程 / mao-agent 的 PTY 连接。 */
+  terminalHostHandler?: TerminalHostHandler;
+  terminalHostIdleTimeoutMs?: number;
 }
 
 export async function attachWebSocket(app: FastifyInstance, deps: AttachWebSocketDeps): Promise<void> {
@@ -21,6 +26,7 @@ export async function attachWebSocket(app: FastifyInstance, deps: AttachWebSocke
   });
   const idleTimeoutMs = deps.idleTimeoutMs ?? 90_000;
   const terminalIdleTimeoutMs = deps.terminalIdleTimeoutMs ?? 90_000;
+  const terminalHostIdleTimeoutMs = deps.terminalHostIdleTimeoutMs ?? 90_000;
 
   app.get('/ws/stream', { websocket: true }, (socket) => {
     const wrapped: WsSocket = {
@@ -85,4 +91,46 @@ export async function attachWebSocket(app: FastifyInstance, deps: AttachWebSocke
     });
     socket.on('pong', () => { lastActivity = Date.now(); });
   });
+
+  // 终端主机通道：PTY 跑在绑定设备的 Electron 主进程 / mao-agent 进程上，服务器只登记转发。
+  // 与另外两条路由同 scope；空闲 90 秒（主机每 10 秒 ping 刷新）。
+  if (deps.terminalHostHandler != null) {
+    const hostHandler = deps.terminalHostHandler;
+    app.get('/ws/terminal-host', { websocket: true }, (socket) => {
+      const wrapped: TerminalSocket = {
+        id: `term-host-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        get readyState() { return socket.readyState === socket.OPEN ? WS_OPEN : socket.readyState; },
+        get bufferedAmount() { return socket.bufferedAmount ?? 0; },
+        send(data: string) { socket.send(data); },
+        close(code?: number, reason?: string) { socket.close(code, reason); },
+      };
+      let lastActivity = Date.now();
+      const idleTimer = setInterval(() => {
+        if (Date.now() - lastActivity > terminalHostIdleTimeoutMs) {
+          socket.close(1001, 'idle timeout');
+        }
+      }, 15_000);
+      socket.on('message', (raw: Buffer | string) => {
+        lastActivity = Date.now();
+        // 单帧上限 256KB（低于本路由 1MB 传输上限）：超限直接按主机断开处理（§4.5），
+        // 避免一个异常帧拆掉连接后状态不清
+        const size = typeof raw === 'string' ? Buffer.byteLength(raw, 'utf8') : raw.length;
+        if (size > HOST_FRAME_MAX_BYTES) {
+          socket.close(1009, 'frame too large');
+          return;
+        }
+        const text = typeof raw === 'string' ? raw : raw.toString('utf8');
+        void hostHandler.handleTextMessage(wrapped, text);
+      });
+      socket.on('close', () => {
+        clearInterval(idleTimer);
+        hostHandler.afterConnectionClosed(wrapped);
+      });
+      socket.on('error', () => {
+        clearInterval(idleTimer);
+        hostHandler.handleTransportError(wrapped);
+      });
+      socket.on('pong', () => { lastActivity = Date.now(); });
+    });
+  }
 }

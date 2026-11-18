@@ -226,6 +226,8 @@ import { removeSessionTabsFor } from '../../composables/useCenterTabs'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import { useRelativeTime, formatRelativeTime } from '../../composables/useRelativeTime'
 import { cloudGroupKey, cloudProjectKeyForNewTask, isEmbedGroupKey, isGroupRenameable, newTaskWorkspaceFromSession, resolveGroupLabel, SIGNAL_GROUP_KEY } from '../../utils/cloud-project'
+import { isElectronClient } from '../../utils/platform'
+import { getLocalDeviceId } from '../../utils/device-info'
 import { planFocusReveal, planGroupReveal } from '../../utils/taskSidebarReveal'
 import { sortSessionsInGroup } from '../../utils/taskGroupSort'
 import { sessionToFocusCandidate, sortByFocusPriority, isHistoryEligible } from '../../utils/focusSort'
@@ -254,7 +256,7 @@ const emit = defineEmits<{
 
 const router = useRouter()
 const sessionStore = useSessionStore()
-const { createTerminal, isOpen: terminalOpen } = useTerminal()
+const { createTerminal, isOpen: terminalOpen, createLocalTerminal } = useTerminal()
 const { sortGroups, onDragEnd, loadPrefs, isGroupCollapsed, toggleGroupCollapsed, expandGroup, groupAliases, renameGroup, resetGroupAlias } = useTaskPanelPrefs()
 useRelativeTime()
 
@@ -977,15 +979,52 @@ function openGroupFolder(group: { key: string }) {
 }
 
 function openTerminal(group: { key: string }) {
-  if (typeof window === 'undefined' || !window.electronAPI?.openTerminal) {
-    ElMessage.info('终端仅在桌面客户端可用')
+  const workspace = group.key.startsWith('LOCAL:') ? group.key.substring(6) : ''
+  if (!workspace) return
+  void openGroupTerminal(group, workspace)
+}
+
+/**
+ * 中继终端（技术方案 2026-11-18 §4.4）：不再用 electronAPI.openTerminal 的存在性当
+ * 「是否桌面客户端」的探针。目标会话（活跃会话属于该分组则用它，否则取分组里
+ * 最近更新的主会话并设为活跃——面板只显示当前会话的标签）：
+ * - 本机是执行端（含绑定缺失）：IPC 本机终端，cwd 为分组工作区（行为与改造前一致）。
+ * - 其它客户端（Web / 安卓 / 绑定在别的设备的桌面）：对该会话建中继终端，
+ *   cwd 固定用服务端保存的 session.workspace。
+ */
+async function openGroupTerminal(group: { key: string }, workspace: string): Promise<void> {
+  const groupSessions = groupedSessions.value.find((g) => g.key === group.key)?.sessions ?? []
+  const active = sessionStore.activeSession
+  const activeInGroup = active != null && groupSessions.some((s) => String(s.id) === String(active.id))
+  const targetSession: Session | null = activeInGroup ? active! : (groupSessions[0] ?? null)
+  if (typeof window === 'undefined' || !isElectronClient() || targetSession == null) {
+    // Web / 安卓 / 分组暂无会话：只有中继一条路（分组无会话时 Electron 也开不了）
+    if (targetSession == null) {
+      ElMessage.info('该分组暂无会话，无法打开终端')
+      return
+    }
+    if (!activeInGroup) sessionStore.setActiveSession(String(targetSession.id))
+    if (!terminalOpen.value) terminalOpen.value = true
+    createTerminal()
     return
   }
-  const workspace = group.key.startsWith('LOCAL:') ? group.key.substring(6) : ''
+  // Electron：按目标会话的绑定判定执行端（绑定缺失按执行端，与 §4.2 矩阵一致）
+  const deviceId = await getLocalDeviceId()
+  const bound = targetSession.targetDeviceId
+  const isExecutor = bound == null || bound === '' || bound === deviceId
+  if (!isExecutor) {
+    // 中继：先设活跃（面板只显示当前会话的标签），cwd 由服务端 workspace 决定
+    if (!activeInGroup) sessionStore.setActiveSession(String(targetSession.id))
+    if (!terminalOpen.value) terminalOpen.value = true
+    createTerminal()
+    return
+  }
+  // 执行端：直接开 IPC 本机终端（分组工作区为 cwd）。不走 createTerminal——
+  // 它按「当前活跃会话」分流，活跃会话不属于该分组时会开错任务（评审 P1-7）
   if (!terminalOpen.value) {
     terminalOpen.value = true
   }
-  createTerminal(workspace || undefined)
+  createLocalTerminal(workspace)
 }
 
 /**

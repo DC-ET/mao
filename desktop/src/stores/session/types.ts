@@ -1,4 +1,4 @@
-import type { WsTaskPhase } from '@mao/contracts'
+import type { TerminalHostAvailability, WsTaskPhase } from '@mao/contracts'
 
 export type SessionStatus = 'ACTIVE' | 'ARCHIVED'
 
@@ -86,6 +86,8 @@ export interface Session {
   targetDeviceOnline?: boolean | null
   /** 当前执行连接类型：electron=桌面客户端，cli=mao-agent；缺省时横幅用旧文案 */
   executorClientType?: string | null
+  /** 绑定设备的终端主机可用性（技术方案 2026-11-18 §4.5）；未绑定 / 离线 / 宽限中为 null */
+  terminalHost?: TerminalHostAvailability | null
   contextTokens?: number
   /** 最近一次请求的构成快照，刷新后随会话详情带回 */
   contextManifest?: import('../../types/chat').ContextManifest | null

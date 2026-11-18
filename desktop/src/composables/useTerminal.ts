@@ -6,6 +6,8 @@ import { SearchAddon } from '@xterm/addon-search'
 import { ElMessage } from 'element-plus'
 import '@xterm/xterm/css/xterm.css'
 import { api } from '../api'
+import { getLocalDeviceId } from '../utils/device-info'
+import { isElectronClient } from '../utils/platform'
 import { useSessionStore } from '../stores/session'
 import { installImeTextareaSweeper, shouldInstallImeSweeper } from '../utils/terminal-ime-guard'
 import { useTerminalWS } from './useTerminalWS'
@@ -60,10 +62,12 @@ export interface TerminalTab {
   id: string
   title: string
   cwd: string
-  /** local = Electron 本机 PTY；remote = 后端服务器 PTY（CLOUD 任务） */
+  /** local = Electron 本机 PTY；remote = 后端服务器 PTY（CLOUD 任务 / LOCAL 中继终端） */
   mode: 'local' | 'remote'
   /** remote 必填（desktop 侧 Session.id 为 string）；local 为 null */
   sessionId: string | null
+  /** 中继终端（技术方案 2026-11-18 §4.4）：PTY 在绑定设备上，观看协议与云端一致 */
+  kind?: 'local-relay'
 }
 
 interface TerminalInstance {
@@ -83,6 +87,8 @@ interface RemoteTerminalInfo {
   cols: number
   rows: number
   createdAt: number
+  /** 中继终端标记（LOCAL 会话）：观看端据此区分标签 */
+  kind?: 'local-relay'
 }
 
 const DEFAULT_COLS = 80
@@ -103,20 +109,47 @@ let electronListenersInitialized = false
 let themeListenerInitialized = false
 let themeObserver: MutationObserver | null = null
 
-function isElectron(): boolean {
-  return typeof window !== 'undefined' && !!(window as any).electronAPI
-}
-
 function currentTheme() {
   return document.documentElement.getAttribute('data-theme') === 'dark' ? DARK_THEME : LIGHT_THEME
 }
 
-/** 当前任务下应展示的 tab：CLOUD 只看本任务的远程终端，LOCAL 只看本地终端。 */
+/** 本机是否 Electron（缓存到模块级：渲染进程内 electronAPI 的存在性不变）。 */
+const isElectron = isElectronClient()
+
+/**
+ * 本机是否这条会话的执行端（技术方案 2026-11-18 §4.4）：绑定缺失（存量未登记会话）
+ * 按执行端处理。异步 deviceId 缓存在 getLocalDeviceId 里，本函数内同步取缓存值。
+ */
+/** ref：visibleTabs 是 computed，读 ref 才会在 deviceId 就绪后重新求值（评审 P2-9）。 */
+const executorDeviceId = ref<string | null>(null)
+if (isElectron) void getLocalDeviceId().then((id) => { executorDeviceId.value = id })
+
+function isExecutorOf(session: { targetDeviceId?: string | null } | null | undefined): boolean {
+  if (!isElectron) return false
+  const bound = session?.targetDeviceId
+  if (bound == null || bound === '') return true
+  return bound === executorDeviceId.value
+}
+
+/**
+ * 当前任务下应展示的 tab（技术方案 2026-11-18 §4.4）：
+ * - CLOUD：本任务的云端终端（不含中继）。
+ * - LOCAL 本机是执行端：全部 IPC 本机标签 + 该会话的中继标签。
+ * - LOCAL 其它客户端：只显示该会话的中继标签（收掉双机看错机器的本机标签）。
+ */
 const visibleTabs = computed<TerminalTab[]>(() => {
   const session = useSessionStore().activeSession
   if (session?.executionMode === 'CLOUD') {
-    return tabs.value.filter((t) => t.mode === 'remote' && t.sessionId === session.id)
+    return tabs.value.filter((t) => t.mode === 'remote' && t.sessionId === session.id && t.kind !== 'local-relay')
   }
+  if (session && session.executionMode === 'LOCAL') {
+    const relayOfSession = (t: TerminalTab) => t.mode === 'remote' && t.kind === 'local-relay' && t.sessionId === session.id
+    if (isExecutorOf(session)) {
+      return tabs.value.filter((t) => (t.mode === 'local' && t.sessionId == null) || relayOfSession(t))
+    }
+    return tabs.value.filter(relayOfSession)
+  }
+  // 无活跃会话：维持旧行为（本机标签）
   return tabs.value.filter((t) => t.mode === 'local')
 })
 
@@ -143,7 +176,7 @@ export function useTerminal() {
 
   function initListeners() {
     initThemeListener()
-    if (electronListenersInitialized || !isElectron()) return
+    if (electronListenersInitialized || !isElectron) return
     electronListenersInitialized = true
 
     window.electronAPI.terminal.onData(
@@ -197,7 +230,7 @@ export function useTerminal() {
   }
 
   async function createLocalTerminal(cwd?: string): Promise<string | null> {
-    if (!isElectron()) return null
+    if (!isElectron) return null
     initListeners()
 
     const result = await window.electronAPI.terminal.create({ cwd, cols: DEFAULT_COLS, rows: DEFAULT_ROWS })
@@ -279,7 +312,7 @@ export function useTerminal() {
     attachRemote(id)
 
     const shellName = info.shell.split('/').pop() || 'bash'
-    tabs.value.push({ id, title: shellName, cwd: info.cwd, mode: 'remote', sessionId })
+    tabs.value.push({ id, title: shellName, cwd: info.cwd, mode: 'remote', sessionId, kind: info.kind })
     return id
   }
 
@@ -328,13 +361,22 @@ export function useTerminal() {
     return id
   }
 
-  /** 统一入口：按当前任务执行模式分流。 */
+  /** 统一入口：CLOUD 走云端；LOCAL 本机是执行端走 IPC，其它客户端走中继（§4.4）。 */
   async function createTerminal(cwd?: string): Promise<string | null> {
     const session = useSessionStore().activeSession
-    if (session?.executionMode === 'CLOUD') {
+    if (!session) return createLocalTerminal(cwd)
+    if (session.executionMode === 'CLOUD') {
       return createRemoteTerminal(session.id)
     }
-    return createLocalTerminal(cwd)
+    // 分流前确保 deviceId 缓存就绪：避免启动早期把本机执行端误判成中继端
+    if (isElectron) {
+      executorDeviceId.value = await getLocalDeviceId()
+      if (isExecutorOf(session)) {
+        return createLocalTerminal(cwd)
+      }
+    }
+    // 中继创建不传 cwd：cwd 固定用服务端保存的 session.workspace（D10）
+    return createRemoteTerminal(session.id)
   }
 
   /** 打开面板 / 切任务时与后端对齐 tab：后端有的补建或重绑，本地多出的移除。 */
@@ -448,7 +490,7 @@ export function useTerminal() {
           // 后端删除失败也移除本地 tab，避免留下无法操作的僵尸 tab
         }
       }
-    } else if (isElectron()) {
+    } else if (isElectron) {
       await window.electronAPI.terminal.kill(id)
     }
     removeTab(id)
@@ -496,6 +538,9 @@ export function useTerminal() {
       return
     }
     if (session?.executionMode === 'CLOUD') {
+      await restoreRemoteTabs(session.id)
+    } else if (session?.executionMode === 'LOCAL') {
+      // LOCAL 也对齐后端列表：本机执行端补上中继标签（保留 IPC），其它客户端只回中继（§4.4）
       await restoreRemoteTabs(session.id)
     }
     if (visibleTabs.value.length === 0) {

@@ -514,6 +514,7 @@ export class StreamingWsHandler {
    * 在线态跃迁（无 → 有 / 有 → 无）必发。设备仍在线、只是执行连接换了类型
    * （electron ↔ cli）时也发一帧 online=true，横幅才能从桌面客户端换成 mao-agent。
    * 同类型互顶不发。clientType 只可能是 electron / cli，离线帧不带。
+   * terminalHost：终端主机可用性快照（技术方案 2026-11-18 §4.5），离线帧不带。
    */
   private broadcastDeviceStatus(
     userId: number,
@@ -521,10 +522,32 @@ export class StreamingWsHandler {
     deviceName: string | null,
     online: boolean,
     clientType?: 'electron' | 'cli' | null,
+    terminalHost?: string | null,
   ): void {
     const data: Record<string, unknown> = { deviceId, deviceName, online };
     if (clientType === 'electron' || clientType === 'cli') data.clientType = clientType;
+    if (terminalHost != null) data.terminalHost = terminalHost;
     this.deps.registry.send(userId, wsEvent('device_status', null, data));
+  }
+
+  /**
+   * 终端主机状态跃迁（主机连接 / 断开 / 宽限 / 升位）时的实时同步（技术方案
+   * 2026-11-18 §4.5）：向该用户广播 device_status，data 带上 terminalHost。
+   * 设备已无流连接时按离线广播（不带 terminalHost），客户端把快照清回 null。
+   */
+  notifyTerminalHostChanged(
+    userId: number,
+    deviceId: string,
+    resolveTerminalHost: (userId: number, deviceId: string) => string | null,
+  ): void {
+    const online = this.deps.registry.hasDeviceConnection(userId, deviceId);
+    const device = this.deps.registry.getDevice(userId, deviceId);
+    const terminalHost = resolveTerminalHost(userId, deviceId);
+    if (terminalHost != null) {
+      this.broadcastDeviceStatus(userId, deviceId, device?.name ?? null, true, undefined, terminalHost);
+      return;
+    }
+    this.broadcastDeviceStatus(userId, deviceId, device?.name ?? null, online);
   }
 
   /** 当前执行连接的 clientType；没有执行连接或不是 electron/cli 时为 null。 */

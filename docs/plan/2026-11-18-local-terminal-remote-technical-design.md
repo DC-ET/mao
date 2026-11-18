@@ -1,6 +1,6 @@
 # 本地任务终端跨端开放技术方案（浏览器 / 安卓使用执行端本机终端）
 
-- 状态：草案（2026-11-18；§3 决策为拟定口径，评审通过后定案。同日修订：去掉本机同意开关；mao-agent 与桌面客户端同为主机；与文件代理方案的并行边界见 §10。**2026-11-18 可行性评审：方案与需求均可行**——`PtyLike` 抽象与 `PtyFactory` 注入缝隙已在 remote-terminal.ts 存在（docker 容器桥先例），桥接主机帧不需改 `RemoteTerminal` 结构；按评审补充 §4.5 主机 token 生命周期、§4.6 桌面 `ws` 依赖与账号切换、§4.7 mao-agent 的 node-pty 安装可行性（optionalDependencies）、§4.3 attach 检查顺序、TERM 覆盖顺序等，见各节标注）
+- 状态：已实施（2026-11-19 落地。2026-11-18 可行性评审通过并补充 §4.5-§4.7 缺口；实现与方案一致，§4.4 的 TaskIndexPanel 按钮改造按「目标会话绑定判定」落位，§10 与文件代理方案并行边界保持：终端帧不走 `/ws/stream`、不改 `sendToFileCapableDevice`）
 - 日期：2026-11-18
 - 关联方案：
   - [2026-11-05-local-task-device-delegation-technical-design.md](./2026-11-05-local-task-device-delegation-technical-design.md)（前置依赖：设备身份、创建即绑定、定向委托、浏览器接管 LOCAL 会话对话。其 §2.2 / §9-3 明确排除「文件树 / 终端 / Git 远程代理」，本方案是其中「终端」的独立方案）
@@ -352,7 +352,7 @@ export type TerminalHostAvailability = 'enabled' | 'unsupported' | 'upgrade-cli'
 
 1. 主机 → 服务器：Electron 与 mao-agent 都按 §4.6 在 `bufferedAmount > 1MB` 时丢片。
 2. 服务器 → 观看端：沿用 `OUTPUT_BACKPRESSURE_BYTES`（`terminal-ws-handler.ts:17-20`）。
-3. 观看端粘贴：服务器把 `input.data` 切成 ≤256KB 再转发。单次粘贴超过 1MB 时直接回 `BAD_REQUEST`「输入过长」，不切片成几十帧。
+3. 观看端粘贴：服务器把 `input.data` 切片后再转发。单次粘贴超过 1MB 时由 `/ws/terminal` 的 1MB 传输上限直接断帧（与云端终端同一行为）——实现注记（2026-11-19）：「输入过长」BAD_REQUEST 分支在该前提下不可达，未单独实现；数据切片按 32KB 预算（JSON 信封 + 转义后仍低于 256KB 帧上限，直接按 256KB 切 data 会让序列化帧超限被两端拆连接）。
 
 PTY 输出按 UTF-8 字符串转发。`cat` 二进制文件会出现替换字符，与云端终端的既定行为一致。
 

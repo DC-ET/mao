@@ -1619,4 +1619,26 @@ describe('session store applyDeviceStatus（执行端在线态实时同步）', 
     expect(store.applyDeviceStatus('dev-unknown', false)).toBe(0)
     expect(store.getSessionEntity('1')?.targetDeviceOnline).toBe(true)
   })
+
+  it('terminalHost 快照：在线帧写入，离线帧清回 null，帧里没带时保持原值', () => {
+    // 技术方案 2026-11-18 §4.8：与 targetDeviceOnline 同帧实时同步
+    const store = seed()
+    expect(store.applyDeviceStatus('dev-1', true, 'MyMac', undefined, 'enabled')).toBe(2)
+    expect(store.getSessionEntity('1')?.terminalHost).toBe('enabled')
+    expect(store.getSessionEntity('3')?.terminalHost).toBeUndefined()
+    // 同值 no-op
+    expect(store.applyDeviceStatus('dev-1', true, 'MyMac', undefined, 'enabled')).toBe(0)
+    // 脏值（不在契约词表内）：保持原值
+    expect(store.applyDeviceStatus('dev-1', true, 'MyMac', undefined, 'dirty')).toBe(0)
+    expect(store.getSessionEntity('1')?.terminalHost).toBe('enabled')
+    // 在线但帧里没带（旧后端 / 降级帧）：保持原值
+    expect(store.applyDeviceStatus('dev-1', true, 'MyMac')).toBe(0)
+    expect(store.getSessionEntity('1')?.terminalHost).toBe('enabled')
+    // 离线帧：清回 null
+    expect(store.applyDeviceStatus('dev-1', false)).toBe(2)
+    expect(store.getSessionEntity('1')?.terminalHost).toBeNull()
+    // 重新上线带回新值
+    expect(store.applyDeviceStatus('dev-1', true, 'MyMac', undefined, 'unsupported')).toBe(2)
+    expect(store.getSessionEntity('1')?.terminalHost).toBe('unsupported')
+  })
 })

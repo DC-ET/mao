@@ -126,6 +126,8 @@ export function assembleLifecycle(deps: LifecycleDeps): LifecycleResult {
   }).catch((error: unknown) => console.error('恢复飞书待绑定消息列表失败', error));
   d.shellManager.startCleanup();
   d.terminalManager.startCleanup();
+  // 中继终端与云端终端同参回收（技术方案 2026-11-18 D8）；生命周期 deps 是宽 any，缺省时跳过
+  d.localTerminalRelay?.startCleanup();
   const runtimeCleanup = new RuntimeCleanupScheduler(
     cfg.app.harness.runtimeDir,
     cfg.app.harness.cleanup,
@@ -205,6 +207,7 @@ export function assembleLifecycle(deps: LifecycleDeps): LifecycleResult {
     scheduler, deliveryScheduler, callLogService: d.callLogService, callLogCleanup: d.callLogCleanup,
     watcherScheduler: d.watcherScheduler, signalCheckCleanup: d.signalCheckCleanup, ecpRenewScheduler,
     shellManager: d.shellManager, terminalManager: d.terminalManager,
+    localTerminalRelay: d.localTerminalRelay, terminalHostHandler: d.terminalHostHandlerRef,
     ptyChannelHubs: d.ptyChannelHubs, ptyHubGeneration: d.ptyHubGeneration,
     containerRegistry: d.containerRegistry, channelServer: d.channelServer, runtimeCleanup,
     activityHeartbeat: d.activityHeartbeat, wsRegistry: d.wsRegistry,

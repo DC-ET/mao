@@ -18,6 +18,7 @@ import type { Logger } from '../util/logger';
 import path from 'node:path';
 import readline from 'node:readline';
 import { LocalExecutor } from '../local/executor';
+import { TerminalHost } from '../local/terminal-host';
 import { ensureWorkspaceTrusted } from '../local/trust';
 import { collectLocalUnsyncedSkills, readAgentsMd } from '../local/local-skills';
 import { buildOsVersion, detectShell, isGitWorkspace } from '../local/paths';
@@ -89,6 +90,16 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
   }
 
   let localExecutor: LocalExecutor | undefined;
+  let localTerminalHost: TerminalHost | undefined;
+  const stopTerminalHost = (): void => {
+    if (localTerminalHost == null) return;
+    try {
+      localTerminalHost.shutdown();
+    } catch {
+      // ignore
+    }
+    localTerminalHost = undefined;
+  };
   let inkRenderer: InkTuiRenderer | undefined;
   const runnerHolder: { current?: SessionRunner } = {};
   const tuiHolder: { ink?: InkTuiRenderer } = {};
@@ -161,6 +172,16 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
         tuiHolder.ink?.deliverApproval(requestId, choice);
       },
     });
+    // 终端主机（技术方案 2026-11-18 §4.7）：交互式 LOCAL 进程也是主机，手机可以直接开
+    // 这台机器上的 shell。CLOUD 模式不启动（localMode 为 false 时本块不执行）。
+    localTerminalHost = new TerminalHost({
+      baseUrl,
+      getToken: ctx.getToken,
+      deviceId: resolveDeviceIdentity().id,
+      workspace: localWorkspace,
+      debug: cfg.debug ? (message) => logger.debug(message) : undefined,
+    });
+    localTerminalHost.start();
   }
 
   const runner = new SessionRunner({
@@ -259,6 +280,7 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
       }
       const result = await runner.runPrompt(cfg.prompt, modelId);
       await runner.shutdown();
+      stopTerminalHost();
       return exitCodeFor(result, {
         questionFailed: runner.questionFailed,
         timedOut: runner.timedOut,
@@ -392,6 +414,7 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
       },
       onExit: async () => {
         await runner.shutdown();
+        stopTerminalHost();
       },
       ensureSession,
       listSwitchableSessions,
@@ -412,6 +435,7 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
     });
     return 0;
   } finally {
+    stopTerminalHost();
     if (cfg.print) process.off('SIGINT', onSig);
     process.off('SIGTERM', onSig);
   }

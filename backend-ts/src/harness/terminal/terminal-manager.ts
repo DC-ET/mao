@@ -57,10 +57,10 @@ export interface TerminalUserLookup {
 }
 
 /** 终端生命周期审计事件类型。 */
-export type TerminalAuditEvent = 'CREATE' | 'CLOSE' | 'ATTACH' | 'RECLAIM' | 'SESSION_DELETED';
+export type TerminalAuditEvent = 'CREATE' | 'CLOSE' | 'ATTACH' | 'RECLAIM' | 'SESSION_DELETED' | 'HOST_LOST';
 
 /** 终端被服务端关闭的原因，用于向仍连着的前端说明。 */
-export type TerminalCloseReason = 'CLOSE' | 'RECLAIM' | 'SESSION_DELETED';
+export type TerminalCloseReason = 'CLOSE' | 'RECLAIM' | 'SESSION_DELETED' | 'HOST_LOST';
 
 export interface TerminalAuditContext {
   ip?: string | null;
@@ -88,6 +88,7 @@ export const TERMINAL_AUDIT_META: Record<
   ATTACH: { action: 'EXECUTE', method: 'WS', path: () => '/ws/terminal/attach' },
   RECLAIM: { action: 'DELETE', method: 'SYSTEM', path: () => '/internal/terminal/reclaim' },
   SESSION_DELETED: { action: 'DELETE', method: 'SYSTEM', path: () => '/internal/terminal/session-deleted' },
+  HOST_LOST: { action: 'DELETE', method: 'SYSTEM', path: () => '/internal/terminal/host-lost' },
 };
 
 export interface CreateTerminalParams {
@@ -375,6 +376,21 @@ export class TerminalManager {
 
   size(): number {
     return this.terminals.size;
+  }
+
+  /**
+   * 占用的全局名额（技术方案 2026-11-18 D8）：已登记 + pending。
+   * 中继终端与云端终端共用 `terminal.*` 上限，配额合并时用本方法与中继自己的计数相加。
+   */
+  occupiedCount(): number {
+    return this.terminals.size + this.pendingCreates.size;
+  }
+
+  /**
+   * 某任务占用的名额（含 pending：reserve() 已把占位 id 写进 sessionTerminals）。
+   */
+  countForSession(sessionId: number): number {
+    return this.sessionTerminals.get(sessionId)?.size ?? 0;
   }
 
   /** create 内 await 前占位，使并发创建也受上限约束。 */

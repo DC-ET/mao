@@ -774,7 +774,9 @@ export function useStreamWS() {
           const clientType = data?.clientType === 'electron' || data?.clientType === 'cli'
             ? data.clientType
             : undefined
-          sessionStore.applyDeviceStatus(deviceId, data.online, deviceName, clientType)
+          // 终端主机可用性（技术方案 2026-11-18 §4.5）：在线帧才带；离线帧清回 null
+          const terminalHost = typeof data?.terminalHost === 'string' ? data.terminalHost : undefined
+          sessionStore.applyDeviceStatus(deviceId, data.online, deviceName, clientType, terminalHost)
           // 持有本地快照的组件（边路面板的来源/边路会话设备态）按需订阅。
           // clientType 缺省时不放进 detail，旧帧与离线帧的形状保持不变。
           const detail: { deviceId: string; deviceName: string | null; online: boolean; clientType?: 'electron' | 'cli' } = {

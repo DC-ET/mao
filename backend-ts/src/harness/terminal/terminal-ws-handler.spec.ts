@@ -44,6 +44,9 @@ class FakeTerminal implements AttachableTerminal {
   private sink: { socketId: string; onOutput: (data: string) => void } | null = null;
   private exitListeners: Array<(exitCode: number) => void> = [];
 
+  /** 中继语义测试可置 true：attach 跳过 terminal:use（技术方案 2026-11-18 D5）。 */
+  skipTerminalUsePermission = false;
+
   constructor(readonly terminalId: string, readonly sessionId: number, readonly userId: number) {}
 
   attach(socketId: string, onOutput: (data: string) => void): string | null {
@@ -233,6 +236,98 @@ describe('TerminalWsHandler auth', () => {
     expect(terminal.toInfo().attached).toBe(false);
     expect(harness.audit).toEqual([]);
     expect(harness.handler.connectionCount()).toBe(0);
+  });
+
+  it('relay terminal (skipTerminalUsePermission) attaches without terminal:use', async () => {
+    // 技术方案 2026-11-18 D5 / §4.3：中继终端 PTY 在执行端设备上，attach 不查 terminal:use
+    const harness = newHarness({ permitted: false });
+    const terminal = harness.registry.add(new FakeTerminal('t1', 1, 7));
+    terminal.skipTerminalUsePermission = true;
+    const socket = await authed(harness, 'sock-relay');
+    await harness.handler.handleTextMessage(socket, JSON.stringify({ type: 'attach', terminalId: 't1' }));
+    expect(socket.frames('attached')).toHaveLength(1);
+    expect(terminal.attachedSocketId()).toBe('sock-relay');
+    // 不存在「未允许」这一拒绝分支：权限查库根本不会被调用
+    expect(harness.permission.hasPermission).not.toHaveBeenCalled();
+    expect(harness.audit.map((a) => a.event)).toEqual(['ATTACH']);
+  });
+
+  it('cloud terminal without terminal:use is still rejected (TERMINAL_FORBIDDEN)', async () => {
+    const harness = newHarness({ permitted: false });
+    harness.registry.add(new FakeTerminal('t1', 1, 7));
+    const socket = await authed(harness, 'sock-cloud');
+    await harness.handler.handleTextMessage(socket, JSON.stringify({ type: 'attach', terminalId: 't1' }));
+    expect(socket.last()).toMatchObject({ type: 'error', code: 'TERMINAL_FORBIDDEN', terminalId: 't1' });
+    expect(harness.permission.hasPermission).toHaveBeenCalledTimes(1);
+    expect(harness.audit).toEqual([]);
+  });
+
+  it('facade 注册晚于中继构造时，中继关闭通知仍到达观看端（P0-2 回归）', async () => {
+    // create-app 的目录门面：onClosed 先被 WS handler 调用（构造期），中继后到。
+    // 修复前缓冲缺失会让中继的 HOST_LOST / RECLAIM 通知永远到不了观看端。
+    const buffered: Array<(info: RemoteTerminalInfo, reason: TerminalCloseReason) => void> = [];
+    const registry = new FakeRegistry();
+    const relayFakes = new Map<string, FakeTerminal>();
+    const facade = {
+      get: (id: string) => registry.get(id) ?? relayFakes.get(id) ?? null,
+      onClosed: (listener: (info: RemoteTerminalInfo, reason: TerminalCloseReason) => void) => {
+        buffered.push(listener);
+        registry.onClosed(listener);
+        // relayRef.current 此刻为 null（构造早于中继）：中继就位后再补挂
+      },
+    };
+    const harness: Harness = {
+      handler: new TerminalWsHandler({
+        // 故意绕过 newHarness 的类型收窄，模拟装配期的门面对象
+        terminalManager: facade as unknown as FakeRegistry,
+        jwtService: {
+          validateAccessToken: (token) => token === VALID_TOKEN,
+          getUserIdFromToken: () => 7,
+          getUsernameFromToken: () => 'alice',
+        },
+        permissionService: { hasPermission: vi.fn(async () => true) },
+        audit: () => {},
+      }),
+      registry,
+      audit: [],
+      permission: { hasPermission: vi.fn(async () => true) },
+    };
+    const socket = await authed(harness, 'sock-facade');
+    const relayTerminal = new FakeTerminal('t-relay', 1, 7);
+    relayTerminal.skipTerminalUsePermission = true;
+    relayFakes.set('t-relay', relayTerminal);
+
+    await harness.handler.handleTextMessage(socket, JSON.stringify({ type: 'attach', terminalId: 't-relay' }));
+    expect(socket.frames('attached')).toHaveLength(1);
+
+    // 「中继就位」：补挂缓冲的观察者（create-app 在 relayRef.current 赋值后做的事）
+    const relayRegistry = {
+      closeListener: null as ((info: RemoteTerminalInfo, reason: TerminalCloseReason) => void) | null,
+      onClosed(listener: (info: RemoteTerminalInfo, reason: TerminalCloseReason) => void) {
+        this.closeListener = listener;
+      },
+    };
+    for (const listener of buffered) relayRegistry.onClosed(listener);
+
+    // 主机丢失：中继关闭 → 观看端收到「执行端已断开，终端已关闭」
+    relayTerminal.emit('x');
+    relayRegistry.closeListener!(
+      relayTerminal.toInfo(),
+      'HOST_LOST',
+    );
+    const error = socket.frames('error').at(-1)!;
+    expect(error).toMatchObject({ type: 'error', code: 'TERMINAL_RECLAIMED', terminalId: 't-relay' });
+    expect(error.message).toBe('执行端已断开，终端已关闭');
+  });
+
+  it('relay terminal with a mismatched owner is still rejected', async () => {
+    // 归属校验两种终端都做（§4.3）：别人的中继终端不能 attach
+    const harness = newHarness({ permitted: true });
+    const terminal = harness.registry.add(new FakeTerminal('t1', 1, 99));
+    terminal.skipTerminalUsePermission = true;
+    const socket = await authed(harness, 'sock-other');
+    await harness.handler.handleTextMessage(socket, JSON.stringify({ type: 'attach', terminalId: 't1' }));
+    expect(socket.last()).toMatchObject({ type: 'error', code: 'TERMINAL_FORBIDDEN', terminalId: 't1' });
   });
 
   it('closes connections with an invalid token', async () => {

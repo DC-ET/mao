@@ -21,7 +21,7 @@ App 内点击 http/https/mailto 链接（助手回复、文件预览、下载对
 
 ## 云端终端（0.0.97 起）
 
-CLOUD 任务可用云端终端（需 `terminal:use` 权限），安卓端额外提供底部虚拟按键条（Esc / Tab / Ctrl 粘滞 / 方向键 / Ctrl+C / Ctrl+D / 粘贴），软键盘弹出时面板自动避让。属纯前端能力，随 Web 部署生效，无需打 APK。LOCAL 任务的本地终端在安卓上仍不可用。详见 [desktop.md](desktop.md#终端)。
+CLOUD 任务可用云端终端（需 `terminal:use` 权限），安卓端额外提供底部虚拟按键条（Esc / Tab / Ctrl 粘滞 / 方向键 / Ctrl+C / Ctrl+D / 粘贴），软键盘弹出时面板自动避让。属纯前端能力，随 Web 部署生效，无需打 APK。LOCAL 任务的终端按绑定设备的主机状态开放（2026-11-19 起）：执行端的桌面客户端或 mao-agent 在线时安卓同样可开中继终端（shell 在那台电脑上），离线 / 版本过旧按按钮 tooltip 提示。详见 [desktop.md](desktop.md#终端)。
 
 ## 构建 APK（仅原生壳变更）
 

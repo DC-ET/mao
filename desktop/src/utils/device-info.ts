@@ -21,6 +21,17 @@ export function getLocalDeviceInfo(): Promise<DesktopDeviceInfo | null> {
     .catch(() => null)
 }
 
+/** 本机 deviceId 的进程内缓存（技术方案 2026-11-18 §4.4）：执行端判定要同步拿到，
+ *  而底层是异步 IPC。首次取回后常驻缓存（桌面端设备身份跨会话稳定不变）。 */
+let cachedDeviceId: string | null | undefined
+
+export async function getLocalDeviceId(): Promise<string | null> {
+  if (cachedDeviceId !== undefined) return cachedDeviceId
+  const info = await getLocalDeviceInfo()
+  cachedDeviceId = info?.id ?? null
+  return cachedDeviceId
+}
+
 function normalizeDeviceInfo(info: Partial<DesktopDeviceInfo>): DesktopDeviceInfo {
   return {
     id: info.id!.trim(),

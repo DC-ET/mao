@@ -174,6 +174,16 @@ describe('clampInt', () => {
 });
 
 describe('TerminalManager', () => {
+  it('occupiedCount / countForSession 把已登记与 pending 都计入（2026-11-18 D8）', async () => {
+    const { manager, root } = await newManager();
+    expect(manager.occupiedCount()).toBe(0);
+    expect(manager.countForSession(7)).toBe(0);
+    await manager.create({ sessionId: 7, userId: 3, workspace: root });
+    expect(manager.occupiedCount()).toBe(1);
+    expect(manager.countForSession(7)).toBe(1);
+    expect(manager.countForSession(8)).toBe(0);
+  });
+
   it('injects ECP_TOKEN when user has an active ECP session', async () => {
     const { manager, root } = await newManager({}, {
       ecpInjector: { injectForUser: async () => 'ecp-session-token' },

@@ -6,6 +6,7 @@ const path = require('path')
 const os = require('os')
 const { autoUpdater } = require('electron-updater')
 const { TerminalManager } = require('./terminalManager.cjs')
+const { TerminalHost } = require('./terminalHost.cjs')
 const { createLocalShellRuntime, resolveShellProtocol } = require('./localShell.cjs')
 const promptImageResizer = require('./promptImageResizer.cjs')
 const serverConfigLib = require('./serverConfig.cjs')
@@ -68,6 +69,16 @@ const earlyApprovalDecisions = new Map()
 let pendingNotificationClick = null
 const terminalManager = new TerminalManager()
 terminalManager.setEnvProvider(buildShellEnv)
+
+// 中继终端主机（技术方案 2026-11-18 §4.6）：绑定设备的浏览器 / 安卓 / 其它电脑经服务器
+// 在本机起 PTY。与 IPC 本机终端共用探测函数但两套 map 互不转发输出。
+// 未登录时 connect 直接返回，等 auth-set-tokens 钩子踢重连，不空转。
+const terminalHost = new TerminalHost({
+  apiBaseUrl: () => getApiBaseUrl(),
+  readAuth: () => readAuthStore(),
+  getDeviceId: () => desktopPrefsLib.ensureDesktopDeviceId(app.getPath('userData')),
+  buildEnv: buildShellEnv,
+})
 
 const PRIVATE_DIFF_FIELD = 'file_change_diff'
 const SNAPSHOT_LIMIT_BYTES = 512 * 1024
@@ -1627,6 +1638,8 @@ ipcMain.handle('desktop-shortcut-set', (event, accel) => {
 })
 
 app.whenReady().then(() => {
+  // 中继终端主机：登录后即连（未登录时空转），登出/账号切换由 token 钩子收敛
+  terminalHost.start()
   buildApplicationMenu()
   createWindow()
   initTray()
@@ -1674,6 +1687,7 @@ app.on('before-quit', () => {
     console.warn('[shortcut] unregisterAll on quit failed:', e?.message)
   }
   terminalManager.killAll()
+  terminalHost.shutdown()
   localShell.closeAll()
   localShell.stopCleanup()
   // 关闭全部 MCP 连接（stdio 子进程 / HTTP 会话）
@@ -1724,6 +1738,8 @@ ipcMain.handle('auth-set-tokens', (_event, payload = {}) => {
   } catch (e) {
     console.error('[auth] Failed to write auth store:', e.message)
   }
+  // 终端主机只标「下次重连用新 token」；userId 变化（账号切换）时杀掉旧账号的 PTY（§4.5）
+  terminalHost.onTokensWritten(payload.token || null)
 })
 
 ipcMain.handle('auth-clear-tokens', (_event, payload) => {
@@ -1732,6 +1748,8 @@ ipcMain.handle('auth-clear-tokens', (_event, payload) => {
   } catch (e) {
     console.error('[auth] Failed to write auth store:', e.message)
   }
+  // 登出：关闭主机 socket 并杀掉中继 PTY（§4.6）
+  terminalHost.onLoggedOut()
 })
 
 // ========== Server baseUrl config IPC ==========

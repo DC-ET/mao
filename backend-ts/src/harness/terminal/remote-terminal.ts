@@ -72,6 +72,10 @@ export interface RemoteTerminalInfo {
   createdAt: number;
   lastActiveAt: number;
   attached: boolean;
+  /**
+   * 中继终端标记（技术方案 2026-11-18 §4.3）：云端终端不写该字段，观看端据此区分标签。
+   */
+  kind?: 'local-relay';
 }
 
 export interface PtyLike {
@@ -123,6 +127,13 @@ export interface RemoteTerminalDeps {
   rows: number;
   pty: PtyLike;
   outputBufferBytes: number;
+  /**
+   * 中继终端（技术方案 2026-11-18 D5）：PTY 跑在执行端设备上而非服务器进程，
+   * attach 不校验 `terminal:use`（该权限语义是服务器 shell）。云端终端恒为 false。
+   */
+  skipTerminalUsePermission?: boolean;
+  /** 中继终端标记：写入 toInfo().kind 供观看端区分标签。 */
+  kind?: 'local-relay';
 }
 
 /**
@@ -136,6 +147,8 @@ export class RemoteTerminal {
   readonly shell: string;
   readonly cwd: string;
   readonly createdAt = Date.now();
+  readonly skipTerminalUsePermission: boolean;
+  readonly kind?: 'local-relay';
 
   private cols: number;
   private rows: number;
@@ -156,6 +169,8 @@ export class RemoteTerminal {
     this.cols = deps.cols;
     this.rows = deps.rows;
     this.pty = deps.pty;
+    this.skipTerminalUsePermission = deps.skipTerminalUsePermission === true;
+    this.kind = deps.kind;
     this.buffer = new OutputRingBuffer(deps.outputBufferBytes);
 
     this.pty.onData((data: string) => {
@@ -268,6 +283,7 @@ export class RemoteTerminal {
       createdAt: this.createdAt,
       lastActiveAt: this.lastActiveAt,
       attached: this.sink != null,
+      ...(this.kind != null ? { kind: this.kind } : {}),
     };
   }
 }

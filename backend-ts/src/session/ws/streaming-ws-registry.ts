@@ -622,6 +622,25 @@ export class StreamingWsRegistry {
   }
 
   /**
+   * 指定设备上存活流连接的 clientType 去重集合（终端主机可用性状态机，技术方案
+   * 2026-11-18 §4.5）：该设备有没有 Electron / CLI 的 `/ws/stream` 连接，决定
+   * 「unsupported / upgrade-cli / upgrade-either」文案。只读现成的连接表与 clientType，
+   * 不读文件代理的 connectionCapabilities。
+   */
+  listDeviceClientTypes(userId: number, deviceId: string | null | undefined): Array<'electron' | 'cli'> {
+    if (deviceId == null || deviceId === '') return [];
+    const types = new Set<'electron' | 'cli'>();
+    for (const session of this.userSessions.get(userId) ?? []) {
+      if (session.readyState !== WS_OPEN) continue;
+      if (!this.isConnectionAuthorized(session)) continue;
+      if (this.connectionDevice.get(session.id)?.id !== deviceId) continue;
+      const type = this.sessionToClientType.get(session.id);
+      if (type === 'electron' || type === 'cli') types.add(type);
+    }
+    return [...types];
+  }
+
+  /**
    * 全量在线连接只读快照（管理后台在线设备页，技术方案 2026-11-10）。
    * 纯读：不调用 isConnectionAuthorized（它对过期 company_sso 连接有顺手 close 的副作用），
    * 过期未关连接照常出现在快照里，由既有惰性关闭机制（下一帧收发时关闭）兜底。

@@ -44,6 +44,11 @@ export interface AttachableTerminal {
   readonly terminalId: string;
   readonly sessionId: number;
   readonly userId: number;
+  /**
+   * 中继终端（技术方案 2026-11-18 D5）：PTY 在执行端设备上，attach 不校验 `terminal:use`
+   * （该权限语义是服务器 shell）。归属校验两种终端都做。
+   */
+  readonly skipTerminalUsePermission: boolean;
   attach(socketId: string, onOutput: (data: string) => void): string | null;
   detach(socketId: string): boolean;
   attachedSocketId(): string | null;
@@ -240,13 +245,8 @@ export class TerminalWsHandler {
       this.sendError(conn.socket, 'BAD_REQUEST', '缺少 terminalId');
       return;
     }
-    if (!(await this.deps.permissionService.hasPermission(conn.userId, TERMINAL_USE_PERMISSION))) {
-      this.sendError(conn.socket, 'TERMINAL_FORBIDDEN', `无权限: ${TERMINAL_USE_PERMISSION}`, terminalId);
-      return;
-    }
-    // 权限查库期间连接可能已关闭：afterConnectionClosed 此时看不到本次 attach，
-    // 若继续绑定会把 sink 挂在死连接上（终端永不进 idle 回收，还会顶替重连后的新连接）
-    if (this.connections.get(conn.socket.id) !== conn || conn.socket.readyState !== TERMINAL_WS_OPEN) return;
+    // skip 标志挂在终端记录上（技术方案 2026-11-18 §4.3 实现顺序注记）：必须先经目录门面
+    // 取到终端，再按记录决定是否跳过 `terminal:use`。归属校验两种终端都做。
     const terminal = this.deps.terminalManager.get(terminalId);
     if (!terminal) {
       this.sendError(conn.socket, 'TERMINAL_NOT_FOUND', '终端不存在或已被回收', terminalId);
@@ -256,6 +256,14 @@ export class TerminalWsHandler {
       this.sendError(conn.socket, 'TERMINAL_FORBIDDEN', '无权操作该终端', terminalId);
       return;
     }
+    if (!terminal.skipTerminalUsePermission
+      && !(await this.deps.permissionService.hasPermission(conn.userId, TERMINAL_USE_PERMISSION))) {
+      this.sendError(conn.socket, 'TERMINAL_FORBIDDEN', `无权限: ${TERMINAL_USE_PERMISSION}`, terminalId);
+      return;
+    }
+    // 权限查库期间连接可能已关闭：afterConnectionClosed 此时看不到本次 attach，
+    // 若继续绑定会把 sink 挂在死连接上（终端永不进 idle 回收，还会顶替重连后的新连接）
+    if (this.connections.get(conn.socket.id) !== conn || conn.socket.readyState !== TERMINAL_WS_OPEN) return;
 
     const previousSocketId = terminal.attach(conn.socket.id, (data) => this.sendOutput(conn.socket.id, terminalId, data));
     if (previousSocketId != null) {
@@ -355,11 +363,12 @@ export class TerminalWsHandler {
     }
   }
 
-  /** 服务端主动关闭（REST DELETE / 回收 / 任务删除）：PTY 的 onExit 不会触发，由此统一收敛状态。 */
+  /** 服务端主动关闭（REST DELETE / 回收 / 任务删除 / 主机丢失）：统一收敛状态。 */
   private handleClosed(info: RemoteTerminalInfo, reason: TerminalCloseReason): void {
     this.exitHooked.delete(info.terminalId);
     const message = reason === 'SESSION_DELETED' ? '任务已删除，终端已关闭'
       : reason === 'RECLAIM' ? '终端因空闲或超时已被回收'
+      : reason === 'HOST_LOST' ? '执行端已断开，终端已关闭'
       : '终端已关闭';
     for (const conn of this.connections.values()) {
       if (!conn.terminals.delete(info.terminalId)) continue;

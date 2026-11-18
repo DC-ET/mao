@@ -56,7 +56,7 @@ describe('BUGCHECK terminal audit IP must follow the trusted-proxy policy', () =
     }));
     const terminalManager = {
       create,
-      list: vi.fn(async () => []),
+      list: vi.fn(() => []), // 同步返回（TerminalManager.list 为同步），GET 路由会展开它
       get: vi.fn(() => null),
       close: vi.fn(),
     } as unknown as TerminalManager;

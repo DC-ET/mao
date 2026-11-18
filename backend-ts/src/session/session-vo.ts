@@ -1,3 +1,4 @@
+import type { TerminalHostAvailability } from '@mao/contracts';
 import { javaLocalDateTimeString } from '../common/datetime.js';
 import { isMultimodalContentParts } from '../common/multimodal-content.js';
 import type { ContextManifest } from '../harness/core/context-manifest.js';
@@ -36,6 +37,8 @@ export interface SessionVO {
   targetDeviceOnline?: boolean | null;
   /** 当前执行连接的客户端类型（electron / cli）；无执行连接时缺省。不入库。 */
   executorClientType?: string | null;
+  /** 绑定设备的终端主机可用性（技术方案 2026-11-18 §4.5）；未绑定 / 离线 / 宽限中为 null。不入库。 */
+  terminalHost?: TerminalHostAvailability | null;
   isGit?: boolean | null;
   platform?: string | null;
   shell?: string | null;

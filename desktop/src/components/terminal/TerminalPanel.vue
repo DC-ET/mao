@@ -133,12 +133,13 @@ watch(
   }
 )
 
-/** 切任务：解绑旧任务终端（让后端能按 idle 回收），再与后端对齐当前任务的 tab。 */
+/** 切任务：解绑旧任务终端（让后端能按 idle 回收），再与后端对齐当前任务的 tab。
+ *  LOCAL 的中继终端同样带 sessionId（技术方案 2026-11-18 §4.4），解绑 / 对齐规则与 CLOUD 相同。 */
 watch(() => sessionStore.activeSessionId, async () => {
   closeSearch()
   const session = sessionStore.activeSession
-  detachRemoteTerminals(session?.executionMode === 'CLOUD' ? session.id : null)
-  if (isOpen.value && session?.executionMode === 'CLOUD') {
+  detachRemoteTerminals(session ? session.id : null)
+  if (isOpen.value && session && (session.executionMode === 'CLOUD' || session.executionMode === 'LOCAL')) {
     await restoreRemoteTabs(session.id)
   }
   if (!activeTabId.value || !visibleTabs.value.some((t) => t.id === activeTabId.value)) {
@@ -152,7 +153,7 @@ watch(isOpen, async (open) => {
     return
   }
   const session = sessionStore.activeSession
-  if (session?.executionMode === 'CLOUD') {
+  if (session && (session.executionMode === 'CLOUD' || session.executionMode === 'LOCAL')) {
     await restoreRemoteTabs(session.id)
   }
 })
