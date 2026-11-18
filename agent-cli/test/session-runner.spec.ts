@@ -62,6 +62,7 @@ async function attached(opts?: {
   maxDurationSec?: number;
   snapshot?: WsEvent;
   onApprovalRelaySupported?: (supported: boolean) => void;
+  localExecutor?: { handleEvent: (evt: WsEvent) => Promise<void> };
 }) {
   const ws = new FakeWs();
   if (opts?.snapshot) ws.snapshot = opts.snapshot;
@@ -77,7 +78,8 @@ async function attached(opts?: {
     includeToolIo: true,
     maxDurationSec: opts?.maxDurationSec,
     onApprovalRelaySupported: opts?.onApprovalRelaySupported,
-  });
+    localExecutor: opts?.localExecutor,
+  } as never);
   await runner.attach(session());
   return { ws, renderer, runner };
 }
@@ -460,5 +462,18 @@ describe('createAndAttach 来源自报（技术方案 2026-11-03 D11）', () => 
     terminal(ws, eid, 'COMPLETED');
     await p;
     expect(renderer.events.filter((e) => e.type === 'approval_aborted')).toHaveLength(1);
+  });
+
+  it('routes file_op_request for the subscribed session to localExecutor（技术方案 2026-11-18 D7）', async () => {
+    const handled: WsEvent[] = [];
+    const { ws } = await attached({
+      localExecutor: { handleEvent: async (evt) => { handled.push(evt); } },
+    });
+    ws.emit({ type: 'file_op_request', sessionId: 11, data: { requestId: 'fop-1', op: 'list', params: {}, workspace: '/tmp/x' } });
+    expect(handled).toHaveLength(1);
+    expect((handled[0].data as { requestId: string }).requestId).toBe('fop-1');
+    // 非当前订阅会话：与 tool_execute 同口径被 acceptEvent 丢弃，不接管（跨会话请用 local --serve）
+    ws.emit({ type: 'file_op_request', sessionId: 99, data: { requestId: 'fop-2', op: 'list', params: {}, workspace: '/tmp/x' } });
+    expect(handled).toHaveLength(1);
   });
 });

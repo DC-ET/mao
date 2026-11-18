@@ -109,8 +109,29 @@ describe('useStreamWS Electron auth device', () => {
     expect(auth).toMatchObject({
       client: 'electron',
       device: { id: 'dev-electron', name: 'Mac A', platform: 'darwin' },
+      // 客户端能力声明（技术方案 2026-11-18 D2）：renderer 有 file_op 执行器，显式声明走分层投递档 1
+      capabilities: ['file_op'],
     })
     // 首帧必须是 auth：设备身份在 IPC 异步返回后才发，期间不得有业务帧抢先
     expect(sockets[0].sent[0]?.type).toBe('auth')
+  })
+
+  it('browser auth frame does not declare capabilities', async () => {
+    // 浏览器 clientType 为 browser，本就不是文件投递候选，capabilities 保持缺省（空集）
+    const electronWindow = (globalThis as any).window
+    ;(globalThis as any).window = new EventTarget()
+    try {
+      const { connect } = useStreamWS()
+      const pending = connect()
+      sockets[0].open()
+      await pending
+
+      const auth = sockets[0].sent.find((m) => m.type === 'auth')
+      expect(auth).toBeDefined()
+      expect((auth as { client?: string }).client).toBe('browser')
+      expect((auth as { capabilities?: unknown }).capabilities).toBeUndefined()
+    } finally {
+      ;(globalThis as any).window = electronWindow
+    }
   })
 })

@@ -11,6 +11,7 @@ import { CliError, EXIT } from '../util/exit-codes';
 /** 不按 sessionId 过滤、直接交给唯一 LocalExecutor 的事件。 */
 export const DAEMON_ROUTED_EVENTS = new Set([
   'tool_execute',
+  'file_op_request',
   'skill_sync_required',
   'mcp_sync_required',
   'tool_approval_resolved',
@@ -123,6 +124,7 @@ export async function cmdLocal(ctx: ChatContext, hooks: DaemonHooks = {}): Promi
 
   const servedSessions = new Set<number>();
   let toolCount = 0;
+  let fileOpCount = 0;
   ws.on((evt) => {
     if (evt.type === 'connected') {
       executor.setApprovalRelaySupported(evt.data?.approvalRelay === true);
@@ -130,6 +132,12 @@ export async function cmdLocal(ctx: ChatContext, hooks: DaemonHooks = {}): Promi
     }
     if (!DAEMON_ROUTED_EVENTS.has(evt.type)) return;
     if (evt.sessionId != null) servedSessions.add(evt.sessionId);
+    if (evt.type === 'file_op_request') {
+      // 文件代理回帧不打日志（高频只读操作），仅计数供退出摘要
+      fileOpCount += 1;
+      void executor.handleEvent(evt);
+      return;
+    }
     if (evt.type !== 'tool_execute') {
       void executor.handleEvent(evt);
       return;
@@ -167,7 +175,7 @@ export async function cmdLocal(ctx: ChatContext, hooks: DaemonHooks = {}): Promi
       } catch {
         // ignore
       }
-      writeOut(`已退出。服务会话 ${servedSessions.size} 个，执行工具 ${toolCount} 次。`);
+      writeOut(`已退出。服务会话 ${servedSessions.size} 个，执行工具 ${toolCount} 次，文件代理 ${fileOpCount} 次。`);
       release(EXIT.SUCCESS);
     })();
   };

@@ -1,6 +1,6 @@
 # 终端 CLI（mao-agent）实现文件代理技术方案（CLI 绑定 LOCAL 会话的远程文件浏览）
 
-- 状态：草案（2026-11-18；2026-11-18 已按代码逐条核实并修订：投递档序修正（显式声明优先于 legacy 推断，修复「旧桌面 + 新 CLI」白等超时）、CLI 图片不缩放与桌面的行为差异如实标注、capabilities 解析边界与四 op DTO 字段细节补全、executor / file-ops 的收窄分工与行号校正。同日补充：与本地终端方案并行时的分工见 §10）
+- 状态：已实施（2026-11-18 落地；评审修订：投递档序修正（显式声明优先于 legacy 推断，修复「旧桌面 + 新 CLI」白等超时）、CLI 图片不缩放与桌面的行为差异如实标注、capabilities 解析边界与四 op DTO 字段细节补全、executor / file-ops 的收窄分工与行号校正。同日补充：与本地终端方案并行时的分工见 §10）
 - 日期：2026-11-18
 - 关联方案：
   - [2026-11-17-local-file-tree-remote-proxy-technical-design.md](./2026-11-17-local-file-tree-remote-proxy-technical-design.md)（已落地：LOCAL 会话文件树远程代理主体。本方案是其 §9-5 开放问题的立项，补齐 CLI 执行端）
@@ -105,7 +105,7 @@
 
    收窄分工：**信任收窄只在 executor 层做一次**（`resolveWorkspace`，复用 tool_execute 的错误文案「拒绝服务端下发的工作区 …」，见 §4.2-3）；`executeFileOp` 接到的 `request.workspace` 已收窄，模块内只做 **containment**——`path.resolve` 后须等于工作区或位于其内（镜像 main.cjs:2272 的 `startsWith(workspace + path.sep) || ===` 口径，越界回「路径越出工作区范围」），不重复信任收窄。
 
-   执行序（与桌面执行器同构，永不抛错、全部收敛为回帧）：containment → op 分发 → 结果 `{ error }` 字段收敛为失败帧 → `Buffer.byteLength(JSON.stringify(frame), 'utf8') > 700KB` 预检 → 「文件过大，移动端暂不支持查看该文件」。fs 一律用 `node:fs/promises`：daemon 长驻进程与 tool_execute / WS 心跳共用事件循环，大目录 BFS 不能用同步 fs 长时间阻塞（桌面端逐目录 await 同构）。
+   执行序（与桌面执行器同构，永不抛错、全部收敛为回帧）：containment → op 分发 → 结果 `{ error }` 字段收敛为失败帧 → `Buffer.byteLength(JSON.stringify(frame), 'utf8') > 700KB` 预检 → 「文件过大，移动端暂不支持查看该文件」。fs 一律用 `node:fs/promises`：daemon 长驻进程与 tool_execute / WS 心跳共用事件循环，大目录 BFS 不能用同步 fs 长时间阻塞（桌面端逐目录 await 同构）。**实施豁免**：read op 图片分支复用 files.ts readImage（同步 fs、≤5MB，毫秒级阻塞已接受）——「复用 readImage」与「一律 fs/promises」内在冲突，实施选复用，评审确认。
 
 2. **四个 op 的实现口径**（逐字段镜像桌面端，服务端归一化共用）：
    - `list`：`path.resolve` containment（防 `..`；镜像 main.cjs:2272）→ `readdir(withFileTypes)` + `lstat`（isDirectory && !isSymlink、size、mtimeMs、isSymlink）→ 目录优先、名称排序（localeCompare）→ 500 条上限 → `{ entries, truncated }`；`truncated` 按 readdir 原始条目数 > 500 判定（排序前计数，与桌面一致）。
@@ -198,7 +198,9 @@
 2. **IMAGE_EXTENSIONS / IGNORED_DIRS 双端漂移**：图片扩展名表 CLI 侧已有先例（`local/tools/files.ts:8-14` 的 `IMAGE_EXT`，file-ops 直接复用）；`IGNORED_DIRS` 十二目录 CLI 侧需新增（镜像 main.cjs:2215，仅 files op 用）。三端各自维护；若后续频繁增改，可评估下沉 `@mao/contracts` 或共享 cjs vendor（现有 `sync:shell` 脚本先例）。
 3. **CLI 的 bytes op**（与桌面 P2 同批）：二进制远程传输方案（分块 / 设备 HTTP 直报）定案后，CLI 与桌面一起实现，CLI 侧无额外障碍。
 4. **设备能力展示**：管理后台在线设备页可展示各连接能力集（file_op 等），便于排查「为什么浏览不了」；纯展示，P3。
-
+5. **同机 REPL + daemon 并存的档 2 命中不确定**：分层投递按连接枚举序取首条命中，服务端无法区分 `--serve` 与交互 REPL 的声明；REPL 先连时档 2 可能命中 REPL，而 REPL 对非订阅会话按 D7 静默丢弃 → 服务端超时（daemon 存活本可服务）。候选方向：daemon auth 帧声明区分性能力（如 `file_op_daemon`）或档内优先 deviceExecutors 执行槽。实施评审（2026-11-18）记录，未在本期处理。
+6. **CLI search 与桌面的两处口径差异**（评审记录）：CLI 无「每目录 500 条」上限（桌面经 listDirectory 间接继承并忽略其 truncated 标志）、结果 path 恒 `/` 分隔（桌面继承 path.relative，Windows 为反斜杠）——file-ops.ts 文件头已互指注释；CLI 结果更完整，显示层差异，可接受。
+7. **>5MB 图片的回帧形态差异**：CLI 走 readImage 错误文案（含「请先本地压缩或裁剪」），桌面 readLocalImage 同分支也是文本错误帧——两端帧形态一致但文案不同，mao-cli 文档已按「大图提示文件过大」概括。
 ## 10. 与本地终端方案同时开发
 
 对照 [2026-11-18-local-terminal-remote-technical-design.md](./2026-11-18-local-terminal-remote-technical-design.md) §10。两套同时做时，本方案保持以下边界，终端方案不进入这些入口：

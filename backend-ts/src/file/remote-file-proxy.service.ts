@@ -65,7 +65,12 @@ export class RemoteFileProxyService {
     });
     const dispatch = this.wsRegistry.sendToFileCapableDevice(target.userId, target.deviceId, event);
     if (dispatch.status === 'cliOnly') {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, '该任务由终端 CLI（mao-agent）执行，暂不支持远程浏览本地文件');
+      // 仅剩旧版 CLI（未声明 file_op 能力）：升级提示而非「暂不支持」——升级即可用
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '该任务由终端 CLI（mao-agent）执行，当前版本暂不支持远程浏览本地文件，请升级 mao-agent 后重试');
+    }
+    if (dispatch.status === 'noCapable') {
+      // 连接都在且都显式声明能力但无 file_op：客户端版本过旧（技术方案 2026-11-18 §4.1-4）
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '执行端客户端不支持远程浏览本地文件，请升级桌面客户端或 mao-agent 后重试');
     }
     if (dispatch.status !== 'delivered') {
       // 设备无任何可写连接（离线 / 刚断开）：立即回错，不空等超时（镜像 local-tool-session-registry 的处理）

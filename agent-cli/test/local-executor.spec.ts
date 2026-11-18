@@ -565,3 +565,98 @@ describe('多端审批：投票、回声与回退（技术方案 2026-11-06）',
     }
   });
 });
+
+describe('LocalExecutor file_op_request（技术方案 2026-11-18）', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const ws = (sent: object[]) => ({
+    sendReliable: async (p: object) => { sent.push(p); return true; },
+  } as unknown as WsClient);
+
+  function executorWith(sent: object[], workspace = os.tmpdir()): LocalExecutor {
+    return new LocalExecutor({
+      ws: ws(sent),
+      getToken: async () => null,
+      baseUrl: 'https://mao.etarch.cn/api',
+      workspace,
+      policy: policy(),
+    });
+  }
+
+  it('lists the workspace and replies file_op_result with entries', async () => {
+    const sent: object[] = [];
+    const exec = executorWith(sent, os.tmpdir());
+    await exec.handleEvent({
+      type: 'file_op_request',
+      sessionId: 7,
+      data: { requestId: 'fop-1', op: 'list', params: {}, workspace: os.tmpdir() },
+    });
+    const frame = sent.find((m) => (m as { type: string }).type === 'file_op_result') as {
+      sessionId: number; requestId: string; ok: boolean; data?: { entries?: unknown[] };
+    };
+    expect(frame.requestId).toBe('fop-1');
+    expect(frame.ok).toBe(true);
+    expect(Array.isArray(frame.data?.entries)).toBe(true);
+  });
+
+  it('rejects a workspace outside the local trust root with the shared denial copy', async () => {
+    const sent: object[] = [];
+    const exec = executorWith(sent, os.tmpdir());
+    await exec.handleEvent({
+      type: 'file_op_request',
+      sessionId: 7,
+      data: { requestId: 'fop-2', op: 'list', params: {}, workspace: '/etc' },
+    });
+    const frame = sent.find((m) => (m as { type: string }).type === 'file_op_result') as { ok: boolean; error?: string };
+    expect(frame.ok).toBe(false);
+    expect(frame.error).toMatch(/拒绝服务端下发的工作区/);
+  });
+
+  it('ignores a request without requestId (no reply frame)', async () => {
+    const sent: object[] = [];
+    const exec = executorWith(sent, os.tmpdir());
+    await exec.handleEvent({
+      type: 'file_op_request',
+      sessionId: 7,
+      data: { op: 'list', params: {}, workspace: os.tmpdir() },
+    });
+    expect(sent).toHaveLength(0);
+  });
+});
+
+describe('LocalExecutor file_op_request catch 兜底', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('sendReliable 抛错时经 handleEvent 统一 catch 回失败帧（console.error 口径同 tool_result）', async () => {
+    const sent: object[] = [];
+    let first = true;
+    const exec = new LocalExecutor({
+      ws: {
+        sendReliable: async (p: object) => {
+          if (first) {
+            first = false;
+            throw new Error('socket gone');
+          }
+          sent.push(p);
+          return true;
+        },
+      } as unknown as WsClient,
+      getToken: async () => null,
+      baseUrl: 'https://mao.etarch.cn/api',
+      workspace: os.tmpdir(),
+      policy: policy(),
+    });
+    await exec.handleEvent({
+      type: 'file_op_request',
+      sessionId: 7,
+      data: { requestId: 'fop-3', op: 'list', params: {}, workspace: os.tmpdir() },
+    });
+    const frame = sent.find((m) => (m as { type: string }).type === 'file_op_result') as { ok: boolean; error?: string };
+    expect(frame.ok).toBe(false);
+    expect(frame.error).toBe('socket gone');
+  });
+});

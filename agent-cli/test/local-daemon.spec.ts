@@ -134,6 +134,20 @@ describe('local daemon', () => {
       await waitFor(() => lines.some((line) => line.includes('tool session=42 tool=read_file')));
       expect(lines.join('\n')).not.toContain('hello.txt');
 
+      // 文件代理（技术方案 2026-11-18）：daemon 全量接管 file_op_request 并回帧，不打工具日志
+      server.send({
+        type: 'file_op_request',
+        sessionId: 42,
+        data: { requestId: 'fop-1', op: 'list', params: {}, workspace: dir },
+      });
+      await waitFor(() => server!.received.some((m) => (m as { type?: string }).type === 'file_op_result'));
+      const fileOp = server.received.find((m) => (m as { type?: string }).type === 'file_op_result') as {
+        ok?: boolean; data?: { entries?: Array<{ name?: string }> };
+      };
+      expect(fileOp.ok).toBe(true);
+      expect(fileOp.data?.entries?.some((e) => e.name === 'hello.txt')).toBe(true);
+      expect(lines.join('\n')).not.toContain('file_op');
+
       server.drop();
       await waitFor(() => server!.received.filter((m) => (m as { type?: string }).type === 'auth').length >= 2);
       const second = server.received.filter((m) => (m as { type?: string }).type === 'auth').at(-1) as { token?: string };
@@ -142,7 +156,7 @@ describe('local daemon', () => {
 
       signals.get('SIGTERM')?.();
       await expect(pending).resolves.toBe(0);
-      expect(lines.join('\n')).toMatch(/已退出。服务会话 1 个，执行工具 1 次/);
+      expect(lines.join('\n')).toMatch(/已退出。服务会话 1 个，执行工具 1 次，文件代理 1 次/);
       expect(closeAll).toHaveBeenCalled();
     } finally {
       signals.get('SIGTERM')?.();
