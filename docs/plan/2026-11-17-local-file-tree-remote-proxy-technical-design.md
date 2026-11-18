@@ -266,7 +266,7 @@ P1 无需给 TaskInspector 新增 `targetDeviceId` prop：门控恢复既有判�
 2. **写操作远程化**（P2）：移动端向 LOCAL 工作区上传 / 编辑，需「服务端暂存 → 设备拉取写入」+ 设备端审批复用，另立方案。
 3. **Git / 终端远程代理**：与文件代理同构（op 泛化为设备 RPC 后可复用 pending 机制），建议等文件代理稳定后评估。
 4. **移动端浏览体验**：大目录虚拟滚动、图片网格视图等，属文件树组件增强，与本方案解耦。
-5. **agent-cli 实现 file op**（P2）：CLI 绑定的 LOCAL 会话目前只能拿到 D11 拒绝文案；`agent-cli/src/local/executor.ts` 已有 `tool_execute` 分发骨架，补 `file_op_request` 处理（node fs + 同款 containment 校验）后，纯 CLI 设备的会话也能被远程浏览。前置依赖：containment 口径在 agent-cli 复刻一份或下沉共享，勿让两端漂移。
+5. **agent-cli 实现 file op**（P2）：CLI 绑定的 LOCAL 会话目前只能拿到 D11 拒绝文案；`agent-cli/src/local/executor.ts` 已有 `tool_execute` 分发骨架，补 `file_op_request` 处理（node fs + 同款 containment 校验）后，纯 CLI 设备的会话也能被远程浏览。前置依赖：containment 口径在 agent-cli 复刻一份或下沉共享，勿让两端漂移。→ 已立项：[2026-11-18-agent-cli-file-op-technical-design.md](./2026-11-18-agent-cli-file-op-technical-design.md)（含能力声明与分层投递）
 6. **fetch 类方法对 HTTP 200 + code 信封的历史坑**：CLOUD 现状的 `workspace-preview` 报错（如「文件不存在」）同样经 `handleError` 映射为 HTTP 200，`previewFile` 会把 JSON 当 blob 渲染失败（`readPdfFile` 的 BusinessException，`workspace-browse.service.ts:261-269`）。与本方案无关但同根，可另开小修（previewFile 补 downloadWorkspaceResource 式的 JSON 信封检查）。
 7. **双机互看时 @ 引用面板的 LOCAL 直连缺口**（P2）：`useEditorTagPanels.ts` 的 LOCAL+Electron 分支仍直调 `electronAPI.listWorkspaceFiles(ctx.workspace)`——目标设备路径在本机不存在时静默返回空列表，与文件树的代理分流不同步。移动端路径已由服务端 `workspace-list` 分流修复，仅 Electron 跨设备场景残留。
 8. **files op 的 DTO 为 CLOUD 超集**：设备端 `list-workspace-files` 条目带 `mtime` 字段（CLOUD `WorkspaceFileDTO` 为 `{path,name,size}`），代理零归一化透传多出该字段，现无消费方使用、无行为影响；如求严格同形可在归一化层剥离。
