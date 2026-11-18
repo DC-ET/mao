@@ -1,6 +1,6 @@
 # 本地任务终端跨端开放技术方案（浏览器 / 安卓使用执行端本机终端）
 
-- 状态：草案（2026-11-18；§3 决策为拟定口径，评审通过后定案。同日修订：去掉本机同意开关；mao-agent 与桌面客户端同为主机；与文件代理方案的并行边界见 §10）
+- 状态：草案（2026-11-18；§3 决策为拟定口径，评审通过后定案。同日修订：去掉本机同意开关；mao-agent 与桌面客户端同为主机；与文件代理方案的并行边界见 §10。**2026-11-18 可行性评审：方案与需求均可行**——`PtyLike` 抽象与 `PtyFactory` 注入缝隙已在 remote-terminal.ts 存在（docker 容器桥先例），桥接主机帧不需改 `RemoteTerminal` 结构；按评审补充 §4.5 主机 token 生命周期、§4.6 桌面 `ws` 依赖与账号切换、§4.7 mao-agent 的 node-pty 安装可行性（optionalDependencies）、§4.3 attach 检查顺序、TERM 覆盖顺序等，见各节标注）
 - 日期：2026-11-18
 - 关联方案：
   - [2026-11-05-local-task-device-delegation-technical-design.md](./2026-11-05-local-task-device-delegation-technical-design.md)（前置依赖：设备身份、创建即绑定、定向委托、浏览器接管 LOCAL 会话对话。其 §2.2 / §9-3 明确排除「文件树 / 终端 / Git 远程代理」，本方案是其中「终端」的独立方案）
@@ -154,7 +154,7 @@ Electron 打开**另一台设备**绑定的 LOCAL 会话时，顶栏仍判定「
 - 主机的 `output` / `exit` 由 `TerminalHostHandler` 调回桥上登记的回调；
 - `pid` 记 0。日志里以 `terminalId` 标识，不假装服务器上有这个进程。
 
-`AttachableTerminal` 增加 `skipTerminalUsePermission: boolean`。`RemoteTerminal` 为 `false`。中继实例为 `true`。`TerminalWsHandler.handleAttach` 仅在该字段为 false 时检查 `terminal:use`（`terminal-ws-handler.ts:243-246`）。归属校验（`:255-258`）两种终端都做。
+`AttachableTerminal` 增加 `skipTerminalUsePermission: boolean`。`RemoteTerminal` 为 `false`。中继实例为 `true`。`TerminalWsHandler.handleAttach` 仅在该字段为 false 时检查 `terminal:use`（`terminal-ws-handler.ts:243-246`）。归属校验（`:255-258`）两种终端都做。**实现顺序注记（评审补充）**：现实现先查权限再 `terminalManager.get()`；skip 标志挂在终端记录上，必须把 get 提到权限检查之前（经 §4.4 目录门面），按记录字段决定是否跳过——spec 需断言「中继终端 + 无 `terminal:use` → attach 成功」与「云端终端 + 无权限 → 仍拒」两条路径各自成立。
 
 `TerminalManager` 增加两个只读方法，供配额使用，不把 `pendingCreates` 暴露出去：
 
@@ -246,7 +246,16 @@ IPC 标签继续不带 `sessionId`（现状）。它们只在「本机是执行�
 | `kill` | `terminalId`、`reason` | `CLOSE` / `RECLAIM` / `SESSION_DELETED` / `HOST_LOST` |
 | `pong` | | |
 
-auth：`validateAccessToken`，`deviceId` 必须匹配 `^[A-Za-z0-9_-]{1,64}$`。失败关闭，code 1003。帧上增加 `client: 'electron' | 'cli'`，与 `/ws/stream` 的 client 取值一致，供同机优先级使用。同一 `(userId, deviceId)` 只留一条**活跃**主机，规则如下，不能照搬「后连的顶掉先连的」：
+auth：`validateAccessToken`，`deviceId` 必须匹配 `^[A-Za-z0-9_-]{1,64}$`。失败关闭，code 1003。**服务端只在 auth 时校验一次 token，连接存活期内不再复查**（与 `/ws/stream` 现状一致；不搬 company_sso 的到期复查）。帧上增加 `client: 'electron' | 'cli'`，与 `/ws/stream` 的 client 取值一致，供同机优先级使用——client 由连接自报，只影响同账号同设备上「新 shell 落在哪个进程」，自报错误无越权面，接受。
+
+**主机连接的 token 生命周期（评审补充）**：access token 是短时效的，`/ws/stream` 靠 `auth_refresh` 在连接内换票；主机连接**本期不加 auth_refresh**，改为「断线重连时必取最新 token」：
+
+- 服务端认可连接后 token 过期不影响在途连接（同上，连接内不复查）。
+- 桌面：token 轮换（`auth-set-tokens` 写盘）后**不主动断开重连**（避免无谓抖动），只把主机连接标记为「下次重连用新 token」；因网络断开重连时从 `readAuthStore()` 取最新值。若 1003 被拒（token 真过期），指数退避等待下一次 `auth-set-tokens` 或渲染进程刷新，重试循环内不写死循环日志。
+- mao-agent：重连时调现成 `getToken()`（2026-11-18 token 重登方案保证过期后能续/重登），复用其指数退避。
+- **账号切换**（评审补充的缺口）：`auth-set-tokens` 写入的是**另一个账号**的 token 时，重连后 userId 已变——主机必须在重连前按「userId 变化」杀掉本进程全部中继 PTY（与登出同一语义），否则旧账号的 shell 成为孤儿且缓冲/注册错位。桌面以 `readAuthStore()` 解出的 userId 与当前主机连接的 userId 比对。
+
+同一 `(userId, deviceId)` 只留一条**活跃**主机，规则如下，不能照搬「后连的顶掉先连的」：
 
 - 活跃主机已是 `electron` 时，新的 `cli` 连接接受为待命：回 `connected` 且 `role: 'standby'`，不向它发 `open`。它不替换 Electron，因此不会把桌面进程里的 PTY 拆掉。
 - 活跃主机是 `cli` 或空位时，新的 `electron` 成为活跃主机。原 CLI 收到 close `4000 replaced`，CLI 杀掉自己 map 里的中继 PTY。这些 id 不在 Electron 的 `terminals` 里，对账后观看端收到 `HOST_LOST`。PTY 不能迁到另一个进程。
@@ -283,9 +292,10 @@ export type TerminalHostAvailability = 'enabled' | 'unsupported' | 'upgrade-cli'
 新增 `desktop/electron/terminalHost.cjs`，由 `main.cjs` 在 `app.ready` 且已有 token 之后启动。职责：
 
 - 用 `readAuthStore()`（`main.cjs:1690-1696`）取 access token，用 `~/.mao/agent-cli/device.json` 取 `deviceId`（与 `desktopPrefs` 读的是同一个文件）。登录成功即连接，不读取任何「是否允许远程」的偏好。
-- 连接 `${apiBase}/ws/terminal-host`。地址与渲染进程的终端 WS 同源，从现有服务器配置读取，不写死域名。
+- **依赖（评审补充）**：桌面当前无 `ws` 依赖（Electron ^28 = Node 20 主进程，无全局 WebSocket；MCP 用的 SDK 传输不算数）。`desktop/package.json` 需新增 `"ws"`——纯 JS 包，不进 `electron-rebuild`，与 `node-pty` 的原生重建互不影响。
+- 连接 `${apiBase}/ws/terminal-host`。地址与渲染进程的终端 WS 同源，从现有服务器配置读取，不写死域名。token 生命周期与账号切换见 §4.5（auth-set-tokens 只标 dirty + userId 变化杀 PTY，不主动断连）。
 - 维护 `Map<terminalId, pty>`，与 IPC 用的 `terminalManager.sessions` **分开**。两套 map 互不转发输出，避免手机上的 shell 把字节灌进桌面正在看的本机标签。
-- `open`：`cwd` 必须是已存在的目录，否则 `open_failed` / `CWD_MISSING`。spawn 参数与 `TerminalManager.create` 相同（检测到的 shell、空参数、`buildShellEnv()`、`TERM=xterm-256color`）。成功后 `opened`。`pty.onData` 按 256KB UTF-8 边界切片上送；发送前若主机 socket `bufferedAmount > 1MB`，丢掉本片并记一笔，下一次能发时先送一行 `\r\n[输出过快，已丢弃部分内容]\r\n`。不暂停读取，避免 PTY 把主进程堵住。
+- `open`：`cwd` 必须是已存在的目录，否则 `open_failed` / `CWD_MISSING`。spawn 参数与 `TerminalManager.create` 相同（检测到的 shell、空参数、`buildShellEnv()`、`TERM=xterm-256color`）。**注意覆盖顺序（评审补充）**：`buildShellEnv()` 把 `TERM` 固定为 `'dumb'`（`main.cjs:397`），必须在 spread 之后覆盖回 `xterm-256color`，否则 vim / 颜色全部退化。成功后 `opened`。`pty.onData` 按 256KB UTF-8 边界切片上送；发送前若主机 socket `bufferedAmount > 1MB`，丢掉本片并记一笔，下一次能发时先送一行 `\r\n[输出过快，已丢弃部分内容]\r\n`。不暂停读取，避免 PTY 把主进程堵住。
 - `input` / `resize` / `kill` 只作用于这张 map。未知 id 忽略。
 - 退出、`before-quit`：`kill` 全部中继 PTY，关闭 socket。与现有 `terminalManager.killAll()` 并列调用。
 - 重连：指数退避，上限 30 秒。auth 的 `terminals` 带上仍活着的 id。服务器没回 `connected` 之前不接受新的 `open`。
@@ -306,6 +316,8 @@ export type TerminalHostAvailability = 'enabled' | 'unsupported' | 'upgrade-cli'
 - 不加入 `DAEMON_ROUTED_EVENTS`，不改 `acceptEvent`。终端是进程级的，不按当前订阅会话过滤。这与文件代理 D7（REPL 只处理当前会话的 `file_op_request`）故意不同：手机要开的是这台机器上的 shell，不是 REPL 正坐着的那一个会话的文件请求。
 
 `package.json` 增加依赖 `node-pty`。`npm test` 不安装、不加载它。
+
+**安装可行性（评审补充的发布风险）**：`node-pty` 放**正式 dependencies** 会让 `npm install -g mao-agent` 在 Linux 上跑 node-gyp（需 python3 / make / g++），编译失败会**波及不用终端的存量用户——整个 mao-agent 安装失败**。因此 node-pty 必须放 **`optionalDependencies`**：安装失败被 npm 容忍，运行时 `require('node-pty')` 失败 → 主机连接照常建立但 `open` 一律回 `open_failed` / `SPAWN_FAILED`，能力降级而不是装不上。§9-3 的预编译备选（fork 带 linux 预编译 / prebuilt 包）按此口径评估。
 
 ### 4.8 前端会话快照
 
