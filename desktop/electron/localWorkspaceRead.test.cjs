@@ -25,7 +25,8 @@ test.after(() => {
 test('正常相对路径解析为 workspace 内绝对路径', () => {
   const resolved = resolveContainedWorkspacePath(WORKSPACE, 'screenshots/a.png')
   assert.strictEqual(resolved.error, undefined)
-  assert.strictEqual(resolved.path, path.resolve(WORKSPACE, 'screenshots', 'a.png'))
+  // 实现返回 realpath。macOS 上 /var 归一到 /private/var，不能拿 path.resolve 的词法结果比对。
+  assert.strictEqual(resolved.path, fs.realpathSync(path.join(WORKSPACE, 'screenshots', 'a.png')))
 })
 
 test('拒绝越界与非法路径', () => {
@@ -50,16 +51,26 @@ test('拒绝非法 workspace 与空段路径', () => {
   assert.strictEqual(resolveContainedWorkspacePath(WORKSPACE, 'screenshots//a.png').error, '文件路径不合法')
 })
 
-test('workspace 带尾分隔符 / 大小写混写仍 containment（Windows 口径）', () => {
+test('workspace 带尾分隔符仍 containment', () => {
   const withSep = WORKSPACE + path.sep
   const resolved = resolveContainedWorkspacePath(withSep, 'screenshots/a.png')
   assert.strictEqual(resolved.error, undefined)
-  // path.win32.relative 大小写不敏感：不同大小写写法的同一路径不判越界
-  const mixed = WORKSPACE.toUpperCase()
-  if (mixed !== WORKSPACE) {
-    const caseInsensitive = resolveContainedWorkspacePath(mixed, 'screenshots/a.png')
-    assert.strictEqual(caseInsensitive.error, undefined)
+  assert.strictEqual(resolved.path, fs.realpathSync(path.join(WORKSPACE, 'screenshots', 'a.png')))
+})
+
+test('大小写不敏感文件系统上，大小写混写的 workspace 仍 containment', (t) => {
+  // realpath 不改写大小写，不能靠 realpath 字符串相等判断。用探测文件：
+  // Windows / 默认 macOS 能打开大小写不同的同一路径；Linux CI 不能，大写工作区应判不存在。
+  const marker = path.join(WORKSPACE, 'CaseMarker')
+  fs.writeFileSync(marker, 'x')
+  const insensitive = fs.existsSync(path.join(WORKSPACE, 'casemarker'))
+  fs.rmSync(marker, { force: true })
+  if (!insensitive) {
+    t.skip('当前文件系统大小写敏感，大写路径不是同一工作区')
+    return
   }
+  const caseInsensitive = resolveContainedWorkspacePath(WORKSPACE.toUpperCase(), 'screenshots/a.png')
+  assert.strictEqual(caseInsensitive.error, undefined)
 })
 
 test('盘符大小写不同的绝对路径逃逸被拒（仅当盘符真不同时）', () => {
