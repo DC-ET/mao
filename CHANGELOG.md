@@ -2,7 +2,7 @@
 
 开发期不要改本文件。用户可见改动写到 [`changelog/unreleased/`](changelog/unreleased/README.md)；打包、发版或 OTA 前在 main 上运行 `./scripts/changelog-cut.sh`。
 
-最新版本：0.0.525（2026-11-17）
+最新版本：0.0.526（2026-11-18）
 
 已发布记录按月归档，新版本在当月文件顶部：
 
