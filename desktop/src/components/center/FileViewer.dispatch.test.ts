@@ -135,6 +135,9 @@ vi.mock('../../utils/capacitor', () => ({
 vi.mock('@element-plus/icons-vue', () => ({
   Refresh: { render: () => null },
   Download: { render: () => null },
+  View: { render: () => null },
+  CopyDocument: { render: () => null },
+  ChatDotRound: { render: () => null },
 }))
 
 // file-preview-format 不 mock——判定纯函数正是被接线的一方
@@ -207,6 +210,19 @@ function findAllByClass(node: StubNode | null, cls: string): StubEl[] {
   if (node == null || 'text' in node) return []
   const self = typeof node.props.class === 'string' && node.props.class.split(' ').includes(cls) ? [node] : []
   return [...self, ...node.children.flatMap((child) => findAllByClass(child, cls))]
+}
+
+function findButton(root: StubEl, label: string): StubEl | undefined {
+  const walk = (node: StubNode | null): StubEl | undefined => {
+    if (node == null || 'text' in node) return undefined
+    if (node.tag === 'button' && node.props['aria-label'] === label) return node
+    for (const child of node.children) {
+      const found = walk(child)
+      if (found) return found
+    }
+    return undefined
+  }
+  return walk(root)
 }
 
 interface ProviderImpl {
@@ -679,18 +695,37 @@ describe('FileViewer dispatch：既有路径不回归', () => {
     // markdown 默认 rendered 态：MarkdownContent stub 在场、源码 Monaco 未启用
     expect(findAllByClass(root, 'md-stub').length).toBeGreaterThan(0)
     expect(lastMonacoEnabled()).toBe(false)
+    // 预览/源码是一组互斥开关，其余操作是图标按钮（名称在 aria-label）
+    expect(findAllByClass(root, 'view-switch')).toHaveLength(1)
+    expect(findButton(root, '预览')?.props['aria-pressed']).toBe(true)
+    expect(findButton(root, '源码')?.props['aria-pressed']).toBe(false)
+    expect(findButton(root, '复制全文')).toBeTruthy()
+    expect(findButton(root, '引用到对话')).toBeTruthy()
+    expect(findButton(root, '刷新')).toBeTruthy()
+    expect(findButton(root, '自动换行')).toBeUndefined()
+
+    const onSource = findButton(root, '源码')?.props.onClick
+    expect(typeof onSource).toBe('function')
+    ;(onSource as () => void)()
+    await flush()
+    expect(findButton(root, '源码')?.props['aria-pressed']).toBe(true)
+    expect(findButton(root, '预览')?.props['aria-pressed']).toBe(false)
+    expect(findButton(root, '自动换行')).toBeTruthy()
+    expect(lastMonacoEnabled()).toBe(true)
   })
 
   it('txt 走既有 ready 路径：Monaco 启用，不进新分支（H2）', async () => {
     const { provider, calls } = makeProvider({
       readFile: async () => ({ content: 'plain text', total_lines: 1 }),
     })
-    await mountViewer('notes.txt', provider)
+    const root = await mountViewer('notes.txt', provider)
 
     expect(calls).toEqual(['readFile:notes.txt'])
     expect(csvProps).toHaveLength(0)
     expect(archiveProps).toHaveLength(0)
     expect(lastMonacoEnabled()).toBe(true)
+    expect(findAllByClass(root, 'view-switch')).toHaveLength(0)
+    expect(findButton(root, '自动换行')).toBeTruthy()
   })
 
   it('pdf 走既有 previewFile 路径：PdfViewer stub 接收 blob URL，不进新分支', async () => {

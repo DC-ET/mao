@@ -8,10 +8,16 @@
 
     <!-- Image preview -->
     <div v-else-if="state === 'image'" class="file-message image-preview">
-      <div class="viewer-toolbar">
-        <button class="tool-btn" title="引用到对话" @click="emit('add-file-to-chat', props.filePath)">引用</button>
-        <button v-if="provider?.downloadFile" class="tool-btn" title="下载文件" @click="downloadFile">下载</button>
-        <button class="tool-btn" title="刷新" @click="loadFile">刷新</button>
+      <div class="viewer-toolbar" role="toolbar" aria-label="文件操作">
+        <button type="button" class="tool-btn" title="引用到对话" aria-label="引用到对话" @click="emit('add-file-to-chat', props.filePath)">
+          <el-icon :size="14"><ChatDotRound /></el-icon>
+        </button>
+        <button v-if="provider?.downloadFile" type="button" class="tool-btn" title="下载文件" aria-label="下载文件" @click="downloadFile">
+          <el-icon :size="14"><Download /></el-icon>
+        </button>
+        <button type="button" class="tool-btn" title="刷新" aria-label="刷新" @click="loadFile">
+          <el-icon :size="14"><Refresh /></el-icon>
+        </button>
       </div>
       <img :src="imageDataUri" :alt="filePath" />
       <p class="image-meta">{{ content }}</p>
@@ -91,16 +97,57 @@
 
     <!-- Content -->
     <div v-else-if="state === 'ready'" class="file-content">
-      <div class="viewer-toolbar">
-        <template v-if="isMarkdown">
-          <button :class="['tool-btn', { active: viewMode === 'rendered' }]" @click="viewMode = 'rendered'">预览</button>
-          <button :class="['tool-btn', { active: viewMode === 'source' }]" @click="viewMode = 'source'">源码</button>
-        </template>
-        <button v-if="showSource" :class="['tool-btn', { active: wordWrapOn }]" title="自动换行" @click="toggleWordWrap">换行</button>
-        <button class="tool-btn" title="复制全文" @click="copyAll">复制</button>
-        <button class="tool-btn" title="引用到对话" @click="emit('add-file-to-chat', props.filePath)">引用</button>
-        <button v-if="provider?.downloadFile" class="tool-btn" title="下载文件" @click="downloadFile">下载</button>
-        <button class="tool-btn" title="刷新" @click="loadFile">刷新</button>
+      <div class="viewer-toolbar" role="toolbar" aria-label="文件操作">
+        <div v-if="isMarkdown" class="view-switch" role="group" aria-label="预览与源码">
+          <button
+            type="button"
+            :class="['tool-btn', { active: viewMode === 'rendered' }]"
+            :aria-pressed="viewMode === 'rendered'"
+            title="预览"
+            aria-label="预览"
+            @click="viewMode = 'rendered'"
+          >
+            <el-icon :size="14"><View /></el-icon>
+          </button>
+          <button
+            type="button"
+            :class="['tool-btn', { active: viewMode === 'source' }]"
+            :aria-pressed="viewMode === 'source'"
+            title="源码"
+            aria-label="源码"
+            @click="viewMode = 'source'"
+          >
+            <svg class="tool-icon" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M5.2 3.2 2.2 8l3 4.8M10.8 3.2 13.8 8l-3 4.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+        </div>
+        <button
+          v-if="showSource"
+          type="button"
+          :class="['tool-btn', { active: wordWrapOn }]"
+          :aria-pressed="wordWrapOn"
+          title="自动换行"
+          aria-label="自动换行"
+          @click="toggleWordWrap"
+        >
+          <svg class="tool-icon" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M2.5 3.5h11M2.5 8h7.2a2.2 2.2 0 0 1 0 4.4H6.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+            <path d="M4.6 10.6 6.2 12.4 4.6 14.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <button type="button" class="tool-btn" title="复制全文" aria-label="复制全文" @click="copyAll">
+          <el-icon :size="14"><CopyDocument /></el-icon>
+        </button>
+        <button type="button" class="tool-btn" title="引用到对话" aria-label="引用到对话" @click="emit('add-file-to-chat', props.filePath)">
+          <el-icon :size="14"><ChatDotRound /></el-icon>
+        </button>
+        <button v-if="provider?.downloadFile" type="button" class="tool-btn" title="下载文件" aria-label="下载文件" @click="downloadFile">
+          <el-icon :size="14"><Download /></el-icon>
+        </button>
+        <button type="button" class="tool-btn" title="刷新" aria-label="刷新" @click="loadFile">
+          <el-icon :size="14"><Refresh /></el-icon>
+        </button>
       </div>
       <div class="file-editor-area">
         <div
@@ -141,6 +188,7 @@ import { resolvePreviewKind, sniffContainerKind } from '../../utils/file-preview
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import { copyText } from '../../utils/clipboard'
 import { ElMessage } from 'element-plus'
+import { ChatDotRound, CopyDocument, Download, Refresh, View } from '@element-plus/icons-vue'
 
 const props = defineProps<{
   filePath: string
@@ -567,21 +615,35 @@ onUnmounted(() => {
   top: 8px;
   right: 8px;
   display: flex;
+  align-items: center;
   gap: 2px;
   z-index: 10;
-}
-
-.tool-btn {
-  height: var(--aw-btn-height);
-  padding: var(--aw-btn-padding);
-  font-size: var(--aw-text-fine);
-  color: var(--aw-ink-muted-48);
+  padding: 2px;
   background: var(--aw-surface);
   border: 1px solid var(--aw-divider-soft);
   border-radius: var(--aw-radius-xs);
-  cursor: pointer;
-  transition: all 0.15s;
   backdrop-filter: blur(8px);
+}
+
+.view-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 1px;
+  border-radius: var(--aw-radius-xs);
+  background: var(--aw-canvas-parchment);
+}
+
+.tool-btn {
+  width: var(--aw-btn-height);
+  height: var(--aw-btn-height);
+  padding: 0;
+  color: var(--aw-ink-muted-48);
+  background: transparent;
+  border: none;
+  border-radius: var(--aw-radius-xs);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
 }
 
 .tool-btn:hover {
@@ -590,8 +652,18 @@ onUnmounted(() => {
 
 .tool-btn.active {
   color: var(--aw-primary);
-  border-color: var(--aw-primary);
   background: var(--aw-primary-hover);
+}
+
+.tool-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.view-switch .tool-btn.active {
+  background: var(--aw-surface);
+  box-shadow: 0 0 0 1px var(--aw-divider-soft);
 }
 
 .markdown-body {
