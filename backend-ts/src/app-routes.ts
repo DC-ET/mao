@@ -263,6 +263,8 @@ export interface RouteDeps {
   /** 当前执行连接的 clientType（electron / cli）；会话 VO 的 executorClientType 快照用。 */
   getExecutorClientType?: (userId: number, deviceId: string) => string | null;
   treeSignalPublisher: SessionTreeSignalPublisher;
+  /** LOCAL 正文图片按需委托读取（方案 2026-11-18） */
+  localFileFetch: import('./harness/local/local-file-fetch.service.js').LocalFileFetchService;
   workspaceBrowse: WorkspaceBrowseService;
   /** LOCAL 会话文件树远程代理（技术方案 2026-11-17）：browse 端点 LOCAL 分流 + WS 回包入口共用。 */
   remoteFileProxy: RemoteFileProxyService;
@@ -367,7 +369,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     agentRepo, modelRepo, todoRepo, pathSandbox, subagentExecutionRepo,
     sessionCompactionEventService, sessionCompactionService, runTraceService, runTraceRecordService,
     approvalRegistry, askUserQuestionsRegistry, inFlightToolRegistry, treeSignalPublisher,
-    workspaceBrowse, terminalManager, workspaceGit, gitCommitMsg, gitWrite, runtimeResolver,
+    workspaceBrowse, terminalManager, workspaceGit, gitCommitMsg, gitWrite, runtimeResolver, localFileFetch,
     remoteFileProxy,
     ossSts,
     skillBundleService, userSkillService, skillDocService,
@@ -596,7 +598,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       fileService, sessionService, workspaceBrowseService: workspaceBrowse,
       workspaceGitService: workspaceGit, gitCommitMessageService: gitCommitMsg,
       gitWriteOperationService: gitWrite, workspaceWriteService: workspaceWrite,
-      workspaceOverviewService, pathSandbox,
+      workspaceOverviewService, localFileFetchService: localFileFetch, pathSandbox,
       remoteFileProxyService: remoteFileProxy,
       experienceDirForAgent,
       getUploadBaseUrl: async () => (await settingService.getUploadConfig()).baseUrl,

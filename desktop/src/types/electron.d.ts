@@ -375,6 +375,8 @@ interface ElectronAPI {
   localReadFile(args: any): Promise<any>
   /** LOCAL 二进制字节读取（技术方案 §5.2）：zip / xlsx / docx / 媒体预览取数，返回 Buffer（结构化克隆为 Uint8Array）。 */
   localReadBytes(args: { path: string }): Promise<{ bytes?: Uint8Array; size?: number; error?: string }>
+  /** file_fetch 委托读取（方案 2026-11-18）：workspace + 相对路径，主进程 containment 校验后读字节。 */
+  localReadWorkspaceBytes?(args: { workspace: string; path: string }): Promise<{ bytes?: Uint8Array; size?: number; error?: string }>
   localWriteFile(args: any): Promise<any>
   localEditFile(args: any): Promise<any>
   listWorkspaceFiles(workspace: string, filter?: string, limit?: number): Promise<WorkspaceFile[]>

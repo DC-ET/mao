@@ -84,6 +84,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Local tool execution - direct IPC (for renderer-initiated calls)
   localReadFile: (args) => ipcRenderer.invoke('local-read-file', args),
   localReadBytes: (args) => ipcRenderer.invoke('local-read-bytes', args),
+  // file_fetch 委托读取（方案 2026-11-18）：workspace + 相对路径，主进程 containment 校验
+  localReadWorkspaceBytes: (payload) => ipcRenderer.invoke('local-read-workspace-bytes', payload),
   localWriteFile: (args) => ipcRenderer.invoke('local-write-file', args),
   localEditFile: (args) => ipcRenderer.invoke('local-edit-file', args),
 

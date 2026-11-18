@@ -1,4 +1,5 @@
 import { createReadStream, existsSync, statSync, unlinkSync } from 'node:fs';
+import { Buffer } from 'node:buffer';
 import { resolve, sep } from 'node:path';
 import { lookup as mimeLookup } from 'mime-types';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -22,6 +23,7 @@ import type { GitCommitMessageService } from './git-commit-message.service.js';
 import type { GitWriteOperationService, LocalGitActivity } from './git-write-operation.service.js';
 import type { WorkspaceWriteService } from './workspace-write.service.js';
 import type { WorkspaceOverviewService } from './workspace-overview.service.js';
+import { hasImageFileExtension, type LocalFileFetchOutcome } from '../harness/local/local-file-fetch.service.js';
 import type { RemoteFileOp, RemoteFileProxyService } from './remote-file-proxy.service.js';
 
 export interface FileRouteDeps {
@@ -33,6 +35,10 @@ export interface FileRouteDeps {
   gitWriteOperationService: GitWriteOperationService;
   workspaceWriteService: WorkspaceWriteService;
   workspaceOverviewService: WorkspaceOverviewService;
+  /** LOCAL 正文图片按需委托读取（方案 2026-11-18）：workspace-download 的 LOCAL 分流走它，绝不直读服务器文件系统。 */
+  localFileFetchService: {
+    fetch(sessionId: number, userId: number, relativePath: string, workspace: string | null | undefined): Promise<LocalFileFetchOutcome>;
+  };
   pathSandbox: PathSandbox;
   /**
    * LOCAL 会话文件浏览的 WS 代理（技术方案 2026-11-17）：未注入时 LOCAL browse 直接报
@@ -49,7 +55,8 @@ export interface FileRouteDeps {
 export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): void {
   const {
     fileService, sessionService, workspaceBrowseService, workspaceGitService,
-    gitCommitMessageService, gitWriteOperationService, workspaceWriteService, workspaceOverviewService, pathSandbox,
+    gitCommitMessageService, gitWriteOperationService, workspaceWriteService, workspaceOverviewService,
+    localFileFetchService, pathSandbox,
   } = deps;
 
   function requireCloudWorkspace(session: Session): string {
@@ -212,7 +219,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
       }));
     }
     const files = fileService.listWorkspaceFiles(
-      session.workspace!, queryOptStr(request, 'filter'), queryOptInt(request, 'limit') ?? 20,
+      requireCloudWorkspace(session), queryOptStr(request, 'filter'), queryOptInt(request, 'limit') ?? 20,
     );
     return sendOk(reply, { files });
   });
@@ -224,7 +231,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
       return sendOk(reply, await browseViaProxy(session, 'list', { dir: queryOptStr(request, 'dir') }));
     }
     return sendOk(reply, workspaceBrowseService.listDirectory(
-      session.workspace!, queryOptStr(request, 'dir'), experienceDirOf(session),
+      requireCloudWorkspace(session), queryOptStr(request, 'dir'), experienceDirOf(session),
     ));
   });
 
@@ -244,7 +251,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
       }));
     }
     return sendOk(reply, workspaceBrowseService.searchFiles(
-      session.workspace!, pattern, queryOptInt(request, 'limit') ?? 100, experienceDirOf(session),
+      requireCloudWorkspace(session), pattern, queryOptInt(request, 'limit') ?? 100, experienceDirOf(session),
     ));
   });
 
@@ -259,7 +266,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
       }));
     }
     return sendOk(reply, await workspaceBrowseService.readFile(
-      session.workspace!, path, queryOptInt(request, 'offset') ?? 0, queryOptInt(request, 'limit') ?? 5000,
+      requireCloudWorkspace(session), path, queryOptInt(request, 'offset') ?? 0, queryOptInt(request, 'limit') ?? 5000,
       experienceDirOf(session),
     ));
   });
@@ -269,9 +276,20 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const session = await requireOwnedSession(userId, requireQueryLong(request, 'sessionId'));
     const path = queryOptStr(request, 'path');
     if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    // LOCAL 分流（方案 2026-11-18）：按需委托绑定执行端读取工作区图片，服务端不落盘不存库。
+    // LOCAL 会话的 workspace 服务端创建时不校验，直读服务器路径是一个目录读取缺口——
+    // 本端点改走委托，读类端点由 2026-11-17 方案分流到设备代理、二进制类明确拒绝，缺口整族关闭。
+    // 失败必须非 2xx（2026-11-17 §4.1）：前端 fetch 仅在 !resp.ok 时读错误 JSON；
+    // 图片 <img> 对 400 同样触发 error 事件回退 📎 占位，两种消费方都成立。
     if (session.executionMode === 'LOCAL') {
-      // bytes 传输（超 WS 1MB 入站上限）P2 引入，先明确拒绝不给死入口（D7/D8）
-      return rejectLocalBinaryBrowse(reply, '本地任务暂不支持远程下载文件，请在桌面客户端查看');
+      // 图片白名单外不进委托（双端同表口径）：zip / xlsx 等 readFileBytes 消费方拿到
+      // 2026-11-17 的「暂不支持远程下载」而非「仅支持图片」，语义更准。
+      if (!hasImageFileExtension(path)) {
+        return rejectLocalBinaryBrowse(reply, '本地任务暂不支持远程下载文件，请在桌面客户端查看');
+      }
+      const outcome = await localFileFetchService.fetch(session.id!, userId, path, session.workspace);
+      if (!outcome.ok) return rejectLocalBinaryBrowse(reply, outcome.error);
+      return sendBuffer(reply, outcome.bytes, outcome.fileName, outcome.mime);
     }
     const result = workspaceBrowseService.downloadFile(session.workspace!, path, experienceDirOf(session));
     const mediaType = mimeLookup(result.path) || 'application/octet-stream';
@@ -875,6 +893,20 @@ function sendFile(
     .type(contentType)
     .header('Content-Length', String(size));
   return reply.send(createReadStream(filePath));
+}
+
+/** sendFile 的内存 Buffer 变体：LOCAL 正文图片委托读取的结果不经磁盘，直接回给请求方。 */
+function sendBuffer(
+  reply: FastifyReply,
+  buffer: Buffer,
+  fileName: string,
+  contentType: string,
+): FastifyReply {
+  reply
+    .header('Content-Disposition', contentDisposition('attachment', fileName))
+    .type(contentType)
+    .header('Content-Length', String(buffer.length));
+  return reply.send(buffer);
 }
 
 async function readWorkspaceUpload(request: FastifyRequest): Promise<{

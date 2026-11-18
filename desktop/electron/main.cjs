@@ -15,6 +15,7 @@ const chatAttachment = require('./chatAttachment.cjs')
 const desktopPrefsLib = require('./desktopPrefs.cjs')
 const { createTray } = require('./tray.cjs')
 const { readFileBytes } = require('./localFileBytes.cjs')
+const { readWorkspaceBytes } = require('./localWorkspaceRead.cjs')
 
 
 app.setName('Mao')
@@ -2157,6 +2158,16 @@ ipcMain.handle('local-read-bytes', async (event, { path: filePath }) => {
   try {
     const resolvedPath = resolveWorkspacePath(filePath)
     return readFileBytes(resolvedPath)
+  } catch (e) {
+    return { error: e.message }
+  }
+})
+
+// file_fetch 委托读取（方案 2026-11-18）：workspace + 相对路径在主进程拼装并 containment 校验。
+// 不沿用 local-read-bytes 的绝对路径直通口子；只读操作，不写 currentWorkspace、不走审批。
+ipcMain.handle('local-read-workspace-bytes', async (event, { workspace, path: relativePath }) => {
+  try {
+    return readWorkspaceBytes(workspace, relativePath)
   } catch (e) {
     return { error: e.message }
   }

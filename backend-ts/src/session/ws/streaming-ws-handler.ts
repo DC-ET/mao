@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Agent, ContentPart, LlmModel, LocalSkillRef, Message, MessageQueueItem, McpToolRef, Session } from '../../domain/types.js';
+import type { LocalFileFetchChunkFrame } from '../../harness/local/local-file-fetch.service.js';
 import type { TaskNotifySource } from '../task-terminal.service.js';
 import type { MessageQueueSource } from '../types.js';
 import { imageUrlFromPart } from '../session-vo.js';
@@ -141,6 +142,10 @@ export interface WsHandlerDeps {
     failAllForSocket(socket: { id: string } | null | undefined): void;
     completeToolRequest(sessionId: number, requestId: string, result: string): void;
     completeToolRequestError(sessionId: number, requestId: string, error: string): void;
+  };
+  /** LOCAL 正文图片按需委托读取（方案 2026-11-18）：file_fetch_result 分片拼装。 */
+  localFileFetchService: {
+    handleChunk(sessionId: number, requestId: string, frame: LocalFileFetchChunkFrame, socketId?: string | null): void;
   };
   /** LOCAL 会话文件浏览代理（技术方案 2026-11-17）：file_op_result 入站完成 + 断线清理。 */
   remoteFileProxyService?: {
@@ -651,6 +656,7 @@ export class StreamingWsHandler {
       case 'mcp_tools_report': await this.handleMcpToolsReport(userId, root); break;
       case 'tool_result': await this.handleToolResult(userId, root); break;
       case 'tool_error': await this.handleToolError(userId, root); break;
+      case 'file_fetch_result': await this.handleFileFetchResult(session, userId, root); break;
       case 'file_op_result': await this.handleFileOpResult(userId, root); break;
       case 'page_tool_result': await this.handlePageToolResult(session, userId, root); break;
       case 'tool_approval': await this.handleToolApproval(session, userId, root); break;
@@ -1236,6 +1242,20 @@ export class StreamingWsHandler {
     if (sessionId == null || requestId == null) return;
     if (!(await this.requireOwnedSession(userId, sessionId))) return;
     this.deps.localToolSessionRegistry.completeToolRequest(sessionId, requestId, result);
+  }
+
+  /** LOCAL 正文图片按需委托读取（方案 2026-11-18）：执行端分片回传，拼装由 LocalFileFetchService 负责。 */
+  private async handleFileFetchResult(session: WsSocket, userId: number, root: Record<string, unknown>): Promise<void> {
+    const sessionId = this.getLong(root, 'sessionId');
+    const requestId = typeof root.requestId === 'string' ? root.requestId : null;
+    if (sessionId == null || requestId == null) return;
+    if (!(await this.requireOwnedSession(userId, sessionId))) return;
+    this.deps.localFileFetchService.handleChunk(sessionId, requestId, {
+      seq: root.seq,
+      total: root.total,
+      data: root.data,
+      error: root.error,
+    }, session.id);
   }
 
   /** LOCAL 审批卡片点「执行/拒绝」后立即恢复 RUNNING，不必等命令真正跑完。 */

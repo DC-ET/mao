@@ -37,10 +37,11 @@ const props = withDefaults(defineProps<{
   /** 消息宿主专用：渲染完成后增强代码块（>30 行折叠 / 换行开关，utils/codeBlockCollapse）。
    *  缺省 false——trace / 文件预览 / 技能页等其它宿主渲染产物逐字节不变（技术方案 D6） */
   codeBlockEnhance?: boolean
-  /** 正文相对图片解析用的会话 ID：CLOUD 会话的工作区文件经后端按会话归属读取。
+  /** 正文相对图片解析用的会话 ID：工作区文件经后端按会话归属读取
+   *  （CLOUD 直读服务器工作区；LOCAL 按需委托执行端，方案 2026-11-18）。
    *  缺省不解析（图片加载失败回退为「📎 原路径」文本） */
   sessionId?: string
-  /** 该会话执行模式：LOCAL 会话的工作区在本机、服务端读不到，不做地址改写 */
+  /** 会话执行模式：仅作 P2 桌面直读快路径的预留开关位，LOCAL / CLOUD 都走 workspace-download */
   sessionExecutionMode?: string
 }>(), {
   bodyClass: 'markdown-body',
