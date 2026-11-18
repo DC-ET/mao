@@ -1,11 +1,12 @@
 # 终端 CLI（mao-agent）实现文件代理技术方案（CLI 绑定 LOCAL 会话的远程文件浏览）
 
-- 状态：草案（2026-11-18；2026-11-18 已按代码逐条核实并修订：投递档序修正（显式声明优先于 legacy 推断，修复「旧桌面 + 新 CLI」白等超时）、CLI 图片不缩放与桌面的行为差异如实标注、capabilities 解析边界与四 op DTO 字段细节补全、executor / file-ops 的收窄分工与行号校正）
+- 状态：草案（2026-11-18；2026-11-18 已按代码逐条核实并修订：投递档序修正（显式声明优先于 legacy 推断，修复「旧桌面 + 新 CLI」白等超时）、CLI 图片不缩放与桌面的行为差异如实标注、capabilities 解析边界与四 op DTO 字段细节补全、executor / file-ops 的收窄分工与行号校正。同日补充：与本地终端方案并行时的分工见 §10）
 - 日期：2026-11-18
 - 关联方案：
   - [2026-11-17-local-file-tree-remote-proxy-technical-design.md](./2026-11-17-local-file-tree-remote-proxy-technical-design.md)（已落地：LOCAL 会话文件树远程代理主体。本方案是其 §9-5 开放问题的立项，补齐 CLI 执行端）
   - [2026-11-05-local-task-device-delegation-technical-design.md](./2026-11-05-local-task-device-delegation-technical-design.md)（已落地：设备身份 / 会话绑定执行端。CLI 与桌面共用 `~/.mao/agent-cli/device.json`）
   - [2026-11-09-mao-agent-local-daemon-technical-design.md](./2026-11-09-mao-agent-local-daemon-technical-design.md)（`mao-agent local --serve` 常驻执行端形态，本方案的执行宿主之一）
+  - [2026-11-18-local-terminal-remote-technical-design.md](./2026-11-18-local-terminal-remote-technical-design.md)（规划中：LOCAL 会话的远程终端，桌面与 mao-agent 都做主机。并行分工见 §10，不共用 `file_op` 通道）
 - 本方案定位：让 CLI（mao-agent）绑定的 LOCAL 会话也能被移动端 / 浏览器远程浏览文件。协议通道（`file_op_request / file_op_result`）、DTO 形状、超时档位、700KB 预检全部复用 11-17 已落地机制，主体是 **CLI 侧四个只读 op 的 Node fs 实现 + 服务端投递的 client-type / 能力感知分层**。
 
 ## 1. 需求背景
@@ -49,6 +50,7 @@
 - **不做写操作**：CLI 只实现四个只读 op；写 / 预览 / 下载 / zip 仍按 11-17 的拒绝口径（bytes 传输 P2 未定），CLI 与桌面能力面保持一致。
 - **不做 agent-cli 与 desktop 的 containment 代码共享**：桌面 renderer 无 node path 模块（词法实现），CLI 在 Node 侧用 `path.resolve`（镜像 main.cjs 口径），两端各自实现 + 互指注释 + 各自单测覆盖同形向量（D6）。
 - **不改 file_op 协议载荷**：事件名、字段、超时档位、700KB 上限全部沿用；不进 `@mao/contracts`（延续 11-17 D3/D10 决策）。
+- **不在本通道承载远程终端**：`capabilities` 本期只声明 `file_op`；`DAEMON_ROUTED_EVENTS` / `executor.ts` 不引入 `node-pty`。终端走独立的 `/ws/terminal-host`，见 §10。
 - **不放宽 REPL 的会话过滤**：交互模式下非当前订阅会话的 `file_op_request` 与 `tool_execute` 同口径被丢弃（服务端最终超时报错）；常驻 daemon 是跨会话场景的正式答案，不为此扩大 REPL 语义（D7）。
 - **不做 CLI 的图片 / PDF 例外放行，也不做图片缩放**：read op 镜像桌面实现（含 data_uri），700KB 预检把大文件挡在回帧层。注意一处与桌面的已知差异：桌面 `readLocalImage` 经 promptImageResizer 把超限图片缩放并转码（长边 ≤2048 / JPEG q85，`promptImageResizer.cjs`）再过预检，多数大图缩后可看；CLI 无 nativeImage 不缩放（与 CLI read_file 工具既有 readImage 同口径），原图 base64 超 700KB（约 >525KB）即回「文件过大」失败帧。不为此引入图片处理依赖，风险表与 mao-cli 文档如实注明。
 
@@ -196,3 +198,14 @@
 2. **IMAGE_EXTENSIONS / IGNORED_DIRS 双端漂移**：图片扩展名表 CLI 侧已有先例（`local/tools/files.ts:8-14` 的 `IMAGE_EXT`，file-ops 直接复用）；`IGNORED_DIRS` 十二目录 CLI 侧需新增（镜像 main.cjs:2215，仅 files op 用）。三端各自维护；若后续频繁增改，可评估下沉 `@mao/contracts` 或共享 cjs vendor（现有 `sync:shell` 脚本先例）。
 3. **CLI 的 bytes op**（与桌面 P2 同批）：二进制远程传输方案（分块 / 设备 HTTP 直报）定案后，CLI 与桌面一起实现，CLI 侧无额外障碍。
 4. **设备能力展示**：管理后台在线设备页可展示各连接能力集（file_op 等），便于排查「为什么浏览不了」；纯展示，P3。
+
+## 10. 与本地终端方案同时开发
+
+对照 [2026-11-18-local-terminal-remote-technical-design.md](./2026-11-18-local-terminal-remote-technical-design.md) §10。两套同时做时，本方案保持以下边界，终端方案不进入这些入口：
+
+- `capabilities` 只追加 `file_op`。不把 `terminal` 放进同一数组，投递档序也不读取终端主机是否在线。
+- `DAEMON_ROUTED_EVENTS` 与 `session-runner` 的 `acceptEvent` 只增加 `file_op_request`。终端主机是进程级的另一条 WebSocket，不按当前订阅会话过滤，也不进这个 Set。
+- `executor.ts` 与 `file-ops.ts` 不 import `node-pty`。终端模块自行懒加载，避免 ubuntu 上无预编译时本方案的 `npm test` 在加载阶段失败。
+- `sendToFileCapableDevice` 的多连接档序维持不变。同机 Electron 与 CLI 可以同时应答文件请求。终端主机槽是另一套规则（Electron 优先、CLI 待命），不要为了「对齐」改成本方案的单连接。
+
+`commands/local.ts` 两边都会改：本方案改事件集和退出摘要，终端方案在流连接建立后另起主机客户端。错开这两处即可合并。`desktop.md` 的 LOCAL 段各写各的句子。
