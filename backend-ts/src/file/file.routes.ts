@@ -22,6 +22,7 @@ import type { GitCommitMessageService } from './git-commit-message.service.js';
 import type { GitWriteOperationService, LocalGitActivity } from './git-write-operation.service.js';
 import type { WorkspaceWriteService } from './workspace-write.service.js';
 import type { WorkspaceOverviewService } from './workspace-overview.service.js';
+import type { RemoteFileOp, RemoteFileProxyService } from './remote-file-proxy.service.js';
 
 export interface FileRouteDeps {
   fileService: FileService;
@@ -33,6 +34,12 @@ export interface FileRouteDeps {
   workspaceWriteService: WorkspaceWriteService;
   workspaceOverviewService: WorkspaceOverviewService;
   pathSandbox: PathSandbox;
+  /**
+   * LOCAL 会话文件浏览的 WS 代理（技术方案 2026-11-17）：未注入时 LOCAL browse 直接报
+   * 服务不可用，绝不回落 WorkspaceBrowseService——LOCAL 的 workspace 是设备上的绝对路径，
+   * 服务端 FS 恰好存在同路径目录时会返回错误机器的数据。
+   */
+  remoteFileProxyService?: RemoteFileProxyService;
   getUploadBaseUrl?: () => Promise<string | null>;
   runtimeDataResolver?: RuntimeDataResolver;
   /** 当前会话 Agent 的经验库目录。不提供时「团队经验」仍按越界拒绝。 */
@@ -65,6 +72,28 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
 
   function experienceDirOf(session: Session): string | undefined {
     return experienceDirForSession(session, deps.experienceDirForAgent);
+  }
+
+  /**
+   * LOCAL 会话读类 browse 端点（list / read / search / files）经 WS 代理到绑定执行端设备。
+   * 归一化（mtime→mtimeMs、补 workspaceRoot）收敛在 proxy service 单点。
+   */
+  async function browseViaProxy(session: Session, op: RemoteFileOp, params: Record<string, unknown>): Promise<unknown> {
+    const proxy = deps.remoteFileProxyService;
+    if (proxy == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '本地文件远程浏览服务不可用');
+    }
+    return proxy.execute(session, op, params);
+  }
+
+  /**
+   * LOCAL 会话二进制类端点（preview / download / zip）的明确拒绝：必须非 2xx——
+   * preview/download 前端走 fetch 且仅在 !resp.ok 时读错误 JSON，BusinessException 经
+   * handleError 默认映射 HTTP 200 + code 信封会被 resp.ok 放行、把 JSON 当 blob 渲染失败
+   * （技术方案 2026-11-17 §4.1）。
+   */
+  function rejectLocalBinaryBrowse(reply: FastifyReply, message: string): FastifyReply {
+    return sendJson(reply, 400, fail(ErrorCode.PARAM_INVALID.code, message));
   }
 
   /**
@@ -175,6 +204,13 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const userId = requireUserId(request);
     const sessionId = requireQueryLong(request, 'sessionId');
     const session = await requireOwnedSession(userId, sessionId);
+    if (session.executionMode === 'LOCAL') {
+      // 移动端 @ 文件引用面板真实调用本端点（技术方案 2026-11-17 §1.2-#4）：
+      // LOCAL 分流到执行端设备，杜绝读到服务端同路径的错误数据
+      return sendOk(reply, await browseViaProxy(session, 'files', {
+        filter: queryOptStr(request, 'filter'), limit: queryOptInt(request, 'limit') ?? 20,
+      }));
+    }
     const files = fileService.listWorkspaceFiles(
       session.workspace!, queryOptStr(request, 'filter'), queryOptInt(request, 'limit') ?? 20,
     );
@@ -184,6 +220,9 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
   app.get('/v1/files/workspace-directory', async (request, reply) => {
     const userId = requireUserId(request);
     const session = await requireOwnedSession(userId, requireQueryLong(request, 'sessionId'));
+    if (session.executionMode === 'LOCAL') {
+      return sendOk(reply, await browseViaProxy(session, 'list', { dir: queryOptStr(request, 'dir') }));
+    }
     return sendOk(reply, workspaceBrowseService.listDirectory(
       session.workspace!, queryOptStr(request, 'dir'), experienceDirOf(session),
     ));
@@ -199,6 +238,11 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     if (pattern.length > 100) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '搜索关键词过长');
     }
+    if (session.executionMode === 'LOCAL') {
+      return sendOk(reply, await browseViaProxy(session, 'search', {
+        pattern, limit: queryOptInt(request, 'limit') ?? 100,
+      }));
+    }
     return sendOk(reply, workspaceBrowseService.searchFiles(
       session.workspace!, pattern, queryOptInt(request, 'limit') ?? 100, experienceDirOf(session),
     ));
@@ -209,6 +253,11 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const session = await requireOwnedSession(userId, requireQueryLong(request, 'sessionId'));
     const path = queryOptStr(request, 'path');
     if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    if (session.executionMode === 'LOCAL') {
+      return sendOk(reply, await browseViaProxy(session, 'read', {
+        path, offset: queryOptInt(request, 'offset') ?? 0, limit: queryOptInt(request, 'limit') ?? 5000,
+      }));
+    }
     return sendOk(reply, await workspaceBrowseService.readFile(
       session.workspace!, path, queryOptInt(request, 'offset') ?? 0, queryOptInt(request, 'limit') ?? 5000,
       experienceDirOf(session),
@@ -220,6 +269,10 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const session = await requireOwnedSession(userId, requireQueryLong(request, 'sessionId'));
     const path = queryOptStr(request, 'path');
     if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    if (session.executionMode === 'LOCAL') {
+      // bytes 传输（超 WS 1MB 入站上限）P2 引入，先明确拒绝不给死入口（D7/D8）
+      return rejectLocalBinaryBrowse(reply, '本地任务暂不支持远程下载文件，请在桌面客户端查看');
+    }
     const result = workspaceBrowseService.downloadFile(session.workspace!, path, experienceDirOf(session));
     const mediaType = mimeLookup(result.path) || 'application/octet-stream';
     return sendFile(reply, result.path, result.fileName, mediaType, result.size, 'attachment');
@@ -230,6 +283,9 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const session = await requireOwnedSession(userId, requireQueryLong(request, 'sessionId'));
     const path = queryOptStr(request, 'path');
     if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    if (session.executionMode === 'LOCAL') {
+      return rejectLocalBinaryBrowse(reply, '本地任务暂不支持远程预览文件，请在桌面客户端查看');
+    }
     const result = workspaceBrowseService.readPdfFile(session.workspace!, path, experienceDirOf(session));
     return sendFile(reply, result.path, result.fileName, 'application/pdf', result.size, 'inline');
   });
@@ -239,6 +295,10 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const session = await requireOwnedSession(userId, requireQueryLong(request, 'sessionId'));
     const path = queryOptStr(request, 'path');
     if (path == null) throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    if (session.executionMode === 'LOCAL') {
+      // 设备端无 zip 原语（list-directory 只逐条列举），明确拒绝（§2.2）
+      return rejectLocalBinaryBrowse(reply, '本地任务暂不支持远程打包下载，请在桌面客户端查看');
+    }
     const result = await workspaceBrowseService.zipDirectory(session.workspace!, path, experienceDirOf(session));
     const stream = createReadStream(result.zipPath);
     const cleanup = () => {
@@ -261,6 +321,9 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const session = await requireOwnedSession(userId, body.sessionId!);
     if (!Array.isArray(body.paths)) {
       throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数');
+    }
+    if (session.executionMode === 'LOCAL') {
+      return rejectLocalBinaryBrowse(reply, '本地任务暂不支持远程打包下载，请在桌面客户端查看');
     }
     const result = await workspaceBrowseService.zipEntries(session.workspace!, body.paths, experienceDirOf(session));
     const stream = createReadStream(result.zipPath);

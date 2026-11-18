@@ -480,4 +480,79 @@ describe('file routes', () => {
 
     await app.close();
   });
+  it('localBrowseEndpointsProxyToBoundDeviceAndRejectBinaryOps', async () => {
+    // 技术方案 2026-11-17 §4.1：LOCAL 会话读类端点走 WS 代理到绑定执行端设备，
+    // 绝不喂 WorkspaceBrowseService（服务端 FS 恰好存在同路径目录会返回错误机器数据）；
+    // preview / download / zip 明确拒绝且必须非 2xx（fetch 类方法仅在 !resp.ok 时读错误 JSON）。
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    app.addHook('preHandler', (req, _r, done) => {
+      req.userId = Number((req.headers['x-test-user'] ?? '7') as string) || 7;
+      done();
+    });
+    const localSession = { id: 2, userId: 7, workspace: '/Users/yang/proj', executionMode: 'LOCAL', targetDeviceId: 'dev-1', targetDeviceName: 'Mac' };
+    const sessionService = { getSession: vi.fn(async (id: number) => (id === 2 ? localSession : { id: 1, userId: 7, workspace: '/tmp/ws', agentId: 9 })) } as unknown as SessionService;
+    const workspaceBrowseService = {
+      listDirectory: vi.fn(() => ({ entries: [], truncated: false })),
+      searchFiles: vi.fn(() => ({ entries: [], truncated: false })),
+      readFile: vi.fn(async () => ({ content: 'server-fs', total_lines: 0 })),
+      readPdfFile: vi.fn(() => ({ path: 'x', fileName: 'x.pdf', size: 1 })),
+      downloadFile: vi.fn(() => ({ path: 'x', fileName: 'x', size: 1 })),
+    } as unknown as WorkspaceBrowseService;
+    const proxy = {
+      execute: vi.fn(async (_session: unknown, op: string, params: Record<string, unknown>) => {
+        if (op === 'list') return { entries: [{ name: 'device.txt', path: 'device.txt', isDirectory: false, size: 1, isSymlink: false, mtimeMs: 1729999999999 }], truncated: false, workspaceRoot: '/Users/yang/proj' };
+        if (op === 'files') return { files: [{ path: 'a.txt', name: 'a.txt', size: 1 }] };
+        if (op === 'read') return { content: 'device-fs', total_lines: 1 };
+        return { entries: [], truncated: false };
+      }),
+    };
+    registerFileRoutes(app, {
+      fileService: { listWorkspaceFiles: vi.fn(() => []) } as unknown as FileService,
+      sessionService,
+      workspaceBrowseService,
+      workspaceGitService: {} as unknown as WorkspaceGitService,
+      gitCommitMessageService: {} as unknown as GitCommitMessageService,
+      gitWriteOperationService: {} as unknown as GitWriteOperationService,
+      workspaceWriteService: {} as unknown as WorkspaceWriteService,
+      workspaceOverviewService: {} as unknown as WorkspaceOverviewService,
+      pathSandbox: { getWorkspaceRoot: () => '/tmp' } as PathSandbox,
+      remoteFileProxyService: proxy as never,
+    });
+    const get = async (url: string) => JSON.parse((await app.inject({ method: 'GET', url })).body);
+
+    // 读类端点：走代理，不触达 WorkspaceBrowseService
+    expect((await get('/v1/files/workspace-directory?sessionId=2')).data.entries[0].name).toBe('device.txt');
+    expect(proxy.execute).toHaveBeenCalledWith(localSession, 'list', { dir: undefined });
+    expect((await get('/v1/files/workspace-list?sessionId=2&filter=a')).data.files).toHaveLength(1);
+    expect(proxy.execute).toHaveBeenCalledWith(localSession, 'files', { filter: 'a', limit: 20 });
+    expect((await get('/v1/files/workspace-read?sessionId=2&path=a.txt')).data.content).toBe('device-fs');
+    expect(proxy.execute).toHaveBeenCalledWith(localSession, 'read', { path: 'a.txt', offset: 0, limit: 5000 });
+    expect((await get('/v1/files/workspace-search?sessionId=2&pattern=a')).code).toBe(0);
+    expect(proxy.execute).toHaveBeenCalledWith(localSession, 'search', { pattern: 'a', limit: 100 });
+    expect(workspaceBrowseService.listDirectory).not.toHaveBeenCalled();
+    expect(workspaceBrowseService.readFile).not.toHaveBeenCalled();
+
+    // 二进制类端点：非 2xx 拒绝 + 可读中文 message（防 HTTP 200 信封回归）
+    const previewRes = await app.inject({ method: 'GET', url: '/v1/files/workspace-preview?sessionId=2&path=a.pdf' });
+    expect(previewRes.statusCode).toBe(400);
+    expect(JSON.parse(previewRes.body).message).toContain('暂不支持远程预览');
+    const downloadRes = await app.inject({ method: 'GET', url: '/v1/files/workspace-download?sessionId=2&path=a.txt' });
+    expect(downloadRes.statusCode).toBe(400);
+    expect(JSON.parse(downloadRes.body).message).toContain('暂不支持远程下载');
+    const zipRes = await app.inject({ method: 'GET', url: '/v1/files/workspace-download-zip?sessionId=2&path=docs' });
+    expect(zipRes.statusCode).toBe(400);
+    expect(JSON.parse(zipRes.body).message).toContain('暂不支持远程打包下载');
+    const multiZipRes = await app.inject({
+      method: 'POST', url: '/v1/files/workspace-download-multi-zip', payload: { sessionId: 2, paths: ['a.txt'] },
+    });
+    expect(multiZipRes.statusCode).toBe(400);
+    expect(workspaceBrowseService.readPdfFile).not.toHaveBeenCalled();
+    expect(workspaceBrowseService.downloadFile).not.toHaveBeenCalled();
+
+    // CLOUD 会话恒等走原实现（sessionService 对 id=1 返回 CLOUD 会话）
+    expect((await get('/v1/files/workspace-directory?sessionId=1')).code).toBe(0);
+    expect(workspaceBrowseService.listDirectory).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
 });

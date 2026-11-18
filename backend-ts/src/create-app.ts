@@ -126,6 +126,7 @@ import { ShellSessionManager, OutputManager } from './harness/shell/shell-sessio
 import { SessionTodoMapper } from './harness/todo/session-todo.mapper.js';
 import { LocalSkillRegistry } from './harness/skill/local-skill-registry.js';
 import { LocalToolSessionRegistry } from './harness/local/local-tool-session-registry.js';
+import { RemoteFileProxyService } from './file/remote-file-proxy.service.js';
 import { LocalToolExecutor } from './harness/local/local-tool-executor.js';
 import { AgentDefinitionRegistry } from './harness/delegate/agent-definition-registry.js';
 import { SubagentExecutionMapper } from './harness/delegate/subagent-execution.mapper.js';
@@ -656,6 +657,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     wsRegistry, resolveEmbedPageToolTimeoutMs(cfg.app.harness.embedPageToolTimeoutSeconds),
   );
   const localToolSessions = new LocalToolSessionRegistry(wsRegistry, sessionMap);
+  // LOCAL 会话文件树远程代理（技术方案 2026-11-17）：目标解析复用工具委托注册表，投递走注册表的
+  // client-type 感知 helper（D11）。同一实例同时供文件路由（HTTP 入口）与 WS handler（回包入口）使用。
+  const remoteFileProxy = new RemoteFileProxyService(wsRegistry, localToolSessions);
   // 通知渠道与开放接口（触发器/订阅 secret）共用的 AES-GCM 密文工具（APP_NOTIFICATION_WEBHOOK_SECRET）
   const notifCipher = new WebhookSecretCipher(cfg.app.taskNotification.secretKey);
   // 开放接口出站订阅（P3）：先于 inboxService 构造，question.pending 分发经 InboxService
@@ -867,7 +871,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const openCallSettle: { current: ((callLogId: number, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED', queueWaitMs: number | null, messageId: number | null) => Promise<void>) | null } = { current: null };
   const wsHandler = assembleWsHandler({
     cfg, jwt, wsRegistry, sessionTitleService, harnessService: harness, agentLoop, compactionSignalBus, sessionService, taskTerminal,
-    messageQueueService, embedPageToolRegistry, localToolSessions, askUserQuestionsRegistry,
+    messageQueueService, embedPageToolRegistry, localToolSessions, remoteFileProxy, askUserQuestionsRegistry,
     treeSignalPublisher, approvalRegistry, approvalRuleService, activityService,
     approvalEscalationSuppressor: {
       suppressByRequest: (sessionId, requestId) =>
@@ -968,6 +972,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     approvalRegistry, askUserQuestionsRegistry, inFlightToolRegistry, treeSignalPublisher,
     failedSessionRecovery,
     workspaceBrowse, terminalManager, workspaceGit, gitCommitMsg, gitWrite, runtimeResolver,
+    remoteFileProxy,
     ossSts,
     skillBundleService, userSkillService, skillDocService,
     scheduledService,

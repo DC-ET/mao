@@ -67,6 +67,16 @@ export interface OutboundEventDispatcher {
   }): void;
 }
 
+/**
+ * SIGNAL 触发完成后的通道回流依赖（技术方案 2026-11-17 §4.7，可选注入；接口化避免
+ * session 域反向依赖 schedule 域实现）。实现 = ScheduledTaskService.pushFinalReplyIfApplicable：
+ * 取最终 ASSISTANT 回复推回飞书/钉钉通道会话，非本渠道会话内部 no-op，推送失败只记日志。
+ * 仅 notifySource='SIGNAL' 触发——SCHEDULED 已自有推送、WEBHOOK/API 不在本方案范围，无重复回帖。
+ */
+export interface SignalChannelReplyPusher {
+  pushFinalReply(sessionId: number): Promise<void>;
+}
+
 export class TaskTerminalService {
   constructor(
     private readonly sessionService: SessionService,
@@ -86,6 +96,13 @@ export class TaskTerminalService {
     private readonly budgetWarner?: TaskTerminalBudgetWarner | null,
     private readonly citationRegistry?: CitationRegistryInvoker | null,
   ) {}
+
+  /** SIGNAL 通道回流依赖：setter 晚绑定（装配顺序上 ScheduledTaskService 创建在本服务之后）。 */
+  private signalChannelReplyPusher: SignalChannelReplyPusher | null = null;
+
+  setSignalChannelReplyPusher(pusher: SignalChannelReplyPusher | null): void {
+    this.signalChannelReplyPusher = pusher;
+  }
 
   async finishExecution(
     sessionId: number,
@@ -170,6 +187,33 @@ export class TaskTerminalService {
     }
 
     this.dispatchMemoryExtraction(session, phase);
+    this.pushSignalChannelReply(session, phase, notifySource);
+  }
+
+  /**
+   * SIGNAL 触发完成后的通道回流（技术方案 2026-11-17 §4.7）：哨兵指定飞书/钉钉通道会话
+   * 执行时，最终回复推回聊天（openRun 直跑与忙时排队两条路径都以 SIGNAL 来源收尾在本方法，
+   * 一处挂钩全覆盖）。仅 COMPLETED 且 notifySource='SIGNAL'——SCHEDULED 已自有推送、
+   * WEBHOOK/API 不在方案范围。fire-and-forget：推送失败只记日志，不影响终态事件链。
+   */
+  private pushSignalChannelReply(session: Session, phase: string, notifySource: TaskNotifySource): void {
+    const pusher = this.signalChannelReplyPusher;
+    if (pusher == null) return;
+    if (notifySource !== 'SIGNAL' || phase !== 'COMPLETED') return;
+    const sessionId = session.id;
+    if (sessionId == null) return;
+    try {
+      this.notificationExecutor(() => {
+        void Promise.resolve()
+          .then(() => pusher.pushFinalReply(sessionId))
+          .catch((e) => {
+            console.warn(`[signal] failed to push channel reply: sessionId=${sessionId}, error=${(e as Error).message}`);
+          });
+      });
+    } catch (e) {
+      // 与 recordInbox 同口径：executor 同步抛错不得穿出 finishExecution。
+      console.warn(`[signal] failed to submit channel reply push: sessionId=${sessionId}, error=${(e as Error).message}`);
+    }
   }
 
   /**

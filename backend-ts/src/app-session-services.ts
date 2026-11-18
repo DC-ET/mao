@@ -149,6 +149,11 @@ export function assembleSessionServices(deps: SessionServicesDeps): SessionServi
     await d.inboxService.recordWeixinWindowClosed(input);
   });
   scheduledService.setWeixinWebhookFallback(d.weixinWebhookFallback);
+  // SIGNAL 触发完成后的通道回流（技术方案 2026-11-17 §4.7）：哨兵指定的飞书/钉钉通道会话
+  // 在运行完成后把最终回复推回聊天。scheduledService 创建在 taskTerminal 之后，setter 晚绑定。
+  taskTerminal.setSignalChannelReplyPusher({
+    pushFinalReply: (sessionId: number) => scheduledService.pushFinalReplyIfApplicable(sessionId),
+  });
   scheduledService.setRunWindowLoader(async (sessionId: number, messageId: number) => {
     const stamps = await d.messageRepo.selectUserStamps(sessionId);
     const anchor = stamps.find((stamp: any) => stamp.id === messageId);

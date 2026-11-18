@@ -113,8 +113,20 @@ const LOCAL_SEARCH_EXCLUDED_DIRS = new Set(['.git', 'node_modules'])
 const LOCAL_SEARCH_MAX_DIRS = 500
 const LOCAL_SEARCH_MAX_DEPTH = 10
 
+/**
+ * P0 防御（技术方案 2026-11-17 §2.1-2）：无 electronAPI 的环境（浏览器 / 移动端）不抛
+ * TypeError，统一回中文错误形状由树错误节点渲染。存量未绑定会话在浏览器端落到本 provider，
+ * 用户看到的就是这条文案（P1 远程代理只覆盖已绑定设备的会话，未绑定仍落这里）。
+ */
+const LOCAL_FILE_UNAVAILABLE = '本地任务文件仅在桌面客户端内可浏览'
+
+function localElectronApi(): ElectronAPI | null {
+  if (typeof window === 'undefined') return null
+  return window.electronAPI ?? null
+}
+
 /** 本地模式按文件名有界搜索：BFS 逐层经 Electron IPC listDirectory 遍历，符号链接不入队防止环路 */
-async function searchLocalWorkspace(
+export async function searchLocalWorkspace(
   workspace: string,
   pattern: string,
   limit?: number,
@@ -162,24 +174,33 @@ async function searchLocalWorkspace(
 export function createLocalProvider(workspace: string): WorkspaceFileProvider {
   return {
     async listDirectory(relativeDir: string) {
+      const api = localElectronApi()
+      if (!api) return { error: LOCAL_FILE_UNAVAILABLE }
       const absoluteDir = !relativeDir || relativeDir === '.'
         ? workspace
         : resolveWorkspaceFilePath(workspace, relativeDir)
-      return window.electronAPI.listDirectory(absoluteDir, workspace)
+      return api.listDirectory(absoluteDir, workspace)
     },
     async readFile(relativePath: string, opts?: { offset?: number; limit?: number }) {
-      return window.electronAPI.localReadFile({
+      const api = localElectronApi()
+      if (!api) return { content: '', total_lines: 0, error: LOCAL_FILE_UNAVAILABLE }
+      return api.localReadFile({
         path: resolveWorkspaceFilePath(workspace, relativePath),
         offset: opts?.offset ?? 0,
         limit: opts?.limit ?? 5000,
       })
     },
-    searchFiles(pattern: string, limit?: number) {
+    async searchFiles(pattern: string, limit?: number) {
+      // 不能依赖 searchLocalWorkspace 内部的逐目录 try/catch：无 electronAPI 时它会
+      // 静默返回空结果而非错误，必须显式回 error（技术方案 2026-11-17 §2.1-2）
+      if (!localElectronApi()) return { error: LOCAL_FILE_UNAVAILABLE }
       return searchLocalWorkspace(workspace, pattern, limit)
     },
     async previewFile(relativePath: string) {
       try {
-        const result = await window.electronAPI.localReadFile({
+        const api = localElectronApi()
+        if (!api) return { error: LOCAL_FILE_UNAVAILABLE }
+        const result = await api.localReadFile({
           path: resolveWorkspaceFilePath(workspace, relativePath),
         })
         if (result.error) {
@@ -195,7 +216,9 @@ export function createLocalProvider(workspace: string): WorkspaceFileProvider {
     },
     async readFileBytes(relativePath: string): Promise<ReadFileBytesResult> {
       try {
-        const result = await window.electronAPI.localReadBytes({
+        const api = localElectronApi()
+        if (!api) return { error: LOCAL_FILE_UNAVAILABLE }
+        const result = await api.localReadBytes({
           path: resolveWorkspaceFilePath(workspace, relativePath),
         })
         if (result.error) {
@@ -695,6 +718,11 @@ export function useWorkspaceFileProvider(
   workspace: Ref<string>,
   sessionId: Ref<string | null>,
   projectKey: Ref<string>,
+  /**
+   * LOCAL 会话且当前端非执行端设备时为会话 id：走服务端 WS 代理（与 CLOUD 端点同 URL 同 DTO，
+   * 技术方案 2026-11-17 §4.3）。空值回落本地 IPC provider（执行端本机 / 未绑定存量会话）。
+   */
+  localProxySessionId: Ref<string | null>,
 ) {
   return computed<WorkspaceFileProvider | null>(() => {
     if (executionMode.value === 'CLOUD') {
@@ -708,6 +736,9 @@ export function useWorkspaceFileProvider(
       return null
     }
     if (workspace.value) {
+      if (localProxySessionId.value) {
+        return createCloudProvider(localProxySessionId.value)
+      }
       return createLocalProvider(workspace.value)
     }
     return null

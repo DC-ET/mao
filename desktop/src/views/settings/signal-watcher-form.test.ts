@@ -21,6 +21,7 @@ function form(partial: Partial<SignalWatcherForm> = {}): SignalWatcherForm {
     scriptPath: '',
     scriptTimeoutSeconds: null,
     triggerMode: 'NEW_SESSION',
+    specifiedSessionId: null,
     ...partial
   }
 }
@@ -148,6 +149,28 @@ describe('buildWatcherPayload 触发方式', () => {
   })
 })
 
+describe('buildWatcherPayload 指定会话（V197）', () => {
+  it('指定模式且已选择：下发 specifiedSessionId', () => {
+    const payload = buildWatcherPayload(form({ triggerMode: 'SPECIFIED_SESSION', specifiedSessionId: 88 }), false)
+    expect(payload.triggerMode).toBe('SPECIFIED_SESSION')
+    expect(payload.specifiedSessionId).toBe(88)
+  })
+
+  it('指定模式未选择（canSubmit 应拦截）：不下发 specifiedSessionId（服务端必选校验兜底）', () => {
+    const payload = buildWatcherPayload(form({ triggerMode: 'SPECIFIED_SESSION', specifiedSessionId: null }), false)
+    expect(payload.triggerMode).toBe('SPECIFIED_SESSION')
+    expect('specifiedSessionId' in payload).toBe(false)
+  })
+
+  it('非指定模式不下发 specifiedSessionId（服务端单侧归空，切模式自动清列）', () => {
+    const payload = buildWatcherPayload(
+      form({ triggerMode: 'NEW_SESSION', specifiedSessionId: 88 }),
+      true
+    ) as unknown as Record<string, unknown>
+    expect('specifiedSessionId' in payload).toBe(false)
+  })
+})
+
 describe('buildWatcherPayload 复制态（copyFrom）', () => {
   it('下发 copyFrom；其余字段照常', () => {
     const payload = buildWatcherPayload(form({ triggerMode: 'REUSE_SESSION' }), false, undefined, 42)
@@ -237,7 +260,7 @@ describe('脚本探针载荷（V189）', () => {
       bodyLength: 0, intervalMinutes: 10, compareMode: 'JSON_FIELD', jsonPath: 'free',
       promptTemplate: 'p', probeType: 'SCRIPT', scriptPath: 'ops/sentinels/disk.sh',
       scriptTimeoutSeconds: 45, status: 'ACTIVE', triggerMode: 'NEW_SESSION',
-      reuseSessionId: null, lastValueHash: null, lastValueSnippet: null,
+      reuseSessionId: null, specifiedSessionId: null, lastValueHash: null, lastValueSnippet: null,
       lastChangeOldSnippet: null, lastChangeNewSnippet: null, lastCheckedAt: null,
       lastChangedAt: null, consecutiveFailures: 0, createdAt: null
     })
@@ -290,6 +313,7 @@ describe('copyFormFromView 复制预填', () => {
       status: 'ACTIVE' as const,
       triggerMode: 'REUSE_SESSION' as const,
       reuseSessionId: 42,
+      specifiedSessionId: null,
       lastValueHash: null,
       lastValueSnippet: null,
       lastChangeOldSnippet: null,
@@ -328,5 +352,22 @@ describe('copyFormFromView 复制预填', () => {
       lastChangedAt: null, consecutiveFailures: 0, createdAt: null
     } as Parameters<typeof copyFormFromView>[0]
     expect(copyFormFromView(view).triggerMode).toBe('NEW_SESSION')
+  })
+
+  it('指定会话随源哨兵继承（用户显式选择；与复用指针的系统维护语义相反）', () => {
+    const view = {
+      id: 11, name: '盯发布', agentId: 7, url: 'https://example.com', method: 'GET',
+      headers: {}, hasBody: false, bodyLength: 0, intervalMinutes: 15,
+      compareMode: 'HASH' as const, jsonPath: null, promptTemplate: 'p',
+      probeType: 'HTTP' as const, scriptPath: null, scriptTimeoutSeconds: null,
+      status: 'ACTIVE' as const, triggerMode: 'SPECIFIED_SESSION' as const,
+      reuseSessionId: null, specifiedSessionId: 88,
+      lastValueHash: null, lastValueSnippet: null, lastChangeOldSnippet: null,
+      lastChangeNewSnippet: null, lastCheckedAt: null, lastChangedAt: null,
+      consecutiveFailures: 0, createdAt: null
+    }
+    const copied = copyFormFromView(view)
+    expect(copied.triggerMode).toBe('SPECIFIED_SESSION')
+    expect(copied.specifiedSessionId).toBe(88)
   })
 })

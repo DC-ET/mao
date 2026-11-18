@@ -130,6 +130,12 @@
               </el-button>
               <span v-else>-</span>
             </el-descriptions-item>
+            <el-descriptions-item v-if="detail.triggerMode === 'SPECIFIED_SESSION'" label="指定会话">
+              <el-button v-if="detail.specifiedSessionId" link type="primary" @click="goSession(detail.specifiedSessionId)">
+                #{{ detail.specifiedSessionId }}
+              </el-button>
+              <span v-else>-</span>
+            </el-descriptions-item>
             <el-descriptions-item label="连续失败">
               <span :class="{ 'fail-text': detail.consecutiveFailures > 0 }">{{ detail.consecutiveFailures }}</span>
             </el-descriptions-item>
@@ -231,6 +237,8 @@ interface WatcherRow {
   /** JSON_FIELD 的取值路径；列表「上次变化内容」文案要用，不能写死空路径。 */
   jsonPath: string | null
   triggerMode: SignalTriggerMode
+  /** SPECIFIED_SESSION 模式的执行会话 id（null=未指定）。 */
+  specifiedSessionId: number | null
   status: SignalWatcherStatus
   lastCheckedAt: string | null
   lastChangedAt: string | null
@@ -252,6 +260,7 @@ interface WatcherDetail extends WatcherRow {
   promptTemplate: string
   lastValueHash: string | null
   reuseSessionId: number | null
+  specifiedSessionId: number | null
 }
 
 interface CheckRow {
@@ -286,7 +295,8 @@ const COMPARE_MODE_LABELS: Record<SignalCompareMode, string> = {
 
 const TRIGGER_MODE_LABELS: Record<SignalTriggerMode, string> = {
   NEW_SESSION: '每次新建会话',
-  REUSE_SESSION: '复用会话'
+  REUSE_SESSION: '复用会话',
+  SPECIFIED_SESSION: '指定会话'
 }
 
 const STATUS_TAGS: Record<SignalWatcherStatus, 'success' | 'warning' | 'danger'> = {

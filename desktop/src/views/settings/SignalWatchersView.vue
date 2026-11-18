@@ -67,6 +67,9 @@
             <span>间隔 {{ watcher.intervalMinutes }} 分钟</span>
             <span v-if="watcher.probeType === 'SCRIPT'">超时 {{ watcher.scriptTimeoutSeconds ?? 60 }} 秒</span>
             <span v-if="watcher.compareMode === 'JSON_FIELD'">路径 {{ watcher.jsonPath }}</span>
+            <span v-if="watcher.triggerMode === 'SPECIFIED_SESSION' && watcher.specifiedSessionId != null">
+              执行会话 <a class="session-link" @click="openSession(watcher.specifiedSessionId)">#{{ watcher.specifiedSessionId }}</a>
+            </span>
             <span>上次变化：{{ watcher.lastChangedAt ? formatTime(watcher.lastChangedAt) : '从未' }}</span>
             <span v-if="watcher.lastChangeOldSnippet != null || watcher.lastChangeNewSnippet != null"
               class="last-change-text">
@@ -214,11 +217,33 @@
           <el-radio-group v-model="form.triggerMode">
             <el-radio value="NEW_SESSION">每次新建会话</el-radio>
             <el-radio value="REUSE_SESSION">复用会话</el-radio>
+            <el-radio value="SPECIFIED_SESSION">指定会话</el-radio>
           </el-radio-group>
           <span class="field-hint">
             「复用会话」首次触发自动创建本哨兵自己的会话，之后每次变化都接着聊；
             切到「每次新建」再切回即可重置。会话被删或更换 Agent 后会自动重建。
+            「指定会话」在所选会话中执行，会话被删或归档后触发会失败并计入连续失败。
           </span>
+        </el-form-item>
+        <el-form-item v-if="form.triggerMode === 'SPECIFIED_SESSION'" label="执行会话" required>
+          <!--
+            会话下拉数据源 /v1/sessions/search（与 Webhook 触发器「绑定会话」同接口）：
+            按会话内消息内容搜索且 keyword 必填（空关键词后端直接报错），所以空关键词不发请求。
+            agentId 过滤保证候选会话属于当前所选 Agent；LOCAL/归档会话漏选由服务端保存校验拦截。
+          -->
+          <el-select
+            v-model="specifiedSessionModel"
+            placeholder="输入会话内出现过的消息内容搜索"
+            clearable
+            filterable
+            remote
+            :remote-method="searchSessionOptions"
+            :loading="sessionSearching"
+            style="width: 100%"
+          >
+            <el-option v-for="s in sessionOptions" :key="s.id" :label="s.title" :value="Number(s.id)" />
+          </el-select>
+          <span class="field-hint">仅列出所选 Agent 的主会话；触发运行在该会话内进行，飞书/钉钉通道会话的回复会推回聊天。</span>
         </el-form-item>
         <el-form-item label="提示词模板" required>
           <el-input
@@ -332,7 +357,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { Plus, Delete, Edit, Aim, Tickets, VideoPause, VideoPlay, CopyDocument } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, type InputInstance } from 'element-plus'
 import { useRouter } from 'vue-router'
@@ -345,6 +370,7 @@ import {
   setSignalWatcherStatus,
   listSignalWatcherChecks,
   testSignalWatcher,
+  searchSessions,
   type SignalWatcherView,
   type SignalWatcherCheckPage,
   type SignalWatcherTestResult,
@@ -404,7 +430,54 @@ const form = reactive({
   probeType: 'HTTP' as SignalProbeType,
   scriptPath: '',
   scriptTimeoutSeconds: null as number | null,
-  triggerMode: 'NEW_SESSION' as SignalTriggerMode
+  triggerMode: 'NEW_SESSION' as SignalTriggerMode,
+  specifiedSessionId: null as number | null
+})
+
+/** 指定会话下拉选项（/v1/sessions/search，按消息内容搜索 + agentId 过滤）。 */
+interface SessionOption { id: number; title: string }
+const sessionOptions = ref<SessionOption[]>([])
+const sessionSearching = ref(false)
+
+/**
+ * 会话远程搜索（Webhook 触发器「绑定会话」同款交互）。/v1/sessions/search 的搜索对象是
+ * 会话内消息内容且 keyword 必填（空关键词后端直接报错），因此空关键词不发请求、清空选项。
+ */
+async function searchSessionOptions(keyword: string): Promise<void> {
+  const kw = keyword.trim()
+  if (kw === '' || form.agentId == null) {
+    sessionOptions.value = []
+    return
+  }
+  sessionSearching.value = true
+  try {
+    const result = await searchSessions(kw, { agentId: form.agentId, sessionType: 'NORMAL' })
+    sessionOptions.value = (result.items ?? []).map((item) => ({ id: Number(item.sessionId), title: item.title ?? `#${item.sessionId}` }))
+  } catch {
+    sessionOptions.value = []
+  } finally {
+    sessionSearching.value = false
+  }
+}
+
+const specifiedSessionModel = computed<number | null>({
+  get: () => form.specifiedSessionId,
+  set: (value) => {
+    form.specifiedSessionId = value == null ? null : Number(value)
+    // 记录选择时的 Agent：换 Agent 才清空，编辑/复制回显（owner 与 agentId 一致）不受影响
+    specifiedSessionOwnerAgentId = value == null ? null : form.agentId
+  }
+})
+
+/** 当前已选执行会话归属的 Agent（watch 是 pre-flush 异步触发，同步赋值序列必须靠它判归属）。 */
+let specifiedSessionOwnerAgentId: number | null = null
+
+/** 换 Agent 必须重选执行会话：候选会话按 agentId 过滤，旧选择不再属于新 Agent（服务端也会拦截）。 */
+watch(() => form.agentId, () => {
+  if (form.specifiedSessionId != null && specifiedSessionOwnerAgentId === form.agentId) return
+  form.specifiedSessionId = null
+  specifiedSessionOwnerAgentId = null
+  sessionOptions.value = []
 })
 
 /** 脚本超时输入框模型：el-input-number 不吃 null，用 60 兜底显示；清空回 null（服务端默认）。 */
@@ -568,6 +641,8 @@ function resetForm(): void {
   form.scriptPath = ''
   form.scriptTimeoutSeconds = null
   form.triggerMode = 'NEW_SESSION'
+  form.specifiedSessionId = null
+  specifiedSessionOwnerAgentId = null
 }
 
 function openCreateDialog(): void {
@@ -587,6 +662,11 @@ function openCreateDialog(): void {
 function openCopyDialog(watcher: SignalWatcherView): void {
   const copied = copyFormFromView(watcher)
   Object.assign(form, copied)
+  // Object.assign 不经过 computed setter，owner 手动对齐：预填会话挂在源哨兵的 Agent 上
+  specifiedSessionOwnerAgentId = copied.specifiedSessionId != null ? watcher.agentId : null
+  sessionOptions.value = copied.specifiedSessionId != null
+    ? [{ id: copied.specifiedSessionId, title: `#${copied.specifiedSessionId}` }]
+    : []
   form.bodyLength = watcher.bodyLength
   editing.value = false
   editingId.value = null
@@ -617,6 +697,11 @@ function openEditDialog(watcher: SignalWatcherView): void {
   form.scriptPath = watcher.scriptPath ?? ''
   form.scriptTimeoutSeconds = watcher.scriptTimeoutSeconds ?? null
   form.triggerMode = watcher.triggerMode ?? 'NEW_SESSION'
+  form.specifiedSessionId = watcher.specifiedSessionId ?? null
+  specifiedSessionOwnerAgentId = form.agentId
+  sessionOptions.value = watcher.specifiedSessionId != null
+    ? [{ id: watcher.specifiedSessionId, title: `#${watcher.specifiedSessionId}` }]
+    : []
   form.headers = headerPairsFromView(watcher.headers)
   dialogVisible.value = true
   if (agents.value.length === 0) void fetchAgents()
@@ -682,6 +767,8 @@ const canSubmit = computed(() => {
   }
   if (form.compareMode === 'JSON_FIELD' && form.jsonPath.trim() === '') return false
   if (form.promptTemplate.trim() === '') return false
+  // 指定会话模式必须已选择执行会话（服务端 normalizeInput 也会拦，这里给表单即时反馈）
+  if (form.triggerMode === 'SPECIFIED_SESSION' && form.specifiedSessionId == null) return false
   return true
 })
 

@@ -38,6 +38,7 @@ export class MysqlSignalWatcherRepository {
       consecutiveFailures: watcher.consecutiveFailures,
       triggerMode: watcher.triggerMode,
       reuseSessionId: watcher.reuseSessionId,
+      specifiedSessionId: watcher.specifiedSessionId,
     });
   }
 
@@ -121,6 +122,7 @@ export class MysqlSignalWatcherRepository {
     if (patch.consecutiveFailures !== undefined) row.consecutiveFailures = patch.consecutiveFailures;
     if (patch.triggerMode !== undefined) row.triggerMode = patch.triggerMode;
     if (patch.reuseSessionId !== undefined) row.reuseSessionId = patch.reuseSessionId;
+    if (patch.specifiedSessionId !== undefined) row.specifiedSessionId = patch.specifiedSessionId;
     const keys = Object.keys(row);
     if (keys.length === 0) return Promise.resolve(false);
     return this.updateByIds(id, userId, row);

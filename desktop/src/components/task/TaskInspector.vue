@@ -508,6 +508,8 @@ const showFileTreeTab = computed(() => {
     // 无会话的新建态：已选云端项目也放行——fileProvider 此时是 project 只读 provider
     return !!props.sessionId || !!props.projectKey
   }
+  // LOCAL：provider 层已按「本机执行端 → 直连 IPC / 其它端 → 服务端 WS 代理」分流
+  // （技术方案 2026-11-17 §4.3），无 electronAPI 环境不再抛 TypeError，保持原判据放行
   return !!props.workspace
 })
 

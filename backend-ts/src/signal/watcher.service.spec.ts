@@ -122,7 +122,9 @@ function harness(options: {
   const scriptProbeExecute = vi.fn(async () =>
     options.scriptProbe ? options.scriptProbe() : { ok: true, exitCode: 0, stdout: '', stdoutBytes: Buffer.alloc(0), error: null, durationMs: 5 },
   );
-  const openRun = { run: vi.fn(async () => ({ sessionId: 42, messageId: 1, queued: false, terminalPhase: 'COMPLETED' as const })) };
+  // openRun.run 回显入参 sessionId（真实语义：显式传 = 在该会话执行，null = 新建会话）；
+  // 新建分支恒 42，既有 REUSE 指针回写用例依赖该值。
+  const openRun = { run: vi.fn(async (input?: { sessionId?: number | null }) => ({ sessionId: input?.sessionId ?? 42, messageId: 1, queued: false, terminalPhase: 'COMPLETED' as const })) };
   // 复用指针预检：读不到返回 null（等同会话已删）
   const getSession = options.getSession
     ? vi.fn(options.getSession)
@@ -1861,5 +1863,211 @@ describe('SCRIPT 哨兵（V189）', () => {
     expect(result.error).toContain('版本待升级');
     expect(h.checks).toHaveLength(0);
     expect(h.watchers.get(1)!.lastCheckedAt).toBeNull();
+  });
+});
+
+// ── 指定执行会话（V197，技术方案 2026-11-17）────────────────────────────────
+// 建模：specified_session_id 用户/Agent 指定（与系统维护的 reuse_session_id 分列）；
+// 保存时校验（存在/归属/主会话/CLOUD/Agent 匹配/未归档）；触发时预检失效不降级新建，
+// 判触发失败计连败——静默改道会重新制造「触发结果用户不可感知」这个原始问题。
+describe('WatcherService 指定执行会话（SPECIFIED_SESSION，V197）', () => {
+  const changed = { lastValueHash: 'different', lastValueSnippet: 'old' } as const;
+  const newBody = { body: 'new-body', bodyBytes: Buffer.from('new-body', 'utf8') } as const;
+
+  function specifiedInput(overrides: Partial<WatcherInput> = {}): WatcherInput {
+    return { ...baseInput, triggerMode: 'SPECIFIED_SESSION', specifiedSessionId: 42, ...overrides };
+  }
+
+  async function expectBusinessError(promise: Promise<unknown>, message: RegExp, code?: number): Promise<void> {
+    try {
+      await promise;
+      expect.unreachable('应抛出 BusinessException');
+    } catch (e) {
+      expect(e).toBeInstanceOf(BusinessException);
+      expect((e as BusinessException).message).toMatch(message);
+      if (code != null) expect((e as BusinessException).code).toBe(code);
+    }
+  }
+
+  it('create：合法会话（本人/主会话/CLOUD/Agent 匹配/未归档）落库并透出', async () => {
+    const h = harness();
+    const view = await h.service.create(7, specifiedInput());
+    expect(view.triggerMode).toBe('SPECIFIED_SESSION');
+    expect(view.specifiedSessionId).toBe(42);
+    expect(h.watchers.get(view.id)!.specifiedSessionId).toBe(42);
+    expect(h.getSession).toHaveBeenCalledWith(42);
+  });
+
+  it('create：未指定会话（null）报「必须选择执行会话」', async () => {
+    const h = harness();
+    await expectBusinessError(h.service.create(7, specifiedInput({ specifiedSessionId: null })), /必须选择执行会话/, ErrorCode.PARAM_INVALID.code);
+  });
+
+  it('create：非法值（0 / 非整数）拒绝', async () => {
+    const h = harness();
+    await expectBusinessError(h.service.create(7, specifiedInput({ specifiedSessionId: 0 })), /必须选择执行会话|正整数/, ErrorCode.PARAM_INVALID.code);
+  });
+
+  it.each([
+    ['会话不存在', [], /指定的会话不存在/, ErrorCode.SESSION_NOT_FOUND.code],
+    ['会话非本人（归属不匹配按不存在，不泄露存在性）', [{ id: 42, userId: 8, sessionType: null, executionMode: 'CLOUD', agentId: 3 }], /指定的会话不存在/, ErrorCode.SESSION_NOT_FOUND.code],
+    ['会话是 SIDE_TASK', [{ id: 42, userId: 7, sessionType: 'SIDE_TASK', executionMode: 'CLOUD', agentId: 3 }], /仅支持主会话/, ErrorCode.PARAM_INVALID.code],
+    ['会话是 LOCAL', [{ id: 42, userId: 7, sessionType: null, executionMode: 'LOCAL', agentId: 3 }], /仅支持云端执行会话/, ErrorCode.PARAM_INVALID.code],
+    ['会话属于其他 Agent', [{ id: 42, userId: 7, sessionType: null, executionMode: 'CLOUD', agentId: 99 }], /需属于该哨兵的 Agent/, ErrorCode.PARAM_INVALID.code],
+    ['会话已归档', [{ id: 42, userId: 7, sessionType: null, executionMode: 'CLOUD', agentId: 3, status: 'ARCHIVED' }], /已归档/, ErrorCode.PARAM_INVALID.code],
+  ] as Array<[string, WatcherSessionLookup[], RegExp, number]>)('create：%s 时拒绝', async (_label, sessions, message, code) => {
+    const h = harness({ sessions });
+    await expectBusinessError(h.service.create(7, specifiedInput()), message, code);
+  });
+
+  it('create：getSession 抛非「不存在」异常时上抛（库瞬断不作配置失效误判）', async () => {
+    const h = harness({ getSession: async () => { throw new BusinessException(ErrorCode.INTERNAL_ERROR, 'db down'); } });
+    await expectBusinessError(h.service.create(7, specifiedInput()), /db down/, ErrorCode.INTERNAL_ERROR.code);
+  });
+
+  it('update：切出指定模式清列；切回未重选报「必须选择执行会话」', async () => {
+    const h = harness({ watcher: watcher({ triggerMode: 'SPECIFIED_SESSION', specifiedSessionId: 42 }) });
+    await h.service.update(7, 1, { triggerMode: 'NEW_SESSION' });
+    expect(h.watchers.get(1)!.specifiedSessionId).toBeNull();
+    await expectBusinessError(h.service.update(7, 1, { triggerMode: 'SPECIFIED_SESSION' }), /必须选择执行会话/, ErrorCode.PARAM_INVALID.code);
+  });
+
+  it('update：改 agentId 且未重选（沿用库值）→ 以新 agentId 校验报错，不静默清列', async () => {
+    const h = harness({ watcher: watcher({ triggerMode: 'SPECIFIED_SESSION', specifiedSessionId: 42 }) });
+    await expectBusinessError(h.service.update(7, 1, { agentId: 9 }), /需属于该哨兵的 Agent/, ErrorCode.PARAM_INVALID.code);
+    // 库值未被静默改写：用户改对后才能保存
+    expect(h.watchers.get(1)!.agentId).toBe(3);
+    expect(h.watchers.get(1)!.specifiedSessionId).toBe(42);
+  });
+
+  it('update：改 agentId 且重选了新 Agent 的会话 → 保存成功', async () => {
+    const h = harness({
+      watcher: watcher({ triggerMode: 'SPECIFIED_SESSION', specifiedSessionId: 42 }),
+      sessions: [{ id: 77, userId: 7, sessionType: null, executionMode: 'CLOUD', agentId: 9 }],
+    });
+    const view = await h.service.update(7, 1, { agentId: 9, specifiedSessionId: 77 });
+    expect(view.agentId).toBe(9);
+    expect(view.specifiedSessionId).toBe(77);
+  });
+
+  it('update：指定模式下改无关字段不动会话列（基线也不清）', async () => {
+    const h = harness({ watcher: watcher({ triggerMode: 'SPECIFIED_SESSION', specifiedSessionId: 42, lastValueHash: 'abc' }) });
+    await h.service.update(7, 1, { name: 'renamed' });
+    expect(h.watchers.get(1)!.specifiedSessionId).toBe(42);
+    expect(h.watchers.get(1)!.lastValueHash).toBe('abc');
+  });
+
+  it('update：非指定模式下显式下发 specifiedSessionId 被单侧归空（防语义漂移）', async () => {
+    const h = harness({ watcher: watcher({ triggerMode: 'NEW_SESSION', lastValueHash: 'abc' }) });
+    await h.service.update(7, 1, { specifiedSessionId: 42 });
+    expect(h.watchers.get(1)!.triggerMode).toBe('NEW_SESSION');
+    expect(h.watchers.get(1)!.specifiedSessionId).toBeNull();
+  });
+
+  it('runCheck：指定模式触发落到指定会话，不回写任何指针列', async () => {
+    const h = harness({ watcher: watcher({ triggerMode: 'SPECIFIED_SESSION', specifiedSessionId: 42, ...changed }), probe: () => probeResult(newBody) });
+    await h.service.runCheck(1);
+    expect(h.getSession).toHaveBeenCalledWith(42);
+    expect(h.openRun.run).toHaveBeenCalledTimes(1);
+    expect(h.openRun.run.mock.calls[0]![0].sessionId).toBe(42);
+    expect(h.watchers.get(1)!.specifiedSessionId).toBe(42);
+    expect(h.watchers.get(1)!.reuseSessionId).toBeNull();
+    expect(h.checks[0]!.triggeredSessionId).toBe(42);
+    expect(h.checks[0]!.error).toBeNull();
+  });
+
+  it.each([
+    ['会话已删（getSession 抛 SESSION_NOT_FOUND）', async () => { throw new BusinessException(ErrorCode.SESSION_NOT_FOUND); }, /指定的会话不存在/],
+    ['会话已归档', async () => ({ id: 42, userId: 7, sessionType: null, executionMode: 'CLOUD', agentId: 3, status: 'ARCHIVED' }), /已归档/],
+    ['会话是 LOCAL', async () => ({ id: 42, userId: 7, sessionType: null, executionMode: 'LOCAL', agentId: 3 }), /仅支持云端执行会话/],
+  ])('runCheck：失效（%s）判触发失败计连败，不降级新建、不回写指针', async (_label, getSessionImpl, message) => {
+    const h = harness({
+      watcher: watcher({ triggerMode: 'SPECIFIED_SESSION', specifiedSessionId: 42, ...changed }),
+      getSession: getSessionImpl,
+      probe: () => probeResult(newBody),
+    });
+    await h.service.runCheck(1);
+    expect(h.openRun.run).not.toHaveBeenCalled();
+    expect(h.recordFailure).toHaveBeenCalledTimes(1);
+    expect(h.checks[0]!.error).toMatch(message);
+    expect(h.checks[0]!.triggeredSessionId).toBeNull();
+    expect(h.watchers.get(1)!.specifiedSessionId).toBe(42);
+  });
+
+  it('runCheck：指定模式但列为 NULL（脏数据）报「未配置执行会话」并计连败', async () => {
+    const h = harness({ watcher: watcher({ triggerMode: 'SPECIFIED_SESSION', specifiedSessionId: null, ...changed }), probe: () => probeResult(newBody) });
+    await h.service.runCheck(1);
+    expect(h.openRun.run).not.toHaveBeenCalled();
+    expect(h.recordFailure).toHaveBeenCalledTimes(1);
+    expect(h.checks[0]!.error).toMatch(/未配置执行会话/);
+  });
+
+  it('runCheck：探针在途期间切走指定模式/改绑 → 以触发前重读的 fresh 行为准', async () => {
+    // 探针执行时并发改库（把 triggerMode 切回 NEW_SESSION）：runCheck 开头读的快照仍是
+    // SPECIFIED，但触发段必须按 fresh 行走新建，不能按旧快照往已解除的会话里触发。
+    const h = harness({
+      watcher: watcher({ triggerMode: 'SPECIFIED_SESSION', specifiedSessionId: 42, ...changed }),
+      probe: () => {
+        h.watchers.get(1)!.triggerMode = 'NEW_SESSION';
+        h.watchers.get(1)!.specifiedSessionId = null;
+        return probeResult(newBody);
+      },
+    });
+    await h.service.runCheck(1);
+    expect(h.getSession).not.toHaveBeenCalled();
+    expect(h.openRun.run).toHaveBeenCalledTimes(1);
+    expect(h.openRun.run.mock.calls[0]![0].sessionId).toBeNull();
+  });
+
+  it('runCheck：探针在途期间改绑到另一有效会话 → 用 fresh 行的新会话', async () => {
+    const h = harness({
+      watcher: watcher({ triggerMode: 'SPECIFIED_SESSION', specifiedSessionId: 42, ...changed }),
+      sessions: [
+        { id: 42, userId: 7, sessionType: null, executionMode: 'CLOUD', agentId: 3 },
+        { id: 77, userId: 7, sessionType: null, executionMode: 'CLOUD', agentId: 3 },
+      ],
+      probe: () => {
+        h.watchers.get(1)!.specifiedSessionId = 77;
+        return probeResult(newBody);
+      },
+    });
+    await h.service.runCheck(1);
+    expect(h.getSession).toHaveBeenCalledWith(77);
+    expect(h.openRun.run.mock.calls[0]![0].sessionId).toBe(77);
+    expect(h.checks[0]!.triggeredSessionId).toBe(77);
+  });
+
+  it('失效计连败后：改绑有效会话 + DISABLED→ACTIVE 重新启用清零并重建基线（既有口径回归）', async () => {
+    let deleted = true;
+    const h = harness({
+      watcher: watcher({ triggerMode: 'SPECIFIED_SESSION', specifiedSessionId: 42 }),
+      getSession: async (id) => {
+        if (id === 42 && deleted) throw new BusinessException(ErrorCode.SESSION_NOT_FOUND);
+        return { id, userId: 7, sessionType: null, executionMode: 'CLOUD', agentId: 3 };
+      },
+      probe: () => probeResult(newBody),
+    });
+    // 累计 5 次失效触发 → 达阈值自动停用并通知
+    for (let i = 0; i < WATCHER_DISABLE_AFTER_FAILURES; i += 1) {
+      h.watchers.get(1)!.lastValueHash = `v${i}`;
+      await h.service.runCheck(1);
+    }
+    expect(h.notify).toHaveBeenCalledTimes(1);
+    // fake 的 recordFailure 把失败状态放在独立槽位：这里按真实 DB 语义把停用态写回行，
+    // 再走用户修复链路（改绑已恢复的会话 + 重新启用）
+    h.watchers.get(1)!.status = 'DISABLED';
+    deleted = false;
+    await h.service.setStatus(7, 1, 'ACTIVE');
+    expect(h.watchers.get(1)!.status).toBe('ACTIVE');
+    expect(h.watchers.get(1)!.consecutiveFailures).toBe(0);
+    expect(h.watchers.get(1)!.lastValueHash).toBeNull();
+    // 重新启用后先重建基线，再一次变化 → 触发落到恢复后的会话
+    await h.service.runCheck(1);
+    expect(h.openRun.run).not.toHaveBeenCalled();
+    h.watchers.get(1)!.lastValueHash = 'fresh-change';
+    await h.service.runCheck(1);
+    expect(h.openRun.run).toHaveBeenCalledTimes(1);
+    expect(h.openRun.run.mock.calls[0]![0].sessionId).toBe(42);
+    expect(h.checks.filter((c) => c.error != null).length).toBe(WATCHER_DISABLE_AFTER_FAILURES);
   });
 });

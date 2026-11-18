@@ -108,29 +108,40 @@ describe('信号哨兵触发方式与复制', () => {
     return src.slice(at, src.indexOf('</el-dialog>', at))
   }
 
-  it('表单提供触发方式单选：每次新建会话 / 复用会话', () => {
+  it('表单提供触发方式单选：每次新建会话 / 复用会话 / 指定会话', () => {
     const block = dialogBlock()
     expect(block).toContain('label="触发方式"')
     expect(block).toContain('v-model="form.triggerMode"')
     expect(block).toContain('value="NEW_SESSION"')
     expect(block).toContain('value="REUSE_SESSION"')
+    expect(block).toContain('value="SPECIFIED_SESSION"')
   })
 
   it('列表卡片展示触发方式角标（不点开对话框也能看出差别）', () => {
     expect(src).toContain('{{ triggerModeLabel(watcher.triggerMode) }}')
   })
 
-  it('表单不出现会话选择器：复用指针由服务端维护，用户不选会话', () => {
-    // 前端只下发 triggerMode；reuse_session_id 只在路由层之后由服务端写，
-    // 一旦露出选择器，用户就会以为能指定任意会话（跨用户/跨 Agent 越权面）。
-    // 注意：轮询记录抽屉里的「会话 #id」跳转链接不在此列（只读展示）。
+  it('复用指针仍不可由用户指定；指定会话选择器只查本人会话', () => {
+    // 复用指针（reuse_session_id）只能由服务端触发链路写：前端不得出现该字段的提交入口。
+    // 指定会话（V197）的越权面由三层接住：候选按 form.agentId 过滤（searchSessions 参数）、
+    // keyword 必填（空关键词不发请求）、服务端 assertSpecifiedSession 归属校验兜底。
+    // 注意：轮询记录抽屉与列表卡的「会话 #id」跳转链接不在此列（只读展示）。
     const fn = scriptBlock().slice(
       scriptBlock().indexOf('const form = reactive'),
       scriptBlock().indexOf('const checksVisible')
     )
     expect(fn).not.toContain('reuseSessionId')
-    expect(fn).not.toContain('sessionId')
-    expect(dialogBlock()).not.toMatch(/选择会话|指定会话/)
+    const dialog = dialogBlock()
+    expect(dialog).toContain('v-model="form.triggerMode"')
+    // 指定会话下拉只在指定模式渲染，且带 agentId 过滤与空关键词短路
+    expect(dialog).toContain("form.triggerMode === 'SPECIFIED_SESSION'")
+    const search = scriptBlock().slice(
+      scriptBlock().indexOf('async function searchSessionOptions'),
+      scriptBlock().indexOf('const specifiedSessionModel')
+    )
+    expect(search).toContain("agentId: form.agentId")
+    expect(search).toContain("sessionType: 'NORMAL'")
+    expect(search).toContain("kw === ''")
   })
 
   it('20 个上限已取消：不引入上限常量、不渲染哨兵数量上限、不禁用新建按钮', () => {

@@ -29,7 +29,7 @@ afterEach(() => {
 describe('useWorkspaceFileProvider 分支序', () => {
   it('CLOUD 有会话：cloud provider，sessionId 透传', async () => {
     mockApiGet({ entries: [{ name: 'a.txt', path: 'a.txt', isDirectory: false, size: 1, isSymlink: false }], truncated: false })
-    const provider = useWorkspaceFileProvider(ref('CLOUD'), ref(''), ref('42'), ref('demo')).value
+    const provider = useWorkspaceFileProvider(ref('CLOUD'), ref(''), ref('42'), ref('demo'), ref(null)).value
     expect(provider).not.toBeNull()
     const result = await provider!.listDirectory('')
     expect(apiGet).toHaveBeenCalledWith('/files/workspace-directory', {
@@ -40,7 +40,7 @@ describe('useWorkspaceFileProvider 分支序', () => {
 
   it('CLOUD 无会话有项目：project provider，projectKey 透传', async () => {
     mockApiGet({ entries: [], truncated: false })
-    const provider = useWorkspaceFileProvider(ref('CLOUD'), ref(''), ref(''), ref('demo')).value
+    const provider = useWorkspaceFileProvider(ref('CLOUD'), ref(''), ref(''), ref('demo'), ref(null)).value
     expect(provider).not.toBeNull()
     await provider!.listDirectory('src')
     expect(apiGet).toHaveBeenCalledWith('/files/project-directory', {
@@ -49,22 +49,56 @@ describe('useWorkspaceFileProvider 分支序', () => {
   })
 
   it('CLOUD 无会话无项目：null', () => {
-    const provider = useWorkspaceFileProvider(ref('CLOUD'), ref(''), ref(''), ref('')).value
+    const provider = useWorkspaceFileProvider(ref('CLOUD'), ref(''), ref(''), ref(''), ref(null)).value
     expect(provider).toBeNull()
   })
 
   it('LOCAL 有 workspace：local provider 走 Electron IPC', async () => {
     const listDirectory = vi.fn(async () => ({ entries: [], truncated: false }))
     ;(globalThis as any).window = { electronAPI: { listDirectory } }
-    const provider = useWorkspaceFileProvider(ref('LOCAL'), ref('/tmp/ws'), ref(''), ref('')).value
+    const provider = useWorkspaceFileProvider(ref('LOCAL'), ref('/tmp/ws'), ref(''), ref(''), ref(null)).value
     expect(provider).not.toBeNull()
     await provider!.listDirectory('')
     expect(listDirectory).toHaveBeenCalledWith('/tmp/ws', '/tmp/ws')
   })
 
   it('LOCAL 无 workspace：null', () => {
-    const provider = useWorkspaceFileProvider(ref('LOCAL'), ref(''), ref(''), ref('')).value
+    const provider = useWorkspaceFileProvider(ref('LOCAL'), ref(''), ref(''), ref(''), ref(null)).value
     expect(provider).toBeNull()
+  })
+
+  it('LOCAL + 代理会话 id：走 cloud provider（服务端 WS 代理，同 URL 同 DTO）', async () => {
+    mockApiGet({ entries: [{ name: 'device.txt', path: 'device.txt', isDirectory: false, size: 1, isSymlink: false }], truncated: false })
+    const provider = useWorkspaceFileProvider(ref('LOCAL'), ref('/Users/yang/proj'), ref(''), ref(''), ref('7')).value
+    expect(provider).not.toBeNull()
+    await provider!.listDirectory('')
+    expect(apiGet).toHaveBeenCalledWith('/files/workspace-directory', {
+      params: { sessionId: 7, dir: undefined },
+    })
+  })
+
+  it('LOCAL + 代理会话 id 为空：回落本地 IPC provider（执行端本机 / 未绑定），不触达 API', () => {
+    const listDirectory = vi.fn(async () => ({ entries: [], truncated: false }))
+    ;(globalThis as any).window = { electronAPI: { listDirectory } }
+    const provider = useWorkspaceFileProvider(ref('LOCAL'), ref('/tmp/ws'), ref(''), ref(''), ref(null)).value
+    expect(provider).not.toBeNull()
+    void provider!.listDirectory('')
+    expect(apiGet).not.toHaveBeenCalled()
+    expect(listDirectory).toHaveBeenCalledWith('/tmp/ws', '/tmp/ws')
+  })
+})
+
+describe('createLocalProvider P0 防御（无 electronAPI 环境）', () => {
+  it('各方法返回中文 error 形状，不抛 TypeError', async () => {
+    // 不设置 window.electronAPI（afterEach 会清 window）
+    ;(globalThis as any).window = {}
+    const provider = createLocalProvider('/tmp/ws')
+    expect(await provider.listDirectory('')).toEqual({ error: '本地任务文件仅在桌面客户端内可浏览' })
+    expect(await provider.readFile('a.txt')).toEqual({ content: '', total_lines: 0, error: '本地任务文件仅在桌面客户端内可浏览' })
+    expect(await provider.previewFile!('a.pdf')).toEqual({ error: '本地任务文件仅在桌面客户端内可浏览' })
+    expect(await provider.readFileBytes!('a.bin')).toEqual({ error: '本地任务文件仅在桌面客户端内可浏览' })
+    // searchFiles 必须显式回 error：不能靠 searchLocalWorkspace 内部 catch 静默返回空结果
+    expect(await provider.searchFiles('a')).toEqual({ error: '本地任务文件仅在桌面客户端内可浏览' })
   })
 })
 
@@ -144,7 +178,7 @@ describe('getAbsolutePath（复制绝对路径）', () => {
       truncated: false,
       workspaceRoot: '/opt/mao-data/workspace/42',
     })
-    const provider = useWorkspaceFileProvider(ref('CLOUD'), ref(''), ref('42'), ref('demo')).value!
+    const provider = useWorkspaceFileProvider(ref('CLOUD'), ref(''), ref('42'), ref('demo'), ref(null)).value!
     // 拉取前无根可依：原样返回相对路径，不拼出错路径
     expect(provider.getAbsolutePath!('scripts/deploy.sh')).toBe('scripts/deploy.sh')
     await provider.listDirectory('scripts')
@@ -165,7 +199,7 @@ describe('getAbsolutePath（复制绝对路径）', () => {
 
   it('LOCAL：以 Electron 选中的 workspace 拼绝对路径（行为不变）', async () => {
     ;(globalThis as any).window = { electronAPI: { listDirectory: vi.fn(async () => ({ entries: [], truncated: false })) } }
-    const provider = useWorkspaceFileProvider(ref('LOCAL'), ref('/tmp/ws'), ref(''), ref('')).value!
+    const provider = useWorkspaceFileProvider(ref('LOCAL'), ref('/tmp/ws'), ref(''), ref(''), ref(null)).value!
     expect(provider.getAbsolutePath!('scripts/deploy.sh')).toBe('/tmp/ws/scripts/deploy.sh')
   })
 })

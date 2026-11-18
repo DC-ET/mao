@@ -977,10 +977,12 @@ export interface SignalWatcherView {
   /** 脚本超时秒数（仅 SCRIPT；null=默认 60）。 */
   scriptTimeoutSeconds: number | null
   status: SignalWatcherStatus
-  /** 触发方式：NEW_SESSION=每次新建会话，REUSE_SESSION=复用自己的会话。 */
+  /** 触发方式：NEW_SESSION=每次新建会话，REUSE_SESSION=复用自己的会话，SPECIFIED_SESSION=指定执行会话。 */
   triggerMode: SignalTriggerMode
   /** REUSE_SESSION 模式当前复用的会话 id（只读；指针由系统维护，不接受提交）。 */
   reuseSessionId: number | null
+  /** SPECIFIED_SESSION 模式的执行会话 id（只读；保存时服务端已校验归属）。 */
+  specifiedSessionId: number | null
   lastValueHash: string | null
   /** 上次判定内容片段（透出：失败行「上次正常值」用；失败不覆盖它）。 */
   lastValueSnippet: string | null
@@ -1052,6 +1054,11 @@ export interface SignalWatcherInput {
   scriptTimeoutSeconds?: number | null
   /** 触发方式；缺省 = NEW_SESSION（保持现状语义）。 */
   triggerMode?: SignalTriggerMode
+  /**
+   * 指定执行会话 id（仅 SPECIFIED_SESSION 模式下发）：省略该键 = 服务端保留原值，
+   * `null` = 清空。非指定模式不下发（服务端单侧归空清列）。
+   */
+  specifiedSessionId?: number | null
   /**
    * 复制源哨兵 id（仅新建生效）：敏感请求头与请求体由后端从源行解密继承，
    * 前端不下发明文。reuseSessionId 刻意不在入参里——指针系统维护。

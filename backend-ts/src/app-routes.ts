@@ -46,6 +46,7 @@ import type { AskUserQuestionsRegistry } from './harness/tool/ask-user-questions
 import type { InFlightToolRegistry } from './harness/core/in-flight-tool-registry.js';
 import type { SessionTreeSignalPublisher } from './harness/approval/session-tree-signal-publisher.js';
 import type { WorkspaceBrowseService } from './file/workspace-browse.service.js';
+import type { RemoteFileProxyService } from './file/remote-file-proxy.service.js';
 import type { TerminalManager } from './harness/terminal/terminal-manager.js';
 import type { WorkspaceGitService } from './file/workspace-git.service.js';
 import type { GitCommitMessageService } from './file/git-commit-message.service.js';
@@ -263,6 +264,8 @@ export interface RouteDeps {
   getExecutorClientType?: (userId: number, deviceId: string) => string | null;
   treeSignalPublisher: SessionTreeSignalPublisher;
   workspaceBrowse: WorkspaceBrowseService;
+  /** LOCAL 会话文件树远程代理（技术方案 2026-11-17）：browse 端点 LOCAL 分流 + WS 回包入口共用。 */
+  remoteFileProxy: RemoteFileProxyService;
   terminalManager: TerminalManager;
   workspaceGit: WorkspaceGitService;
   gitCommitMsg: GitCommitMessageService;
@@ -365,6 +368,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     sessionCompactionEventService, sessionCompactionService, runTraceService, runTraceRecordService,
     approvalRegistry, askUserQuestionsRegistry, inFlightToolRegistry, treeSignalPublisher,
     workspaceBrowse, terminalManager, workspaceGit, gitCommitMsg, gitWrite, runtimeResolver,
+    remoteFileProxy,
     ossSts,
     skillBundleService, userSkillService, skillDocService,
     scheduledService,
@@ -593,6 +597,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       workspaceGitService: workspaceGit, gitCommitMessageService: gitCommitMsg,
       gitWriteOperationService: gitWrite, workspaceWriteService: workspaceWrite,
       workspaceOverviewService, pathSandbox,
+      remoteFileProxyService: remoteFileProxy,
       experienceDirForAgent,
       getUploadBaseUrl: async () => (await settingService.getUploadConfig()).baseUrl,
       runtimeDataResolver: runtimeResolver,

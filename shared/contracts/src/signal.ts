@@ -25,10 +25,13 @@ export type SignalProbeType = 'HTTP' | 'SCRIPT';
 export type SignalWatcherStatus = 'ACTIVE' | 'PAUSED' | 'DISABLED';
 
 /**
- * 触发方式：NEW_SESSION=每次触发新建会话，REUSE_SESSION=复用本哨兵自己的会话。
- * 复用指针（reuse_session_id）由系统维护：首次触发自动建会话并回写，用户不选择会话。
+ * 触发方式：NEW_SESSION=每次触发新建会话，REUSE_SESSION=复用本哨兵自己的会话，
+ * SPECIFIED_SESSION=在用户/Agent 指定的会话中执行（V197）。
+ * 复用指针（reuse_session_id）由系统维护：首次触发自动建会话并回写，用户不选择会话；
+ * 指定会话（specified_session_id）由用户锚定：保存时校验（存在/归属/主会话/CLOUD/Agent 匹配/未归档），
+ * 失效触发判失败计连败，不降级新建（技术方案 2026-11-17 §8-2）。
  */
-export type SignalTriggerMode = 'NEW_SESSION' | 'REUSE_SESSION';
+export type SignalTriggerMode = 'NEW_SESSION' | 'REUSE_SESSION' | 'SPECIFIED_SESSION';
 
 /** 轮询记录里的非失败告警码：触发频次超限（照常触发，仅标记）。 */
 export type SignalWatcherWarning = 'TRIGGER_RATE_LIMITED';

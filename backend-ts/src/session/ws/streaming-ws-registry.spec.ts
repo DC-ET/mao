@@ -457,3 +457,65 @@ describe('StreamingWsRegistry listConnections（管理后台在线设备页）',
     expect(socket.close).not.toHaveBeenCalled();
   });
 });
+
+describe('sendToFileCapableDevice（文件代理投递，技术方案 2026-11-17 D11）', () => {
+  let registry: StreamingWsRegistry;
+
+  beforeEach(() => {
+    registry = new StreamingWsRegistry(10);
+  });
+
+  afterEach(() => {
+    registry.shutdown();
+  });
+
+  it('deliversToElectronConnectionOfTheBoundDevice', () => {
+    const socket = mockSocket('ws-1');
+    registry.register(socket, 7, 'electron', undefined, true, { id: 'dev-1', name: 'Mac', platform: 'darwin' });
+    const result = registry.sendToFileCapableDevice(7, 'dev-1', wsEvent('file_op_request', 11, { requestId: 'r1' }));
+    expect(result.status).toBe('delivered');
+    expect(socket.send).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(socket.send.mock.calls[0][0] as string).type).toBe('file_op_request');
+  });
+
+  it('prefersElectronConnectionEvenWhenExecutorSlotIsHeldByCli', () => {
+    // 同机 Electron + CLI 并存共用 deviceId：deviceExecutors 执行连接槽被 CLI 覆盖后，
+    // file_op_request 仍必须投给 electron renderer（CLI 收到会静默忽略、白等超时）
+    const electronSocket = mockSocket('ws-electron');
+    const cliSocket = mockSocket('ws-cli');
+    registry.register(electronSocket, 7, 'electron', undefined, true, { id: 'dev-1', name: 'Mac', platform: 'darwin' });
+    registry.register(cliSocket, 7, 'cli', undefined, true, { id: 'dev-1', name: 'Mac', platform: 'darwin' });
+    const result = registry.sendToFileCapableDevice(7, 'dev-1', wsEvent('file_op_request', 11, { requestId: 'r1' }));
+    expect(result.status).toBe('delivered');
+    expect((result as { socket: WsSocket }).socket.id).toBe('ws-electron');
+    expect(cliSocket.send).not.toHaveBeenCalled();
+  });
+
+  it('reportsCliOnlyWhenDeviceHasNoElectronConnection', () => {
+    const cliSocket = mockSocket('ws-cli');
+    registry.register(cliSocket, 7, 'cli', undefined, true, { id: 'dev-1', name: 'Mac', platform: 'darwin' });
+    const result = registry.sendToFileCapableDevice(7, 'dev-1', wsEvent('file_op_request', 11, { requestId: 'r1' }));
+    expect(result.status).toBe('cliOnly');
+    expect(cliSocket.send).not.toHaveBeenCalled();
+  });
+
+  it('reportsOfflineWhenDeviceHasNoAliveConnection', () => {
+    expect(registry.sendToFileCapableDevice(7, 'dev-none', wsEvent('file_op_request', 11, {})).status).toBe('offline');
+    // 设备连接存在但另一设备：不投递
+    registry.register(mockSocket('ws-1'), 7, 'electron', undefined, true, { id: 'dev-other', name: 'Win', platform: 'win32' });
+    expect(registry.sendToFileCapableDevice(7, 'dev-1', wsEvent('file_op_request', 11, {})).status).toBe('offline');
+  });
+
+  it('doesNotDeliverToConnectionsOfAnotherUserOrBrowserClient', () => {
+    // browser 连接即使碰巧带 device 字段也不进设备索引（register 白名单），不会收到投递
+    registry.register(mockSocket('ws-b'), 7, 'browser');
+    registry.register(mockSocket('ws-other-user'), 8, 'electron', undefined, true, { id: 'dev-1', name: 'Mac', platform: 'darwin' });
+    expect(registry.sendToFileCapableDevice(7, 'dev-1', wsEvent('file_op_request', 11, {})).status).toBe('offline');
+  });
+
+  it('reportsOfflineWhenSendThrows', () => {
+    const socket = mockSocket('ws-1', () => { throw new Error('broken pipe'); });
+    registry.register(socket, 7, 'electron', undefined, true, { id: 'dev-1', name: 'Mac', platform: 'darwin' });
+    expect(registry.sendToFileCapableDevice(7, 'dev-1', wsEvent('file_op_request', 11, {})).status).toBe('offline');
+  });
+});
