@@ -70,6 +70,7 @@ describe('StreamingWsHandler', () => {
     completeToolRequest: vi.fn(), completeToolRequestError: vi.fn(),
   };
   const localFileFetchService = { handleChunk: vi.fn() };
+  const remoteFileProxyService = { complete: vi.fn(), failAllForSocket: vi.fn() };
   const embedPageToolRegistry = {
     request: vi.fn(), complete: vi.fn(() => true), failSession: vi.fn(), isEmbedSession: vi.fn(() => false),
     hasBoundConnection: vi.fn(() => false), pendingCount: vi.fn(() => 0),
@@ -110,7 +111,7 @@ describe('StreamingWsHandler', () => {
   const handler = new StreamingWsHandler({
     registry, titleService, harnessService, sessionService, taskTerminalService, messageQueueService,
     onScheduledTaskQueueConsumed,
-    localToolSessionRegistry, localFileFetchService, askUserQuestionsRegistry, embedPageToolRegistry, treeSignalPublisher, approvalRegistry, activityService,
+    localToolSessionRegistry, localFileFetchService, remoteFileProxyService, askUserQuestionsRegistry, embedPageToolRegistry, treeSignalPublisher, approvalRegistry, activityService,
     activityHeartbeat, sessionTodoMapper, agentLoop, shellSessionManager, skillSyncService,
     localSkillRegistry, localAgentsMdRegistry, mcpSyncService, mcpClientManager, agentMapper,
     llmModelMapper, jwtService, agentExecutor: (fn) => executor.submit(fn), mcpSyncTimeoutSeconds: 60,
@@ -740,6 +741,46 @@ describe('StreamingWsHandler', () => {
     expect(approvalRegistry.unregister).toHaveBeenCalledWith(11, 'req', { approved: true, alwaysAllow: false });
     expect(treeSignalPublisher.publishForSession).toHaveBeenCalledWith(11);
     expect(askUserQuestionsRegistry.complete).toHaveBeenCalledWith(11, 'q', '{"answers":[{"id":"a"}]}');
+  });
+
+  it('fileOpResultCompletesPendingRequestWithOwnershipCheck', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    // id=12 是他人会话（userId=9），id=11 归属当前用户
+    sessionService.getSession.mockImplementation(async (id: number) => (
+      id === 12 ? { ...session('LOCAL', 'IDLE'), id: 12, userId: 9 } : session('LOCAL', 'IDLE')
+    ));
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'file_op_result', sessionId: 11, requestId: 'fop-1', ok: true, data: { entries: [], truncated: false },
+    }));
+    expect(remoteFileProxyService.complete).toHaveBeenCalledWith('fop-1', true, { entries: [], truncated: false });
+
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'file_op_result', sessionId: 11, requestId: 'fop-2', ok: false, error: '文件不存在',
+    }));
+    expect(remoteFileProxyService.complete).toHaveBeenCalledWith('fop-2', false, '文件不存在');
+
+    // 归属校验（同 tool_result）：他人会话的回包被忽略
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'file_op_result', sessionId: 12, requestId: 'fop-3', ok: true, data: {},
+    }));
+    expect(remoteFileProxyService.complete).toHaveBeenCalledTimes(2);
+
+    // 归属校验：连接 userId 与会话归属不符（userId=8 对 userId=7 的会话）
+    registry.getUserId.mockReturnValue(8);
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'file_op_result', sessionId: 11, requestId: 'fop-4', ok: true, data: {},
+    }));
+    expect(remoteFileProxyService.complete).toHaveBeenCalledTimes(2);
+    registry.getUserId.mockReturnValue(7);
+  });
+
+  it('connectionCloseFailsPendingFileOpsOnTheSameSocket', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    handler.afterConnectionClosed(ws);
+    expect(remoteFileProxyService.failAllForSocket).toHaveBeenCalledWith(ws);
+    expect(localToolSessionRegistry.failAllForSocket).toHaveBeenCalledWith(ws);
   });
 
   it('reorderQueueMessageIgnoresInvalidTargetIndex', async () => {
@@ -2542,7 +2583,6 @@ describe('StreamingWsHandler tool_approval.alwaysAllow（V135）', () => {
     setTargetForSession: vi.fn(), resolveTarget: vi.fn(async () => null), isConnected: vi.fn(), failAllForSession: vi.fn(), failAllForUser: vi.fn(), failAllForDevice: vi.fn(), failAllForSocket: vi.fn(),
     completeToolRequest: vi.fn(), completeToolRequestError: vi.fn(),
   };
-  const localFileFetchService = { handleChunk: vi.fn() };
   const embedPageToolRegistry = { request: vi.fn(), complete: vi.fn(), failSession: vi.fn(), isEmbedSession: vi.fn(() => false) };
   const askUserQuestionsRegistry = { failAllForSession: vi.fn(), getPendingForSession: vi.fn(() => []), complete: vi.fn() };
   const treeSignalPublisher = { publishIfSideTask: vi.fn(), publishForSession: vi.fn() };

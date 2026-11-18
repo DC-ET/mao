@@ -83,6 +83,8 @@ export class CreateSignalWatcherTool extends BaseTool {
         json_path: { type: 'string', description: 'JSON_FIELD 模式必填：点分提取路径，如 data.list.0.price' },
         interval_minutes: { type: 'integer', description: '轮询间隔（分钟）。HTTP 哨兵 1~1440；脚本哨兵 5~1440（脚本最长跑 300 秒）' },
         timeout_seconds: { type: 'integer', description: '脚本哨兵可选：单次执行超时（5~300 秒，默认 60）' },
+        trigger_mode: { type: 'string', enum: ['NEW_SESSION', 'REUSE_SESSION', 'SPECIFIED_SESSION'], description: '可选：触发方式。缺省时自动选择——当前会话可作触发目标（主会话且云端执行）则默认 SPECIFIED_SESSION 在当前会话执行，否则 NEW_SESSION 每次新建' },
+        session_id: { type: 'integer', description: '可选：SPECIFIED_SESSION 模式的执行会话 id，缺省=当前会话' },
         prompt_template: { type: 'string', description: '变化时发给 Agent 的提示词模板（1~2000 字），可用 {name} {url} {diff} 占位（脚本哨兵的 {url} 为脚本路径）。必须自包含：不引用本会话的临时文件路径，不要求创建/修改哨兵' },
       },
       required: ['name', 'probe_type', 'interval_minutes', 'compare_mode', 'prompt_template'],
@@ -108,6 +110,9 @@ export class CreateSignalWatcherTool extends BaseTool {
 ### 判定与触发
 - 首轮轮询只建立基线不触发；之后判定值变化才开一次 Agent 会话（每次变化计一次用量）
 - interval_minutes 即轮询间隔：HTTP 哨兵 1~1440 分钟，脚本哨兵 5~1440 分钟
+- 触发会话：用户说「在我这个会话里盯…」时无需传 trigger_mode/session_id（工具自动默认在当前会话执行）；
+  当前会话是本地执行（LOCAL）或边路任务会话时无法被服务端触发，会自动回退为每次新建会话，
+  请向用户说明这一点
 - prompt_template 可用 {name} {url} {diff} 占位（脚本哨兵的 {url} 为脚本路径）
 - 创建后结果里给出 watcher_id，用户可在「设置 → 信号哨兵」里查看与调整
 `;
@@ -125,6 +130,38 @@ export class CreateSignalWatcherTool extends BaseTool {
       }
       const resolved = await resolveUserWithAgent(userId, sessionId, this.sessionService);
       if (resolved == null) return errorJson('无法获取当前用户信息，请确保在有效会话中创建哨兵');
+      // 触发方式与执行会话（技术方案 2026-11-17 §4.6）：模型显式指定照用；未指定时由工具
+      // 代码内判定（模型无从得知会话的 executionMode/sessionType）——当前会话可作触发目标
+      // 则默认指定当前会话（用户「回到这个会话继续」的默认预期），否则回退 NEW_SESSION
+      //（存量行为）。回退不静默：结果 JSON 与 message 都写明实际生效的方式。
+      const rawTriggerMode = args.trigger_mode == null ? undefined : (asText(args.trigger_mode) ?? '').trim().toUpperCase();
+      if (rawTriggerMode != null && rawTriggerMode !== 'NEW_SESSION' && rawTriggerMode !== 'REUSE_SESSION' && rawTriggerMode !== 'SPECIFIED_SESSION') {
+        return errorJson(`trigger_mode 仅支持 NEW_SESSION/REUSE_SESSION/SPECIFIED_SESSION，收到：${rawTriggerMode}`);
+      }
+      // 显式传了但不是正整数（含字符串数字）→ 显式报错便于模型自纠；未传（undefined）才走默认判定
+      const rawSessionId = args.session_id == null ? undefined : args.session_id;
+      if (rawSessionId !== undefined && !(typeof rawSessionId === 'number' && Number.isInteger(rawSessionId) && rawSessionId > 0)) {
+        return errorJson(`session_id 必须为正整数（执行会话 id），收到：${JSON.stringify(rawSessionId)}`);
+      }
+      const sessionIdInput = rawSessionId as number | undefined;
+      let triggerMode: string;
+      let specifiedSessionId: number | null = null;
+      if (rawTriggerMode === 'NEW_SESSION' || rawTriggerMode === 'REUSE_SESSION') {
+        triggerMode = rawTriggerMode;
+      } else if (rawTriggerMode === 'SPECIFIED_SESSION') {
+        const target = sessionIdInput ?? resolved.session.id ?? null;
+        if (target == null) return errorJson('无法确定执行会话：请传 session_id，或确保当前会话有效');
+        triggerMode = 'SPECIFIED_SESSION';
+        specifiedSessionId = target;
+      } else if (sessionIdInput != null) {
+        triggerMode = 'SPECIFIED_SESSION';
+        specifiedSessionId = sessionIdInput;
+      } else if (isValidTriggerTarget(resolved.session)) {
+        triggerMode = 'SPECIFIED_SESSION';
+        specifiedSessionId = resolved.session.id ?? null;
+      } else {
+        triggerMode = 'NEW_SESSION';
+      }
       const watcher = await this.getSignalWatcherService().create(resolved.userId, {
         name,
         agentId: resolved.agentId,
@@ -141,7 +178,12 @@ export class CreateSignalWatcherTool extends BaseTool {
         probeType,
         scriptPath: scriptPath ?? null,
         scriptTimeoutSeconds: args.timeout_seconds == null ? null : Number(args.timeout_seconds),
+        triggerMode,
+        specifiedSessionId,
       });
+      const message = triggerMode === 'SPECIFIED_SESSION'
+        ? `哨兵 '${watcher.name}' 已创建并开始按 ${watcher.intervalMinutes} 分钟间隔轮询；变化时将在会话 #${watcher.specifiedSessionId} 中执行，飞书/钉钉通道会话的回复会推回聊天。`
+        : `哨兵 '${watcher.name}' 已创建并开始按 ${watcher.intervalMinutes} 分钟间隔轮询；首轮建立基线，之后判定值变化才会触发会话。`;
       return toJson({
         success: true,
         watcher_id: watcher.id,
@@ -150,7 +192,9 @@ export class CreateSignalWatcherTool extends BaseTool {
         target: watcher.probeType === 'SCRIPT' ? watcher.scriptPath : `${watcher.method} ${watcher.url}`,
         interval_minutes: watcher.intervalMinutes,
         status: watcher.status,
-        message: `哨兵 '${watcher.name}' 已创建并开始按 ${watcher.intervalMinutes} 分钟间隔轮询；首轮建立基线，之后判定值变化才会触发会话。`,
+        trigger_mode: watcher.triggerMode,
+        execute_session_id: watcher.triggerMode === 'SPECIFIED_SESSION' ? watcher.specifiedSessionId : null,
+        message,
       });
     } catch (e) {
       return errorJson((e as Error).message ?? '未知错误');
@@ -162,6 +206,22 @@ interface SessionLookup {
   id?: number;
   userId?: number | null;
   agentId?: number | null;
+  sessionType?: string | null;
+  executionMode?: string | null;
+  status?: string | null;
+}
+
+/**
+ * 当前会话是否可作为哨兵触发目标（工具默认值判定，与 WatcherService.assertSpecifiedSession
+ * 同口径的廉价前置）：主会话 + 云端执行 + 未归档。归属一致性由「默认=当前会话」保证，
+ * openRun 还会复读校验。
+ */
+function isValidTriggerTarget(session: SessionLookup | null): boolean {
+  if (session == null || session.id == null) return false;
+  if (session.sessionType === 'SUBAGENT' || session.sessionType === 'SIDE_TASK') return false;
+  if (session.executionMode === 'LOCAL') return false;
+  if (session.status === 'ARCHIVED') return false;
+  return true;
 }
 
 async function resolveUser(
@@ -179,18 +239,19 @@ async function resolveUserWithAgent(
   userId: number | null,
   sessionId: number | null,
   sessionService: SessionService,
-): Promise<{ userId: number; agentId: number } | null> {
+): Promise<{ userId: number; agentId: number; session: SessionLookup } | null> {
   let agentId: number | null = null;
   let resolvedUserId = userId;
+  let session: SessionLookup | null = null;
   if (sessionId != null) {
-    const session = await safeGetSession(sessionService, sessionId) as SessionLookup | null;
+    session = await safeGetSession(sessionService, sessionId) as SessionLookup | null;
     if (session != null) {
       agentId = session.agentId ?? null;
       if (resolvedUserId == null) resolvedUserId = session.userId ?? null;
     }
   }
   if (resolvedUserId == null || agentId == null || agentId <= 0) return null;
-  return { userId: resolvedUserId, agentId };
+  return { userId: resolvedUserId, agentId, session: session ?? {} };
 }
 
 async function safeGetSession(sessionService: SessionService, sessionId: number): Promise<unknown> {

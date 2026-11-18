@@ -478,3 +478,71 @@ describe('TaskTerminalService citation registry build', () => {
     expect(order.indexOf('citation:build')).toBeLessThan(order.indexOf('ws:session_status'));
   });
 });
+
+// ── SIGNAL 触发完成后的通道回流（技术方案 2026-11-17 §4.7）──────────────────
+// finishExecution 是直跑与忙时排队两条 SIGNAL 路径的统一终态收尾点；仅
+// notifySource='SIGNAL' 且 COMPLETED 触发回流（SCHEDULED 已自有推送、WEBHOOK/API 不在范围）。
+describe('TaskTerminalService SIGNAL 通道回流', () => {
+  function buildWithPusher(sessionOverrides: Record<string, unknown> = {}) {
+    const h = build(sessionOverrides);
+    const pusher = { pushFinalReply: vi.fn(async () => undefined) };
+    h.terminal.setSignalChannelReplyPusher(pusher);
+    return { ...h, pusher };
+  }
+
+  it('SIGNAL + COMPLETED：调用回流推送（会话形态不在此判断，由 pusher 实现内部 no-op）', async () => {
+    const h = buildWithPusher();
+    await h.terminal.finishExecution(11, 7, 'COMPLETED', 'exec-1', undefined, 'SIGNAL');
+    await flush(h);
+    expect(h.pusher.pushFinalReply).toHaveBeenCalledTimes(1);
+    expect(h.pusher.pushFinalReply).toHaveBeenCalledWith(11);
+  });
+
+  it.each(['SCHEDULED', 'WEBHOOK', 'API', 'MANUAL'] as const)('%s 来源不触发回流（无重复回帖）', async (source) => {
+    const h = buildWithPusher();
+    await h.terminal.finishExecution(11, 7, 'COMPLETED', 'exec-1', undefined, source);
+    await flush(h);
+    expect(h.pusher.pushFinalReply).not.toHaveBeenCalled();
+  });
+
+  it.each(['FAILED', 'CANCELLED'] as const)('%s 终态不触发回流', async (phase) => {
+    const h = buildWithPusher();
+    await h.terminal.finishExecution(11, 7, phase, 'exec-1', phase === 'FAILED' ? 'boom' : undefined, 'SIGNAL');
+    await flush(h);
+    expect(h.pusher.pushFinalReply).not.toHaveBeenCalled();
+  });
+
+  it('未装配 pusher（setSignalChannelReplyPusher 未调用）时静默跳过', async () => {
+    const h = build();
+    await expect(h.terminal.finishExecution(11, 7, 'COMPLETED', 'exec-1', undefined, 'SIGNAL')).resolves.toBeUndefined();
+    await flush(h);
+  });
+
+  it('推送失败只记日志，不影响终态链（finishExecution 正常返回、相位已落）', async () => {
+    const h = buildWithPusher();
+    h.pusher.pushFinalReply.mockRejectedValueOnce(new Error('feishu down'));
+    await expect(h.terminal.finishExecution(11, 7, 'COMPLETED', 'exec-1', undefined, 'SIGNAL')).resolves.toBeUndefined();
+    expect(h.sessionService.updatePhase).toHaveBeenCalledWith(11, 'COMPLETED');
+    await flush(h);
+    expect(h.pusher.pushFinalReply).toHaveBeenCalledTimes(1);
+  });
+
+  it('executor 同步抛错不穿出 finishExecution（与 recordInbox 同口径）', async () => {
+    const sessionService = {
+      getSession: vi.fn(async () => session()),
+      updateRuntimeStatus: vi.fn(async () => undefined),
+      updatePhase: vi.fn(async () => undefined),
+      markLastMessageFinished: vi.fn(async () => undefined),
+    };
+    const terminal = new TaskTerminalService(
+      sessionService as never as SessionService,
+      { send: vi.fn(), sendWithResult: vi.fn(async () => ({} as never)) } as never,
+      { prepare: vi.fn(async () => null) } as never,
+      { publish: vi.fn(), publishAtRoot: vi.fn() } as never,
+      () => { throw new Error('executor rejected'); },
+    );
+    terminal.setSignalChannelReplyPusher({ pushFinalReply: vi.fn(async () => undefined) });
+    await expect(terminal.finishExecution(11, 7, 'COMPLETED', 'exec-1', undefined, 'SIGNAL')).resolves.toBeUndefined();
+    expect(sessionService.updatePhase).toHaveBeenCalledWith(11, 'COMPLETED');
+  });
+});

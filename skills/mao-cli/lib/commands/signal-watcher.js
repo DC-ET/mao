@@ -20,7 +20,7 @@ const HELP = `用法:
   mao signal-watcher create --name <名称> --agent-id <Agent id> --prompt-template <提示词> --probe-type SCRIPT
       --script-path <项目内相对路径> [--timeout-seconds <秒>]
   mao signal-watcher create ... [--interval <分钟>] [--compare-mode HASH|JSON_FIELD|STATUS_CODE] [--json-path <点分路径>]
-      [--trigger-mode NEW_SESSION|REUSE_SESSION] [--copy-from <源哨兵 id>]
+      [--trigger-mode NEW_SESSION|REUSE_SESSION|SPECIFIED_SESSION] [--session-id <执行会话 id>] [--copy-from <源哨兵 id>]
   mao signal-watcher update --id <id> [create 的可选字段；只提交显式传入的字段，未传的保持原值]
   mao signal-watcher delete --id <id>
   mao signal-watcher status --id <id> --status ACTIVE|PAUSED
@@ -45,8 +45,12 @@ const HELP = `用法:
   --compare-mode    判定模式：HASH（默认，整体内容哈希）/ JSON_FIELD（按 --json-path 提取）/ STATUS_CODE（HTTP 状态码）
                     SCRIPT 仅支持 HASH / JSON_FIELD
   --json-path       JSON_FIELD 的点分提取路径，支持数组下标，如 data.list.0.price
-  --trigger-mode    NEW_SESSION（默认，每次变化新建会话）/ REUSE_SESSION（复用本哨兵自己的会话持续聊）
-  --copy-from       复制源哨兵 id：未显式修改的敏感请求头与请求体由后端从源行解密继承，CLI 不接触明文
+  --trigger-mode    NEW_SESSION（默认，每次变化新建会话）/ REUSE_SESSION（复用本哨兵自己的会话持续聊）/
+                    SPECIFIED_SESSION（在 --session-id 指定的会话中执行）
+  --session-id      SPECIFIED_SESSION 模式的执行会话 id；单传（不带 --trigger-mode）隐含指定模式。
+                    会话必须属于本人、为主会话且云端执行；会话被删/归档后触发判失败计连败，不自动降级
+  --copy-from       复制源哨兵 id：未显式修改的敏感请求头与请求体由后端从源行解密继承，CLI 不接触明文；
+                    指定会话不会被服务端继承，副本需显式传 --session-id
   --script-path     SCRIPT 探针要执行的脚本：项目工作区内相对路径（如 my-project/sentinels/check.sh），
                     非绝对路径、不含 .. 段；stdout 作为判定值，退出码非 0 记一次失败（SCRIPT 必填）
   --timeout-seconds SCRIPT 探针超时秒数，5~300 的整数，默认 60
@@ -69,7 +73,7 @@ const PROBE_TYPES = new Set(['HTTP', 'SCRIPT']);
 const COMPARE_MODES = new Set(['HASH', 'JSON_FIELD', 'STATUS_CODE']);
 /** 脚本哨兵不开放 STATUS_CODE：exit code 是成败语义，不是变化判定输入（后端 types.ts SCRIPT_COMPARE_MODES）。 */
 const SCRIPT_COMPARE_MODES = new Set(['HASH', 'JSON_FIELD']);
-const TRIGGER_MODES = new Set(['NEW_SESSION', 'REUSE_SESSION']);
+const TRIGGER_MODES = new Set(['NEW_SESSION', 'REUSE_SESSION', 'SPECIFIED_SESSION']);
 const SET_STATUSES = new Set(['ACTIVE', 'PAUSED']);
 const ADMIN_STATUSES = new Set(['ACTIVE', 'PAUSED', 'DISABLED']);
 const FORBIDDEN_HEADERS = new Set(['host', 'content-length', 'transfer-encoding', 'connection']);
@@ -242,6 +246,17 @@ function collectFields(flags) {
   if (promptTemplate !== undefined) patch.promptTemplate = promptTemplate;
   const triggerMode = optionalChoice(flags, 'trigger-mode', TRIGGER_MODES);
   if (triggerMode !== undefined) patch.triggerMode = triggerMode;
+  // 指定会话（V197）：单传 --session-id 不带 --trigger-mode 时显式同步下发 SPECIFIED_SESSION——
+  // 后端对「键未下发」按沿用库值合并，缺了这行 update 单传 --session-id 会被 normalizeInput
+  // 按 NEW_SESSION 归一后单侧归空、静默丢弃。
+  const sessionId = optionalNumber(flags, 'session-id');
+  if (sessionId !== undefined) {
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
+      throw createCliError('--session-id 必须为正整数（执行会话 id）');
+    }
+    patch.specifiedSessionId = sessionId;
+    if (patch.triggerMode === undefined) patch.triggerMode = 'SPECIFIED_SESSION';
+  }
   const copyFrom = optionalNumber(flags, 'copy-from');
   if (copyFrom !== undefined) patch.copyFrom = copyFrom;
   // 脚本侧字段（V189）
@@ -289,6 +304,14 @@ function validate(patch, { creating }) {
   }
   if (patch.copyFrom !== undefined && (!Number.isInteger(patch.copyFrom) || patch.copyFrom <= 0)) {
     throw createCliError('--copy-from 必须为正整数（源哨兵 id）');
+  }
+  // 指定会话组合校验：后端对非 SPECIFIED_SESSION 模式把 specifiedSessionId 单侧归空，
+  // 「--trigger-mode NEW_SESSION + --session-id」会被静默丢弃，这里提前拦下。
+  if (patch.specifiedSessionId !== undefined && patch.triggerMode !== undefined && patch.triggerMode !== 'SPECIFIED_SESSION') {
+    throw createCliError('--session-id 仅在 --trigger-mode SPECIFIED_SESSION 时生效（单传 --session-id 即隐含指定模式）');
+  }
+  if (patch.triggerMode === 'SPECIFIED_SESSION' && patch.specifiedSessionId === undefined) {
+    throw createCliError('--trigger-mode SPECIFIED_SESSION 必须配套 --session-id（执行会话 id）');
   }
   if (patch.url !== undefined) {
     const raw = patch.url.trim();
@@ -453,7 +476,7 @@ async function handle(ctx) {
       const id = requireId(flags, 'id', '哨兵 ID');
       const patch = validate(collectFields(flags), { creating: false });
       if (Object.keys(patch).length === 0) {
-        throw createCliError('update 至少需要一个待修改字段（--name / --agent-id / --url / --method / --headers / --body / --interval / --compare-mode / --json-path / --prompt-template / --trigger-mode）');
+        throw createCliError('update 至少需要一个待修改字段（--name / --agent-id / --url / --method / --headers / --body / --interval / --compare-mode / --json-path / --prompt-template / --trigger-mode / --session-id）');
       }
       const result = await request({ ...common, method: 'PUT', path: `/signal-watchers/${id}`, body: patch });
       outputResult(result, globals);

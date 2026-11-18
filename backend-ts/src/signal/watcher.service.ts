@@ -131,6 +131,11 @@ export interface WatcherInput {
   promptTemplate: string;
   /** 触发方式（原始字符串，normalizeInput 白名单校验）；缺省=NEW_SESSION。 */
   triggerMode?: string;
+  /**
+   * 指定执行会话 id（仅 SPECIFIED_SESSION 模式消费）：undefined=未下发（编辑沿用库值），
+   * null=显式清空，正整数=指定。非指定模式时由 normalizeInput 单侧归空（防双字段语义漂移）。
+   */
+  specifiedSessionId?: number | null;
   /** 探针类型（V189，原始字符串）：缺省=HTTP。 */
   probeType?: string;
   /** 脚本路径（V189，仅 SCRIPT）：undefined=未下发（编辑沿用库值），null/string=显式下发。 */
@@ -169,6 +174,8 @@ export interface SignalWatcherView {
   triggerMode: SignalTriggerMode;
   /** REUSE_SESSION 模式当前复用的会话 id（只读展示；指针系统维护，不接受提交）。 */
   reuseSessionId: number | null;
+  /** SPECIFIED_SESSION 模式的执行会话 id（只读展示；保存时已校验归属）。 */
+  specifiedSessionId: number | null;
   /**
    * 上次判定内容片段（透出供失败行「上次正常值」用；失败不覆盖它，见 D4）。
    * 注：此处是 watcher 行的「当前最新值」，不是某一历史 check 行的旧值。
@@ -237,6 +244,10 @@ export class WatcherService {
     if (normalized.probeType === 'SCRIPT') {
       await this.validateScriptFile(userId, normalized.scriptPath);
     }
+    // 指定会话：保存时校验（错误前置到表单，避免「保存成功但永远不触发」的静默故障）。
+    if (normalized.triggerMode === 'SPECIFIED_SESSION') {
+      await this.assertSpecifiedSession(userId, normalized.specifiedSessionId, normalized.agentId);
+    }
     const id = await this.deps.watcherRepo.insert({
       userId,
       agentId: normalized.agentId,
@@ -264,6 +275,8 @@ export class WatcherService {
       // 副本首次触发时自建），用户也不能通过提交 reuseSessionId 指定（路由层不解析）。
       triggerMode: normalized.triggerMode,
       reuseSessionId: null,
+      // 指定会话随归一化值落库（非指定模式 normalizeInput 已归空；指定模式上方已校验）。
+      specifiedSessionId: normalized.specifiedSessionId,
     });
     return this.get(userId, id);
   }
@@ -292,6 +305,9 @@ export class WatcherService {
       jsonPath: input.jsonPath !== undefined ? input.jsonPath : existing.jsonPath,
       promptTemplate: input.promptTemplate ?? existing.promptTemplate,
       triggerMode: input.triggerMode ?? existing.triggerMode,
+      // 指定会话三态合并（与 scriptPath 同口径）：未下发沿用库值，显式下发（含 null）才覆盖。
+      // 非指定模式由 normalizeInput 单侧归空；指定模式在 normalize 后统一校验（含 agentId 变更场景）。
+      specifiedSessionId: input.specifiedSessionId !== undefined ? input.specifiedSessionId : existing.specifiedSessionId ?? null,
       // V189 三键与 headers 同口径：未下发沿用库值，显式下发（含 null）才覆盖
       probeType: input.probeType ?? existing.probeType,
       scriptPath: input.scriptPath !== undefined ? input.scriptPath : existing.scriptPath,
@@ -301,6 +317,11 @@ export class WatcherService {
     // 脚本哨兵：编辑后仍需脚本文件校验（路径可能被改、文件可能已删）
     if (normalized.probeType === 'SCRIPT') {
       await this.validateScriptFile(userId, normalized.scriptPath);
+    }
+    // 指定会话：以归一化后的 agentId 校验合并值。改 agentId 且未重选时库值必然不匹配新 Agent，
+    // 严格报错让用户一次改对（不静默清列降级——那会变成另一个看不懂的「必须选择执行会话」）。
+    if (normalized.triggerMode === 'SPECIFIED_SESSION') {
+      await this.assertSpecifiedSession(userId, normalized.specifiedSessionId, normalized.agentId);
     }
     // 基线重置判定用「本次实际生效的值」而非原始入参：normalizeInput 会把
     // method/compareMode 转大写、jsonPath 去首尾空白、url 规范化（主机转小写），
@@ -335,6 +356,8 @@ export class WatcherService {
       reuseSessionId: normalized.triggerMode === 'REUSE_SESSION' && normalized.agentId === existing.agentId
         ? existing.reuseSessionId ?? null
         : null,
+      // 指定会话随归一化值写回：非指定模式恒 null（切模式即自动清列），指定模式为已校验值。
+      specifiedSessionId: normalized.specifiedSessionId,
     };
     if (resetBaseline) {
       patch.lastValueHash = null;
@@ -670,21 +693,34 @@ export class WatcherService {
           jsonPath: watcher.jsonPath,
         }),
       });
-      // 复用指针预检（技术方案 2026-10-27 §3.2.3）：会话被用户删/归档导致失效时
-      // 清指针走新建，不计入 consecutive_failures。用上面复读的 fresh 行而非函数
-      // 开头读的 watcher——探针在途 10~15 秒期间用户可能切 triggerMode / 清指针。
-      let reuseId = fresh.triggerMode === 'REUSE_SESSION' ? fresh.reuseSessionId : null;
-      if (reuseId != null && !(await this.isReusableSession(watcher, reuseId))) {
-        reuseId = null;
-        await this.deps.watcherRepo.update(watcher.id!, watcher.userId, { reuseSessionId: null });
+      // 触发目标会话按模式分流，读取源一律用上面复读的 fresh 行而非函数开头读的 watcher
+      // ——探针在途 10~15 秒期间用户可能切 triggerMode / 清指针 / 改绑指定会话。
+      // - REUSE_SESSION（技术方案 2026-10-27 §3.2.3）：指针失效清指针走新建，不计连败；
+      // - SPECIFIED_SESSION（技术方案 2026-11-17 §4.3.6）：失效**不降级新建**，抛具体原因
+      //   判触发失败计连败——静默改道会重新制造「触发结果用户不可感知」这个原始问题。
+      let targetSessionId: number | null = null;
+      if (fresh.triggerMode === 'REUSE_SESSION') {
+        let reuseId = fresh.reuseSessionId;
+        if (reuseId != null && !(await this.isReusableSession(watcher, reuseId))) {
+          reuseId = null;
+          await this.deps.watcherRepo.update(watcher.id!, watcher.userId, { reuseSessionId: null });
+        }
+        effectiveReuseId = reuseId;
+        targetSessionId = reuseId;
+      } else if (fresh.triggerMode === 'SPECIFIED_SESSION') {
+        if (fresh.specifiedSessionId == null) {
+          throw new BusinessException(ErrorCode.PARAM_INVALID, '指定会话模式未配置执行会话，请在设置中重新选择');
+        }
+        // 失效即失败：BusinessException 落入下方 catch → markCheckError + recordFailure 既有口径
+        await this.assertSpecifiedSession(watcher.userId, fresh.specifiedSessionId, watcher.agentId);
+        targetSessionId = fresh.specifiedSessionId;
       }
-      effectiveReuseId = reuseId;
       const outcome = await this.deps.openRun.run({
         userId: watcher.userId,
         agentId: watcher.agentId,
         message: prompt,
         source: 'SIGNAL',
-        sessionId: reuseId, // null = 新建（NEW_SESSION 或复用模式首触）
+        sessionId: targetSessionId, // null = 新建（NEW_SESSION 或复用模式首触）
       });
       sessionId = outcome.sessionId;
     } catch (e) {
@@ -949,6 +985,7 @@ export class WatcherService {
     scriptPath: string | null;
     scriptTimeoutSeconds: number | null;
     triggerMode: SignalTriggerMode;
+    specifiedSessionId: number | null;
   } {
     const name = (input.name ?? '').trim();
     if (name.length === 0 || name.length > 128) {
@@ -1027,10 +1064,20 @@ export class WatcherService {
     if (promptTemplate.length === 0 || promptTemplate.length > 2000) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '提示词模板需为 1~2000 字符');
     }
-    // 触发方式仅归一化校验；复用会话的选择权在系统（指针自动维护），没有「选会话」入参。
+    // 触发方式仅归一化校验；复用会话的选择权在系统（指针自动维护），指定会话走 specifiedSessionId。
     const triggerMode = (input.triggerMode ?? 'NEW_SESSION').trim().toUpperCase();
     if (!isSignalTriggerMode(triggerMode)) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, '触发方式仅支持 NEW_SESSION/REUSE_SESSION');
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '触发方式仅支持 NEW_SESSION/REUSE_SESSION/SPECIFIED_SESSION');
+    }
+    // 指定会话（V197）：非指定模式单侧归空（库里非指定模式恒无会话 id，防双字段语义漂移）；
+    // 指定模式必须为正整数（存在/归属等异步校验在 create/update 的 assertSpecifiedSession）。
+    let specifiedSessionId: number | null = null;
+    if (triggerMode === 'SPECIFIED_SESSION') {
+      const raw = input.specifiedSessionId;
+      if (raw == null || !Number.isInteger(raw) || raw <= 0) {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '指定会话模式必须选择执行会话');
+      }
+      specifiedSessionId = raw;
     }
     return {
       name,
@@ -1047,6 +1094,7 @@ export class WatcherService {
       scriptPath,
       scriptTimeoutSeconds,
       triggerMode,
+      specifiedSessionId,
     };
   }
 
@@ -1124,6 +1172,45 @@ export class WatcherService {
     if (session.agentId !== watcher.agentId) return false;
     if (session.status === 'ARCHIVED') return false;
     return true;
+  }
+
+  /**
+   * 指定会话校验（技术方案 2026-11-17 §4.3.2，保存与触发双侧共用）：存在（含归属，不匹配
+   * 按不存在，不泄露会话存在性）→ 非边路 → 非 LOCAL → agentId 匹配 → 非 ARCHIVED，逐项给
+   * 具体文案。与 webhook-trigger 的 assertBindableSession 同款语义，多一项 ARCHIVED 拒绝
+   * （归档会话的活动在任务面板不可见，往里触发等于静默烧额度；openRun 不拒 ARCHIVED，此项必须自兜）。
+   *
+   * 其它异常（如库瞬断）上抛：触发侧由 runCheck 记成本次触发失败，不能把瞬断误判成配置失效。
+   */
+  private async assertSpecifiedSession(userId: number, sessionId: number | null, agentId: number): Promise<void> {
+    if (sessionId == null || !Number.isInteger(sessionId) || sessionId <= 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '指定会话模式必须选择执行会话');
+    }
+    let session: WatcherSessionLookup | null;
+    try {
+      session = await this.deps.getSession(sessionId);
+    } catch (e) {
+      // 只把「会话不存在 / 已删」当配置失效；其它异常继续上抛（runCheck 记触发失败）。
+      if (e instanceof BusinessException && e.code === ErrorCode.SESSION_NOT_FOUND.code) {
+        throw new BusinessException(ErrorCode.SESSION_NOT_FOUND, '指定的会话不存在');
+      }
+      throw e;
+    }
+    if (session == null || session.userId !== userId) {
+      throw new BusinessException(ErrorCode.SESSION_NOT_FOUND, '指定的会话不存在');
+    }
+    if (session.sessionType === 'SUBAGENT' || session.sessionType === 'SIDE_TASK') {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '指定会话仅支持主会话');
+    }
+    if (session.executionMode === 'LOCAL') {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '指定会话仅支持云端执行会话');
+    }
+    if (session.agentId !== agentId) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '指定会话需属于该哨兵的 Agent，请重新选择');
+    }
+    if (session.status === 'ARCHIVED') {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '指定会话已归档，请先恢复或重新选择');
+    }
   }
 
   private encryptHeaders(headers: Record<string, string> | null): string | null {
@@ -1237,6 +1324,7 @@ export class WatcherService {
       consecutiveFailures: Number(row.consecutiveFailures ?? 0),
       triggerMode: row.triggerMode,
       reuseSessionId: row.reuseSessionId ?? null,
+      specifiedSessionId: row.specifiedSessionId ?? null,
       lastValueSnippet: row.lastValueSnippet ?? null,
       lastChangeOldSnippet: row.lastChangeOldSnippet ?? null,
       lastChangeNewSnippet: row.lastChangeNewSnippet ?? null,

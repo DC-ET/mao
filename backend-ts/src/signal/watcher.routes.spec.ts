@@ -47,8 +47,9 @@ function watcher(overrides: Partial<SignalWatcher> = {}): SignalWatcher {
   };
 }
 
-function makeHarness(seed: SignalWatcher, extra: SignalWatcher[] = []) {
+function makeHarness(seed: SignalWatcher, extra: SignalWatcher[] = [], sessions: Array<{ id: number; userId: number; sessionType?: string | null; executionMode?: string | null; agentId?: number | null; status?: string | null }> = []) {
   const watchers = new Map<number, SignalWatcher>([[seed.id!, seed], ...extra.map((w) => [w.id!, w] as [number, SignalWatcher])]);
+  const sessionMap = new Map(sessions.map((s) => [s.id, s]));
   const checks: SignalWatcherCheck[] = [];
   const cipher = new SignalSecretCipher(SECRET);
   const watcherRepo = {
@@ -96,7 +97,7 @@ function makeHarness(seed: SignalWatcher, extra: SignalWatcher[] = []) {
     cipher,
     openRun: { run: vi.fn(async () => ({ sessionId: 9, messageId: 1, queued: false })) } as never,
     probe: { execute: executeProbe },
-    getSession: vi.fn(async () => null),
+    getSession: vi.fn(async (id: number) => sessionMap.get(id) ?? null),
   });
   const app = Fastify();
   // 与生产同款错误处理：业务失败（BusinessException）按仓库约定返回 HTTP 200，
@@ -162,6 +163,19 @@ describe('toInput 键存在性判定', () => {
   it('reuseSessionId 刻意不解析（指针系统维护，防伪造指向他人生效中的会话）', () => {
     const input = toInput({ reuseSessionId: 42 });
     expect('reuseSessionId' in input).toBe(false);
+  });
+
+  it('specifiedSessionId 三态：未下发 undefined / null 清空 / 正整数指定（V197）', () => {
+    expect(toInput({}).specifiedSessionId).toBeUndefined();
+    expect(toInput({ specifiedSessionId: null }).specifiedSessionId).toBeNull();
+    expect(toInput({ specifiedSessionId: 42 }).specifiedSessionId).toBe(42);
+  });
+
+  it('specifiedSessionId 非法值拒绝（0/负数/小数/非数字）', () => {
+    expect(() => toInput({ specifiedSessionId: 0 })).toThrow(/specifiedSessionId 必须为正整数或 null/);
+    expect(() => toInput({ specifiedSessionId: -1 })).toThrow(/specifiedSessionId 必须为正整数或 null/);
+    expect(() => toInput({ specifiedSessionId: 1.5 })).toThrow(/specifiedSessionId 必须为正整数或 null/);
+    expect(() => toInput({ specifiedSessionId: 'abc' as unknown })).toThrow(/specifiedSessionId 必须为正整数或 null/);
   });
 });
 
@@ -345,5 +359,50 @@ describe('PUT /v1/signal-watchers/:id 编辑链路（BUG-H/BUG-A/BUG-B 回归）
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(h.cipher.decrypt(h.watchers.get(1)!.headersJson!))).toEqual({ Authorization: 'Bearer SECRET' });
+  });
+});
+
+// ── 指定执行会话（V197）端到端：toInput → service → repo 组合链 ──────────────
+describe('POST/PUT /v1/signal-watchers 指定执行会话（V197）', () => {
+  const seed = watcher();
+  const validSessions = [{ id: 42, userId: 7, sessionType: null, executionMode: 'CLOUD', agentId: 3 }];
+
+  it('POST SPECIFIED_SESSION：合法会话落库 specifiedSessionId，视图透出', async () => {
+    const h = makeHarness(seed, [], validSessions);
+    const res = await h.app.inject({
+      method: 'POST', url: '/v1/signal-watchers',
+      payload: { name: '盯发布', agentId: 3, url: 'https://example.com/api', method: 'GET', intervalMinutes: 15, compareMode: 'HASH', promptTemplate: 'changed {diff}', triggerMode: 'SPECIFIED_SESSION', specifiedSessionId: 42 },
+    });
+    expect(res.statusCode).toBe(200);
+    const created = h.watchers.get(2)!;
+    expect(created.triggerMode).toBe('SPECIFIED_SESSION');
+    expect(created.specifiedSessionId).toBe(42);
+    expect((res.json() as { data: { specifiedSessionId: number | null } }).data.specifiedSessionId).toBe(42);
+  });
+
+  it('POST SPECIFIED_SESSION：会话不存在（getSession null）→ 拒绝，不落库', async () => {
+    const h = makeHarness(seed);
+    const res = await h.app.inject({
+      method: 'POST', url: '/v1/signal-watchers',
+      payload: { name: '盯发布', agentId: 3, url: 'https://example.com/api', method: 'GET', intervalMinutes: 15, compareMode: 'HASH', promptTemplate: 'changed {diff}', triggerMode: 'SPECIFIED_SESSION', specifiedSessionId: 42 },
+    });
+    expect(failureOf(res).message).toContain('指定的会话不存在');
+    expect(h.watchers.size).toBe(1);
+  });
+
+  it('PUT 切出指定模式：specifiedSessionId 键不下发也清列（服务端单侧归空）', async () => {
+    const h = makeHarness(watcher({ triggerMode: 'SPECIFIED_SESSION', specifiedSessionId: 42 }), [], validSessions);
+    const res = await h.app.inject({ method: 'PUT', url: '/v1/signal-watchers/1', payload: renameOnly({ triggerMode: 'NEW_SESSION' }) });
+    expect(res.statusCode).toBe(200);
+    expect(h.watchers.get(1)!.triggerMode).toBe('NEW_SESSION');
+    expect(h.watchers.get(1)!.specifiedSessionId).toBeNull();
+  });
+
+  it('PUT 指定模式下未下发 specifiedSessionId：沿用库值并重校验（会话有效则保存）', async () => {
+    const h = makeHarness(watcher({ triggerMode: 'SPECIFIED_SESSION', specifiedSessionId: 42 }), [], validSessions);
+    const res = await h.app.inject({ method: 'PUT', url: '/v1/signal-watchers/1', payload: renameOnly({ triggerMode: 'SPECIFIED_SESSION' }) });
+    expect(res.statusCode).toBe(200);
+    expect(h.watchers.get(1)!.specifiedSessionId).toBe(42);
+    expect((res.json() as { data: { specifiedSessionId: number | null } }).data.specifiedSessionId).toBe(42);
   });
 });

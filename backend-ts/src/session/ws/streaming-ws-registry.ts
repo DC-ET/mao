@@ -32,6 +32,15 @@ export interface WsDeliveryResult {
   failureCount: number;
 }
 
+/**
+ * 文件代理请求投递结果（技术方案 2026-11-17 D11）：client-type 感知的三态。
+ * delivered 携带实际接收连接（断线清理按「请求 → 下发连接」精确失败）。
+ */
+export type FileCapableDelivery =
+  | { status: 'delivered'; socket: WsSocket }
+  | { status: 'offline' }
+  | { status: 'cliOnly' };
+
 export function delivered(result: WsDeliveryResult): boolean {
   return result.successCount > 0;
 }
@@ -511,6 +520,38 @@ export class StreamingWsRegistry {
   /** 连接自报的设备 id（浏览器 / 旧客户端返回 null）。 */
   getDeviceId(session: WsSocket): string | null {
     return this.connectionDevice.get(session.id)?.id ?? null;
+  }
+
+  /**
+   * 文件代理请求投递（技术方案 2026-11-17 D11）：只投给执行端设备上的 Electron renderer 连接。
+   * deviceExecutors 每设备只存一条执行连接（同 deviceId 最新覆盖），Electron 与 CLI 并存时
+   * 该槽可能被 CLI 占住——直接 sendToDevice 会把 file_op_request 发给 CLI 被静默忽略、
+   * 白等超时。因此这里扫描该设备的全部存活连接：优先执行连接（若为 electron），其次任意
+   * electron 连接；仅剩 CLI 连接时返回 cliOnly（代理层回专用文案）；无连接返回 offline。
+   */
+  sendToFileCapableDevice(userId: number, deviceId: string, event: WsEvent): FileCapableDelivery {
+    const connections = [...(this.userSessions.get(userId) ?? [])].filter((s) =>
+      s.readyState === WS_OPEN
+      && this.isConnectionAuthorized(s)
+      && this.connectionDevice.get(s.id)?.id === deviceId,
+    );
+    if (connections.length === 0) return { status: 'offline' };
+    let json: string;
+    try {
+      json = JSON.stringify(event);
+    } catch {
+      return { status: 'offline' };
+    }
+    const executor = this.deviceExecutors.get(userId)?.get(deviceId);
+    const target = connections.find((s) => s === executor && this.sessionToClientType.get(s.id) === 'electron')
+      ?? connections.find((s) => this.sessionToClientType.get(s.id) === 'electron');
+    if (target == null) return { status: 'cliOnly' };
+    try {
+      target.send(json);
+      return { status: 'delivered', socket: target };
+    } catch {
+      return { status: 'offline' };
+    }
   }
 
   /** 连接自报的设备信息（浏览器 / 旧客户端返回 null）。 */

@@ -521,37 +521,50 @@ describe('file routes', () => {
     expect(localFileFetchService.fetch).toHaveBeenCalledWith(2, 7, 'screenshots/x.png', 'D:\proj');
     expect(downloadFile).not.toHaveBeenCalled();
 
-    // 委托失败：HTTP 200 + 错误信封（code≠0），文案透传
+    // 委托失败：必须非 2xx（2026-11-17 §4.1——前端 fetch 仅在 !resp.ok 读错误 JSON；<img> 同样触发 error 回退）
     localFileFetchService.fetch.mockResolvedValueOnce({ ok: false as const, error: '本地执行端未连接，无法读取本地文件' });
     const errRes = await app.inject({ method: 'GET', url: '/v1/files/workspace-download?sessionId=2&path=x.png' });
-    expect(errRes.statusCode).toBe(200);
+    expect(errRes.statusCode).toBe(400);
     const errVo = JSON.parse(errRes.body) as { code: number; message: string };
     expect(errVo.code).not.toBe(0);
     expect(errVo.message).toBe('本地执行端未连接，无法读取本地文件');
     expect(downloadFile).not.toHaveBeenCalled();
 
-    // 非白名单路径在服务内拒绝（路由只透传）
+    // 带图片扩展名但形状违规（`..` 穿越）：仍进委托、由服务内校验拒绝（路由只按扩展名分流）
     localFileFetchService.fetch.mockResolvedValueOnce({ ok: false as const, error: '图片路径不合法' });
     const badRes = await app.inject({ method: 'GET', url: '/v1/files/workspace-download?sessionId=2&path=..%2Fa.png' });
     expect(JSON.parse(badRes.body).code).not.toBe(0);
     expect(downloadFile).not.toHaveBeenCalled();
 
-    // 同级 workspace 端点族对 LOCAL 一律拒绝（requireCloudWorkspace）：LOCAL workspace 服务端不校验，
-    // 直读服务器路径是目录读取缺口，整族关闭（评审 P1-1）
+    // 图片白名单外不进委托（2026-11-17 拒绝文案保持）：zip / xlsx 等 readFileBytes 消费方语义
+    const fetchCallsBefore = localFileFetchService.fetch.mock.calls.length;
+    const txtRes = await app.inject({ method: 'GET', url: '/v1/files/workspace-download?sessionId=2&path=report.pdf' });
+    expect(txtRes.statusCode).toBe(400);
+    expect(JSON.parse(txtRes.body).message).toContain('暂不支持远程下载');
+    expect(localFileFetchService.fetch.mock.calls.length).toBe(fetchCallsBefore);
+    expect(downloadFile).not.toHaveBeenCalled();
+
+    // 读类端点族 LOCAL 分流到设备代理（2026-11-17）：本测试不注入代理 → 报错收口，
+    // 绝不回落 WorkspaceBrowseService 直读服务端 FS（LOCAL workspace 服务端不校验，评审 P1-1）
     for (const url of [
       '/v1/files/workspace-list?sessionId=2',
       '/v1/files/workspace-directory?sessionId=2',
       '/v1/files/workspace-search?sessionId=2&pattern=a',
       '/v1/files/workspace-read?sessionId=2&path=a.txt',
-      '/v1/files/workspace-preview?sessionId=2&path=a.pdf',
-      '/v1/files/workspace-download-zip?sessionId=2&path=dir',
     ]) {
       const res = await app.inject({ method: 'GET', url });
       expect(JSON.parse(res.body).code).not.toBe(0);
-      expect(JSON.parse(res.body).message).toBe('本地模式不支持服务端文件管理');
+      expect(JSON.parse(res.body).message).toBe('本地文件远程浏览服务不可用');
     }
-    const zipRes = await app.inject({ method: 'POST', url: '/v1/files/workspace-download-multi-zip', payload: { sessionId: 2, paths: ['a'] } });
-    expect(JSON.parse(zipRes.body).message).toBe('本地模式不支持服务端文件管理');
+    // 二进制类（preview / zip）非 2xx 明确拒绝（2026-11-17 §4.1）
+    const previewRes = await app.inject({ method: 'GET', url: '/v1/files/workspace-preview?sessionId=2&path=a.pdf' });
+    expect(previewRes.statusCode).toBe(400);
+    expect(JSON.parse(previewRes.body).message).toContain('暂不支持远程预览');
+    const zipRes = await app.inject({ method: 'GET', url: '/v1/files/workspace-download-zip?sessionId=2&path=dir' });
+    expect(zipRes.statusCode).toBe(400);
+    expect(JSON.parse(zipRes.body).message).toContain('暂不支持远程打包下载');
+    const multiZipRes = await app.inject({ method: 'POST', url: '/v1/files/workspace-download-multi-zip', payload: { sessionId: 2, paths: ['a'] } });
+    expect(multiZipRes.statusCode).toBe(400);
     expect(downloadFile).not.toHaveBeenCalled();
 
     await app.close();
@@ -592,6 +605,87 @@ describe('file routes', () => {
     expect(downloadFile).toHaveBeenCalledTimes(1);
     expect(localFileFetchService.fetch).not.toHaveBeenCalled();
 
+    await app.close();
+  });
+
+  // 技术方案 2026-11-17 §4.1：LOCAL 会话读类端点走 WS 代理到绑定执行端设备
+  it('localBrowseEndpointsProxyToBoundDeviceAndRejectBinaryOps', async () => {
+    // 绝不喂 WorkspaceBrowseService（服务端 FS 恰好存在同路径目录会返回错误机器数据）；
+    // preview / zip 明确拒绝且必须非 2xx（fetch 类方法仅在 !resp.ok 时读错误 JSON）；
+    // download 的非图片路径同样明确拒绝（2026-11-18 分流：仅图片白名单进委托，失败同为非 2xx）。
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    app.addHook('preHandler', (req, _r, done) => {
+      req.userId = Number((req.headers['x-test-user'] ?? '7') as string) || 7;
+      done();
+    });
+    const localSession = { id: 2, userId: 7, workspace: '/Users/yang/proj', executionMode: 'LOCAL', targetDeviceId: 'dev-1', targetDeviceName: 'Mac' };
+    const sessionService = { getSession: vi.fn(async (id: number) => (id === 2 ? localSession : { id: 1, userId: 7, workspace: '/tmp/ws', agentId: 9 })) } as unknown as SessionService;
+    const workspaceBrowseService = {
+      listDirectory: vi.fn(() => ({ entries: [], truncated: false })),
+      searchFiles: vi.fn(() => ({ entries: [], truncated: false })),
+      readFile: vi.fn(async () => ({ content: 'server-fs', total_lines: 0 })),
+      readPdfFile: vi.fn(() => ({ path: 'x', fileName: 'x.pdf', size: 1 })),
+      downloadFile: vi.fn(() => ({ path: 'x', fileName: 'x', size: 1 })),
+    } as unknown as WorkspaceBrowseService;
+    const proxy = {
+      execute: vi.fn(async (_session: unknown, op: string, params: Record<string, unknown>) => {
+        if (op === 'list') return { entries: [{ name: 'device.txt', path: 'device.txt', isDirectory: false, size: 1, isSymlink: false, mtimeMs: 1729999999999 }], truncated: false, workspaceRoot: '/Users/yang/proj' };
+        if (op === 'files') return { files: [{ path: 'a.txt', name: 'a.txt', size: 1 }] };
+        if (op === 'read') return { content: 'device-fs', total_lines: 1 };
+        return { entries: [], truncated: false };
+      }),
+    };
+    const localFileFetchMock = vi.fn();
+    registerFileRoutes(app, {
+      fileService: { listWorkspaceFiles: vi.fn(() => []) } as unknown as FileService,
+      sessionService,
+      workspaceBrowseService,
+      workspaceGitService: {} as unknown as WorkspaceGitService,
+      gitCommitMessageService: {} as unknown as GitCommitMessageService,
+      gitWriteOperationService: {} as unknown as GitWriteOperationService,
+      workspaceWriteService: {} as unknown as WorkspaceWriteService,
+      workspaceOverviewService: {} as unknown as WorkspaceOverviewService,
+      pathSandbox: { getWorkspaceRoot: () => '/tmp' } as PathSandbox,
+      remoteFileProxyService: proxy as never,
+      // download 的 LOCAL 分流（2026-11-18）：a.txt 不在图片白名单 → 不进委托直接拒绝
+      localFileFetchService: { fetch: localFileFetchMock },
+    });
+    const get = async (url: string) => JSON.parse((await app.inject({ method: 'GET', url })).body);
+
+    // 读类端点：走代理，不触达 WorkspaceBrowseService
+    expect((await get('/v1/files/workspace-directory?sessionId=2')).data.entries[0].name).toBe('device.txt');
+    expect(proxy.execute).toHaveBeenCalledWith(localSession, 'list', { dir: undefined });
+    expect((await get('/v1/files/workspace-list?sessionId=2&filter=a')).data.files).toHaveLength(1);
+    expect(proxy.execute).toHaveBeenCalledWith(localSession, 'files', { filter: 'a', limit: 20 });
+    expect((await get('/v1/files/workspace-read?sessionId=2&path=a.txt')).data.content).toBe('device-fs');
+    expect(proxy.execute).toHaveBeenCalledWith(localSession, 'read', { path: 'a.txt', offset: 0, limit: 5000 });
+    expect((await get('/v1/files/workspace-search?sessionId=2&pattern=a')).code).toBe(0);
+    expect(proxy.execute).toHaveBeenCalledWith(localSession, 'search', { pattern: 'a', limit: 100 });
+    expect(workspaceBrowseService.listDirectory).not.toHaveBeenCalled();
+    expect(workspaceBrowseService.readFile).not.toHaveBeenCalled();
+
+    // 二进制类端点：非 2xx 拒绝 + 可读中文 message（防 HTTP 200 信封回归）
+    const previewRes = await app.inject({ method: 'GET', url: '/v1/files/workspace-preview?sessionId=2&path=a.pdf' });
+    expect(previewRes.statusCode).toBe(400);
+    expect(JSON.parse(previewRes.body).message).toContain('暂不支持远程预览');
+    const downloadRes = await app.inject({ method: 'GET', url: '/v1/files/workspace-download?sessionId=2&path=a.txt' });
+    expect(downloadRes.statusCode).toBe(400);
+    expect(JSON.parse(downloadRes.body).message).toContain('暂不支持远程下载');
+    expect(localFileFetchMock).not.toHaveBeenCalled();
+    const zipRes = await app.inject({ method: 'GET', url: '/v1/files/workspace-download-zip?sessionId=2&path=docs' });
+    expect(zipRes.statusCode).toBe(400);
+    expect(JSON.parse(zipRes.body).message).toContain('暂不支持远程打包下载');
+    const multiZipRes = await app.inject({
+      method: 'POST', url: '/v1/files/workspace-download-multi-zip', payload: { sessionId: 2, paths: ['a.txt'] },
+    });
+    expect(multiZipRes.statusCode).toBe(400);
+    expect(workspaceBrowseService.readPdfFile).not.toHaveBeenCalled();
+    expect(workspaceBrowseService.downloadFile).not.toHaveBeenCalled();
+
+    // CLOUD 会话恒等走原实现（sessionService 对 id=1 返回 CLOUD 会话）
+    expect((await get('/v1/files/workspace-directory?sessionId=1')).code).toBe(0);
+    expect(workspaceBrowseService.listDirectory).toHaveBeenCalledTimes(1);
     await app.close();
   });
 });

@@ -26,8 +26,10 @@ export interface SignalWatcherForm {
   scriptPath: string
   /** 脚本超时秒数（仅 SCRIPT）；null=服务端默认 60。 */
   scriptTimeoutSeconds: number | null
-  /** 触发方式：每次新建会话 / 复用自己的会话。 */
+  /** 触发方式：每次新建会话 / 复用自己的会话 / 指定执行会话。 */
   triggerMode: SignalTriggerMode
+  /** 指定执行会话 id（仅 SPECIFIED_SESSION 模式消费；null=未选择）。 */
+  specifiedSessionId: number | null
 }
 
 /** 服务端打码值（与后端 SECRET_MASK 一致）。 */
@@ -45,7 +47,8 @@ export const PROBE_TYPE_LABELS: Record<SignalProbeType, string> = {
 /** 触发方式中文名（契约联合穷尽，漏一项编译期报错）。 */
 export const TRIGGER_MODE_LABELS: Record<SignalTriggerMode, string> = {
   NEW_SESSION: '每次新建会话',
-  REUSE_SESSION: '复用会话'
+  REUSE_SESSION: '复用会话',
+  SPECIFIED_SESSION: '指定会话'
 }
 
 /**
@@ -86,7 +89,8 @@ export function headerPairsFromView(headers: Record<string, string>): HeaderPair
  * - 非敏感字段原样带过去；
  * - 敏感请求头回显为掩码行（留空 = 沿用源行原值，由后端从源行解密继承）；
  * - body 没有明文可预填，留空 = 沿用源体（后端 POST 继承）；
- * - triggerMode 随源哨兵；reuseSessionId 不继承（指针系统维护，副本首触自建）。
+ * - triggerMode 随源哨兵；reuseSessionId 不继承（指针系统维护，副本首触自建）；
+ * - specifiedSessionId 随源哨兵继承（用户显式选择，与复用指针相反；服务端保存时再校验归属）。
  */
 export function copyFormFromView(watcher: SignalWatcherView): SignalWatcherForm {
   return {
@@ -103,7 +107,8 @@ export function copyFormFromView(watcher: SignalWatcherView): SignalWatcherForm 
     probeType: watcher.probeType ?? 'HTTP',
     scriptPath: watcher.scriptPath ?? '',
     scriptTimeoutSeconds: watcher.scriptTimeoutSeconds ?? null,
-    triggerMode: watcher.triggerMode ?? 'NEW_SESSION'
+    triggerMode: watcher.triggerMode ?? 'NEW_SESSION',
+    specifiedSessionId: watcher.specifiedSessionId ?? null
   }
 }
 
@@ -169,6 +174,11 @@ export function buildWatcherPayload(
     // 触发方式由 radio 权威下发：编辑态回显的就是原值，未动等于不动；
     // 后端对同值幂等（复用模式同值不清指针）。
     triggerMode: form.triggerMode,
+    // 指定会话仅在指定模式且已选择时下发；其它模式不下发——服务端 normalizeInput 单侧归空，
+    // 切走模式时自动清列，前端无需发 null。
+    ...(form.triggerMode === 'SPECIFIED_SESSION' && form.specifiedSessionId != null
+      ? { specifiedSessionId: form.specifiedSessionId }
+      : {}),
     ...(copyFrom != null ? { copyFrom } : {})
   }
 }

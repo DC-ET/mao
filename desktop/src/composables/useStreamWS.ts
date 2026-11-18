@@ -15,6 +15,7 @@ import { ensureDesktopShellBridgeFromWs } from './useDesktopShell'
 import { resolveFileChangeWorkspace } from '../utils/file-change-workspace'
 import { getToolInputPreview } from '../utils/toolDisplay'
 import { handleLocalFileFetch } from '../utils/local-file-fetch'
+import { executeLocalFileOp } from '../utils/local-file-op'
 import {
   clearApprovalVoted,
   clearLocallyReleased,
@@ -1363,6 +1364,22 @@ export function useStreamWS() {
           readBytes: (payload) => (window as any).electronAPI.localReadWorkspaceBytes(payload),
           send: sendReliable,
         })
+        break
+      }
+
+      case 'file_op_request': {
+        // LOCAL 会话文件树远程代理（技术方案 2026-11-17 §4.2）：服务端定向投给执行端设备的
+        // Electron renderer 连接，D11 下浏览器 tab / CLI 连接不会被投递；保守回错优于静默。
+        if (!sessionId || !data) break
+        void executeLocalFileOp(Number(sessionId), data)
+          .then((frame) => sendReliable(frame))
+          .catch((err: Error) => sendReliable({
+            type: 'file_op_result',
+            sessionId: Number(sessionId),
+            requestId: String(data?.requestId ?? ''),
+            ok: false,
+            error: err.message || '文件操作执行失败',
+          }))
         break
       }
 

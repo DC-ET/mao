@@ -212,6 +212,13 @@ export function validateRelativeImagePath(relativePath: string): string | null {
   return null;
 }
 
+/** 扩展名白名单判定（取扩展名口径与 validateRelativeImagePath 一致）：路由分流用——非图片不进委托，保持 2026-11-17 的明确拒绝文案。 */
+export function hasImageFileExtension(relativePath: string): boolean {
+  const segments = relativePath.split('/');
+  const ext = segments[segments.length - 1].split('.').pop()?.toLowerCase() ?? '';
+  return IMAGE_EXTENSIONS.has(ext);
+}
+
 function fileNameOf(relativePath: string): string {
   const segments = relativePath.split('/');
   return segments[segments.length - 1] || 'image';
