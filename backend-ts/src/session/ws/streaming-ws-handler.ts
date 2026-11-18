@@ -142,6 +142,11 @@ export interface WsHandlerDeps {
     completeToolRequest(sessionId: number, requestId: string, result: string): void;
     completeToolRequestError(sessionId: number, requestId: string, error: string): void;
   };
+  /** LOCAL 会话文件浏览代理（技术方案 2026-11-17）：file_op_result 入站完成 + 断线清理。 */
+  remoteFileProxyService?: {
+    complete(requestId: string, ok: boolean, data: unknown): void;
+    failAllForSocket(socket: { id: string } | null | undefined): void;
+  };
   askUserQuestionsRegistry: {
     failAllForSession(sessionId: number): void;
     getPendingForSession(sessionId: number): Array<{ requestId: string; questions: unknown[]; metadata?: unknown }>;
@@ -464,6 +469,9 @@ export class StreamingWsHandler {
     // 执行连接可能已交接给同设备新连接，那些连接上在途的请求仍会正常返回，不能被误杀；
     // 本连接上的请求（含接管前已下发的）自身断开后不可能被接手，必须立即失败。
     this.deps.localToolSessionRegistry.failAllForSocket(session);
+    // 文件代理请求同口径清理（技术方案 2026-11-17 §4.1）：本连接上的在途文件请求断开后
+    // 不可能被接手，立即失败，避免悬挂到 15s/30s 超时。
+    this.deps.remoteFileProxyService?.failAllForSocket(session);
     // 页面连接断开：先让该连接上所有等待中的页面工具立即失败，再注销连接与绑定。
     for (const boundSessionId of this.deps.registry.getEmbedSessionsForConnection(session)) {
       this.deps.embedPageToolRegistry.failSession(boundSessionId, '页面连接已断开，页面操作已取消', 'embed_client_not_connected');
@@ -643,6 +651,7 @@ export class StreamingWsHandler {
       case 'mcp_tools_report': await this.handleMcpToolsReport(userId, root); break;
       case 'tool_result': await this.handleToolResult(userId, root); break;
       case 'tool_error': await this.handleToolError(userId, root); break;
+      case 'file_op_result': await this.handleFileOpResult(userId, root); break;
       case 'page_tool_result': await this.handlePageToolResult(session, userId, root); break;
       case 'tool_approval': await this.handleToolApproval(session, userId, root); break;
       case 'ask_user_questions_result': await this.handleAskUserQuestionsResult(userId, root); break;
@@ -1331,6 +1340,18 @@ export class StreamingWsHandler {
     if (sessionId == null || requestId == null) return;
     if (!(await this.requireOwnedSession(userId, sessionId))) return;
     this.deps.localToolSessionRegistry.completeToolRequestError(sessionId, requestId, error);
+  }
+
+  /**
+   * 设备端文件代理回包（技术方案 2026-11-17 §4.1）：归属校验同 tool_result；
+   * pending 按 requestId 全局匹配，ok=false 时 data 字段承载中文错误串。
+   */
+  private async handleFileOpResult(userId: number, root: Record<string, unknown>): Promise<void> {
+    const sessionId = this.getLong(root, 'sessionId');
+    const requestId = typeof root.requestId === 'string' ? root.requestId : null;
+    if (sessionId == null || requestId == null) return;
+    if (!(await this.requireOwnedSession(userId, sessionId))) return;
+    this.deps.remoteFileProxyService?.complete(requestId, root.ok === true, root.ok === true ? root.data : root.error);
   }
 
   private async handleAskUserQuestionsResult(userId: number, root: Record<string, unknown>): Promise<void> {

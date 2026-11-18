@@ -13,6 +13,7 @@ import type { ApprovalRuleService } from './approval-rule/approval-rule.service.
 import type { StreamingWsRegistry } from './session/ws/streaming-ws-registry.js';
 import type { EmbedPageToolRegistry } from './harness/embed-page-tool-registry.js';
 import type { LocalToolSessionRegistry } from './harness/local/local-tool-session-registry.js';
+import type { RemoteFileProxyService } from './file/remote-file-proxy.service.js';
 import type { AskUserQuestionsRegistry } from './harness/tool/ask-user-questions-registry.js';
 import type { SessionTreeSignalPublisher } from './harness/approval/session-tree-signal-publisher.js';
 import type { ApprovalRegistry } from './harness/approval/approval-registry.js';
@@ -48,6 +49,8 @@ export interface WsHandlerDeps {
   messageQueueService: MessageQueueService;
   embedPageToolRegistry: EmbedPageToolRegistry;
   localToolSessions: LocalToolSessionRegistry;
+  /** LOCAL 会话文件树远程代理（技术方案 2026-11-17）：file_op_result 入站完成 + 断线清理。 */
+  remoteFileProxy: RemoteFileProxyService;
   askUserQuestionsRegistry: AskUserQuestionsRegistry;
   treeSignalPublisher: SessionTreeSignalPublisher;
   approvalRegistry: ApprovalRegistry;
@@ -79,7 +82,7 @@ export interface WsHandlerDeps {
 export function assembleWsHandler(deps: WsHandlerDeps): StreamingWsHandler {
   const {
     cfg, jwt, wsRegistry, sessionTitleService, harnessService, agentLoop, compactionSignalBus, sessionService, taskTerminal,
-    messageQueueService, embedPageToolRegistry, localToolSessions, askUserQuestionsRegistry,
+    messageQueueService, embedPageToolRegistry, localToolSessions, remoteFileProxy, askUserQuestionsRegistry,
     treeSignalPublisher, approvalRegistry, approvalRuleService, approvalEscalationSuppressor, activityService,
     activityHeartbeat, todoMapper, backgroundSubagentManager, shellManager,
     skillSync, localSkills, localAgentsMd, mcpSync, routingMcpClient,
@@ -96,6 +99,7 @@ export function assembleWsHandler(deps: WsHandlerDeps): StreamingWsHandler {
     messageQueueService,
     embedPageToolRegistry,
     localToolSessionRegistry: localToolSessions,
+    remoteFileProxyService: remoteFileProxy,
     askUserQuestionsRegistry,
     treeSignalPublisher,
     approvalRegistry,

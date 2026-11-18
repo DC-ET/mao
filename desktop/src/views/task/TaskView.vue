@@ -124,6 +124,7 @@ import { usePanelLayout } from '../../composables/usePanelLayout'
 import { resetNewTaskTabs, useCenterTabs } from '../../composables/useCenterTabs'
 import { getPersistedActiveTab, resolveSideTaskRestoreIds, resolveSubagentRestoreId } from '../../utils/center-active-tab'
 import { useWorkspaceFileProvider } from '../../composables/workspace-file-provider'
+import { useCurrentDevice } from '../../composables/useCurrentDevice'
 import { useWorkspaceGitProvider } from '../../composables/workspace-git-provider'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import type { GitChangedFile } from '../../types/git'
@@ -692,7 +693,18 @@ watch(inspectorSessionId, (sid) => {
   void ensureInspectorTodos(sid)
 }, { immediate: true })
 
-const fileProvider = useWorkspaceFileProvider(executionMode, workspace, activeSessionIdRef, projectKey)
+const { deviceId: currentDeviceId } = useCurrentDevice()
+// LOCAL 会话且当前端非执行端设备（浏览器 / 移动端，或双机互看）时走服务端 WS 代理浏览
+// 执行端设备上的真实文件；执行端本机 / 未绑定存量会话为 null（直连 IPC，技术方案 2026-11-17 D6）。
+// electronAPI 缺失时 getLocalDeviceInfo 恒为 null → currentDeviceId 为 null → 只要有绑定就走代理。
+const localProxySessionId = computed<string | null>(() => {
+  if (executionMode.value !== 'LOCAL') return null
+  const sid = activeSessionIdRef.value
+  const targetDeviceId = sessionStore.activeSession?.targetDeviceId ?? null
+  if (!sid || !targetDeviceId) return null
+  return currentDeviceId.value !== targetDeviceId ? sid : null
+})
+const fileProvider = useWorkspaceFileProvider(executionMode, workspace, activeSessionIdRef, projectKey, localProxySessionId)
 const gitProvider = useWorkspaceGitProvider(executionMode, workspace, activeSessionIdRef)
 provide('fileProvider', fileProvider)
 
