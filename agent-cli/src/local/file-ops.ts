@@ -12,6 +12,12 @@ import { mimeFromPath, readImage } from './tools/files';
  * 信任收窄不在本模块：request.workspace 已由 executor 层 resolveWorkspace 收窄到本地信任根
  * （与 tool_execute 同款不变量），这里只做 containment——path.resolve 后必须等于工作区或
  * 位于其内（镜像 main.cjs:2272 口径），防 `..` 与绝对路径越界。
+ *
+ * 与桌面已知的两处口径差异（评审 2026-11-18 记录，勿按「逐字段镜像」误判）：
+ * - search 无「每目录 500 条」上限（桌面经 listDirectory 间接继承并忽略 truncated）、
+ *   结果 path 恒为 `/` 分隔（桌面继承 path.relative，Windows 为 `\`）；
+ * - 图片读取复用 files.ts readImage（同步 fs、≤5MB，daemon 上毫秒级阻塞已接受）；
+ *   >5MB 图片回 readImage 的错误文案（桌面同分支也是文本错误帧）。
  */
 
 export type LocalFileOp = 'list' | 'read' | 'search' | 'files';
@@ -61,16 +67,13 @@ function resolveContained(workspace: string, relative: unknown): string | null {
 }
 
 async function listDirectory(workspace: string, abs: string): Promise<Record<string, unknown>> {
-  try {
-    await fsp.access(abs);
-  } catch {
-    return { error: 'Directory does not exist' };
-  }
   let dirents;
   try {
     dirents = await fsp.readdir(abs, { withFileTypes: true });
   } catch (e) {
-    return { error: e instanceof Error ? e.message : String(e) };
+    // 与桌面 existsSync/readdirSync 分层口径一致：ENOENT 报不存在，权限等错误原样透传
+    const code = (e as { code?: unknown }).code;
+    return { error: code === 'ENOENT' ? 'Directory does not exist' : e instanceof Error ? e.message : String(e) };
   }
   const truncated = dirents.length > MAX_LIST_ENTRIES;
   const entries: Array<Record<string, unknown>> = [];
@@ -248,7 +251,9 @@ async function runOp(request: FileOpRequest): Promise<unknown> {
       return await searchWorkspace(workspace, params.pattern, typeof params.limit === 'number' ? params.limit : 100);
     }
     case 'files': {
-      return await listWorkspaceFiles(workspace, asOptionalString(params.filter), typeof params.limit === 'number' ? params.limit : 20);
+      // 镜像桌面 maxResults = limit || 20：0 / 负数回落 20（服务端 ?limit=0 会原样下发）
+      const filesLimit = typeof params.limit === 'number' && params.limit > 0 ? params.limit : 20;
+      return await listWorkspaceFiles(workspace, asOptionalString(params.filter), filesLimit);
     }
     default:
       throw new Error(`不支持的文件操作类型: ${String(op)}`);

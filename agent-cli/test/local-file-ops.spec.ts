@@ -55,7 +55,6 @@ describe('executeFileOp（CLI 文件代理设备端执行器）', () => {
 
   it('containment：.. 逃逸与绝对路径越界一律拒绝', async () => {
     const ws = await makeWorkspace();
-    await fsp.writeFile('/tmp/mao-fileops-outside.txt', 'no').catch(() => {});
     const outside = path.join(os.tmpdir(), 'mao-fileops-outside.txt');
     await fsp.writeFile(outside, 'no');
     try {
@@ -68,6 +67,18 @@ describe('executeFileOp（CLI 文件代理设备端执行器）', () => {
     } finally {
       await fsp.rm(outside, { force: true });
     }
+  });
+
+  it('containment：工作区根退化与大小写变体 fail closed（与桌面同一组向量，D6）', async () => {
+    // workspace='/'：包含性失去意义，一律拒绝
+    const root = await executeFileOp(11, req('read', { path: '/etc/passwd' }, '/'));
+    expect(root.ok).toBe(false);
+    expect(root.error).toBe('路径越出工作区范围');
+    // 大小写不归一：POSIX 上大小写变体按越界拒绝（与桌面词法实现同一 fail-closed 口径）
+    const ws = await makeWorkspace();
+    const frame = await executeFileOp(11, req('read', { path: path.join(ws.toUpperCase(), 'x.txt') }, ws));
+    expect(frame.ok).toBe(false);
+    expect(frame.error).toBe('路径越出工作区范围');
   });
 
   it('read：文本行窗口与 total_lines', async () => {

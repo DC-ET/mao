@@ -194,12 +194,14 @@ describe('auth 帧客户端能力声明（capabilities，技术方案 2026-11-18
   let registry: StreamingWsRegistry;
   let handler: StreamingWsHandler;
   let ws: WsSocket;
+  let seq = 0;
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
     registry = new StreamingWsRegistry();
     ws = socket('caps');
+    seq = 0;
     const jwtService = {
       getAccessTokenMetadata: vi.fn(() => ({ userId: 7, authSource: 'local', expiresAt: NOW + 1000 })),
       getTokenType: vi.fn(() => 'access'),
@@ -216,7 +218,9 @@ describe('auth 帧客户端能力声明（capabilities，技术方案 2026-11-18
     vi.useRealTimers();
   });
 
+  // 每次用新 socket：同一连接的重复 auth 帧走 dispatch 分支会被忽略，无法覆盖二次解析
   async function authWith(capabilities: unknown): Promise<void> {
+    ws = socket(`caps-${++seq}`);
     await handler.handleTextMessage(ws, JSON.stringify({
       type: 'auth', token: 'old', client: 'cli',
       device: { id: 'dev-1', name: 'Mac', platform: 'darwin' },
@@ -241,5 +245,12 @@ describe('auth 帧客户端能力声明（capabilities，技术方案 2026-11-18
     await authWith(undefined);
     expect(registry.hasCapability(ws, 'file_op')).toBe(false);
     expect(registry.getDeviceId(ws)).toBe('dev-1');
+  });
+
+  it('emptyArrayIsValidEmptySetAndSixteenItemsIsTheBoundary', async () => {
+    await authWith([]);
+    expect(registry.hasCapability(ws, 'file_op')).toBe(false);
+    await authWith(Array.from({ length: 16 }, (_, i) => (i === 0 ? 'file_op' : `c${i}`)));
+    expect(registry.hasCapability(ws, 'file_op')).toBe(true);
   });
 });

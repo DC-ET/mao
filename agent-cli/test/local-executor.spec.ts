@@ -625,3 +625,38 @@ describe('LocalExecutor file_op_request（技术方案 2026-11-18）', () => {
     expect(sent).toHaveLength(0);
   });
 });
+
+describe('LocalExecutor file_op_request catch 兜底', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('sendReliable 抛错时经 handleEvent 统一 catch 回失败帧（console.error 口径同 tool_result）', async () => {
+    const sent: object[] = [];
+    let first = true;
+    const exec = new LocalExecutor({
+      ws: {
+        sendReliable: async (p: object) => {
+          if (first) {
+            first = false;
+            throw new Error('socket gone');
+          }
+          sent.push(p);
+          return true;
+        },
+      } as unknown as WsClient,
+      getToken: async () => null,
+      baseUrl: 'https://mao.etarch.cn/api',
+      workspace: os.tmpdir(),
+      policy: policy(),
+    });
+    await exec.handleEvent({
+      type: 'file_op_request',
+      sessionId: 7,
+      data: { requestId: 'fop-3', op: 'list', params: {}, workspace: os.tmpdir() },
+    });
+    const frame = sent.find((m) => (m as { type: string }).type === 'file_op_result') as { ok: boolean; error?: string };
+    expect(frame.ok).toBe(false);
+    expect(frame.error).toBe('socket gone');
+  });
+});
