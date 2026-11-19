@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1666,8 +1666,8 @@ describe('SCRIPT 哨兵（V189）', () => {
     expect(h.watchers.get(1)!.lastValueHash).toBe(sha256('100'));
     // 假执行器收到绝对路径与白名单 env（含 MAO_WATCHER_ID，不含后端进程变量）
     const call = h.scriptProbeExecute.mock.calls[0]![0]!;
-    // macOS /var → /private/var 符号链接：用 realpath 对齐
-    expect(call.scriptPath).toBe(realpathSync(join(projectsRoot, '7', 'projects', 'ops/sentinels/disk.sh')));
+    // 下发路径为配置视角（存储根软链不解析 realpath）：容器内只有与配置逐字节一致的挂载点
+    expect(call.scriptPath).toBe(join(projectsRoot, '7', 'projects', 'ops/sentinels/disk.sh'));
     expect(call.env.MAO_WATCHER_ID).toBe('1');
     expect(call.env.MAO_WATCHER_NAME).toBe('磁盘');
     expect(call.env.APP_SIGNAL_SECRET).toBeUndefined();
@@ -1800,6 +1800,34 @@ describe('SCRIPT 哨兵（V189）', () => {
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ userId: 7, agentId: 3 }));
     expect(h.scriptProbeExecute).not.toHaveBeenCalled();
     expect(h.watchers.get(1)!.lastValueHash).toBe(sha256('100'));
+  });
+
+  it('runCheck：存储根为挂载根软链时下发配置视角路径（容器重建后探针不再报「文件不存在」）', async () => {
+    // 复刻生产结构：存储根是软链（/opt/mao-data -> /data/mao-data 的反向：软链 -> 真实目录），
+    // 容器内挂载点等于配置视角。若下发 realpath 解析出的宿主真实路径，容器内将不可达——
+    // 修复后下发的必须是软链（配置）视角路径。
+    const linkRoot = join(tmpdir(), `mao-script-root-link-${process.pid}-${Date.now()}`);
+    symlinkSync(projectsRoot, linkRoot);
+    try {
+      const execute = vi.fn(async (_input: {
+        userId: number; agentId: number; scriptPath: string; timeoutSeconds: number; env: Record<string, string>;
+      }) => scriptProbeResult());
+      const h = harness({
+        watcher: scriptWatcher(),
+        scriptProbe: scriptProbeResult,
+        scriptProjectsRoot: linkRoot,
+        containerScriptProbe: { enabledFor: async () => true, execute },
+      });
+      writeUserScript(7, 'ops/sentinels/disk.sh', 'echo \'{"free": 100}\'\n');
+      await h.service.runCheck(1);
+      expect(execute).toHaveBeenCalledTimes(1);
+      // 断言下发路径保持配置（软链）视角，而非 realpath 解析后的宿主真实路径
+      expect(execute.mock.calls[0]![0]!.scriptPath).toBe(join(linkRoot, '7', 'projects', 'ops/sentinels/disk.sh'));
+      // 安全校验不受影响：软链逃逸仍被拦截（另见既有逃逸用例）
+      expect(h.watchers.get(1)!.lastValueHash).toBe(sha256('100'));
+    } finally {
+      rmSync(linkRoot, { force: true });
+    }
   });
 
   it('runCheck：容器桥关闭时仍在宿主执行', async () => {
