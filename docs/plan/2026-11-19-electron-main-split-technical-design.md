@@ -61,7 +61,7 @@
 - `currentWorkspace`：`tool-execute`（约 2613–2620 行）写入，Git IPC、搜索、`resolveWorkspacePath`、`get-environment-info` 读取。抽出的模块只接收 `getCurrentWorkspace`，不持有这份可变状态。写入仍只发生在 `tool-execute`。
 - `mainWindow`、`quitting`、`pendingApprovals`、`earlyApprovalDecisions`、更新状态、托盘与快捷键：只服务进程壳，本方案不外移。
 - `mcpClients`：`cleanupSiteScopedResources`（约 1189 行）和 `before-quit`（约 1694 行）按 session 关闭连接。MCP 模块导出 `closeMcpSession` 与 `closeAllMcpSessions`，入口不再碰内部 Map。
-- `buildShellEnv` 在约 71 行就交给 `TerminalManager.setEnvProvider`，定义在约 401 行。今天能工作是因为 `function` 声明会提升。本方案不移动它。若以后要移，`require` 必须放在 `setEnvProvider`（约 71 行）和 `createLocalShellRuntime`（约 878 行）之前。
+- `buildShellEnv` 在约 71 行就交给 `TerminalManager.setEnvProvider`，定义在约 401 行。今天能工作是因为 `function` 声明会提升。本方案不移动它。消费方共三处：`TerminalManager.setEnvProvider`（约 71 行）、`TerminalHost` 构造参数 `buildEnv`（约 80 行）、`createLocalShellRuntime`（约 878 行）。若以后要移，`require` 必须放在最早消费方（约 71 行）之前。
 
 ### 2.4 两套文件入口不能合并
 
@@ -140,7 +140,7 @@ createLocalSearch({
 })
 ```
 
-返回 `{ handleGlobSearch, handleGrepSearch }`。`executeToolByName` 的 `glob_search` / `grep_search` 改为调这两个函数。忽略目录、`head_limit`、上下文行数、输出字符上限保持原值。不把 `rg` 是否存在写死：单测走 Node 回退，或注入 `execFile`。
+返回 `{ handleGlobSearch, handleGrepSearch }`。`executeToolByName` 的 `glob_search` / `grep_search` 改为调这两个函数。忽略目录、`head_limit`、上下文行数、输出字符上限保持原值。不把 `rg` 是否存在写死：`execFile` 可注入，单测走 Node 回退。`rgAvailable` 探测结果缓存进 `createLocalSearch` 闭包而非模块顶层——留在顶层的话，单测注入假 `execFile` 时第一个用例的探测结果会污染后续用例。
 
 ### 5.3 `localRuntimePaths.cjs`（第 2 批）
 
@@ -172,6 +172,7 @@ registerLocalSkillsIpc(ipcMain, {
   sendToRenderer,
   getApiBaseUrl,
   resolveLocalSkillsDir,
+  getLocalAgentsSkillsDir,   // () => '~/.agents/skills' 绝对路径
 })
 ```
 
@@ -181,6 +182,8 @@ registerLocalSkillsIpc(ipcMain, {
 - 技能目录仍是 `~/.agents/skills`。文件夹名拒绝 `/`、`\`、以 `.` 开头，并用 `path.relative` 语义拒绝逃出根目录（实现继续用 `path.resolve` + `path.sep` 前缀判断）。
 - `skill-sync` 仍 POST 下载 zip，用 `adm-zip` 覆盖解压到会话技能目录，并用 `skill-sync-complete` 通知渲染层。
 - `read-agents-md` 仍只读调用方给出的 `workspace` 下的 `AGENTS.md`，不存在返回 `{ content: null }`。
+- `~/.agents/skills` 根目录（今天的模块级常量 `LOCAL_SKILLS_DIR`，约 950 行）经 `getLocalAgentsSkillsDir` 注入，模块内不硬编码：`resolveLocalSkillFolder`、`list-local-skills` 都用它，返回形状里的 `skillsDir` 继续是注入值（生产即 `~/.agents/skills` 绝对路径），单测才能指向临时目录。
+- `skill-sync` 的「下载 zip」与「解压到技能目录」拆开：解压导出为可独立调用的函数（如 `extractSkillZip(zipBuffer, skillsDir)`），handler 只管下载、落盘与通知渲染层。§8 的 zip 用例依赖这条缝，不发 HTTP。
 
 ### 5.6 `gitIpc.cjs`（第 3 批）
 
@@ -198,7 +201,17 @@ registerLocalSkillsIpc(ipcMain, {
 
 注册：`local-read-file`、`local-read-bytes`、`local-read-workspace-bytes`、`local-delivery-read-bytes`、`local-write-file`、`local-edit-file`、`list-workspace-files`、`list-directory`。
 
-同时导出供 `executeToolByName` 调用的 `handleLocalReadFile`、`handleLocalWriteFile`、`handleLocalEditFile`。读图（`mimeFromPath`、`detectMimeFromBytes`、`readLocalImage`）跟读文件走，`nativeImage` 由入口传入，模块本身不 `require('electron')`，单测不必起 Electron。
+同时导出供 `executeToolByName` 调用的 `handleLocalReadFile`、`handleLocalWriteFile`、`handleLocalEditFile`。依赖统一从入口注入：
+
+```js
+registerLocalFileIpc(ipcMain, {
+  resolveWorkspacePath,     // 第 3 批时已来自 localRuntimePaths（闭包含 getCurrentWorkspace）
+  requestToolApproval,      // 审批留在入口（§7）；D2 禁止反向 require，没有这条缝写文件通道无法落地
+  nativeImage,              // 读图缩放用
+})
+```
+
+读图（`mimeFromPath`、`detectMimeFromBytes`、`formatImageSize`、`readLocalImage`，及图片扩展名表与 5MB 上限常量）跟读文件走，`nativeImage` 由入口传入，模块本身不 `require('electron')`，单测不必起 Electron。
 
 新增一个内部函数，例如 `writeFileWithDiff(resolvedPath, filePathArg, content)`，只做：存在则读原文、建目录、写入、`computeLineDelta`、`buildFileChangeDiff`。`local-write-file` 与 `handleLocalWriteFile` 各自先审批，再调用它。编辑继续调用第 1 批的 `writeEditedFile`。
 
@@ -292,10 +305,10 @@ registerLocalSkillsIpc(ipcMain, {
 **`localSkills.test.cjs`**
 
 - `parseSkillMd`：合法 frontmatter 取出 name、description、body；无 frontmatter 或无 name 返回 null。
-- `resolveLocalSkillFolder`：拒绝 `../`、绝对逃逸、以 `.` 开头；临时目录内的真实文件夹可通过。
+- `resolveLocalSkillFolder`：拒绝 `../`、绝对逃逸、以 `.` 开头；临时目录内的真实文件夹可通过（skills 根目录走 `getLocalAgentsSkillsDir` 注入，不摸真实 `~/.agents/skills`）。
 - `preferIpv4Loopback` 把 `://localhost` 换成 `://127.0.0.1`；`resolveSkillSyncBaseUrl` 去掉末尾 `/v1`。
 - `read-agents-md`：无文件返回 `{ content: null }`，有文件返回正文。
-- 不在单测里访问网络。zip 解压若要测，用临时目录和本地 buffer，不发 HTTP。
+- 不在单测里访问网络。zip 解压用例直接调 §5.5 导出的解压函数，传临时目录与本地 buffer，不走 `skill-sync` 的下载段。
 
 **`gitIpc.test.cjs` 与 `localFileIpc.test.cjs`**
 
