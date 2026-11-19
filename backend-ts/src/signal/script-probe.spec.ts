@@ -143,7 +143,9 @@ describe('executeScriptProbe', () => {
     expect(result.stdout).toBe('EOF\n');
   });
 
-  it('脚本本体退出但有后代进程握着 stdio 管道：进程组回收让结果立即返回', async () => {
+  // 进程组回收是 Unix 语义（win32 上 kill(-pid) 不可用、孤儿后代 CWD 还会让临时目录
+  // 清理 EPERM），与 script-probe-dispatch.spec.ts 的平台守卫同口径，仅 POSIX 平台跑。
+  it.skipIf(process.platform === 'win32')('脚本本体退出但有后代进程握着 stdio 管道：进程组回收让结果立即返回', async () => {
     // 脚本派生 60s 后台进程再退出；若不整组回收，close 会被管道握住拖到硬超时
     const result = await run(writeScript('stray.sh', '(sleep 60; echo late) &\nexit 0\n'), 3);
     expect(result.ok).toBe(true);

@@ -31,6 +31,11 @@ export type ApprovalChoice = 'allow' | 'deny' | 'always';
 /** 投票后等回声：5s 未到且连接在线则重发同一帧，最多 2 次（技术方案 2026-11-06 §4.5-6）。 */
 export const APPROVAL_ECHO_RETRY_MS = 5000;
 export const APPROVAL_ECHO_MAX_RETRIES = 2;
+/** 回声总等待上限：回声只是服务端对本连接投票的认领回执，重发窗口之外仍不到即视为
+ *  丢失（服务端重启丢 pending / 断线）——继续等只会把工具拖到服务端工具超时，超上限
+ *  后按本地选择收尾；时长与 Ink 模态 30s 兜底语义衔接（模态兜底只关 UI，这里保证
+ *  executor 侧等待同样收敛）。 */
+export const APPROVAL_ECHO_DEADLINE_MS = 30_000;
 /** 已完成决策的 requestId 记录上限（shell 复用一个 requestId，跨请求淘汰即可）。 */
 const APPROVAL_DECIDED_LIMIT = 200;
 
@@ -40,6 +45,8 @@ interface ApprovalEchoWaiter {
   approved: boolean;
   alwaysAllow: boolean;
   resolve: (choice: ApprovalChoice) => void;
+  /** 总等待上限定时器：回声丢失时按本地选择收尾（raceVoteAndEcho 登记）。 */
+  deadline: ReturnType<typeof setTimeout>;
 }
 
 export interface LocalExecutorOptions {
@@ -161,6 +168,13 @@ export class LocalExecutor {
       waiter.resolve({ kind: 'disconnected' });
     }
     this.remoteWaiters.clear();
+    // 投票回声路径同样要收尾（对齐 onWsClosed 注释契约「等待远端审批的请求立刻失败，
+    // 不等满超时」）：断线 = 单机离线，无人抢认领，按本地已投的选择收尾，并清掉重发 /
+    // 上限定时器，避免迟到回声在服务端已放弃之后又把工具跑起来。
+    for (const [requestId, waiter] of this.approvalEchoWaiters) {
+      this.disposeApprovalEchoWaiter(requestId);
+      waiter.resolve(waiter.approved ? (waiter.alwaysAllow ? 'always' : 'allow') : 'deny');
+    }
   }
 
   /** 关掉 shell 与全部会话的 MCP。不改变 close(sessionId) 的附着形态语义。 */
@@ -392,8 +406,7 @@ export class LocalExecutor {
       }
     } finally {
       this.approvalSessions.delete(requestId);
-      this.clearApprovalResend(requestId);
-      this.approvalEchoWaiters.delete(requestId);
+      this.disposeApprovalEchoWaiter(requestId);
       this.approvalRemoteChoices.delete(requestId);
     }
   }
@@ -465,11 +478,30 @@ export class LocalExecutor {
       return early;
     }
     const echoed = await new Promise<ApprovalChoice>((resolve) => {
-      this.approvalEchoWaiters.set(requestId, { sessionId, approved, alwaysAllow, resolve });
+      // 总等待上限：回声丢失（服务端重启丢 pending / 断线 / 重发用尽）时按本地选择收尾，
+      // 不把工具拖到服务端工具超时（与 failRemoteWaits 的断线收尾同口径）。
+      const deadline = setTimeout(() => {
+        if (this.approvalEchoWaiters.get(requestId) !== waiter) return;
+        this.disposeApprovalEchoWaiter(requestId);
+        resolve(localChoice);
+      }, APPROVAL_ECHO_DEADLINE_MS);
+      deadline.unref?.();
+      const waiter: ApprovalEchoWaiter = { sessionId, approved, alwaysAllow, resolve, deadline };
+      this.approvalEchoWaiters.set(requestId, waiter);
       this.scheduleApprovalResend(sessionId, requestId, approved, alwaysAllow);
     });
     this.markApprovalDecided(requestId);
     return echoed;
+  }
+
+  /** 清掉该 requestId 的回声等待登记（重发定时器 + 总等待上限 + 映射项），不触发 resolve。 */
+  private disposeApprovalEchoWaiter(requestId: string): void {
+    this.clearApprovalResend(requestId);
+    const waiter = this.approvalEchoWaiters.get(requestId);
+    if (waiter) {
+      clearTimeout(waiter.deadline);
+      this.approvalEchoWaiters.delete(requestId);
+    }
   }
 
   /** 服务端认领结果（含超时 / 中止的 null）：闭合等待者；早到或收尾帧按需转给模态收尾。 */
@@ -492,8 +524,7 @@ export class LocalExecutor {
     }
     const waiter = this.approvalEchoWaiters.get(requestId);
     if (waiter) {
-      this.clearApprovalResend(requestId);
-      this.approvalEchoWaiters.delete(requestId);
+      this.disposeApprovalEchoWaiter(requestId);
       waiter.resolve(choice ?? 'deny');
       return;
     }
@@ -525,8 +556,7 @@ export class LocalExecutor {
       const oldest = this.approvalDecided.values().next();
       if (!oldest.done) this.approvalDecided.delete(oldest.value);
     }
-    this.clearApprovalResend(requestId);
-    this.approvalEchoWaiters.delete(requestId);
+    this.disposeApprovalEchoWaiter(requestId);
   }
 
   private clearApprovalResend(requestId: string): void {

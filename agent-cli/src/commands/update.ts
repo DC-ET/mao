@@ -26,10 +26,15 @@ interface RunOptions {
 }
 
 function run(cmd: string, args: string[], opts: RunOptions = {}): void {
+  // Windows 上 npm 是 .cmd 脚本：无 shell 的 spawnSync 走 CreateProcess，不做 PATHEXT
+  // 解析，必 ENOENT（Node ≥18.20 对 .cmd 直启还会 EINVAL）。npm 的调用参数全是固定
+  // 字面量，shell 拼接安全；git / bash 是真实 .exe，不走 shell——其参数含路径与引号，
+  // 交给 cmd.exe 二次解析会破坏引号语义。
   const res = spawnSync(cmd, args, {
     stdio: opts.quiet ? 'ignore' : 'inherit',
     cwd: opts.cwd,
     env: { ...process.env, ...opts.env },
+    ...(process.platform === 'win32' && cmd === 'npm' ? { shell: true } : {}),
   });
   if (res.error) {
     if (opts.tolerate) return;
@@ -97,6 +102,9 @@ export async function cmdUpdate(opts: UpdateOptions = {}): Promise<void> {
 
   out(`mao-agent 当前版本 ${current}（源 ${repo}@${ref}）`);
   if (existsSync(join(srcDir, '.git'))) {
+    // npm 预检必须先于源码切换：git checkout --force 会把源码树强制切到远端，
+    // 若之后 npm 才失败（未安装 / 不在 PATH），会留下「源码已切换、依赖未装」的半更新状态。
+    run('npm', ['--version'], { quiet: true });
     out(`拉取最新源码 ${srcDir} ...`);
     run('git', ['-C', srcDir, 'fetch', '--depth', '1', 'origin', ref]);
     run('git', ['-C', srcDir, 'checkout', '--force', 'FETCH_HEAD']);

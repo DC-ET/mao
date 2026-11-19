@@ -3,6 +3,7 @@ import { lstatSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { resolve, relative } from 'node:path';
 import * as Lark from '@larksuiteoapi/node-sdk';
+import { clipByCodePoints } from './common/utf8.js';
 import { FEISHU_CHAT_DIR } from './harness/container/channel-workspace.js';
 import { isBotSender, botSenderLabel } from './feishu/message.service.js';
 import { batchResolveFeishuUserNames } from './feishu/sender-names.js';
@@ -45,7 +46,7 @@ export function sanitizeFeishuFileName(name: string | null | undefined, fallback
 }
 
 export function truncateQuoted(text: string, maxLength = 1500): string {
-  return text.length <= maxLength ? text : `${text.slice(0, maxLength)}…（引用内容过长已截断）`;
+  return text.length <= maxLength ? text : `${clipByCodePoints(text, maxLength)}…（引用内容过长已截断）`;
 }
 
 export async function downloadFeishuMediaBuffer(

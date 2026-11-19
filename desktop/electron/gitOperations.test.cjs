@@ -35,7 +35,24 @@ function git(cwd, args, env = {}) {
 
 function tempDir(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-git-test-'))
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  // Windows 上被超时杀掉的 git 会留下孤儿孙进程（git-remote-http），其 CWD 仍握着仓库
+  // 目录导致 rmSync 抛 EPERM。t.after 钩子按注册顺序执行且钩子抛错会跳过本测试的后续
+  // 钩子——rm 钩子若在挂起远端 server.close 钩子之前抛错，服务器将永不关闭、测试进程
+  // 挂死。这里重试等孤儿退出，仍失败则告警不抛。
+  t.after(async () => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+        return
+      } catch (error) {
+        if (attempt >= 4) {
+          console.warn(`[git-test] 临时目录清理失败（可忽略）: ${dir} (${error.code ?? error})`)
+          return
+        }
+        await new Promise((resolve) => setTimeout(resolve, 400))
+      }
+    }
+  })
   return dir
 }
 
@@ -429,8 +446,11 @@ test('fetch reports partial failure when one remote is unreachable', async (t) =
 })
 
 test('fetch reports a single hanging remote with the timeout message', async (t) => {
+  // 先 await startHangingRemote 注册 server 清理钩子，再 initRepo 注册 rm 钩子：
+  // Windows 上孤儿 git-remote-http 占着仓库目录，rm 依赖 server 先关闭让孤儿退出。
+  const hangUrl = await startHangingRemote(t)
   const repo = initRepo(t)
-  git(repo, ['remote', 'add', 'only-hang', await startHangingRemote(t)])
+  git(repo, ['remote', 'add', 'only-hang', hangUrl])
 
   const result = await withGitTimeout(2000, () => fetch(repo))
   assert.equal(result.success, false)
@@ -448,8 +468,9 @@ test('fetch names every remote when all remotes fail', async (t) => {
 })
 
 test('fetch fetches hanging remotes in parallel within a single timeout budget', async (t) => {
-  const repo = initRepo(t)
+  // 同上：server 清理钩子必须先于仓库 rm 钩子注册。
   const url = await startHangingRemote(t)
+  const repo = initRepo(t)
   for (const name of ['h1', 'h2', 'h3']) git(repo, ['remote', 'add', name, url])
 
   const started = Date.now()

@@ -44,9 +44,20 @@ export class TaskNotificationPreferenceService {
     let masked: string | null = null;
     const configured = hasText(row.webhookCiphertext);
     if (configured) {
-      const plain = this.cipher.decrypt(row.webhookCiphertext!);
-      // EMAIL 渠道密文存收件邮箱：按邮箱口径掩码（a***@domain.com），不复用 URL 掩码
-      masked = row.channel === 'EMAIL' ? maskEmail(plain) : this.urlValidator.mask(plain);
+      // 解密失败降级为 maskedWebhook:null，不得让读路径整体抛错（同 settings.service
+      // decryptSecret 的 "treat as unset" 契约）：APP_NOTIFICATION_WEBHOOK_SECRET 轮换/
+      // 丢失后，偏好面板要能打开，关闭路径（enabled=false 且非切渠道时保留旧密文落库）
+      // 之后 get() 仍会走到这里——抛错的话用户连「关闭通知」都做不到。
+      let plain: string | null = null;
+      try {
+        plain = this.cipher.decrypt(row.webhookCiphertext!);
+      } catch (e) {
+        console.warn(`[task-notification] webhook 密文解密失败，按未配置掩码展示 userId=${userId}`, e);
+      }
+      if (plain != null) {
+        // EMAIL 渠道密文存收件邮箱：按邮箱口径掩码（a***@domain.com），不复用 URL 掩码
+        masked = row.channel === 'EMAIL' ? maskEmail(plain) : this.urlValidator.mask(plain);
+      }
     }
     return {
       enabled: row.enabled === 1,

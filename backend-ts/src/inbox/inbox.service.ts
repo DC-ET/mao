@@ -1,4 +1,5 @@
 import type { InboxItem, InboxKind, InboxPreference, InboxListResult, InboxSource } from '@mao/contracts';
+import { clipByCodePoints } from '../common/utf8.js';
 import { isInboxKind } from './types.js';
 import type { InboxRepository, NotificationRow } from './inbox.repository.js';
 import { toInboxItem } from './inbox.repository.js';
@@ -558,5 +559,5 @@ function clip(value: string | null | undefined, maxLength: number): string | nul
   if (value == null) return null;
   const trimmed = value.trim();
   if (trimmed === '') return null;
-  return trimmed.length <= maxLength ? trimmed : trimmed.slice(0, maxLength);
+  return clipByCodePoints(trimmed, maxLength);
 }

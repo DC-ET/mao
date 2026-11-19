@@ -34,6 +34,8 @@ const bugIt = it.fails;
 
 /** 以 root 运行时 EACCES 类触发不可复现（权限不生效），相关用例跳过。 */
 const IS_ROOT = typeof process.getuid === 'function' && process.getuid() === 0;
+/** Windows 上 chmod 只清写属性、读权限恒在，chmod(0o000) 造不出「不可读」前提。 */
+const CHMOD_EFFECTIVE = process.platform !== 'win32';
 
 // ────────────────────────────────────────────────────────────────────────────
 // BUG-1 outbound_delivery：在途投递行不被 recoverInterrupted 误判卡死（已修复，回归）
@@ -281,7 +283,8 @@ describe.skipIf(IS_ROOT)('BUG-5 glob_search 不可读目录容错（回归）', 
     }
   });
 
-  it('根目录本身不可读仍整体报错（不静默返回空结果）', async () => {
+  // chmod(0o000) 造不出不可读前提的平台（Windows）上无意义，跳过。
+  it.skipIf(!CHMOD_EFFECTIVE)('根目录本身不可读仍整体报错（不静默返回空结果）', async () => {
     const root = mkdtempSync(join(tmpdir(), 'glob-bug5-root-'));
     chmodSync(root, 0o000);
     try {

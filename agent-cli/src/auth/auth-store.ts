@@ -43,8 +43,21 @@ function readJsonFile(file: string): AuthRecord | null {
 }
 
 export function loadAuth(): AuthRecord | null {
-  const current = readJsonFile(AUTH_FILE);
-  if (current?.accessToken) return current;
+  // 区分「不存在」与「存在但不可用」：auth.json 在（哪怕解析失败 / 缺 accessToken）时
+  // 不得落入 legacy 迁移——否则一次写盘中断留下的截断 JSON 会把 ~/.mao-cli/ 里可能
+  // 数月前过期、甚至属于他人会话的旧 token 复活回当前登录态，后续全部 401。
+  let authFileExists = false;
+  try {
+    authFileExists = fs.existsSync(AUTH_FILE);
+  } catch {
+    // ignore
+  }
+  if (authFileExists) {
+    const current = readJsonFile(AUTH_FILE);
+    if (current?.accessToken) return current;
+    console.warn(`[auth] ${AUTH_FILE} 存在但无法解析或缺少 accessToken，按未登录处理（不迁移 legacy 凭据）`);
+    return null;
+  }
   for (const legacy of LEGACY_AUTH_FILES) {
     const data = readJsonFile(legacy);
     if (data?.accessToken) {
@@ -68,7 +81,20 @@ export function saveAuth(data: Partial<AuthRecord> & { accessToken?: string | nu
     user: data.user ?? null,
     savedAt: new Date().toISOString(),
   };
-  fs.writeFileSync(AUTH_FILE, JSON.stringify(payload, null, 2) + '\n', { mode: 0o600 });
+  // 原子写（对齐 config-store / device-identity 基线）：CLI / desktop / mao-cli 共用此文件，
+  // 直接就地写会在中途崩溃 / 磁盘满时留下截断的 JSON，下次 loadAuth 静默失效。
+  const tmp = `${AUTH_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(payload, null, 2) + '\n', { mode: 0o600 });
+  try {
+    fs.renameSync(tmp, AUTH_FILE);
+  } catch (e) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      // ignore
+    }
+    throw e;
+  }
   try {
     fs.chmodSync(AUTH_FILE, 0o600);
   } catch {

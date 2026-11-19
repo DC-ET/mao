@@ -16,3 +16,19 @@ export function utf8Prefix(source: Buffer, max: number): string {
   }
   return source.subarray(0, end).toString('utf8');
 }
+
+/**
+ * 按 UTF-16 码元上限截取字符串，切点落在代理对（emoji 等）中间时回退 1 个码元。
+ * UTF-16 码元硬切会留下孤立高代理，`Buffer.from(..., 'utf8')` / 落库解码后变 U+FFFD
+ * 乱码（同 utf8Prefix 的字节口径；2026-11-13 已对 weixin 分片修复同缺陷类）。
+ */
+export function clipByCodePoints(source: string, maxLength: number): string {
+  if (source.length <= maxLength) return source;
+  let end = Math.max(0, maxLength);
+  // 结果末位（index end-1）是高代理（0xD800-0xDBFF）时，低代理恰好在切点上被切断
+  const last = end > 0 ? source.charCodeAt(end - 1) : 0;
+  if (last >= 0xd800 && last <= 0xdbff) {
+    end -= 1;
+  }
+  return source.slice(0, end);
+}

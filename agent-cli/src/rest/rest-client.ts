@@ -146,20 +146,34 @@ export class RestClient {
         }
       }
       throw classifyNetworkError(err, this.timeoutMs, url);
+    }
+
+    // 定时器不在响应头到达时就清除：signal 必须同时覆盖 body 读取（同 local/tools/mcp.ts
+    // 对 HTTP MCP 的修复契约）——服务端挂死或持续 trickle body 时，只等响应头的 fetch 会
+    // 正常返回，text() 却可能永不返回，整轮任务/收尾（如 /exit 的 markRead）随之卡死。
+    let text: string;
+    try {
+      text = await response.text();
+    } catch (err) {
+      throw classifyNetworkError(err, this.timeoutMs, url);
     } finally {
       clearTimeout(timer);
     }
 
-    const text = await response.text();
     let json: Result<T> | null = null;
+    let parseFailure: CliError | null = null;
     if (text) {
       try {
         json = JSON.parse(text) as Result<T>;
       } catch {
-        if (!response.ok) {
-          throw new CliError(`HTTP ${response.status}: ${text.slice(0, 500)}`);
-        }
-        throw new CliError(`响应不是合法 JSON: ${text.slice(0, 200)}`);
+        // 非 JSON body 先挂起，等 401 分支处理完再抛：反代/网关返回自己的 401 HTML 页时
+        // 必须照常走 onUnauthorized 刷新/重登链——与空 body / JSON body 的 401 行为一致；
+        // 提前抛 `HTTP 401: <原文>` 会让交互终端错过重新登录流程。
+        parseFailure = response.ok
+          ? new CliError(`响应不是合法 JSON: ${text.slice(0, 200)}`)
+          : response.status === 401
+            ? new CliError(unauthorizedHint())
+            : new CliError(`HTTP ${response.status}: ${text.slice(0, 500)}`);
       }
     }
 
@@ -172,6 +186,8 @@ export class RestClient {
       }
       throw new CliError(unauthorizedHint());
     }
+
+    if (parseFailure) throw parseFailure;
 
     if (!response.ok) {
       const msg = json?.message || response.statusText || '请求失败';

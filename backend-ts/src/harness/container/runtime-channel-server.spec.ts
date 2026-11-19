@@ -5,6 +5,10 @@ import { join } from 'node:path';
 import { RuntimeChannelServer } from './runtime-channel-server.js';
 import { useTmpDirOutsideRepo } from '../../testing/tmp-dir.js';
 
+// Unix domain socket 落文件路径；Windows 上 listen 只认 \\.\pipe\ 前缀（文件路径 EACCES）。
+// 运行时通道是 Linux 宿主机侧特性，本组仅 POSIX 平台跑。
+const describePosix = process.platform === 'win32' ? describe.skip : describe;
+
 /**
  * 宿主机侧每容器 socket 监听的生命周期回归（2026-11-12 线上故障）：
  * 蓝绿部署/并发替换期间 runtime.sock 被 unlink，但进程仍持有监听 inode——
@@ -26,7 +30,7 @@ function connectOk(socketPath: string, timeoutMs = 2000): Promise<void> {
   });
 }
 
-describe('RuntimeChannelServer ensureListening', () => {
+describePosix('RuntimeChannelServer ensureListening', () => {
   const servers: RuntimeChannelServer[] = [];
 
   afterEach(async () => {

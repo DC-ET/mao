@@ -42,17 +42,19 @@ done
 
 MYSQL_ROOT() {
   # root 常见两种登录方式：auth_socket（不传 -h，走 socket）与 TCP 密码。
+  # 迁移/种子文件均为 UTF-8，客户端字符集必须显式指定：中文 Windows 下
+  # mysql 客户端默认按 GBK 发包，服务端转码报 ERROR 1366 Incorrect string value。
   if [[ -n "$E2E_MYSQL_ROOT_PASS" ]]; then
-    mysql -h"$E2E_MYSQL_HOST" -P"$E2E_MYSQL_PORT" -uroot -p"$E2E_MYSQL_ROOT_PASS" "$@"
-  elif mysql -uroot -e "SELECT 1" >/dev/null 2>&1; then
-    mysql -uroot "$@"
+    mysql --default-character-set=utf8mb4 -h"$E2E_MYSQL_HOST" -P"$E2E_MYSQL_PORT" -uroot -p"$E2E_MYSQL_ROOT_PASS" "$@"
+  elif mysql --default-character-set=utf8mb4 -uroot -e "SELECT 1" >/dev/null 2>&1; then
+    mysql --default-character-set=utf8mb4 -uroot "$@"
   else
-    mysql -h"$E2E_MYSQL_HOST" -P"$E2E_MYSQL_PORT" -uroot "$@"
+    mysql --default-character-set=utf8mb4 -h"$E2E_MYSQL_HOST" -P"$E2E_MYSQL_PORT" -uroot "$@"
   fi
 }
 
 MYSQL_E2E() {
-  mysql -h"$E2E_MYSQL_HOST" -P"$E2E_MYSQL_PORT" -u"$E2E_MYSQL_USER" -p"$E2E_MYSQL_PASS" "$E2E_DB" "$@"
+  mysql --default-character-set=utf8mb4 -h"$E2E_MYSQL_HOST" -P"$E2E_MYSQL_PORT" -u"$E2E_MYSQL_USER" -p"$E2E_MYSQL_PASS" "$E2E_DB" "$@"
 }
 
 command -v mysql >/dev/null || { echo "错误：未安装 mysql 客户端"; exit 1; }
