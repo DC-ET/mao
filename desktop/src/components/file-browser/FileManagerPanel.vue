@@ -154,7 +154,10 @@
     <div v-if="directoryReadOnly" class="fm-hint">团队经验库只读。内容由 Agent 写入，修改请到管理后台的 Agent 经验库。</div>
 
     <div v-if="uploadProgress" class="fm-upload-progress">
-      <span>{{ uploadProgress.error ? `${uploadProgress.label}：${uploadProgress.error}` : uploadProgress.label }}</span>
+      <div class="fm-upload-progress-head">
+        <span>{{ uploadProgress.error ? `${uploadProgress.label}：${uploadProgress.error}` : uploadProgress.label }}</span>
+        <button v-if="!uploadProgress.error" type="button" class="fm-text-btn" @click="cancelUpload">取消</button>
+      </div>
       <el-progress :percentage="uploadProgress.percent" :status="uploadProgress.error ? 'exception' : undefined" />
     </div>
 
@@ -218,7 +221,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onActivated, onMounted, reactive, ref, toRef } from 'vue'
+import { computed, onActivated, onMounted, onUnmounted, reactive, ref, toRef } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowLeft, ArrowRight, ArrowDown, CaretBottom, CaretTop, Delete, Document, DocumentAdd, DocumentCopy,
@@ -234,7 +237,7 @@ import {
   DRAG_PATHS_MIME, canDropTarget, canDropTargetDir, dedupeMoveSources, isValidEntryName, joinRel, parentDirOf, parseDragPaths,
 } from '../../utils/file-manager'
 import {
-  copyWorkspacePath, deleteWorkspacePath, filesFromDataTransfer, filesFromInput, mkdirWorkspace,
+  copyWorkspacePath, deleteWorkspacePath, filesFromDataTransfer, filesFromInput, isUploadCancelled, mkdirWorkspace,
   moveWorkspacePath, renameWorkspacePath, uploadWorkspace, writeWorkspaceFile,
   type UploadItem, type UploadProgress,
 } from '../../composables/workspace-file-write'
@@ -298,6 +301,8 @@ const fileInput = ref<HTMLInputElement>()
 const dirInput = ref<HTMLInputElement>()
 const uploadDir = ref('')
 const uploadProgress = ref<UploadProgress | null>(null)
+let uploadController: AbortController | null = null
+let uploadCancelRequested = false
 const ctxMenu = reactive<{ visible: boolean; x: number; y: number; entry: FileNode | null }>({
   visible: false, x: 0, y: 0, entry: null,
 })
@@ -309,6 +314,7 @@ const ctxWritesLocked = computed(() => {
 
 onMounted(() => rootEl.value?.focus())
 onActivated(() => rootEl.value?.focus())
+onUnmounted(() => uploadController?.abort())
 
 function selectedEntries(): FileNode[] {
   return entries.value.filter((e) => selectedList.value.includes(e.path))
@@ -573,24 +579,46 @@ function onPickFiles(e: Event) {
   void handleFiles(items, uploadDir.value)
 }
 
+function cancelUpload() {
+  uploadCancelRequested = true
+  uploadController?.abort()
+}
+
 async function handleFiles(items: UploadItem[], dir: string) {
   if (items.length === 0) return
   if (!ensureWritable()) return
+  const previous = uploadController
+  const controller = new AbortController()
+  uploadController = controller
+  uploadCancelRequested = false
+  previous?.abort()
   uploadProgress.value = {
     label: items.length === 1 ? items[0].relativePath : `${items.length} 个文件`,
     percent: 0,
     error: '',
   }
   let ok = false
+  let cancelled = false
   try {
     await uploadWorkspace(numericSessionId.value, dir, items, (p) => {
+      if (uploadController !== controller) return
       uploadProgress.value = p
-    }, ownedRoot())
+    }, ownedRoot(), controller.signal)
+    if (uploadController !== controller) return
     ok = true
-  } catch {
+  } catch (e) {
+    if (uploadController !== controller) return
     // 3044/3045 的询问面板与错误 toast 已由 withPrompts 处理
+    cancelled = isUploadCancelled(e) || controller.signal.aborted
   } finally {
-    uploadProgress.value = null
+    if (uploadController === controller) {
+      uploadProgress.value = null
+      uploadController = null
+    }
+  }
+  if (cancelled) {
+    if (uploadCancelRequested) ElMessage.info('已取消上传')
+    return
   }
   if (ok) {
     ElMessage.success('上传成功')
@@ -928,6 +956,21 @@ function onSortCommand(command: { field: 'name' | 'size' | 'mtime' }) {
   border-top: 1px solid var(--aw-divider-soft, #e0e0e0);
   font-size: var(--aw-text-caption, 12px);
   color: var(--aw-ink, #1a1a1a);
+}
+
+.fm-upload-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fm-upload-progress-head span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .fm-statusbar {

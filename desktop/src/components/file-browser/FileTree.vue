@@ -29,7 +29,10 @@
         <input ref="fileInput" class="hidden-input" type="file" multiple @change="onPickFiles" />
       </div>
       <div v-if="uploadProgress" class="upload-progress">
-        <span>{{ uploadProgress.error || uploadProgress.label }}</span>
+        <div class="upload-progress-head">
+          <span>{{ uploadProgress.error || uploadProgress.label }}</span>
+          <button v-if="!uploadProgress.error" type="button" class="upload-cancel" @click="cancelUpload">取消</button>
+        </div>
         <el-progress :percentage="uploadProgress.percent" :status="uploadProgress.error ? 'exception' : undefined" />
       </div>
       <div class="file-tree-content" v-loading="loading || searching">
@@ -183,6 +186,7 @@ import {
   filesFromInput,
   mkdirWorkspace,
   moveWorkspacePath,
+  isUploadCancelled,
   renameWorkspacePath,
   uploadWorkspace,
   writeWorkspaceFile,
@@ -221,6 +225,9 @@ const createPath = ref<string | null>(null)
 const createKind = ref<'file' | 'dir'>('file')
 const uploadDir = ref('.')
 const uploadProgress = ref<UploadProgress | null>(null)
+let uploadController: AbortController | null = null
+let uploadCancelRequested = false
+let uploadClearTimer = 0
 const fileInput = ref<HTMLInputElement>()
 const rootCreateInput = ref<HTMLInputElement>()
 let draftBusy = false
@@ -495,17 +502,48 @@ async function onPickFiles(event: Event) {
   await doUpload(uploadDir.value || '.', items)
 }
 
+function cancelUpload() {
+  uploadCancelRequested = true
+  uploadController?.abort()
+}
+
 async function doUpload(dir: string, items: { file: File; relativePath: string }[]) {
   if (items.length === 0 || numericSessionId.value <= 0) return
+  const previous = uploadController
+  const controller = new AbortController()
+  uploadController = controller
+  uploadCancelRequested = false
+  previous?.abort()
+  window.clearTimeout(uploadClearTimer)
   uploadProgress.value = { label: items.length === 1 ? items[0].relativePath : `${items.length} 个文件`, percent: 0, error: '' }
+  let cancelled = false
   try {
-    await uploadWorkspace(numericSessionId.value, dir, items, (progress) => { uploadProgress.value = progress })
+    await uploadWorkspace(numericSessionId.value, dir, items, (progress) => {
+      if (uploadController !== controller) return
+      uploadProgress.value = progress
+    }, undefined, controller.signal)
+    if (uploadController !== controller) return
     await refresh()
-  } catch {
-    // 进度条上保留失败文案
+  } catch (e) {
+    if (uploadController !== controller) return
+    if (isUploadCancelled(e) || controller.signal.aborted) cancelled = true
+    // 失败文案留在进度条上
   } finally {
-    window.setTimeout(() => { uploadProgress.value = null }, 1600)
+    if (uploadController === controller) {
+      if (cancelled) {
+        uploadProgress.value = null
+        uploadController = null
+      } else {
+        uploadClearTimer = window.setTimeout(() => {
+          if (uploadController === controller) {
+            uploadProgress.value = null
+            uploadController = null
+          }
+        }, 1600)
+      }
+    }
   }
+  if (cancelled && uploadCancelRequested) ElMessage.info('已取消上传')
 }
 
 async function handleInternalDrop(payload: { target: FileNode; paths: string[] }) {
@@ -750,6 +788,8 @@ function handleRefresh() {
 
 onUnmounted(() => {
   resetSearchState()
+  window.clearTimeout(uploadClearTimer)
+  uploadController?.abort()
 })
 </script>
 
@@ -852,6 +892,31 @@ onUnmounted(() => {
   padding: 4px 10px 0;
   font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-64);
+}
+
+.upload-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.upload-progress-head span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-cancel {
+  flex-shrink: 0;
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: var(--aw-primary);
+  font-size: var(--aw-text-fine);
+  cursor: pointer;
 }
 
 .root-create,

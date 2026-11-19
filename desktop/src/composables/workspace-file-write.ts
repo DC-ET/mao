@@ -18,6 +18,18 @@ export interface UploadProgress {
   error: string
 }
 
+/** 用户取消上传。调用方据此跳过成功提示，不把它当成传输失败。 */
+export class UploadCancelledError extends Error {
+  constructor() {
+    super('已取消上传')
+    this.name = 'UploadCancelledError'
+  }
+}
+
+export function isUploadCancelled(error: unknown): boolean {
+  return error instanceof UploadCancelledError
+}
+
 interface Flags {
   force?: boolean
   overwrite?: boolean
@@ -72,6 +84,7 @@ async function withPrompts<T>(op: string, run: (flags: Flags) => Promise<T>, fla
   try {
     return await run(flags)
   } catch (e) {
+    if (isUploadCancelled(e)) throw e
     const err = asError(e)
     if (err.code === 3044 && !flags.force) {
       const forced = await confirmForce(err.message)
@@ -153,9 +166,14 @@ export function uploadWorkspace(
   items: UploadItem[],
   onProgress?: (progress: UploadProgress) => void,
   workspacePath?: string,
+  signal?: AbortSignal,
 ) {
   const label = items.length === 1 ? items[0].relativePath : `${items.length} 个文件`
-  return withPrompts('upload', (flags) => sendUpload(sessionId, dir, items, label, flags, onProgress, workspacePath))
+  return withPrompts('upload', (flags) => {
+    // 覆盖 / 强制写入确认之后会整包重传；确认期间已取消则不再发下一次
+    if (signal?.aborted) return Promise.reject(new UploadCancelledError())
+    return sendUpload(sessionId, dir, items, label, flags, onProgress, workspacePath, signal)
+  })
 }
 
 function sendUpload(
@@ -166,18 +184,38 @@ function sendUpload(
   flags: Flags,
   onProgress?: (progress: UploadProgress) => void,
   workspacePath?: string,
+  signal?: AbortSignal,
 ): Promise<WriteResult> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
+    let settled = false
+    let onAbort = () => {}
+    const cleanup = () => signal?.removeEventListener('abort', onAbort)
+    const settle = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      fn()
+    }
+    const cancel = () => {
+      settle(() => reject(new UploadCancelledError()))
+      try {
+        xhr.abort()
+      } catch {
+        // open 之前 abort 在部分环境会抛，请求本身尚未发出
+      }
+    }
+    onAbort = () => cancel()
     xhr.open('POST', `${API_BASE}/files/workspace-upload`)
     xhr.timeout = 0
     const token = getToken()
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     xhr.upload.onprogress = (event) => {
+      if (settled || signal?.aborted) return
       const percent = event.lengthComputable ? Math.round((event.loaded / event.total) * 100) : 0
       onProgress?.({ label, percent, error: '' })
     }
-    xhr.onload = () => {
+    xhr.onload = () => settle(() => {
       let body: { code?: number; message?: string; data?: WriteResult } = {}
       try {
         body = JSON.parse(xhr.responseText || '{}')
@@ -193,12 +231,13 @@ function sendUpload(
       err.code = body.code
       onProgress?.({ label, percent: 0, error: err.message })
       reject(err)
-    }
-    xhr.onerror = () => {
+    })
+    xhr.onerror = () => settle(() => {
       const err = new Error('上传失败，请重试')
       onProgress?.({ label, percent: 0, error: err.message })
       reject(err)
-    }
+    })
+    xhr.onabort = () => settle(() => reject(new UploadCancelledError()))
     const form = new FormData()
     if (workspacePath) form.append('workspacePath', workspacePath)
     else form.append('sessionId', String(sessionId))
@@ -209,6 +248,12 @@ function sendUpload(
       form.append('relativePath', item.relativePath)
       form.append('file', item.file, item.file.name)
     }
+    if (signal?.aborted) {
+      cancel()
+      return
+    }
+    signal?.addEventListener('abort', onAbort)
+    onProgress?.({ label, percent: 0, error: '' })
     xhr.send(form)
   })
 }
