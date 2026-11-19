@@ -503,8 +503,8 @@ describe('TaskIndexPanel 右键菜单删除路径', () => {
 describe('TaskIndexPanel 宽度阈值', () => {
   const panel = (host: HTMLElement) => host.querySelector('.task-index-panel')!
 
-  it('≥160px 显示「任务」标题（图标 3 个后标题 + 图标可同框）', async () => {
-    mockPanelWidth = 180
+  it('≥148px 显示「任务」标题（窄窗口默认栏宽也能看到）', async () => {
+    mockPanelWidth = 148
     const { host, app } = mountPanel()
     await tick()
     expect(panel(host).classList.contains('header-condensed')).toBe(false)
@@ -512,8 +512,8 @@ describe('TaskIndexPanel 宽度阈值', () => {
     app.unmount()
   })
 
-  it('<160px 隐藏「任务」标题（极窄栏把宽度让给图标）', async () => {
-    mockPanelWidth = 140
+  it('<148px 隐藏「任务」标题（极窄栏把宽度让给图标）', async () => {
+    mockPanelWidth = 147
     const { host, app } = mountPanel()
     await tick()
     expect(panel(host).classList.contains('header-condensed')).toBe(true)
@@ -521,8 +521,8 @@ describe('TaskIndexPanel 宽度阈值', () => {
     app.unmount()
   })
 
-  it('160–199px 仍不显示行内操作按钮（行内阈值独立保持 200px）', async () => {
-    mockPanelWidth = 180
+  it('148–199px 仍不显示行内操作按钮（行内阈值独立保持 200px）', async () => {
+    mockPanelWidth = 148
     store.sessions = [row('1')]
     const { host, app } = mountPanel()
     await tick()
@@ -533,18 +533,18 @@ describe('TaskIndexPanel 宽度阈值', () => {
     app.unmount()
   })
 
-  it('拖窄跨越 160px 时标题实时隐藏（走 ResizeObserver）', async () => {
+  it('拖窄跨越 148px 时标题实时隐藏（走 ResizeObserver）', async () => {
     mockPanelWidth = 280
     const { host, app } = mountPanel()
     await tick()
     expect(q(host, '.panel-title')!.textContent).toBe('任务')
 
-    mockPanelWidth = 140
+    mockPanelWidth = 147
     ;(globalThis as any).__resizeCallbacks.forEach((cb: () => void) => cb())
     await tick()
     expect(q(host, '.panel-title')).toBeNull()
 
-    mockPanelWidth = 200
+    mockPanelWidth = 148
     ;(globalThis as any).__resizeCallbacks.forEach((cb: () => void) => cb())
     await tick()
     expect(q(host, '.panel-title')!.textContent).toBe('任务')

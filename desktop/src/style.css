@@ -157,7 +157,7 @@
 
 @media (max-width: 768px) {
   :root {
-    --aw-session-panel-width: 140px;
+    --aw-session-panel-width: 148px;
     --aw-inspector-width: 140px;
   }
 }

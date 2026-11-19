@@ -789,8 +789,8 @@ const effectivePanelWidth = ref(280)
 const MIN_WIDTH = 120
 const MAX_WIDTH = 500
 const ACTION_BUTTONS_MIN_WIDTH = 200
-/** 头部标题独立阈值：图标由 5 个减为 3 个后，160px 起标题 + 三个图标就能同框放下 */
-const HEADER_TITLE_MIN_WIDTH = 160
+/** 头部标题阈值与窄窗口默认栏宽一致：≥148px 显示「任务」，手机和 ≤768px 窗口一进来就能看到 */
+const HEADER_TITLE_MIN_WIDTH = 148
 
 const showItemActions = computed(() => effectivePanelWidth.value >= ACTION_BUTTONS_MIN_WIDTH)
 const showHeaderTitle = computed(() => effectivePanelWidth.value >= HEADER_TITLE_MIN_WIDTH)
