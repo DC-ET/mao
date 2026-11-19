@@ -81,7 +81,10 @@ describe('chunkBuffer', () => {
     expect(chunks[0].length).toBe(FILE_FETCH_CHUNK_BYTES);
     expect(chunks[1].length).toBe(FILE_FETCH_CHUNK_BYTES);
     expect(chunks[2].length).toBe(8);
-    expect(Buffer.concat(chunks)).toEqual(bytes);
+    // 字节级比较。toEqual 会把约 1MB Buffer 当对象逐项做深度比较，CI 上会顶满 5s 超时。
+    const joined = Buffer.concat(chunks);
+    expect(joined.length).toBe(bytes.length);
+    expect(joined.equals(bytes)).toBe(true);
   });
 
   it('空 buffer 产出空数组（executor 据此静默）', () => {
