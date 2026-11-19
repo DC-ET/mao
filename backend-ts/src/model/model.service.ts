@@ -142,7 +142,7 @@ export class ModelService {
     if (!enabled) {
       throw new BusinessException(
         ErrorCode.PARAM_INVALID.code,
-        'ECP 飞书登录未启用，无法选择「当前用户的 ECP Token」凭证方式',
+        'ECP 飞书登录未启用，无法选择「ECP Token」凭证方式',
       );
     }
   }

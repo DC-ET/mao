@@ -109,12 +109,12 @@
           </el-form-item>
           <el-form-item label="凭证方式">
             <el-radio-group v-model="form.authType">
-              <el-radio value="api_key">固定 API Key</el-radio>
-              <el-radio value="ecp" :disabled="!ecpEnabled">当前用户的 ECP Token</el-radio>
+              <el-radio value="api_key">API Key</el-radio>
+              <el-radio value="ecp" :disabled="!ecpEnabled">ECP Token</el-radio>
             </el-radio-group>
             <span v-if="!ecpEnabled" class="form-hint-inline">
               {{ form.authType === 'ecp'
-                ? 'ECP 飞书登录已关闭：该模型仍是 ECP 模式，可直接改回「固定 API Key」；如需继续使用 ECP 请先在系统配置中启用'
+                ? 'ECP 飞书登录已关闭：该模型仍是 ECP 模式，可直接改回「API Key」；如需继续使用 ECP 请先在系统配置中启用'
                 : '需先在系统配置中启用 ECP 飞书登录' }}
             </span>
             <span v-else-if="form.authType === 'ecp'" class="form-hint-inline">
@@ -126,7 +126,7 @@
             <el-input v-model="form.apiKey" type="password" show-password :placeholder="isEdit ? '已回填当前 Key，可查看或修改；留空则不修改' : '请输入 API Key'" />
           </el-form-item>
           <el-form-item v-else label="API Key">
-            <span class="form-hint-inline">ECP 模式不使用固定 Key；原 Key 保留在库中，切回「固定 API Key」即可继续使用</span>
+            <span class="form-hint-inline">ECP 模式不使用固定 Key；原 Key 保留在库中，切回「API Key」即可继续使用</span>
           </el-form-item>
           <el-form-item v-if="isTextType" label="输入价格">
             <el-input-number

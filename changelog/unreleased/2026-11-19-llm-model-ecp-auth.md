@@ -4,7 +4,7 @@
 
 ### 管理后台
 
-- **模型编辑弹窗新增「凭证方式」单选**：固定 API Key / 当前用户的 ECP Token。ECP 选项仅在系统配置「启用 ECP 飞书登录」打开时可选；ECP 模式无需填写且不校验 API Key（原 Key 保留在库中，切回「固定 API Key」即可继续使用）。模型列表对 ECP 模型显示 `ECP` 标签。
+- **模型编辑弹窗新增「凭证方式」单选**：API Key / ECP Token。ECP 选项仅在系统配置「启用 ECP 飞书登录」打开时可选；ECP 模式无需填写且不校验 API Key（原 Key 保留在库中，切回「API Key」即可继续使用）。模型列表对 ECP 模型显示 `ECP` 标签。
 
 ### 终端 CLI（mao-cli）
 
