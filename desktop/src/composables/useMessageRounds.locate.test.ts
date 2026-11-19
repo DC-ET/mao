@@ -13,6 +13,7 @@ function round(userId: string, stepId: string): MessageRound {
     stepCount: 1,
     durationText: '',
     fileChanges: [],
+    deliveries: [],
   }
 }
 

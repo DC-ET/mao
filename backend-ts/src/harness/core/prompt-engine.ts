@@ -2,6 +2,8 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { hasText } from '../../common/case.js';
 import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
+import { isDingtalkChannelSession } from '../tool/dingtalk-channel-tool.js';
+import { isFeishuChannelSession } from '../tool/feishu-channel-tool.js';
 import { isPageWriteTool } from '../page-tool-kinds.js';
 import type { ChatMessage, ChatRequest, ContentPart, ToolDefinition } from '../llm/chat-request.js';
 import type { PathSandbox } from '../safety/path-sandbox.js';
@@ -24,7 +26,8 @@ import { observePrefix } from './prompt-prefix-monitor.js';
 import type { WorkspaceRulesSnapshotService } from './workspace-rules-snapshot.service.js';
 
 const TASK_TOOL_NAMES = new Set(['task_create', 'task_update', 'task_list', 'task_delete']);
-const WEIXIN_MEDIA_TOOL_NAMES = new Set(['send_wechat_image', 'send_wechat_file']);
+/** 统一发送工具（技术方案 2026-11-18-unified-send-media）：列表里有才注入媒体发送提示。 */
+const SEND_MEDIA_TOOL_NAMES = new Set(['send_image', 'send_file']);
 
 const WEIXIN_DEFAULT_EXPERIENCES = [
   'AGENTS.md文件里面存储了当前用户最核心的信息，该文件的内容的前200行每次都会被加载至对话上下文的系统提示词中，一般情况在你无需主动读取该文件（除非文件已超出200行），你可以在必要的时候编辑或新增该文件的内容（如果文件不存在你可以新建这个文件），但一定要保持文件内容的精简，避免内容过长。',
@@ -524,9 +527,9 @@ export class PromptEngine {
     if (subagentText.length > 0) {
       sections.push({ key: 'subagent', label: '子代理', text: subagentText });
     }
-    const weixinText = this.weixinMediaToolHints(context);
-    if (weixinText.length > 0) {
-      sections.push({ key: 'weixin-media', label: '微信媒体', text: weixinText });
+    const mediaText = this.mediaToolHints(context);
+    if (mediaText.length > 0) {
+      sections.push({ key: 'send-media', label: '发送图片 / 文件', text: mediaText });
     }
     if (embedPageAgent) {
       sections.push({ key: 'embed', label: '嵌入页面', text: embedPageAgentHints(this.hasPageWriteTools(context)) });
@@ -836,15 +839,31 @@ export class PromptEngine {
     return sb;
   }
 
-  private weixinMediaToolHints(context: AgentExecutionContext): string {
-    if (!(context.tools ?? []).some((t) => WEIXIN_MEDIA_TOOL_NAMES.has(t.getName()))) return '';
-    return `## 微信媒体发送
-
-- 当前会话为微信通道。用户请求"把这张图/照片发给我""生成一张图发我"时，使用 send_wechat_image；请求"发一份文件/PDF/报告"时使用 send_wechat_file。
-- 工具只负责发送媒体本身；文字说明通过正常回复给出。
-- 工具返回 {"error": ...} 时，如实向用户说明原因（如账号未绑定、需要先给机器人发一条消息建立会话、文件超限等），不要重复调用。
-
-`;
+  /**
+   * 统一发送工具提示（技术方案 2026-11-18-unified-send-media §7）：描述写「会话里总能看到，
+   * 绑定的通道再推一份」；通道专属的更严限制按会话绑定注入，不写死在工具描述里（D14）。
+   */
+  private mediaToolHints(context: AgentExecutionContext): string {
+    if (!(context.tools ?? []).some((t) => SEND_MEDIA_TOOL_NAMES.has(t.getName()))) return '';
+    const base = `- 用户请求"把这张图/照片发给我""发一份文件/报告给我"时，使用 send_image / send_file。发送后图片和文件出现在这条对话的回复下方；文字说明仍通过正常回复给出。
+- 工具返回 {"error": ...} 时，如实向用户说明原因（发送失败 / 部分成功），不要盲目重复调用：结果里已有 delivery，或 channelStatus 为 sent 的那一侧已经完成。`;
+    if (context.projectKey === WEIXIN_PROJECT_KEY) {
+      return `${base}
+- 当前会话绑定了微信：微信侧仅支持 PNG/JPG/JPEG/GIF/WebP，大小不超过 20MB（文件同为 20MB）。
+- 不符合微信限制时对话里仍能看到，微信不会收到；不要改用其他方式重发。`;
+    }
+    if (isDingtalkChannelSession(context.projectKey, context.workspace)) {
+      return `${base}
+- 当前会话绑定了钉钉：图片仅支持 PNG/JPG/JPEG/GIF/BMP 且不超过 20MB；文件扩展名仅 xlsx/pdf/zip/rar/doc/docx 且不超过 20MB。
+- 不符合钉钉限制时对话里仍能看到，钉钉不会收到；不要改用其他方式重发。`;
+    }
+    if (isFeishuChannelSession(context.projectKey, context.workspace)) {
+      return `${base}
+- 当前会话绑定了飞书：图片仅支持 PNG/JPG/JPEG/GIF/WebP 且不超过 10MB，文件不超过 30MB。
+- 不符合飞书限制时对话里仍能看到，飞书不会收到；不要改用其他方式重发。`;
+    }
+    return `${base}
+- 当前会话没有绑定外部通道：图片和文件只出现在这条对话里，文字仍用正常回复。`;
   }
 
   /**

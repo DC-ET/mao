@@ -13,6 +13,9 @@ import { CliError, EXIT } from '../util/exit-codes';
 export const DAEMON_ROUTED_EVENTS = new Set([
   'tool_execute',
   'file_op_request',
+  // 正文图片 / 发送字节的委托读取：只读工作区文件、失败静默，不进审批也不进工具时间线
+  'file_fetch',
+  'delivery_fetch',
   'skill_sync_required',
   'mcp_sync_required',
   'tool_approval_resolved',

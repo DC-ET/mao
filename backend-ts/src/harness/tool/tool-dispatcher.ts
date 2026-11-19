@@ -73,24 +73,23 @@ const SERVER_ONLY_TOOLS = new Set([
   // 用户消息文件化（技术方案 2026-10-29）：两种模式都由服务端读消息并决定落点，
   // LOCAL 会话的落盘再经 LocalToolExecutor 委托桌面端 write_local_text_file。
   'dump_user_messages',
-  'send_wechat_image', 'send_wechat_file',
+  // 统一发送图片 / 文件（2026-11-18-unified-send-media）：SERVER_ONLY，LOCAL 不再下发执行端
+  'send_image', 'send_file',
   // mcp_describe 是纯本地查询（读会话缓存清单），两种执行模式都不进 LOCAL 委托分支。
   'mcp_describe',
   // 自定义 HTTP 工具（2026-10-20 方案二）：后端 fetch 直连，全模式无审批门，
-  // 与 web_search / send_wechat_image 同口径；SSRF 判定是这条路径上的服务端强制闸口。
+  // 与 web_search / send_image 同口径；SSRF 判定是这条路径上的服务端强制闸口。
   'http_describe', 'http_call',
 ]);
 const WRITE_TOOLS = new Set(['write_file', 'edit_file']);
 /**
  * 消费 SendBytesSupport（loadSendFileBytes → read_bytes）的工具全集（2026-11-07
  * 复合容器方案 §5.6）：这些工具在容器用户的执行路径上需要按轮快照的 agentId 路由
- * read_bytes，分布在 SERVER_ONLY 分支（send_wechat_* / edit_image）与兜底分支
- * （feishu/dingtalk 发送四件套），两个分支统一经 dispatchWithRoundAgent 注入。
+ * read_bytes。统一发送图片 / 文件后全部落在 SERVER_ONLY 分支（send_image / send_file /
+ * edit_image），仍经 dispatchWithRoundAgent 注入。
  */
 const SEND_BYTES_TOOLS = new Set([
-  'send_wechat_image', 'send_wechat_file',
-  'feishu_send_image', 'feishu_send_file',
-  'dingtalk_send_image', 'dingtalk_send_file',
+  'send_image', 'send_file',
   'edit_image',
 ]);
 
@@ -101,8 +100,7 @@ const SEND_BYTES_TOOLS = new Set([
  */
 const RUNTIME_SCOPED_TOOLS = new Set<string>([
   'dump_user_messages', 'open_web_page', 'generate_image', 'edit_image',
-  'feishu_send_image', 'feishu_send_file', 'dingtalk_send_image', 'dingtalk_send_file',
-  'send_wechat_image', 'send_wechat_file',
+  'send_image', 'send_file',
 ]);
 
 export class IllegalArgumentException extends Error {
@@ -317,7 +315,7 @@ export class ToolDispatcher {
       const tool = this.toolRegistry.getTool(toolName);
       if (tool) {
         // 产物/缓存类工具按运行身份寻址（§5.5）：dump_user_messages、open_web_page、
-        // generate_image、edit_image、send_wechat_* 均在 SERVER_ONLY 分支。
+        // generate_image、edit_image、send_image / send_file 均在 SERVER_ONLY 分支。
         const raw = await this.dispatchWithRoundAgent(toolName, runtimeUserId, sessionId, routeAgentId,
           () => callTool(tool, argumentsJson, sessionId, runtimeToolUserId, workspace));
         return { raw, llmVerdict: null };

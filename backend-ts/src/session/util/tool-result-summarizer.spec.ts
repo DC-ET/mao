@@ -118,6 +118,21 @@ describe('tool-result-summarizer failure suffix (B 类: 裸 (失败) → 带原�
       .toBe('发送钉钉图片 (失败)');
   });
 
+  it('send_image / send_file 四态：成功 / 部分成功 / 失败 / 执行中（result=null 不提前写成功）', () => {
+    expect(ToolResultSummarizer.summarize('send_image', JSON.stringify({ image: 'images/photo.png' }), JSON.stringify({ success: true, filename: 'photo.png' })))
+      .toBe('发送图片: photo.png (成功)');
+    expect(ToolResultSummarizer.summarize('send_image', JSON.stringify({ image: 'images/photo.png' }), JSON.stringify({ success: true, filename: 'photo.png', error: '已放入当前对话，飞书发送失败：图片超过 10MB 上限' })))
+      .toBe('发送图片: photo.png (部分成功: 已放入当前对话，飞书发送失败：图片超过 10MB 上限)');
+    expect(ToolResultSummarizer.summarize('send_file', JSON.stringify({ file: '/tmp/report.pdf' }), JSON.stringify({ success: false, filename: 'report.pdf', error: '文件过大' })))
+      .toBe('发送文件: report.pdf (失败: 文件过大)');
+    expect(ToolResultSummarizer.summarize('send_file', JSON.stringify({ file: '/tmp/report.pdf' }), JSON.stringify({ error: '文件不存在：/tmp/report.pdf' })))
+      .toBe('发送文件: /tmp/report.pdf (失败: 文件不存在：/tmp/report.pdf)');
+    // 工具执行中：进度卡传 result=null，只显示名称，不能写「成功」
+    expect(ToolResultSummarizer.summarize('send_image', JSON.stringify({ image: 'images/photo.png' }), null))
+      .toBe('发送图片: images/photo.png');
+    expect(ToolResultSummarizer.summarize('send_file', null, null)).toBe('发送文件');
+  });
+
   it('feishu 三工具失败带原因；success=false 无 error 兜底裸 (失败)', () => {
     for (const toolName of ['feishu_download_file', 'feishu_send_image', 'feishu_send_file'] as const) {
       const labels: Record<string, string> = {

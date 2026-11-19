@@ -8,7 +8,7 @@ const assert = require('node:assert')
 const path = require('path')
 const os = require('os')
 const fs = require('fs')
-const { resolveContainedWorkspacePath, readWorkspaceBytes } = require('./localWorkspaceRead.cjs')
+const { resolveContainedWorkspacePath, readWorkspaceBytes, readDeliveryWorkspaceBytes } = require('./localWorkspaceRead.cjs')
 
 const WORKSPACE = path.join(os.tmpdir(), 'mao-local-workspace-read-test')
 
@@ -112,5 +112,64 @@ test('父级目录 symlink 指向外部时穿出被拒（realpath containment）
   } finally {
     if (linked) fs.rmSync(path.join(WORKSPACE, 'screenshots', 'link'), { force: true })
     fs.rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+// ── delivery_fetch（统一发送媒体方案 §6.2）：相对或 workspace 内绝对路径、普通文件、非符号链接、maxBytes ──
+
+test('delivery：相对路径 / workspace 内绝对路径都读到字节', () => {
+  const rel = readDeliveryWorkspaceBytes(WORKSPACE, 'screenshots/a.png', { maxBytes: 1024 })
+  assert.strictEqual(rel.error, undefined)
+  assert.deepStrictEqual([...rel.bytes], [0x89, 0x50, 0x4e, 0x47])
+  const absolute = path.join(WORKSPACE, 'screenshots', 'a.png')
+  const abs = readDeliveryWorkspaceBytes(WORKSPACE, absolute, { maxBytes: 1024 })
+  assert.strictEqual(abs.error, undefined)
+  assert.deepStrictEqual([...abs.bytes], [0x89, 0x50, 0x4e, 0x47])
+})
+
+test('delivery：workspace 外绝对路径 / 越界 / 反斜杠 / NUL 一律拒绝', () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-delivery-outside-'))
+  try {
+    fs.writeFileSync(path.join(outside, 'x.pdf'), 'x')
+    for (const bad of [
+      path.join(outside, 'x.pdf'),
+      '../escape.png',
+      'a\\b.png',
+      'a\0b.png',
+      '',
+    ]) {
+      const resolved = readDeliveryWorkspaceBytes(WORKSPACE, bad, { maxBytes: 1024 })
+      assert.strictEqual(typeof resolved.error, 'string', `应拒绝：${JSON.stringify(bad)}`)
+    }
+  } finally {
+    fs.rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+test('delivery：目标本身是符号链接被拒（不跟到目标）', () => {
+  const link = path.join(WORKSPACE, 'screenshots', 'link.png')
+  try {
+    fs.symlinkSync(path.join(WORKSPACE, 'screenshots', 'a.png'), link, 'file')
+  } catch {
+    return // Windows 无符号链接权限时跳过
+  }
+  try {
+    assert.strictEqual(readDeliveryWorkspaceBytes(WORKSPACE, 'screenshots/link.png').error, '不接受符号链接')
+  } finally {
+    fs.rmSync(link, { force: true })
+  }
+})
+
+test('delivery：帧内 maxBytes 作为读取上限（图片 20MB 场景不再按 30MB 读整份）', () => {
+  const big = path.join(WORKSPACE, 'screenshots', 'big.bin')
+  fs.writeFileSync(big, Buffer.alloc(8, 1))
+  try {
+    const capped = readDeliveryWorkspaceBytes(WORKSPACE, 'screenshots/big.bin', { maxBytes: 4 })
+    assert.match(capped.error, /文件过大/)
+    const ok = readDeliveryWorkspaceBytes(WORKSPACE, 'screenshots/big.bin', { maxBytes: 8 })
+    assert.strictEqual(ok.error, undefined)
+    assert.strictEqual(ok.size, 8)
+  } finally {
+    fs.rmSync(big, { force: true })
   }
 })

@@ -12,6 +12,8 @@ export const LOCAL_CLIENT_OFFLINE_TOOL_ERROR = '本地执行端未连接，请�
 
 /** 本地执行端未连接时文件读取（file_fetch）的失败回执。与工具文案分开，图片下载场景用户可见。 */
 export const LOCAL_EXECUTOR_OFFLINE_FILE_ERROR = '本地执行端未连接，无法读取本地文件';
+/** 发送字节委托读取的离线文案：旧执行端静默忽略帧与真离线不可区分，合并成一句（§6.2 评审补充）。 */
+export const LOCAL_EXECUTOR_OFFLINE_DELIVERY_ERROR = '执行端不在线或版本过旧，无法读取本机文件';
 
 export interface PendingLocalToolRequest {
   requestId: string | null;
@@ -207,12 +209,31 @@ export class LocalToolSessionRegistry {
   }
 
   /**
+   * LOCAL 发送字节委托读取（技术方案 2026-11-18-unified-send-media §6）：向绑定执行端
+   * 下发 `delivery_fetch`，复用工具委托的全套簿记；分片由 LocalDeliveryFetchService 拼装。
+   * 与工具调用无关：无审批、无工具卡、不落库。
+   */
+  async sendDeliveryRequest(
+    sessionId: number,
+    filePath: string,
+    workspace: string | null | undefined,
+    maxBytes: number,
+  ): Promise<PendingLocalToolRequest> {
+    return this.dispatchRequest(
+      sessionId,
+      'delivery_fetch',
+      LOCAL_EXECUTOR_OFFLINE_DELIVERY_ERROR,
+      (requestId) => ({ requestId, path: filePath, workspace: workspace ?? '', maxBytes }),
+    );
+  }
+
+  /**
    * 工具 / 文件读取委托的公共下发路径：目标解析 → 可达性判定 → requestId 簿记 →
    * 定向（绑定设备）或用户级广播（未绑定）投递 → 投递落空立即回错。
    */
   private async dispatchRequest(
     sessionId: number | null,
-    eventType: 'tool_execute' | 'file_fetch',
+    eventType: 'tool_execute' | 'file_fetch' | 'delivery_fetch',
     offlineError: string,
     buildPayload: (requestId: string) => Record<string, unknown>,
   ): Promise<PendingLocalToolRequest> {

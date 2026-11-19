@@ -86,6 +86,13 @@ function fillSuggestedQuestion(content: string) {
 /** header 副标题：运行态优先，其次连接态（连接指示灯颜色只表示已鉴权） */
 const statusText = computed(() => (running.value ? '正在处理…' : props.connected ? '在线' : '连接中…'));
 
+/** 投递条文件大小（与桌面 ChatDeliveryBar 同口径的粗粒度展示）。 */
+function formatDeliverySize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+
 /** 距底部阈值内才自动跟随，避免打断用户上滚回看 */
 const FOLLOW_THRESHOLD_PX = 40;
 
@@ -209,6 +216,32 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
               <span /><span /><span />
             </div>
           </template>
+          <!-- 发送媒体副本（统一发送媒体方案 2026-11-18 D6）：回复下方、折叠区之外，与桌面端一致 -->
+          <div v-if="round.deliveries.length > 0" class="mao-deliveries">
+            <template v-for="d in round.deliveries" :key="d.url">
+              <a
+                v-if="d.kind === 'image'"
+                class="mao-delivery mao-delivery--image"
+                :href="d.url"
+                target="_blank"
+                rel="noopener"
+                :title="d.filename"
+              >
+                <img :src="d.url" :alt="d.filename" loading="lazy" />
+              </a>
+              <a
+                v-else
+                class="mao-delivery mao-delivery--file"
+                :href="d.url"
+                target="_blank"
+                rel="noopener"
+                :title="d.filename"
+              >
+                <span class="mao-delivery__name">{{ d.filename }}</span>
+                <span v-if="d.bytes != null" class="mao-delivery__size">{{ formatDeliverySize(d.bytes) }}</span>
+              </a>
+            </template>
+          </div>
         </div>
       </template>
       <div v-if="isEmpty" class="mao-empty">

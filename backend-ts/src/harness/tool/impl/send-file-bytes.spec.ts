@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { mcpWhitelistEnv } from '../../mcp/mcp-client-manager.js';
 import { loadSendFileBytes, readLocalBytes } from './send-file-bytes.js';
-import { fetchBytesWithLimits } from './fetch-bytes.js';
+import { fetchBytesWithContentType } from './fetch-bytes.js';
 import { StrictPathResolver } from '../../safety/strict-path.js';
 import { SecurityException } from '../../safety/path-sandbox.js';
 import { useTmpDir } from '../../../testing/tmp-dir.js';
@@ -11,6 +11,7 @@ import { join } from 'node:path';
 // URL 源不发真实网络请求：只验证「预检不误拦 URL、也不走容器」的顺序不变量。
 vi.mock('./fetch-bytes.js', () => ({
   fetchBytesWithLimits: vi.fn(async () => Buffer.from('url-bytes')),
+  fetchBytesWithContentType: vi.fn(async () => ({ bytes: Buffer.from('url-bytes'), contentType: 'image/png' })),
 }));
 
 describe('mcp stdio env whitelist', () => {
@@ -131,7 +132,7 @@ describe('send-file bytes loading', () => {
       'https://cdn.example.com/a.png', sandbox, support, { userId: 67, sessionId: 11, workspace }, 1024,
     );
     expect(bytes.toString()).toBe('url-bytes');
-    expect(vi.mocked(fetchBytesWithLimits)).toHaveBeenCalledWith('https://cdn.example.com/a.png', 1024);
+    expect(vi.mocked(fetchBytesWithContentType)).toHaveBeenCalledWith('https://cdn.example.com/a.png', 1024);
     // URL 不应落到容器读取分支
     expect(readBytes).not.toHaveBeenCalled();
   });

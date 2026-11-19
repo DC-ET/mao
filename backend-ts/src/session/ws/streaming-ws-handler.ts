@@ -147,6 +147,9 @@ export interface WsHandlerDeps {
   localFileFetchService: {
     handleChunk(sessionId: number, requestId: string, frame: LocalFileFetchChunkFrame, socketId?: string | null): void;
   };
+
+  /** LOCAL 发送字节委托读取（2026-11-18-unified-send-media §6）：delivery_fetch_result 分片拼装。 */
+  localDeliveryFetchService: { handleChunk(sessionId: number, requestId: string, frame: { seq?: unknown; total?: unknown; data?: unknown }, socketId?: string | null): void };
   /** LOCAL 会话文件浏览代理（技术方案 2026-11-17）：file_op_result 入站完成 + 断线清理。 */
   remoteFileProxyService?: {
     complete(requestId: string, ok: boolean, data: unknown): void;
@@ -681,6 +684,7 @@ export class StreamingWsHandler {
       case 'tool_result': await this.handleToolResult(userId, root); break;
       case 'tool_error': await this.handleToolError(userId, root); break;
       case 'file_fetch_result': await this.handleFileFetchResult(session, userId, root); break;
+      case 'delivery_fetch_result': await this.handleDeliveryFetchResult(session, userId, root); break;
       case 'file_op_result': await this.handleFileOpResult(userId, root); break;
       case 'page_tool_result': await this.handlePageToolResult(session, userId, root); break;
       case 'tool_approval': await this.handleToolApproval(session, userId, root); break;
@@ -1279,6 +1283,19 @@ export class StreamingWsHandler {
       total: root.total,
       data: root.data,
       error: root.error,
+    }, session.id);
+  }
+
+  /** LOCAL 发送字节委托读取（2026-11-18-unified-send-media §6）：执行端分片回传，拼装由 LocalDeliveryFetchService 负责。 */
+  private async handleDeliveryFetchResult(session: WsSocket, userId: number, root: Record<string, unknown>): Promise<void> {
+    const sessionId = this.getLong(root, 'sessionId');
+    const requestId = typeof root.requestId === 'string' ? root.requestId : null;
+    if (sessionId == null || requestId == null) return;
+    if (!(await this.requireOwnedSession(userId, sessionId))) return;
+    this.deps.localDeliveryFetchService.handleChunk(sessionId, requestId, {
+      seq: root.seq,
+      total: root.total,
+      data: root.data,
     }, session.id);
   }
 

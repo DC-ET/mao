@@ -44,9 +44,10 @@ import {
   CreateScheduledTaskTool, DeleteScheduledTaskTool, ListScheduledTasksTool, UpdateScheduledTaskTool,
 } from './impl/scheduled-task-tools.js';
 import { CreateSignalWatcherTool, ListSignalWatchersTool, type SignalWatcherServiceRef } from './impl/signal-watcher-tools.js';
-import { SendWechatFileTool, SendWechatImageTool } from './impl/wechat-tools.js';
-import { FeishuDownloadFileTool, SendFeishuFileTool, SendFeishuImageTool } from './impl/feishu-tools.js';
-import { SendDingtalkFileTool, SendDingtalkImageTool, type DingtalkMediaSendSupport } from './impl/dingtalk-tools.js';
+import { FeishuDownloadFileTool } from './impl/feishu-tools.js';
+import { SendImageTool, SendFileTool, WechatSendStrategy, FeishuSendStrategy, DingtalkSendStrategy } from './impl/send-media-tool.js';
+import type { LocalDeliveryFetchService } from '../local/delivery-fetch.service.js';
+import type { DingtalkMediaSendSupport } from './impl/dingtalk-tools.js';
 import type { SendBytesSupport } from './impl/send-file-bytes.js';
 import { createPageTools } from './impl/page-tools.js';
 import type { EmbedPageToolRegistry } from '../embed-page-tool-registry.js';
@@ -91,9 +92,10 @@ export interface DefaultToolRegistryDeps {
   getUploadBaseUrl?: () => Promise<string>;
   /** servlet contextPath（默认 /api）：图片产物 image_url 派生静态 origin 用。 */
   uploadContextPath?: string;
-  weixinToolSupport: WeixinMediaToolSupport;
-  weixinUploadService: WeixinMediaUploadService;
-  weixinSendService: WeixinSendService;
+  /** 微信通道策略（统一发送工具，2026-11-18-unified-send-media）；测试装配可缺省。 */
+  weixinToolSupport?: WeixinMediaToolSupport | null;
+  weixinUploadService?: WeixinMediaUploadService | null;
+  weixinSendService?: WeixinSendService | null;
   feishuToolSupport: FeishuChannelToolSupport;
   feishuMediaDownloader: FeishuMediaDownloader;
   feishuGroupMediaLookup: FeishuGroupMediaLookup;
@@ -103,6 +105,8 @@ export interface DefaultToolRegistryDeps {
   dingtalkMediaSendSupport: DingtalkMediaSendSupport;
   /** 外部发送工具的容器读字节支持（docker 模式下本地路径经容器读取，§5.8）。可选注入。 */
   sendBytesSupport?: SendBytesSupport | null;
+  /** LOCAL 发送字节委托读取（2026-11-18-unified-send-media §6）；未装配时 LOCAL 本机路径发送直接失败。 */
+  localDeliveryFetchService?: LocalDeliveryFetchService | null;
   definitionRegistry: AgentDefinitionRegistry;
   harnessService: HarnessService;
   agentLoop: AgentLoop;
@@ -184,13 +188,29 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
       new ListSignalWatchersTool(deps.getSignalWatcherService, deps.sessionService),
       new CreateSignalWatcherTool(deps.getSignalWatcherService, deps.sessionService),
     ] : []),
-    new SendWechatImageTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService, deps.sendBytesSupport),
-    new SendWechatFileTool(deps.pathSandbox, deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService, deps.sendBytesSupport),
+    // 统一发送图片 / 文件（技术方案 2026-11-18-unified-send-media）：六个通道发送工具收编为
+    // send_image / send_file，通道推送逻辑移进策略（send-media-tool.ts），旧类删除。
+    new SendImageTool(
+      deps.pathSandbox, deps.sessionService,
+      { uploadDir: deps.uploadDir, getUploadBaseUrl: deps.getUploadBaseUrl ?? (async () => ''), uploadContextPath: deps.uploadContextPath },
+      deps.weixinToolSupport != null && deps.weixinUploadService != null && deps.weixinSendService != null
+        ? new WechatSendStrategy(deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService) : null,
+      deps.feishuMediaSendSupport != null ? new FeishuSendStrategy(deps.feishuMediaSendSupport) : null,
+      deps.dingtalkMediaSendSupport != null ? new DingtalkSendStrategy(deps.dingtalkMediaSendSupport) : null,
+      deps.sendBytesSupport,
+      deps.localDeliveryFetchService ?? null,
+    ),
+    new SendFileTool(
+      deps.pathSandbox, deps.sessionService,
+      { uploadDir: deps.uploadDir, getUploadBaseUrl: deps.getUploadBaseUrl ?? (async () => ''), uploadContextPath: deps.uploadContextPath },
+      deps.weixinToolSupport != null && deps.weixinUploadService != null && deps.weixinSendService != null
+        ? new WechatSendStrategy(deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService) : null,
+      deps.feishuMediaSendSupport != null ? new FeishuSendStrategy(deps.feishuMediaSendSupport) : null,
+      deps.dingtalkMediaSendSupport != null ? new DingtalkSendStrategy(deps.dingtalkMediaSendSupport) : null,
+      deps.sendBytesSupport,
+      deps.localDeliveryFetchService ?? null,
+    ),
     new FeishuDownloadFileTool(deps.feishuToolSupport, deps.feishuGroupMediaLookup, deps.feishuMediaDownloader, deps.feishuMaxInboundFileBytes, deps.feishuMessageDetailFetcher),
-    new SendFeishuImageTool(deps.pathSandbox, deps.feishuMediaSendSupport, deps.sendBytesSupport),
-    new SendFeishuFileTool(deps.pathSandbox, deps.feishuMediaSendSupport, deps.sendBytesSupport),
-    new SendDingtalkImageTool(deps.pathSandbox, deps.dingtalkMediaSendSupport, deps.sendBytesSupport),
-    new SendDingtalkFileTool(deps.pathSandbox, deps.dingtalkMediaSendSupport, deps.sendBytesSupport),
     new SpawnSubagentTool(deps.backgroundSubagentManager, deps.definitionRegistry),
     new SubagentFollowupTool(deps.backgroundSubagentManager),
     new CheckSubagentTool(deps.backgroundSubagentManager),

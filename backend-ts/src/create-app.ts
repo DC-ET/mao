@@ -127,6 +127,7 @@ import { SessionTodoMapper } from './harness/todo/session-todo.mapper.js';
 import { LocalSkillRegistry } from './harness/skill/local-skill-registry.js';
 import { LocalToolSessionRegistry } from './harness/local/local-tool-session-registry.js';
 import { LocalFileFetchService } from './harness/local/local-file-fetch.service.js';
+import { LocalDeliveryFetchService } from './harness/local/delivery-fetch.service.js';
 import { RemoteFileProxyService } from './file/remote-file-proxy.service.js';
 import { LocalToolExecutor } from './harness/local/local-tool-executor.js';
 import { AgentDefinitionRegistry } from './harness/delegate/agent-definition-registry.js';
@@ -695,6 +696,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const localToolSessions = new LocalToolSessionRegistry(wsRegistry, sessionMap);
   // LOCAL 正文图片按需委托读取（方案 2026-11-18）：file routes 的 workspace-download 分流与 WS file_fetch_result 拼装共用
   const localFileFetch = new LocalFileFetchService(localToolSessions);
+  // LOCAL 发送字节委托读取（2026-11-18-unified-send-media §6）：send_image/send_file 在 LOCAL 会话
+  // 读不到本机文件时向执行端拉取；分片拼装复用工具委托簿记。
+  const localDeliveryFetch = new LocalDeliveryFetchService(localToolSessions);
   // LOCAL 会话文件树远程代理（技术方案 2026-11-17）：目标解析复用工具委托注册表，投递走注册表的
   // client-type 感知 helper（D11）。同一实例同时供文件路由（HTTP 入口）与 WS handler（回包入口）使用。
   const remoteFileProxy = new RemoteFileProxyService(wsRegistry, localToolSessions);
@@ -851,7 +855,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     userRepo, ecpInjector, larkUatInjector, settingService, runtimeResolver, modelService,
     wechatBridges, feishuMessageService, feishuMessageRepository, getFeishuClient,
     sendBytesBridge, dingtalkMediaHolder, definitionRegistry, holder, subagentMapper,
-    localToolSessions, visibility, backgroundSubagentManager,
+    localToolSessions, localDeliveryFetch, visibility, backgroundSubagentManager,
     messageRepo, compactionSvc, embedPageToolRegistry, mcpToolsRegistry, routingMcpClient,
     httpToolService, httpApiExecutor, llmAdapter, promptEngine, contextManager,
     compactionService, compactionArchiveService, compactionConfig, historyLoader,
@@ -909,7 +913,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const openCallSettle: { current: ((callLogId: number, phase: 'COMPLETED' | 'FAILED' | 'CANCELLED', queueWaitMs: number | null, messageId: number | null) => Promise<void>) | null } = { current: null };
   const wsHandler = assembleWsHandler({
     cfg, jwt, wsRegistry, sessionTitleService, harnessService: harness, agentLoop, compactionSignalBus, sessionService, taskTerminal,
-    messageQueueService, embedPageToolRegistry, localToolSessions, localFileFetch, remoteFileProxy, askUserQuestionsRegistry,
+    messageQueueService, embedPageToolRegistry, localToolSessions, localFileFetch, localDeliveryFetch, remoteFileProxy, askUserQuestionsRegistry,
     treeSignalPublisher, approvalRegistry, approvalRuleService, activityService,
     approvalEscalationSuppressor: {
       suppressByRequest: (sessionId, requestId) =>

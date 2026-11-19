@@ -46,6 +46,8 @@ const TOOL_ICON_MAP: Record<string, Component> = {
   open_web_page: Link,
   generate_image: Picture,
   edit_image: Picture,
+  send_image: Picture,
+  send_file: Document,
   send_wechat_image: Picture,
   send_wechat_file: Document,
   create_scheduled_task: Calendar,

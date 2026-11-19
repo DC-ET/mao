@@ -7,6 +7,8 @@ export interface FeishuSendTarget {
   receiveIdType: 'union_id' | 'open_id' | 'chat_id';
   /** 可选：回复目标消息 ID。设置时用 message.reply() 发送（话题群中落入当前话题），否则回退 message.create()。 */
   replyMessageId?: string;
+  /** 解析命中的会话 id（边路回落到父会话时是父会话 id）；p2p 消息落库用，缺失按调用方 sessionId。 */
+  sessionId?: number;
 }
 
 /**

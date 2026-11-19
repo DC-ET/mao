@@ -15,6 +15,7 @@ function round(overrides: Partial<MessageRound> & Pick<MessageRound, 'userMessag
     stepCount: 0,
     durationText: '',
     fileChanges: [],
+    deliveries: [],
     ...overrides,
   }
 }

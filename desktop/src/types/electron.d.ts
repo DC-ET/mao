@@ -377,6 +377,8 @@ interface ElectronAPI {
   localReadBytes(args: { path: string }): Promise<{ bytes?: Uint8Array; size?: number; error?: string }>
   /** file_fetch 委托读取（方案 2026-11-18）：workspace + 相对路径，主进程 containment 校验后读字节。 */
   localReadWorkspaceBytes?(args: { workspace: string; path: string }): Promise<{ bytes?: Uint8Array; size?: number; error?: string }>
+  /** delivery_fetch 委托读取（统一发送媒体方案 §6.2）：workspace + 相对或 workspace 内绝对路径；maxBytes 为帧内副本上限。 */
+  localDeliveryReadFile?(args: { workspace: string; path: string; maxBytes?: number }): Promise<{ bytes?: Uint8Array; size?: number; error?: string }>
   localWriteFile(args: any): Promise<any>
   localEditFile(args: any): Promise<any>
   listWorkspaceFiles(workspace: string, filter?: string, limit?: number): Promise<WorkspaceFile[]>

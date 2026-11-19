@@ -86,6 +86,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   localReadBytes: (args) => ipcRenderer.invoke('local-read-bytes', args),
   // file_fetch 委托读取（方案 2026-11-18）：workspace + 相对路径，主进程 containment 校验
   localReadWorkspaceBytes: (payload) => ipcRenderer.invoke('local-read-workspace-bytes', payload),
+  // delivery_fetch 委托读取（统一发送媒体方案）：workspace + 相对或 workspace 内绝对路径
+  localDeliveryReadFile: (payload) => ipcRenderer.invoke('local-delivery-read-bytes', payload),
   localWriteFile: (args) => ipcRenderer.invoke('local-write-file', args),
   localEditFile: (args) => ipcRenderer.invoke('local-edit-file', args),
 

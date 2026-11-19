@@ -77,6 +77,7 @@
         :changes="round.fileChanges"
         mode="history"
       />
+      <ChatDeliveryBar :deliveries="round.deliveries" />
       <!-- 压缩分隔线标记轮次边界：必须排在本轮回复与它的文件变更之后，
            插在中间会把一条回复和它自己的变更割开，读起来像分隔线属于下面那块面板。 -->
       <CompactionMarker
@@ -106,6 +107,7 @@
         :changes="round.fileChanges"
         mode="history"
       />
+      <ChatDeliveryBar :deliveries="round.deliveries" />
       <CompactionMarker
         v-for="ev in markersAfter(round.finalReply?.id)"
         :key="'c-' + ev.id"
@@ -153,6 +155,8 @@
       />
     </template>
     <!-- 执行中不展示文件变更；刷新后 API 虽会带回已落库变更，也须等轮次完成后再展示 -->
+    <!-- 发送媒体副本随 tool_call_result 实时到达，进行中轮次即画（§7.1） -->
+    <ChatDeliveryBar :deliveries="activeRound.deliveries" />
   </template>
 
   <!-- 无轮次时：直接渲染所有消息 -->
@@ -193,6 +197,7 @@ import { formatDateTime } from '../../utils/datetime'
 import { userAskExcerpt } from '../../utils/selection-quote'
 import MessageBubble from './MessageBubble.vue'
 import FileChangePanel from './FileChangePanel.vue'
+import ChatDeliveryBar from './ChatDeliveryBar.vue'
 import CompactionMarker from './CompactionMarker.vue'
 
 const props = withDefaults(defineProps<{

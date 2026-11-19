@@ -69,6 +69,18 @@ export interface Citation {
   title: string
 }
 
+/**
+ * 发送媒体会话副本（统一发送媒体方案 2026-11-18 D5/D6）：send_image / send_file 工具结果里的
+ * delivery，从本轮工具调用收集后画在该轮回复下方。url 为 uploads 副本绝对地址。
+ */
+export interface SendDelivery {
+  kind: 'image' | 'file'
+  url: string
+  mime?: string
+  bytes?: number
+  filename: string
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system'

@@ -507,8 +507,8 @@ describe('BackgroundSubagentManager.buildSubContext', () => {
     ctx.tools = [
       { getName: () => 'read_file' } as Tool,
       { getName: () => 'ask_user_questions' } as Tool,
-      { getName: () => 'dingtalk_send_image' } as Tool,
-      { getName: () => 'dingtalk_send_file' } as Tool,
+      { getName: () => 'send_image' } as Tool,
+      { getName: () => 'send_file' } as Tool,
       { getName: () => 'spawn_subagent' } as Tool,
     ];
     const manager = new BackgroundSubagentManager({

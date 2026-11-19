@@ -21,7 +21,7 @@ import { TokenEstimator } from './token-estimator.js';
 import { UpdateScheduledTaskTool, DeleteScheduledTaskTool } from '../tool/impl/scheduled-task-tools.js';
 import { BackgroundTaskManager } from './background-task-manager.js';
 import { ShellSessionTool } from '../tool/impl/shell-session-tool.js';
-import { SendWechatFileTool } from '../tool/impl/wechat-tools.js';
+import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
 
 async function flush(): Promise<void> {
   for (let i = 0; i < 5; i++) await Promise.resolve();
@@ -168,25 +168,26 @@ describe('Logic Bug Audit 2026-10-29', () => {
     });
   });
 
-  describe('BUG-5: wechat fileName 空串未兜底（?? 不处理空串）', () => {
-    it('send_wechat_file 的 fileName 不应为空串', async () => {
-      const pathSandbox = { resolveLenient: vi.fn((_p: string, ws: string | null) => _p.startsWith('/') ? _p : join(ws ?? '', _p)) };
+  describe('BUG-5: 发送工具 filename 空串兜底（原 wechat fileName 审计，2026-11-19 收编为 send_file）', () => {
+    it('send_file 的 filename 显式空串应回落 basename，不给通道空文件名', async () => {
+      const { SendFileTool } = await import('../tool/impl/send-media-tool.js');
       const support = { resolveAccount: vi.fn(async () => ({ accountId: 'acc', wxUserId: 'wx' })) };
       const upload = { uploadFile: vi.fn(async () => ({ mediaId: 'fid' })) };
       const send = { sendFile: vi.fn(async () => true) };
-      const fileTool = new SendWechatFileTool(pathSandbox as never, support, upload, send);
-
+      const { WechatSendStrategy } = await import('../tool/impl/send-media-tool.js');
       const dir = useTmpDir('wx-file-name-bug-');
       writeFileSync(join(dir, 'note.txt'), 'hello');
-      // resolveLenient 返回真实文件路径（loadSendFileBytes 能读到文件）
-      pathSandbox.resolveLenient.mockReturnValue(join(dir, 'note.txt'));
-
-      // 触发路径 1：filename 显式传空串 → asText('') = '' → '' ?? file.split() = '' → ?? 'file' 不兜底空串
-      // 触发路径 2：file 以 / 结尾 → split/pop = '' → ?? 'file' 不兜底空串（但 loadSendFileBytes 会先失败）
-      // 正确行为：fileName 兜底为 'file'
-      // BUG：fileName = ''（空串），微信上传 API 收到空文件名
+      const sessionLookup = { getSession: vi.fn(async () => ({ projectKey: WEIXIN_PROJECT_KEY, workspace: dir, executionMode: 'CLOUD' })) };
+      const fileTool = new SendFileTool(
+        { getEffectiveWorkspaceRoot: () => dir } as never,
+        sessionLookup as never,
+        { uploadDir: join(dir, 'uploads'), getUploadBaseUrl: async () => 'https://mao.example.com/api' },
+        new WechatSendStrategy(support as never, upload as never, send as never),
+        null, null,
+      );
+      // BUG-5 原形态：filename 显式空串不兜底，微信上传 API 收到空文件名。
+      // 收编后 SendFileTool 的 `asText(args.filename) || basenameOfSource(source)` 保持同一兜底语义。
       await fileTool.execute(JSON.stringify({ file: 'note.txt', filename: '' }), 11, 7, dir);
-
       expect(send.sendFile).toHaveBeenCalledWith(
         expect.anything(),
         expect.anything(),

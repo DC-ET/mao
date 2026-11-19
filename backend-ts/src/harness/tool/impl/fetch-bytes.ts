@@ -9,11 +9,25 @@ import https from 'node:https';
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_READ_TIMEOUT_MS = 30_000;
 
+export interface FetchedBytes {
+  bytes: Buffer;
+  /** 响应头 content-type（未去参数）；无头或缺省为 null。发送工具据此推导副本扩展名 / mime。 */
+  contentType: string | null;
+}
+
 export function fetchBytesWithLimits(
   url: string,
   maxBytes: number,
   timeouts: { connectTimeoutMs?: number; readTimeoutMs?: number } = {},
 ): Promise<Buffer> {
+  return fetchBytesWithContentType(url, maxBytes, timeouts).then((fetched) => fetched.bytes);
+}
+
+export function fetchBytesWithContentType(
+  url: string,
+  maxBytes: number,
+  timeouts: { connectTimeoutMs?: number; readTimeoutMs?: number } = {},
+): Promise<FetchedBytes> {
   const connectTimeoutMs = timeouts.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
   const readTimeoutMs = timeouts.readTimeoutMs ?? DEFAULT_READ_TIMEOUT_MS;
   return new Promise((resolvePromise, reject) => {
@@ -24,7 +38,7 @@ export function fetchBytesWithLimits(
       if (connectTimer) clearTimeout(connectTimer);
       if (readTimer) clearTimeout(readTimer);
     };
-    const finish = (err: Error | null, value?: Buffer) => {
+    const finish = (err: Error | null, value?: FetchedBytes) => {
       if (settled) return;
       settled = true;
       clearTimers();
@@ -42,6 +56,8 @@ export function fetchBytesWithLimits(
         finish(new Error(`下载失败: HTTP ${status}`));
         return;
       }
+      const header = res.headers['content-type'];
+      const contentType = typeof header === 'string' && header.trim() !== '' ? header.trim() : null;
       const chunks: Buffer[] = [];
       let size = 0;
       readTimer = setTimeout(() => {
@@ -58,7 +74,7 @@ export function fetchBytesWithLimits(
         }
         chunks.push(chunk);
       });
-      res.on('end', () => finish(null, Buffer.concat(chunks)));
+      res.on('end', () => finish(null, { bytes: Buffer.concat(chunks), contentType }));
       res.on('error', (err) => finish(err));
     });
 

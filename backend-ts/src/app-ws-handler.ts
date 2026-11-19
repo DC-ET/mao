@@ -50,6 +50,8 @@ export interface WsHandlerDeps {
   embedPageToolRegistry: EmbedPageToolRegistry;
   /** LOCAL 正文图片按需委托读取（方案 2026-11-18） */
   localFileFetch: import('./harness/local/local-file-fetch.service.js').LocalFileFetchService;
+  /** LOCAL 发送字节委托读取（统一发送媒体方案 2026-11-18 §6）：delivery_fetch_result 拼装 */
+  localDeliveryFetch: import('./harness/local/delivery-fetch.service.js').LocalDeliveryFetchService;
   localToolSessions: LocalToolSessionRegistry;
   /** LOCAL 会话文件树远程代理（技术方案 2026-11-17）：file_op_result 入站完成 + 断线清理。 */
   remoteFileProxy: RemoteFileProxyService;
@@ -84,7 +86,7 @@ export interface WsHandlerDeps {
 export function assembleWsHandler(deps: WsHandlerDeps): StreamingWsHandler {
   const {
     cfg, jwt, wsRegistry, sessionTitleService, harnessService, agentLoop, compactionSignalBus, sessionService, taskTerminal,
-    messageQueueService, embedPageToolRegistry, localToolSessions, localFileFetch, remoteFileProxy, askUserQuestionsRegistry,
+    messageQueueService, embedPageToolRegistry, localToolSessions, localFileFetch, localDeliveryFetch, remoteFileProxy, askUserQuestionsRegistry,
     treeSignalPublisher, approvalRegistry, approvalRuleService, approvalEscalationSuppressor, activityService,
     activityHeartbeat, todoMapper, backgroundSubagentManager, shellManager,
     skillSync, localSkills, localAgentsMd, mcpSync, routingMcpClient,
@@ -102,6 +104,7 @@ export function assembleWsHandler(deps: WsHandlerDeps): StreamingWsHandler {
     embedPageToolRegistry,
     localToolSessionRegistry: localToolSessions,
     localFileFetchService: localFileFetch,
+    localDeliveryFetchService: localDeliveryFetch,
     remoteFileProxyService: remoteFileProxy,
     askUserQuestionsRegistry,
     treeSignalPublisher,

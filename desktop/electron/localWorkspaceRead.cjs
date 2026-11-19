@@ -16,7 +16,9 @@ const path = require('path')
 const { readFileBytes } = require('./localFileBytes.cjs')
 
 /** file_fetch 功能上限（与 backend-ts FILE_FETCH_MAX_BYTES / 渲染层同表）；默认收紧 localFileBytes 的 64MB 通用上限。 */
+/** delivery_fetch 功能上限（与 backend-ts SEND_FILE_MAX_BYTES 同表）；图片 20MB / 文件 30MB 的并集取文件侧。 */
 const FILE_FETCH_MAX_BYTES = 10 * 1024 * 1024
+const DELIVERY_FETCH_MAX_BYTES = 30 * 1024 * 1024
 
 /**
  * 相对路径 → workspace 内绝对路径。
@@ -65,4 +67,52 @@ function readWorkspaceBytes(workspace, relativePath, options) {
   return readFileBytes(resolved.path, { maxBytes: FILE_FETCH_MAX_BYTES, ...options })
 }
 
-module.exports = { resolveContainedWorkspacePath, readWorkspaceBytes, FILE_FETCH_MAX_BYTES }
+/**
+ * delivery_fetch 的执行端路径解析（方案 2026-11-18-unified-send-media §6.2）：相对路径，
+ * 或「解析后仍在该会话 workspace 内」的绝对路径（send 工具允许 absolute-within-workspace）。
+ * containment 是 realpath 口径（`..` / 父级目录 symlink 逃逸都靠 realpath 比对拒绝）；
+ * 反斜杠与 NUL 直接拒绝，目标本身是符号链接也拒绝（工具约定「非符号链接」）。
+ * @returns {{ path: string } | { error: string }}
+ */
+function resolveDeliveryWorkspacePath(workspace, filePath) {
+  if (typeof workspace !== 'string' || workspace.trim() === '') return { error: '缺少工作区路径' }
+  if (typeof filePath !== 'string' || filePath.trim() === '') return { error: '缺少文件路径' }
+  if (filePath.includes('\\')) return { error: '文件路径不合法' }
+  if (filePath.includes('\0')) return { error: '文件路径不合法' }
+  const root = path.resolve(workspace)
+  let rootReal
+  try {
+    rootReal = fs.realpathSync(root)
+  } catch {
+    return { error: '工作区路径不存在' }
+  }
+  const target = path.resolve(root, filePath)
+  // 目标本身是符号链接直接拒绝（realpath 会跟到目标，之后 lstat 就看不出来了）
+  try {
+    if (fs.lstatSync(target).isSymbolicLink()) return { error: '不接受符号链接' }
+  } catch {
+    return { error: '文件不存在' }
+  }
+  let targetReal
+  try {
+    targetReal = fs.realpathSync(target)
+  } catch {
+    return { error: '文件不存在' }
+  }
+  const rel = path.relative(rootReal, targetReal)
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return { error: '文件路径越界' }
+  return { path: targetReal }
+}
+
+/**
+ * delivery_fetch 委托读取：containment + readFileBytes（普通文件 / 符号链接 / 上限校验）。
+ * 上限取副本文件上限 30MB（与 backend-ts SEND_FILE_MAX_BYTES / 渲染层同表）。
+ * @returns {{ bytes: Buffer, size: number } | { error: string }}
+ */
+function readDeliveryWorkspaceBytes(workspace, filePath, options) {
+  const resolved = resolveDeliveryWorkspacePath(workspace, filePath)
+  if (resolved.error) return resolved
+  return readFileBytes(resolved.path, { maxBytes: DELIVERY_FETCH_MAX_BYTES, ...options })
+}
+
+module.exports = { resolveContainedWorkspacePath, readWorkspaceBytes, readDeliveryWorkspaceBytes, FILE_FETCH_MAX_BYTES, DELIVERY_FETCH_MAX_BYTES }

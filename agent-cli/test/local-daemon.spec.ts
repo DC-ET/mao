@@ -151,6 +151,22 @@ describe('local daemon', () => {
       expect(fileOp.data?.entries?.some((e) => e.name === 'hello.txt')).toBe(true);
       expect(lines.join('\n')).not.toContain('file_op');
 
+      // 发送字节委托读取（统一发送媒体方案 2026-11-18 §6.2）：daemon 读信任工作区内文件并分片回帧，不打工具日志
+      server.send({
+        type: 'delivery_fetch',
+        sessionId: 42,
+        data: { requestId: 'df-1', path: 'hello.txt', workspace: dir, maxBytes: 1024 * 1024 },
+      });
+      await waitFor(() => server!.received.some((m) => (m as { type?: string }).type === 'delivery_fetch_result'));
+      const delivery = server.received.find((m) => (m as { type?: string }).type === 'delivery_fetch_result') as {
+        requestId?: string; seq?: number; total?: number; data?: string;
+      };
+      expect(delivery.requestId).toBe('df-1');
+      expect(delivery.seq).toBe(1);
+      expect(delivery.total).toBe(1);
+      expect(Buffer.from(delivery.data ?? '', 'base64').toString()).toBe('hi-from-daemon');
+      expect(lines.join('\n')).not.toContain('delivery_fetch');
+
       server.drop();
       await waitFor(() => server!.received.filter((m) => (m as { type?: string }).type === 'auth').length >= 2);
       const second = server.received.filter((m) => (m as { type?: string }).type === 'auth').at(-1) as { token?: string };

@@ -133,6 +133,15 @@ export interface ToolCallItem {
   imagePreview?: string;
 }
 
+/** `send_image` / `send_file` 的会话副本（统一发送媒体方案 2026-11-18 D6）：回复下方投递条。 */
+export interface SendDelivery {
+  kind: 'image' | 'file';
+  url: string;
+  mime?: string;
+  bytes?: number;
+  filename: string;
+}
+
 export interface PendingQuestion {
   requestId: string;
   questions: WsAskUserQuestionItem[];

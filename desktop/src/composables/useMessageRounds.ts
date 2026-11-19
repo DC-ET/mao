@@ -1,5 +1,5 @@
 import { ref, computed, type Ref } from 'vue'
-import { normalizeMessageRole, type ChatMessage, type FileChange } from '../types/chat'
+import { normalizeMessageRole, type ChatMessage, type FileChange, type SendDelivery, type ToolCall } from '../types/chat'
 import { parseDateTime } from '../utils/datetime'
 import { formatRelativeTime } from './useRelativeTime'
 import { userAskExcerpt } from '../utils/selection-quote'
@@ -12,6 +12,7 @@ export interface MessageRound {
   stepCount: number
   durationText: string
   fileChanges: FileChange[]
+  deliveries: SendDelivery[]
 }
 
 function isToolOnlyMessage(message: ChatMessage): boolean {
@@ -87,6 +88,7 @@ function buildRound(user: ChatMessage, steps: ChatMessage[], reply: ChatMessage 
   }
   const fileChanges: FileChange[] = [...steps, ...(reply ? [reply] : [])]
     .flatMap(m => m.fileChanges || [])
+  const deliveries = collectRoundDeliveries([ ...steps, ...(reply ? [reply] : []) ])
   return {
     userMessage: user,
     collapsedSteps: steps,
@@ -95,6 +97,51 @@ function buildRound(user: ChatMessage, steps: ChatMessage[], reply: ChatMessage 
     stepCount,
     durationText,
     fileChanges,
+    deliveries,
+  }
+}
+
+/** 收集目标工具名：统一发送媒体（技术方案 2026-11-18-unified-send-media §7.1）。 */
+const SEND_MEDIA_TOOL_NAMES = new Set(['send_image', 'send_file'])
+
+/**
+ * 从一轮消息的工具调用里按调用顺序收 send_image / send_file 的会话副本（D6）。
+ * 结果 JSON 能解析且含 delivery.url 才收（副本写失败无 delivery，不画）；
+ * toolCall.result 由实时 tool_call_result 与刷新回放两条路回填，收集逻辑共用。
+ */
+export function collectRoundDeliveries(messages: ChatMessage[]): SendDelivery[] {
+  const result: SendDelivery[] = []
+  for (const message of messages) {
+    for (const call of message.toolCalls || []) {
+      const delivery = extractDelivery(call)
+      if (delivery) result.push(delivery)
+    }
+  }
+  return result
+}
+
+function extractDelivery(call: ToolCall): SendDelivery | null {
+  if (!SEND_MEDIA_TOOL_NAMES.has(call.name)) return null
+  if (typeof call.result !== 'string' || call.result === '') return null
+  try {
+    const parsed = JSON.parse(call.result) as Record<string, unknown>
+    const delivery = parsed.delivery as Record<string, unknown> | undefined
+    if (!delivery || typeof delivery !== 'object') return null
+    const url = delivery.url
+    if (typeof url !== 'string' || url === '') return null
+    const kind = delivery.kind === 'file' ? 'file' : 'image'
+    const filename = typeof parsed.filename === 'string' && parsed.filename.trim() !== ''
+      ? parsed.filename
+      : (typeof delivery.url === 'string' ? delivery.url.split('/').pop() || 'attachment' : 'attachment')
+    return {
+      kind,
+      url,
+      mime: typeof delivery.mime === 'string' ? delivery.mime : undefined,
+      bytes: typeof delivery.bytes === 'number' ? delivery.bytes : undefined,
+      filename,
+    }
+  } catch {
+    return null
   }
 }
 

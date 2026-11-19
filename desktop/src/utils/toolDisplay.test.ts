@@ -192,6 +192,17 @@ describe('getToolInputPreview 子代理与定时任务/微信补全（0.0.468）
     expect(getToolInputPreview('send_wechat_file', {})).toBe('')
   })
 
+  it('send_image / send_file 中文名与参数预览（统一发送媒体方案）', () => {
+    expect(getToolDisplayName('send_image')).toBe('发送图片')
+    expect(getToolDisplayName('send_file')).toBe('发送文件')
+    expect(getToolInputPreview('send_image', { image: 'images/photo.png' })).toBe('images/photo.png')
+    expect(getToolInputPreview('send_image', { image: 42 })).toBe('')
+    expect(getToolInputPreview('send_file', { file: '/tmp/a.pdf', filename: '报告.pdf' })).toBe('报告.pdf')
+    expect(getToolInputPreview('send_file', { file: '/tmp/a.pdf' })).toBe('/tmp/a.pdf')
+    expect(getToolInputPreview('send_file', { filename: '   ' })).toBe('')
+    expect(getToolInputPreview('send_file', {})).toBe('')
+  })
+
   it('subagent_followup 依赖通用回落（task 键），不被新 case 拦截', () => {
     expect(getToolInputPreview('subagent_followup', { child_session_id: 9, task: '继续分析日志' })).toBe('继续分析日志')
     expect(getToolInputPreview('subagent_followup', { child_session_id: 9, task: '继续分析日志', agent_type: 'explore' })).toBe('explore: 继续分析日志')

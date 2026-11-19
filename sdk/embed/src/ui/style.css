@@ -495,6 +495,46 @@
 .mao-reply {
   margin-top: 2px;
 }
+/* 发送媒体副本（统一发送媒体方案 D6）：图片缩略图网格、文件为可点开的链接 */
+.mao-deliveries {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+.mao-delivery {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--mao-panel, rgba(127, 127, 127, 0.1));
+  color: var(--mao-text, inherit);
+  font-size: 12px;
+  text-decoration: none;
+}
+.mao-delivery--image {
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+}
+.mao-delivery--image img {
+  display: block;
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+.mao-delivery__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mao-delivery__size {
+  flex-shrink: 0;
+  opacity: 0.65;
+}
 .mao-lightbox {
   position: fixed;
   inset: 0;

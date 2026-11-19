@@ -140,7 +140,7 @@ describe('PromptEngine', () => {
     context.projectKey = WEIXIN_PROJECT_KEY;
     context.executionMode = 'LOCAL';
     context.workspace = '/Users/me/proj';
-    context.tools = [tool('send_wechat_image')];
+    context.tools = [tool('send_image')];
     context.localUnsyncedSkills = [{ name: 'local', folderName: 'local', description: 'd' }];
     context.availableSkillNames = ['local'];
     context.sessionId = 1;
@@ -148,7 +148,8 @@ describe('PromptEngine', () => {
     const system = request.messages[0].content as string;
     expect(system).toContain('AGENTS.md');
     expect(system).toContain('LOCAL 本地模式');
-    expect(system).toContain('微信媒体发送');
+    expect(system).toContain('send_image / send_file');
+    expect(system).toContain('绑定了微信');
     expect(system).toContain('本地未同步');
   });
 

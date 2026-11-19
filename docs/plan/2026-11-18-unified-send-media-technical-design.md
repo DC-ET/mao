@@ -1,6 +1,6 @@
 # 统一发送图片 / 文件技术方案（send_image / send_file）
 
-- 状态：草案（2026-11-18；§3 决策为拟定口径，评审通过后定案。**2026-11-19 可行性评审：方案与需求均可行**——能力底座的全部代码事实逐条核实（工具名 `send_wechat_*` / `feishu_send_*` / `dingtalk_send_*`、dispatcher 三集合、`filterToolsForSession` 通道标记互斥、`loadSendFileBytes`、三通道上限、TOOL 消息落库 + 刷新时 `chatMessage.ts` 把 TOOL content 回填进 `toolCall.result`、`persistFinalAssistant` metadata 写 null、`localFileBytes.cjs` 校验、微信多联系人拒绝猜测）。评审补充：边路任务通道解析回落父会话、mao-agent 路由入口、中止轮次副本丢失的如实表述、副本扩展名 / mime 推导、执行端允许根收窄、LOCAL 超时文案、安全边界节，见各节「评审补充」标注）
+- 状态：已实施（2026-11-19 落地。实现评审修复：WS 装配层漏传 `localDeliveryFetch`（否则 LOCAL 发送必然 20s 超时）、LOCAL 回退判据收窄到宿主机缺文件、http(s) content-type 推导、可执行扩展名回落 `.bin`、图片字节魔数校验、微信发送返回 false 判失败、执行端拒绝目标符号链接、嵌入浮窗补投递条。原草案：2026-11-18；§3 决策为拟定口径，评审通过后定案。**2026-11-19 可行性评审：方案与需求均可行**——能力底座的全部代码事实逐条核实（工具名 `send_wechat_*` / `feishu_send_*` / `dingtalk_send_*`、dispatcher 三集合、`filterToolsForSession` 通道标记互斥、`loadSendFileBytes`、三通道上限、TOOL 消息落库 + 刷新时 `chatMessage.ts` 把 TOOL content 回填进 `toolCall.result`、`persistFinalAssistant` metadata 写 null、`localFileBytes.cjs` 校验、微信多联系人拒绝猜测）。评审补充：边路任务通道解析回落父会话、mao-agent 路由入口、中止轮次副本丢失的如实表述、副本扩展名 / mime 推导、执行端允许根收窄、LOCAL 超时文案、安全边界节，见各节「评审补充」标注）
 - 日期：2026-11-18
 - 修订：2026-11-18。会话类型只在创建时绑定外部通道，之后同一条会话会在网页、桌面、安卓和该 IM 里被打开。发送改为「会话记录始终留一份副本，绑定了外部通道再额外推一份」，两侧独立成败。
 - 关联方案：
@@ -224,7 +224,7 @@ return combine(copy, push)
 
 1. 字节已经在内存（`loadSendFileBytes` 或 §6 的执行端回传）。读取上限等于副本上限：图片 20MB，文件 30MB。
 2. 副本校验通过后写入 `uploads/{userId}/send-{uuid}{ext}`。`userId` 用运行身份（与 `RUNTIME_SCOPED_TOOLS` 一致）。`userId` 为空时退到平坦 `uploads/`，与文生图相同。
-   **扩展名与 mime 推导（评审补充）**：`ext` 取来源路径 `path.extname`，白名单化 `^[A-Za-z0-9]{1,10}$`（不含点；不在白名单一律 `.bin`）；http(s) 来源先取 URL 路径 extname，取不到再按响应 `content-type` 的 mime→扩展名映射，最终仍 `.bin`。`delivery.mime`：http 用真实响应 content-type（去参数），本地按扩展名映射表，未知一律 `application/octet-stream`——`el-image` 预览与文件图标都靠它，不能缺省。
+   **扩展名与 mime 推导（评审补充）**：`ext` 取来源路径 `path.extname`，白名单化 `^[A-Za-z0-9]{1,9}$`（不含点；不在白名单一律 `.bin`）；http(s) 来源先取 URL 路径 extname，取不到再按响应 `content-type` 的 mime→扩展名映射，最终仍 `.bin`。`delivery.mime`：http 用真实响应 content-type（去参数），本地按扩展名映射表，未知一律 `application/octet-stream`——`el-image` 预览与文件图标都靠它，不能缺省。**实现评审修复**：`/uploads/` 是同源静态路径，可执行内容（html / svg / xml / js / wasm 等）不得以原扩展名落盘，一律回落 `.bin`（存储型 XSS 面）；`kind === 'image'` 的副本校验以字节嗅探为准（BMP 按 `BM` 魔数），扩展名与声明的 content-type 都不能把非图片伪装成图片。
 3. URL 用 `toStaticUploadBase` 的 origin + `/uploads/{userId}/文件名`。origin 为空时视为副本失败，`error` 说明对话页没有可打开的地址；通道推送仍照常尝试。
 4. 工具结果带上 §4.1 的 `delivery`。不要把 base64 放进结果，避免工具消息和压缩归档膨胀（现有 `admin-message-compact` 会剥 `data_uri`，这里从源头不写）。
 
@@ -275,6 +275,8 @@ return combine(copy, push)
 - 来源不是 http(s)
 - 容器与宿主机都没有读到这份文件（容器用户读失败仍按现在的方式抛错，不把「容器里没有」降级成「再去执行端找」）
 
+**实现评审修复**：回退判据收窄到「宿主机侧文件不存在（`SendBytesNotFoundError`）或路径不在服务端沙箱根内（`SecurityException`，LOCAL 本机绝对路径在服务器上必然如此）」。跨成员路径预检命中、容器 `read_bytes` 失败、超限、符号链接越界一律不回退，避免把安全 / 大小问题掩盖成 20 秒执行端超时。http(s) 来源按响应 `content-type` 推导扩展名 / mime（`fetchBytesWithContentType`）。
+
 CLOUD 会话不走 `delivery_fetch`。安卓会话都是 CLOUD。读失败时还没有副本，也还没有通道推送。
 
 ### 6.2 帧
@@ -286,7 +288,7 @@ CLOUD 会话不走 `delivery_fetch`。安卓会话都是 CLOUD。读失败时还
 | 服务端 → 执行端 `delivery_fetch` | `{ type, sessionId, data: { requestId, path, workspace, maxBytes } }` |
 | 执行端 → 服务端 `delivery_fetch_result` | `{ type, sessionId, requestId, seq, total, data }`，`data` 为该片 base64，`seq` 从 1 起 |
 
-常量：每片 512KB 原始字节（base64 后约 699KB，低于 900KB 与 1MB）；单文件上限取副本上限（图片 20MB，文件 30MB），超限在发起拉取前拒绝；总超时 20 秒。投递落空、执行端未连接、超时，工具返回 `{ "error": "执行端不在线或版本过旧，无法读取本机文件" }`，不挂起本轮。**评审补充**：旧执行端不认识 `delivery_fetch` 会静默忽略该帧，20 秒超时与「执行端真的不在线」呈现为同一现象，文案合并成这一句才诚实；旧桌面 dist 对未知流事件本就忽略（与 `file_fetch` 同机制）。
+常量：每片 512KB 原始字节（base64 后约 699KB，低于 900KB 与 1MB）；单文件上限取副本上限（图片 20MB，文件 30MB），超限在发起拉取前拒绝；总超时 20 秒。投递落空、执行端未连接、超时，工具返回 `{ "error": "执行端不在线或版本过旧，无法读取本机文件" }`，不挂起本轮。**评审补充**：旧执行端不认识 `delivery_fetch` 会静默忽略该帧，20 秒超时与「执行端真的不在线」呈现为同一现象，文案合并成这一句才诚实；旧桌面 dist 对未知流事件本就忽略（与 `file_fetch` 同机制）。**实现细化**：服务端拿不到本机文件大小，「超限在发起前拒绝」只在执行端侧生效——执行端对超过帧内 `maxBytes` 的文件静默不回包，最终同样收敛为 20 秒超时文案；这是「执行端失败一律静默」的必然结果，不为超限单开错误帧（会与合法分片竞争）。
 
 执行端校验：相对路径或「解析后仍在该会话 workspace / 允许根内」的绝对路径、普通文件、非符号链接、不超过 `maxBytes`。失败只打日志，不回错误帧（未绑定会话会广播给该用户的多个执行端，错误帧会抢先毁掉合法分片）。服务端靠超时收口。拼装规则与正文图片方案相同：首片锁定来源连接，异源分片丢掉。**评审补充**：执行端侧的「允许根」就是本机会话 workspace（mao-agent 为本地信任根）——服务端的 `uploads/{userId}` / runtime 语义在用户机器上不存在，不要把服务端那套根集合照搬到执行端校验里。
 

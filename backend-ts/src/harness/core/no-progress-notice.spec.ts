@@ -369,4 +369,33 @@ describe('no-progress-notice', () => {
     expect(shortHash('abc')).toBe(shortHash('abc'));
     expect(shortHash('abc')).not.toBe(shortHash('abd'));
   });
+
+  describe('send_image / send_file 归一化（统一发送媒体方案 D12）', () => {
+    const digestOf = (result: Record<string, unknown>) => resultDigest({
+      toolName: 'send_image',
+      argumentsJson: '{"image":"a.png"}',
+      resultContent: JSON.stringify(result),
+    });
+
+    it('同一 filename + 相同 channelStatus、不同 delivery.url 视为无进展', () => {
+      const first = digestOf({
+        success: true, channel: 'chat', channelStatus: 'skipped', filename: 'a.png',
+        delivery: { kind: 'image', url: 'https://h/uploads/7/send-1.png', bytes: 1 },
+      });
+      const second = digestOf({
+        success: true, channel: 'chat', channelStatus: 'skipped', filename: 'a.png',
+        delivery: { kind: 'image', url: 'https://h/uploads/7/send-2.png', bytes: 1 },
+      });
+      expect(first).toBe(second);
+    });
+
+    it('channelStatus failed → sent 视为有进展；channel / filename 变化也算进展', () => {
+      const base = { success: true, channel: 'feishu', filename: 'a.png' };
+      const failed = digestOf({ ...base, channelStatus: 'failed' });
+      const sent = digestOf({ ...base, channelStatus: 'sent' });
+      expect(failed).not.toBe(sent);
+      expect(sent).not.toBe(digestOf({ ...base, channel: 'wechat', channelStatus: 'sent' }));
+      expect(sent).not.toBe(digestOf({ ...base, filename: 'b.png', channelStatus: 'sent' }));
+    });
+  });
 });

@@ -70,6 +70,7 @@ describe('StreamingWsHandler', () => {
     completeToolRequest: vi.fn(), completeToolRequestError: vi.fn(),
   };
   const localFileFetchService = { handleChunk: vi.fn() };
+  const localDeliveryFetchService = { handleChunk: vi.fn() };
   const remoteFileProxyService = { complete: vi.fn(), failAllForSocket: vi.fn() };
   const embedPageToolRegistry = {
     request: vi.fn(), complete: vi.fn(() => true), failSession: vi.fn(), isEmbedSession: vi.fn(() => false),
@@ -111,7 +112,7 @@ describe('StreamingWsHandler', () => {
   const handler = new StreamingWsHandler({
     registry, titleService, harnessService, sessionService, taskTerminalService, messageQueueService,
     onScheduledTaskQueueConsumed,
-    localToolSessionRegistry, localFileFetchService, remoteFileProxyService, askUserQuestionsRegistry, embedPageToolRegistry, treeSignalPublisher, approvalRegistry, activityService,
+    localToolSessionRegistry, localFileFetchService, localDeliveryFetchService, remoteFileProxyService, askUserQuestionsRegistry, embedPageToolRegistry, treeSignalPublisher, approvalRegistry, activityService,
     activityHeartbeat, sessionTodoMapper, agentLoop, shellSessionManager, skillSyncService,
     localSkillRegistry, localAgentsMdRegistry, mcpSyncService, mcpClientManager, agentMapper,
     llmModelMapper, jwtService, agentExecutor: (fn) => executor.submit(fn), mcpSyncTimeoutSeconds: 60,
@@ -812,6 +813,27 @@ describe('StreamingWsHandler', () => {
     sessionService.getSession.mockResolvedValue(session('LOCAL', 'IDLE'));
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'file_fetch_result', sessionId: 11, seq: 1, total: 2, data: 'aGk=' }));
     expect(localFileFetchService.handleChunk).not.toHaveBeenCalled();
+  });
+
+  // 统一发送媒体方案 §6：delivery_fetch_result 与 file_fetch_result 同口径，拼装由 LocalDeliveryFetchService 负责
+  it('deliveryFetchResultRequiresOwnershipAndForwardsFrameWithSocketId', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'IDLE'));
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'delivery_fetch_result', sessionId: 11, requestId: 'd1', seq: 1, total: 2, data: 'aGk=' }));
+    expect(localDeliveryFetchService.handleChunk).toHaveBeenCalledWith(11, 'd1', { seq: 1, total: 2, data: 'aGk=' }, 'ws-1');
+    localDeliveryFetchService.handleChunk.mockClear();
+
+    // 非归属会话（他人会话）：拒绝
+    sessionService.getSession.mockResolvedValue({ ...session('LOCAL', 'IDLE'), userId: 99 });
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'delivery_fetch_result', sessionId: 11, requestId: 'd1', seq: 1, total: 2, data: 'aGk=' }));
+    expect(localDeliveryFetchService.handleChunk).not.toHaveBeenCalled();
+    localDeliveryFetchService.handleChunk.mockClear();
+
+    // 缺 requestId：忽略
+    sessionService.getSession.mockResolvedValue(session('LOCAL', 'IDLE'));
+    await handler.handleTextMessage(ws, JSON.stringify({ type: 'delivery_fetch_result', sessionId: 11, seq: 1, total: 2, data: 'aGk=' }));
+    expect(localDeliveryFetchService.handleChunk).not.toHaveBeenCalled();
   });
 
   it('subscribeSendsSnapshotForWaitingApproval', async () => {

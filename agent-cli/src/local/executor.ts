@@ -9,7 +9,15 @@ import {
   type ApprovalRequest,
 } from './approval';
 import { isWorkspaceWithin } from './sandbox';
-import { chunkBuffer, FILE_FETCH_MAX_CHUNKS, readWorkspaceImageBytes } from './file-fetch';
+import {
+  chunkBuffer,
+  FILE_FETCH_MAX_CHUNKS,
+  DELIVERY_FETCH_CHUNK_BYTES,
+  DELIVERY_FETCH_MAX_BYTES,
+  DELIVERY_FETCH_MAX_CHUNKS,
+  readDeliveryFileBytes,
+  readWorkspaceImageBytes,
+} from './file-fetch';
 import { persistToolResult } from './truncate';
 import { executeFileOp } from './file-ops';
 import { handleEditFile, handleReadFile, handleWriteFile, handleWriteLocalTextFile } from './tools/files';
@@ -184,6 +192,8 @@ export class LocalExecutor {
         await this.onToolExecute(sessionId, d);
       } else if (evt.type === 'file_fetch') {
         await this.onFileFetch(sessionId, d);
+      } else if (evt.type === 'delivery_fetch') {
+        await this.onDeliveryFetch(sessionId, d);
       } else if (evt.type === 'file_op_request') {
         await this.onFileOpRequest(sessionId, d);
       } else if (evt.type === 'skill_sync_required') {
@@ -271,6 +281,44 @@ export class LocalExecutor {
       }
     } catch (e) {
       console.warn(`[file_fetch] ignored: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /**
+   * LOCAL 发送字节委托读取（统一发送媒体方案 2026-11-18 §6.2）：send_image / send_file 在
+   * 服务端读不到本机文件时下发 delivery_fetch，这里在信任工作区内读文件并分片回传。
+   * 失败一律静默（同 onFileFetch）：未绑定会话是用户级广播，异机多执行端都可能收到本帧，
+   * 错误回包会与合法执行端的分片竞争；服务端 20 秒超时后统一回「执行端不在线或版本过旧」。
+   */
+  private async onDeliveryFetch(sessionId: number, d: Record<string, unknown>): Promise<void> {
+    try {
+      const requestId = typeof d.requestId === 'string' ? d.requestId : '';
+      const filePath = typeof d.path === 'string' ? d.path : '';
+      if (!requestId || filePath.trim() === '') return;
+      const maxBytes = typeof d.maxBytes === 'number' && Number.isInteger(d.maxBytes) && d.maxBytes > 0
+        ? Math.min(d.maxBytes, DELIVERY_FETCH_MAX_BYTES)
+        : DELIVERY_FETCH_MAX_BYTES;
+      const workspace = this.resolveWorkspace(d.workspace);
+      const bytes = await readDeliveryFileBytes(workspace, filePath, maxBytes);
+      const chunks = chunkBuffer(bytes, DELIVERY_FETCH_CHUNK_BYTES);
+      const maxChunks = Math.min(
+        Math.ceil(maxBytes / DELIVERY_FETCH_CHUNK_BYTES),
+        DELIVERY_FETCH_MAX_CHUNKS,
+      );
+      if (chunks.length === 0 || chunks.length > maxChunks) return;
+      for (let seq = 1; seq <= chunks.length; seq++) {
+        const sent = await this.opts.ws.sendReliable({
+          type: 'delivery_fetch_result',
+          sessionId,
+          requestId,
+          seq,
+          total: chunks.length,
+          data: chunks[seq - 1].toString('base64'),
+        });
+        if (!sent) return;
+      }
+    } catch (e) {
+      console.warn(`[delivery_fetch] ignored: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

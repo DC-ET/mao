@@ -20,6 +20,7 @@ import type { DingtalkMediaSendSupport } from './harness/tool/impl/dingtalk-tool
 import type { AgentDefinitionRegistry } from './harness/delegate/agent-definition-registry.js';
 import type { SubagentExecutionMapper } from './harness/delegate/subagent-execution.mapper.js';
 import type { LocalToolSessionRegistry } from './harness/local/local-tool-session-registry.js';
+import type { LocalDeliveryFetchService } from './harness/local/delivery-fetch.service.js';
 import type { SubAgentVisibilityService } from './harness/delegate/subagent-visibility-service.js';
 import type { BackgroundSubagentManager } from './harness/delegate/background-subagent-manager.js';
 import type { MessageRepository } from './session/session.repository.js';
@@ -114,6 +115,8 @@ export interface HarnessEngineDeps {
   holder: { harness?: HarnessService; loop?: AgentLoop };
   subagentMapper: SubagentExecutionMapper;
   localToolSessions: LocalToolSessionRegistry;
+  /** LOCAL 发送字节委托读取（2026-11-18-unified-send-media §6）。 */
+  localDeliveryFetch: LocalDeliveryFetchService;
   visibility: SubAgentVisibilityService;
   backgroundSubagentManager: BackgroundSubagentManager;
   messageRepo: MessageRepository;
@@ -240,6 +243,8 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
         const channel = await d.feishuMessageService.findSessionChannel(sessionId);
         if (channel == null) return null;
         const target = feishuSendTargetOf(channel.appId, channel.chatId);
+        // 边路回落到父会话时，p2p 消息落库要记到真正命中的会话上（边路在飞书侧没有行）
+        target.sessionId = sessionId;
         const replyMessageId = await d.feishuMessageService.findLatestInboundMessageId(sessionId, channel);
         if (replyMessageId != null) target.replyMessageId = replyMessageId;
         return target;
@@ -262,6 +267,7 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
       },
     },
     sendBytesSupport: d.sendBytesBridge,
+    localDeliveryFetchService: d.localDeliveryFetch,
     dingtalkMediaSendSupport: {
       resolveSendTarget: (sessionId: number | null) => d.dingtalkMediaHolder.current?.resolveSendTarget(sessionId) ?? Promise.resolve(null),
       sendImage: async (target: any, bytes: any, fileName: string) => {

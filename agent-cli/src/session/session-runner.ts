@@ -454,6 +454,8 @@ export class SessionRunner {
     if (
       evt.type === 'tool_execute'
       || evt.type === 'file_op_request'
+      || evt.type === 'file_fetch'
+      || evt.type === 'delivery_fetch'
       || evt.type === 'skill_sync_required'
       || evt.type === 'mcp_sync_required'
       || evt.type === 'tool_approval_resolved'

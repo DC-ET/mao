@@ -151,6 +151,10 @@ export function summarize(toolName: string | null | undefined, argumentsJson: st
       return summarizeSendWechatImage(argumentsJson, result);
     case 'send_wechat_file':
       return summarizeSendWechatFile(argumentsJson, result);
+    case 'send_image':
+      return summarizeSendMedia('发送图片', argumentsJson, result);
+    case 'send_file':
+      return summarizeSendMedia('发送文件', argumentsJson, result);
     case 'mcp_call':
       return summarizeMcpCall(argumentsJson, result);
     case 'mcp_describe':
@@ -501,6 +505,27 @@ function summarizeSendWechatImage(argumentsJson: string | null | undefined, resu
   }
   if (node.success === true) return `${label} (成功)`;
   return label;
+}
+
+function summarizeSendMedia(label: string, argumentsJson: string | null | undefined, result: string | null | undefined): string {
+  // 统一发送工具（2026-11-18-unified-send-media §5.4）：成功 / 部分成功（带原因）/ 失败三态。
+  // result 为 null = 工具仍在执行（飞书 / 钉钉进度卡），只显示名称，不能提前写「成功」。
+  const argName = extractJsonString(argumentsJson, 'filename')
+    || extractJsonString(argumentsJson, 'image')
+    || extractJsonString(argumentsJson, 'file');
+  if (result == null || result.trim() === '') {
+    return argName != null && argName !== '' ? `${label}: ${truncateFilename(argName)}` : label;
+  }
+  const node = asObj(parseJson(result));
+  const hasError = has(node, 'error');
+  const failed = node?.success === false || (!has(node, 'success') && hasError);
+  const name = extractJsonString(result, 'filename') || argName || '';
+  if (failed) {
+    const reason = hasError && node != null ? String(node.error) : '';
+    return reason ? `${label}: ${name} (失败: ${reason})` : `${label}: ${name} (失败)`;
+  }
+  if (hasError && node != null) return `${label}: ${name} (部分成功: ${String(node.error)})`;
+  return `${label}: ${name} (成功)`;
 }
 
 function summarizeSendWechatFile(argumentsJson: string | null | undefined, result: string | null | undefined): string {

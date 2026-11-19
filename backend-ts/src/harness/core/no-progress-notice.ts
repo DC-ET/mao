@@ -64,6 +64,13 @@ const VOLATILE_RESULT_KEYS = new Set<string>([
 ]);
 
 /**
+ * 统一发送工具只取语义字段（§5.3）：同一 filename + 相同 channelStatus 视为无进展；
+ * channelStatus failed → sent 视为有进展。url（随机文件名）与 error（重复失败文本相同）
+ * 都不进签名。
+ */
+const SEND_MEDIA_SEMANTIC_KEYS = ['success', 'channel', 'channelStatus', 'filename'] as const;
+
+/**
  * shell 只取语义字段。事故 2207 的形态是每次 `output_file` 都随新建会话变化
  * （`${shellSessionId}.out`），未完成时的 `message` 也带会话 id；只剔 `session_id`
  * 仍然每轮不同，会漏报。`output` / `exit_code` / `completed` 已覆盖真实结果。
@@ -265,6 +272,19 @@ function buildRoundCalls(
 
 function normalizeResult(toolName: string, content: string): string {
   const parsed = parseJson(content);
+  if (toolName === 'send_image' || toolName === 'send_file') {
+    // 统一发送工具（2026-11-18-unified-send-media §5.3）：delivery.url 含随机文件名，
+    // error 是失败原因文本——都剔除；只留四语义字段，通道失败转成功算有进展
+    if (parsed.ok && isPlainObject(parsed.value)) {
+      const node = parsed.value;
+      const picked: Record<string, unknown> = {};
+      for (const key of SEND_MEDIA_SEMANTIC_KEYS) {
+        if (key in node) picked[key] = node[key];
+      }
+      return stableStringify(picked);
+    }
+    return trimTrailingWhitespace(content);
+  }
   if (toolName === 'shell') {
     if (parsed.ok && isPlainObject(parsed.value)) {
       const node = parsed.value;

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { fetchBytesWithLimits } from './fetch-bytes.js';
+import { fetchBytesWithContentType } from './fetch-bytes.js';
 import type { PathSandbox } from '../../safety/path-sandbox.js';
 import { StrictPathResolver } from '../../safety/strict-path.js';
 
@@ -59,7 +59,13 @@ export interface SendBytesCallContext {
 /**
  * 外部发送工具共用的 loadBytes：URL 直连宿主机下载（与容器无关），
  * 本地路径优先走容器（docker 模式），否则宿主机严格解析后读取。
+ * `Detailed` 变体额外带响应 content-type（http 来源），供会话副本推导扩展名 / mime。
  */
+export interface LoadedSendBytes {
+  bytes: Buffer;
+  contentType: string | null;
+}
+
 export async function loadSendFileBytes(
   src: string,
   pathSandbox: PathSandbox,
@@ -67,6 +73,16 @@ export async function loadSendFileBytes(
   ctx: SendBytesCallContext,
   maxBytes: number,
 ): Promise<Buffer> {
+  return (await loadSendFileBytesDetailed(src, pathSandbox, support, ctx, maxBytes)).bytes;
+}
+
+export async function loadSendFileBytesDetailed(
+  src: string,
+  pathSandbox: PathSandbox,
+  support: SendBytesSupport | null,
+  ctx: SendBytesCallContext,
+  maxBytes: number,
+): Promise<LoadedSendBytes> {
   // 跨成员路径预检（§5.9 第 3 条）：必须在容器分发之前——宿主侧才能拼出公开 URL，
   // 且 host/docker 两种模式拿到同一条可执行文案。
   if (support?.foreignPathMessage != null && ctx.userId != null) {
@@ -74,13 +90,28 @@ export async function loadSendFileBytes(
     if (message != null) throw new Error(message);
   }
   if (src.startsWith('http://') || src.startsWith('https://')) {
-    return fetchBytesWithLimits(src, maxBytes);
+    return fetchBytesWithContentType(src, maxBytes);
   }
   if (support) {
     const fromContainer = await support.readBytes({ ...ctx, path: src, maxBytes });
-    if (fromContainer != null) return fromContainer;
+    if (fromContainer != null) return { bytes: fromContainer, contentType: null };
   }
-  return readLocalBytes(src, pathSandbox, support?.extraRoots(ctx.userId) ?? [], ctx.workspace, maxBytes);
+  return {
+    bytes: await readLocalBytes(src, pathSandbox, support?.extraRoots(ctx.userId) ?? [], ctx.workspace, maxBytes),
+    contentType: null,
+  };
+}
+
+/**
+ * 宿主机侧没有这份文件：LOCAL 会话据此回退执行端读取（统一发送媒体方案 §6.1）。
+ * 其它读取错误（跨成员预检、容器失败、超限、符号链接越界）不回退，避免把安全 / 大小
+ * 问题掩盖成执行端超时。
+ */
+export class SendBytesNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SendBytesNotFoundError';
+  }
 }
 
 /** 宿主机本地读取：严格解析（越界拒绝）+ 大小上限。 */
@@ -93,7 +124,10 @@ export async function readLocalBytes(
 ): Promise<Buffer> {
   const primaryRoot = workspace != null && workspace !== '' ? workspace : pathSandbox.getEffectiveWorkspaceRoot(null);
   const resolved = new StrictPathResolver(primaryRoot, extraRoots).resolve(src);
-  if (!existsSync(resolved) || !statSync(resolved).isFile()) {
+  if (!existsSync(resolved)) {
+    throw new SendBytesNotFoundError('文件不存在：' + src);
+  }
+  if (!statSync(resolved).isFile()) {
     throw new Error('文件不存在：' + src);
   }
   const size = statSync(resolved).size;

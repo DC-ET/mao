@@ -92,7 +92,7 @@ export class EditImageTool extends BaseTool {
 - background：auto（默认）/ opaque。
 - output_format：png（默认）/ jpeg；仅 jpeg 时可传 output_compression（0–100）。
 - model 可选：覆盖后台默认模型。别名 flare=gpt-image-2.5-flare（快速），sunburst=gpt-image-2.5-sunburst（精细编辑/多图合成）。用户点名模型时只用该模型，失败不要换其他模型再交图。
-- 成功后返回 images[].image_url 与 images[].image_path；结果可继续交给 send_wechat_image / feishu_send_image / dingtalk_send_image。
+- 成功后返回 images[].image_url 与 images[].image_path；结果可继续交给 send_image 发到当前会话。
 - generate_image / edit_image 返回的 image_path（本人 uploads 产物）可直接作为本工具输入，无需先复制到工作区。
 - 纯文生图请用 generate_image；本工具需要至少一张已有本地图。
 - 若没有可用文生图模型（model_type=image），工具会报错，请提示用户先在管理后台配置。

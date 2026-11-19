@@ -1047,11 +1047,11 @@ describe('ToolDispatcher docker routing', () => {
   });
 
   it('send 工具走兜底分支时也注入轮快照（ALS，round-2 Bug 1 回归）', async () => {
-    // feishu/dingtalk 发送四件套不在 SERVER_ONLY_TOOLS、走兜底分支：
+    // 统一发送工具（2026-11-18-unified-send-media）在 SEND_BYTES_TOOLS、走兜底分支：
     // docker 用户的 read_bytes 必须拿到按轮快照的 agentId（优先于会话查库兜底），
     // 轮中切 Agent 后与同轮 docker-only 工具路由到同一容器
     let seen: number | null | undefined = undefined;
-    const sendTool = mockTool('feishu_send_image');
+    const sendTool = mockTool('send_image');
     sendTool.execute.mockImplementation(async () => {
       seen = sendToolRoundContext.getStore()?.agentId ?? null;
       return 'ok';
@@ -1065,7 +1065,7 @@ describe('ToolDispatcher docker routing', () => {
       { enabledFor: vi.fn(async () => true), dispatch: vi.fn() } as never,
     );
     await dockerDispatcher.dispatchInvocation({
-      callId: 'c', toolName: 'feishu_send_image', argumentsJson: '{}',
+      callId: 'c', toolName: 'send_image', argumentsJson: '{}',
       executionMode: 'CLOUD', sessionId: 11, userId: 7, executionUserId: 7,
       runtimeUserId: 7, agentId: 5, workspace: '/ws', permissionLevel: null, modelConfig: null, sessionTools: null,
     } as never);
@@ -1079,7 +1079,7 @@ describe('ToolDispatcher docker routing', () => {
     );
     seen = undefined;
     await plainDispatcher.dispatchInvocation({
-      callId: 'c', toolName: 'feishu_send_image', argumentsJson: '{}',
+      callId: 'c', toolName: 'send_image', argumentsJson: '{}',
       executionMode: 'CLOUD', sessionId: 11, userId: 7, executionUserId: 7,
       runtimeUserId: 7, agentId: 5, workspace: '/ws', permissionLevel: null, modelConfig: null, sessionTools: null,
     } as never);
@@ -1315,7 +1315,7 @@ describe('ToolDispatcher 自定义 HTTP 工具执行位置（2026-10-20 方案�
 
 describe('ToolDispatcher runtime identity routing', () => {
   function build(opts: { docker?: boolean } = {}) {
-    const feishuSend = mockTool('feishu_send_image');
+    const feishuSend = mockTool('send_image');
     const generate = mockTool('generate_image');
     const task = mockTool('task_create');
     const readFile = mockTool('read_file');
@@ -1349,10 +1349,10 @@ describe('ToolDispatcher runtime identity routing', () => {
     };
   }
 
-  it('feishu_send_image（宿主回退分支）按运行身份读字节', async () => {
+  it('send_image（宿主回退分支）按运行身份读字节', async () => {
     const { dispatcher, feishuSend } = build();
     feishuSend.execute.mockResolvedValue('ok');
-    await dispatcher.dispatchInvocation(invocation('feishu_send_image') as never);
+    await dispatcher.dispatchInvocation(invocation('send_image') as never);
     expect(feishuSend.execute).toHaveBeenCalledWith('{}', 7, 67, 'ws');
   });
 
@@ -1395,7 +1395,7 @@ describe('ToolDispatcher runtime identity routing', () => {
   it('runtimeUserId 缺省时回落 executionUserId（兼容旧调用）', async () => {
     const { dispatcher, feishuSend } = build();
     feishuSend.execute.mockResolvedValue('ok');
-    const inv = invocation('feishu_send_image');
+    const inv = invocation('send_image');
     delete (inv as Record<string, unknown>).runtimeUserId;
     await dispatcher.dispatchInvocation(inv as never);
     expect(feishuSend.execute).toHaveBeenCalledWith('{}', 7, 67, 'ws');

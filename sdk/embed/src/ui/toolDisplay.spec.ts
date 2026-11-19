@@ -127,3 +127,14 @@ describe('toolDiff（与桌面端同实现冒烟）', () => {
     expect(lines.at(-1)?.text).toBe('B');
   });
 });
+
+describe('统一发送图片 / 文件（send_image / send_file）', () => {
+  it('展示中文名与参数预览', () => {
+    expect(getToolDisplayName('send_image')).toBe('发送图片');
+    expect(getToolDisplayName('send_file')).toBe('发送文件');
+    expect(getToolInputPreview('send_image', { image: 'images/photo.png' })).toBe('images/photo.png');
+    expect(getToolInputPreview('send_file', { file: '/tmp/a.pdf', filename: '报告.pdf' })).toBe('报告.pdf');
+    expect(getToolInputPreview('send_file', { file: '/tmp/a.pdf' })).toBe('/tmp/a.pdf');
+    expect(getToolInputPreview('send_file', {})).toBe('');
+  });
+});

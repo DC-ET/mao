@@ -8,7 +8,7 @@
  * segment 序列扁平化处理，规则一致。
  */
 import { computed, reactive, type Ref } from 'vue';
-import type { ChatMessage, MessageSegment, ToolCallItem } from '../types';
+import type { ChatMessage, MessageSegment, SendDelivery, ToolCallItem } from '../types';
 import { formatRoundDuration } from './elapsed';
 
 export interface RoundRow {
@@ -41,10 +41,60 @@ export interface RoundView {
   durationText: string;
   /** 是否可折叠：本轮用过工具（与桌面端 collapsedSteps.length > 0 同口径） */
   collapsible: boolean;
+  /** 本轮 send_image / send_file 的会话副本（统一发送媒体方案 D6），按调用顺序 */
+  deliveries: SendDelivery[];
   /** 本轮仍在执行：平铺展示，不折叠 */
   active: boolean;
   /** 是否显示等待三点：执行中、无工具在跑、且还没有正在流出的正文 */
   typing: boolean;
+}
+
+/** 统一发送媒体的工具名（与 desktop/src/composables/useMessageRounds.ts 同表）。 */
+const SEND_MEDIA_TOOL_NAMES = new Set(['send_image', 'send_file']);
+
+/**
+ * 从一轮的助手消息里按调用顺序收 `delivery`（统一发送媒体方案 D6）：结果 JSON 能解析且含
+ * `delivery.url` 才收；message.toolCalls 与 segments 可能同时持有同一调用，按 toolCallId 去重。
+ */
+function collectDeliveries(messages: ChatMessage[]): SendDelivery[] {
+  const seen = new Set<string>();
+  const deliveries: SendDelivery[] = [];
+  const consider = (call: ToolCallItem): void => {
+    if (!SEND_MEDIA_TOOL_NAMES.has(call.toolName) || seen.has(call.toolCallId)) return;
+    seen.add(call.toolCallId);
+    const delivery = extractDelivery(call);
+    if (delivery) deliveries.push(delivery);
+  };
+  for (const message of messages) {
+    for (const call of message.toolCalls ?? []) consider(call);
+    for (const segment of message.segments ?? []) {
+      if (segment.type === 'tool-group') for (const call of segment.toolCalls) consider(call);
+    }
+  }
+  return deliveries;
+}
+
+function extractDelivery(call: ToolCallItem): SendDelivery | null {
+  if (!call.resultText) return null;
+  try {
+    const parsed = JSON.parse(call.resultText) as Record<string, unknown>;
+    const delivery = parsed.delivery as Record<string, unknown> | undefined;
+    if (!delivery || typeof delivery !== 'object') return null;
+    const url = delivery.url;
+    if (typeof url !== 'string' || url === '') return null;
+    const filename = typeof parsed.filename === 'string' && parsed.filename.trim() !== ''
+      ? parsed.filename
+      : (url.split('/').pop() || 'attachment');
+    return {
+      kind: delivery.kind === 'file' ? 'file' : 'image',
+      url,
+      mime: typeof delivery.mime === 'string' ? delivery.mime : undefined,
+      bytes: typeof delivery.bytes === 'number' ? delivery.bytes : undefined,
+      filename,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** thinking 起新轮；tool-group / text 归属当前轮。与桌面端「每步一条消息」的步数口径对齐。 */
@@ -184,6 +234,7 @@ export function useRounds(messages: Ref<ChatMessage[]>, activePhase: Ref<string 
       stepCount,
       durationText,
       collapsible,
+      deliveries: collectDeliveries(group.assistants),
       active,
       typing,
     };
