@@ -5,6 +5,8 @@ import { InboundMergeWindow } from '../common/inbound-merge-window.js';
 
 const IDENTITY_TEXT = '当前无法识别你的钉钉身份';
 const OAUTH_MISSING_TEXT = '管理员尚未配置钉钉登录，暂时无法绑定';
+/** 密码档也无可用时的兜底文案（OAuth 已配置但发卡失败仍用 OAUTH_MISSING_TEXT，行为不变）。 */
+const NO_LOGIN_METHOD_TEXT = '管理员尚未开启可用登录方式，暂时无法绑定';
 const GROUP_UNSUPPORTED_TEXT = '群聊暂不支持该类型，请私聊发送';
 const P2P_UNSUPPORTED_TEXT = '暂不支持语音和视频';
 
@@ -13,6 +15,10 @@ export interface DingtalkInboundProcessorOptions {
   resolveUserId?: (accountId: string, event: DingtalkNormalizedMessage) => Promise<number | null>;
   sendReply?: (accountId: string, event: DingtalkNormalizedMessage, text: string) => Promise<void>;
   sendBindingCard?: (accountId: string, event: DingtalkNormalizedMessage) => Promise<boolean>;
+  /** 密码绑定卡（技术方案 2026-11-19-channel-password-bind §4.2）：OAuth 未配置时兜底发卡。 */
+  sendPasswordBindCard?: (accountId: string, event: DingtalkNormalizedMessage) => Promise<boolean>;
+  /** 密码档发卡失败时的回退文案：区分「密码登录未开启」与「站点地址未配置」。 */
+  passwordBindMissingText?: () => Promise<string>;
   oauthConfigured?: () => Promise<boolean>;
   rememberMember?: (accountId: string, event: DingtalkNormalizedMessage, userId: number) => Promise<void>;
   /** 入站防抖合并窗口时长（ms）。同账号 + 会话 + 发送者的连续文本消息合并为一次触发；0 = 禁用（与加窗前一致）。 */
@@ -197,12 +203,21 @@ export class DingtalkInboundProcessor {
   }
 
   private async sendBindingGuide(accountId: string, event: DingtalkNormalizedMessage): Promise<void> {
-    if (this.options.oauthConfigured != null && !(await this.options.oauthConfigured())) {
-      await this.reply(accountId, event, OAUTH_MISSING_TEXT);
+    const oauthOn = this.options.oauthConfigured != null && (await this.options.oauthConfigured());
+    if (oauthOn) {
+      // OAuth 档行为不变（§5：密码档只在 OAuth 缺位时兜底），发卡失败仍回退文本
+      const sent = await this.options.sendBindingCard?.(accountId, event) ?? false;
+      if (!sent) await this.reply(accountId, event, OAUTH_MISSING_TEXT);
       return;
     }
-    const sent = await this.options.sendBindingCard?.(accountId, event) ?? false;
-    if (!sent) await this.reply(accountId, event, OAUTH_MISSING_TEXT);
+    // 密码档：ECP/钉钉 OAuth 缺位且账号密码登录开启时，引导到 SPA 绑定确认页
+    const sentPassword = await this.options.sendPasswordBindCard?.(accountId, event) ?? false;
+    if (!sentPassword) {
+      const missingText = this.options.passwordBindMissingText != null
+        ? await this.options.passwordBindMissingText()
+        : NO_LOGIN_METHOD_TEXT;
+      await this.reply(accountId, event, missingText);
+    }
   }
 
   private async reply(accountId: string, event: DingtalkNormalizedMessage, text: string): Promise<void> {
@@ -210,4 +225,4 @@ export class DingtalkInboundProcessor {
   }
 }
 
-export { IDENTITY_TEXT, OAUTH_MISSING_TEXT, GROUP_UNSUPPORTED_TEXT, P2P_UNSUPPORTED_TEXT };
+export { IDENTITY_TEXT, OAUTH_MISSING_TEXT, NO_LOGIN_METHOD_TEXT, GROUP_UNSUPPORTED_TEXT, P2P_UNSUPPORTED_TEXT };

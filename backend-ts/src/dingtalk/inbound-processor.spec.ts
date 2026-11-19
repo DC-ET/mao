@@ -57,6 +57,64 @@ describe('DingtalkInboundProcessor', () => {
     expect(sendReply).not.toHaveBeenCalled();
   });
 
+  it('OAuth 未配置时走密码档发卡（§4.2）', async () => {
+    const onMessage = vi.fn();
+    const sendBindingCard = vi.fn(async () => true);
+    const sendPasswordBindCard = vi.fn(async () => true);
+    const sendReply = vi.fn();
+    await processor({ onMessage }, {
+      resolveUserId: async () => null,
+      sendBindingCard,
+      sendPasswordBindCard,
+      sendReply,
+      oauthConfigured: async () => false,
+    }).process('1', event());
+    expect(sendBindingCard).not.toHaveBeenCalled();
+    expect(sendPasswordBindCard).toHaveBeenCalled();
+    expect(sendReply).not.toHaveBeenCalled();
+  });
+
+  it('OAuth 未配置且密码档也失败时回退「未开启可用登录方式」文案', async () => {
+    const sendPasswordBindCard = vi.fn(async () => false);
+    const sendReply = vi.fn();
+    await processor({ onMessage: vi.fn() }, {
+      resolveUserId: async () => null,
+      sendPasswordBindCard,
+      sendReply,
+      oauthConfigured: async () => false,
+    }).process('1', event());
+    expect(sendReply).toHaveBeenCalledWith('1', expect.anything(), '管理员尚未开启可用登录方式，暂时无法绑定');
+  });
+
+  it('密码档失败且注入 passwordBindMissingText 时使用该文案（站点地址缺失口径）', async () => {
+    const sendPasswordBindCard = vi.fn(async () => false);
+    const sendReply = vi.fn();
+    await processor({ onMessage: vi.fn() }, {
+      resolveUserId: async () => null,
+      sendPasswordBindCard,
+      sendReply,
+      passwordBindMissingText: async () => '请联系管理员在管理后台配置站点地址（site.baseUrl）后重试',
+      oauthConfigured: async () => false,
+    }).process('1', event());
+    expect(sendReply).toHaveBeenCalledWith('1', expect.anything(), '请联系管理员在管理后台配置站点地址（site.baseUrl）后重试');
+  });
+
+  it('OAuth 已配置但发卡失败仍回退 OAUTH_MISSING_TEXT，不触发密码档（§5）', async () => {
+    const sendBindingCard = vi.fn(async () => false);
+    const sendPasswordBindCard = vi.fn(async () => true);
+    const sendReply = vi.fn();
+    await processor({ onMessage: vi.fn() }, {
+      resolveUserId: async () => null,
+      sendBindingCard,
+      sendPasswordBindCard,
+      sendReply,
+      oauthConfigured: async () => true,
+    }).process('1', event());
+    expect(sendBindingCard).toHaveBeenCalled();
+    expect(sendPasswordBindCard).not.toHaveBeenCalled();
+    expect(sendReply).toHaveBeenCalledWith('1', expect.anything(), '管理员尚未配置钉钉登录，暂时无法绑定');
+  });
+
   it('does not send a binding card when staff id is missing', async () => {
     const sendBindingCard = vi.fn();
     const sendReply = vi.fn();

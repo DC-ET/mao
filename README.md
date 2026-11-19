@@ -55,7 +55,7 @@
 | 入口 | 适用场景 | 客户端要求 |
 |------|----------|------------|
 | [Web 工作台](skills/mao-cli/reference/desktop.md) | 日常任务、云端工作区、文件预览编辑、在线终端与 Git | 浏览器 |
-| [飞书](skills/mao-cli/reference/feishu-bot.md) / [钉钉](skills/mao-cli/reference/dingtalk-bot.md) / [微信](skills/mao-cli/reference/weixin.md) | 群聊 `@` 协同或私聊交办，支持流式进度卡片 | 免安装 |
+| [飞书](skills/mao-cli/reference/feishu-bot.md) / [钉钉](skills/mao-cli/reference/dingtalk-bot.md) / [微信](skills/mao-cli/reference/weixin.md) | 群聊 `@` 协同或私聊交办，支持流式进度卡片；未开通 IM 登录的部署可经 Mao 账号密码登录自助绑定 | 免安装 |
 | [Embed SDK](skills/mao-cli/reference/embed-sdk.md) | 嵌入内部后台的对话浮窗，可读取与操作宿主页面上下文 | 宿主页面引入一行脚本 |
 | [mao-agent CLI](skills/mao-cli/reference/mao-agent.md) | 终端交互式 REPL、CI/CD 流水线集成、本机目录直连 | Node.js CLI |
 | [Android](skills/mao-cli/reference/android.md) | 移动办公、审批与任务跟进 | APK（支持应用内 OTA） |

@@ -56,6 +56,19 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/settings/DingtalkBindRedirect.vue')
       },
       {
+        path: 'feishu/bind/:state',
+        name: 'FeishuBindConfirm',
+        component: () => import('../views/auth/ChannelBindConfirmView.vue'),
+        // 通道标识：通用确认页按 meta.channel 调对应域的预览/complete 接口
+        meta: { channel: 'feishu' }
+      },
+      {
+        path: 'dingtalk/bind-pwd/:state',
+        name: 'DingtalkBindPwdConfirm',
+        component: () => import('../views/auth/ChannelBindConfirmView.vue'),
+        meta: { channel: 'dingtalk' }
+      },
+      {
         path: 'tasks/:sessionId',
         name: 'Task',
         component: () => import('../views/task/TaskView.vue')

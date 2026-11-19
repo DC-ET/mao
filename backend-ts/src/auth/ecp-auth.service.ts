@@ -17,7 +17,7 @@ import {
 } from './ecp-oauth.repository.js';
 import type { MysqlEcpSessionRepository } from './ecp-session.repository.js';
 import type { EcpChannelCallbackOutcome } from './ecp-channel-callback-page.js';
-import type { FeishuEcpPendingResult } from '../feishu/ecp-inbound-gate.js';
+import type { ChannelBindOutcome } from '../channel-bind/bind-flow.js';
 
 const ECP_PROCESSING = 'PROCESSING';
 const STATE_EXPIRES_SECONDS = 300;
@@ -33,7 +33,7 @@ export class EcpAuthService {
     private readonly authService: Pick<AuthService, 'buildLoginResult'>,
     private readonly getConfig: () => Promise<EcpConfig>,
     private readonly client: Pick<EcpClient, 'createFeishuAuthorization' | 'createSessionFromFeishuCallback'> = new EcpClient(),
-    private readonly onAuthenticated?: (user: User, state: string) => Promise<FeishuEcpPendingResult | void>,
+    private readonly onAuthenticated?: (user: User, state: string) => Promise<ChannelBindOutcome | void>,
   ) {}
 
   async isEnabled(): Promise<boolean> {
@@ -81,7 +81,7 @@ export class EcpAuthService {
   private async completeStateWithCodeAndPending(
     state: string | undefined,
     code: string | undefined,
-  ): Promise<{ user: User; pendingResult?: FeishuEcpPendingResult }> {
+  ): Promise<{ user: User; pendingResult?: ChannelBindOutcome }> {
     const config = await this.getConfig();
     assertEcpEnabled(config.enabled);
     if (!hasText(state)) throw new EcpError('ECP 登录 state 不能为空');

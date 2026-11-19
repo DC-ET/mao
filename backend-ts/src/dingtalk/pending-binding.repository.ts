@@ -49,6 +49,25 @@ export class MysqlDingtalkPendingBindingRepository {
     );
   }
 
+  /**
+   * 按 state 取待完成行（密码绑定预览用）：只认 SENT 且未过期（claim 同款口径）。
+   * 不消费状态；claim 才是原子消费点。
+   */
+  async findByState(state: string): Promise<(DingtalkPendingBindingMessage & { expiresAt?: string | null }) | null> {
+    const row = await this.db.queryOne<Record<string, unknown>>(
+      "SELECT * FROM dingtalk_pending_binding_message WHERE state = ? AND status = 'SENT' AND expires_at > CURRENT_TIMESTAMP LIMIT 1",
+      [state],
+    );
+    if (row == null) return null;
+    return {
+      state: String(row.state),
+      botId: Number(row.botId),
+      event: JSON.parse(String(row.payload)) as DingtalkNormalizedMessage,
+      status: 'SENT',
+      expiresAt: row.expires_at == null ? null : String(row.expires_at),
+    };
+  }
+
   async claim(state: string): Promise<DingtalkPendingBindingMessage | null> {
     const row = await this.db.queryOne<Record<string, unknown>>(
       "SELECT * FROM dingtalk_pending_binding_message WHERE state = ? AND status = 'SENT' AND expires_at > CURRENT_TIMESTAMP LIMIT 1",

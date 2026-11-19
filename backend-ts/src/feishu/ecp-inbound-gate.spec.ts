@@ -1,7 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  completeFeishuPendingAfterEcp,
-  FEISHU_ECP_IDENTITY_MISMATCH_TEXT,
   feishuUnauthorizedGuide,
   isFeishuSenderEcpReady,
   persistFeishuPendingAuth,
@@ -11,31 +9,6 @@ import {
   buildFeishuAuthGuideCard,
   feishuUnauthorizedFallbackText,
 } from './ecp-inbound-gate.js';
-import type { FeishuPendingBindingMessage } from './pending-binding.repository.js';
-
-function pending(overrides: Partial<FeishuPendingBindingMessage> = {}): FeishuPendingBindingMessage {
-  return {
-    state: 'st',
-    appId: 1,
-    messageId: 'om_1',
-    event: {
-      eventId: 'evt',
-      messageId: 'om_1',
-      chatId: 'oc_1',
-      chatType: 'p2p',
-      senderId: 'ou_1',
-      senderUnionId: 'on_1',
-      senderType: 'user',
-      messageType: 'text',
-      text: 'hi',
-      mentions: [],
-      isBotMentioned: false,
-      content: {},
-      rawEvent: {},
-    },
-    ...overrides,
-  };
-}
 
 describe('startFeishuChannelAuthLink', () => {
   it('prefers ECP even when Mao Feishu OAuth is also enabled', async () => {
@@ -69,6 +42,47 @@ describe('startFeishuChannelAuthLink', () => {
       startFeishu: async () => ({ authUrl: 'https://mao', state: 'f' }),
     })).toBeNull();
   });
+
+  it('密码档：ECP / 飞书 OAuth 都关闭且密码登录开启 + 站点地址可用时兜底', async () => {
+    const startPassword = vi.fn(() => ({ authUrl: 'https://mao.example.com/feishu/bind/st', state: 'st' }));
+    const startEcpFail = async () => { throw new Error('ECP 不应被调用'); };
+    const startFeishuFail = async () => { throw new Error('飞书 OAuth 不应被调用'); };
+    const link = await startFeishuChannelAuthLink({
+      ecpEnabled: false,
+      feishuEnabled: false,
+      passwordEnabled: true,
+      getSiteBaseUrl: () => 'https://mao.example.com',
+      startEcp: startEcpFail,
+      startFeishu: startFeishuFail,
+      startPassword,
+    });
+    expect(link).toEqual({ authUrl: 'https://mao.example.com/feishu/bind/st', state: 'st' });
+    expect(startPassword).toHaveBeenCalledTimes(1);
+  });
+
+  it('密码档：ECP 或飞书 OAuth 任一开启时不触发', async () => {
+    const startPassword = vi.fn(() => ({ authUrl: 'x', state: 'x' }));
+    await startFeishuChannelAuthLink({
+      ecpEnabled: true, feishuEnabled: false,
+      passwordEnabled: true, getSiteBaseUrl: () => 'https://mao.example.com',
+      startEcp: async () => ({ authUrl: 'ecp', state: 'e' }), startFeishu: async () => ({ authUrl: 'f', state: 'f' }), startPassword,
+    });
+    await startFeishuChannelAuthLink({
+      ecpEnabled: false, feishuEnabled: true,
+      passwordEnabled: true, getSiteBaseUrl: () => 'https://mao.example.com',
+      startEcp: async () => ({ authUrl: 'e', state: 'e' }), startFeishu: async () => ({ authUrl: 'feishu', state: 'f' }), startPassword,
+    });
+    expect(startPassword).not.toHaveBeenCalled();
+  });
+
+  it('密码档：密码登录未开启或站点地址缺失时返回 null', async () => {
+    const base = { ecpEnabled: false, feishuEnabled: false, startEcp: async () => ({ authUrl: 'e', state: 'e' }), startFeishu: async () => ({ authUrl: 'f', state: 'f' }) };
+    const startPassword = () => ({ authUrl: 'x', state: 'x' });
+    expect(await startFeishuChannelAuthLink({ ...base, passwordEnabled: false, getSiteBaseUrl: () => 'https://x', startPassword })).toBeNull();
+    expect(await startFeishuChannelAuthLink({ ...base, passwordEnabled: true, getSiteBaseUrl: () => '', startPassword })).toBeNull();
+    expect(await startFeishuChannelAuthLink({ ...base, passwordEnabled: true, getSiteBaseUrl: () => null, startPassword })).toBeNull();
+    expect(await startFeishuChannelAuthLink({ ...base, passwordEnabled: true, getSiteBaseUrl: () => 'https://x' })).toBeNull();
+  });
 });
 
 describe('feishuUnauthorizedGuide', () => {
@@ -94,6 +108,22 @@ describe('feishuUnauthorizedGuide', () => {
   });
 
   it('uses bind copy for private chat when ECP is off', () => {
+    expect(feishuUnauthorizedGuide(false, 'p2p').body).toContain('请先完成飞书账号绑定后再试');
+  });
+
+  it('密码档 p2p：登录 + 确认绑定文案与按钮', () => {
+    const guide = feishuUnauthorizedGuide(false, 'p2p', true);
+    expect(guide.body).toBe('登录 Mao 账号后核对信息并确认绑定，即可继续刚才的消息（15 分钟内有效）。');
+    expect(guide.buttonLabel).toBe('登录 Mao 并绑定');
+    expect(guide.title).toBe('新用户绑定');
+  });
+
+  it('密码档群聊：先绑定再使用权限的文案', () => {
+    expect(feishuUnauthorizedGuide(false, 'group', true).body).toBe('请先登录 Mao 账号并确认绑定，获得群内使用权限后再试（15 分钟内有效）。');
+  });
+
+  it('ECP 开启时密码档不改变 ECP 文案；passwordEnabled 缺省维持飞书 OAuth 档', () => {
+    expect(feishuUnauthorizedGuide(true, 'p2p', true).body).toBe('请先点击下方按钮完成用户绑定（3分钟内有效）。');
     expect(feishuUnauthorizedGuide(false, 'p2p').body).toContain('请先完成飞书账号绑定后再试');
   });
 });
@@ -167,119 +197,6 @@ describe('senderUnionIdOf', () => {
     expect(senderUnionIdOf({ senderUnionId: 'on_1', senderId: 'ou_1' })).toBe('on_1');
     expect(senderUnionIdOf({ senderUnionId: null, senderId: 'ou_1' })).toBe('ou_1');
     expect(senderUnionIdOf({ senderUnionId: null, senderId: null })).toBeNull();
-  });
-});
-
-describe('completeFeishuPendingAfterEcp', () => {
-  it('binds unbound union_id and replays the original message', async () => {
-    const bind = vi.fn(async () => undefined);
-    const replay = vi.fn(async () => undefined);
-    const complete = vi.fn(async () => undefined);
-    const result = await completeFeishuPendingAfterEcp({
-      state: 'st',
-      ecpUserId: 8,
-      claim: async () => pending(),
-      findUserIdByUnionId: async () => null,
-      bind,
-      replay,
-      complete,
-      release: async () => undefined,
-      failClaimed: async () => undefined,
-    });
-    expect(result).toBe('replayed');
-    expect(bind).toHaveBeenCalledWith(8, 'on_1');
-    expect(replay).toHaveBeenCalled();
-    expect(complete).toHaveBeenCalledWith('st');
-  });
-
-  it('replays when the bound user is the ECP user', async () => {
-    const bind = vi.fn(async () => undefined);
-    const result = await completeFeishuPendingAfterEcp({
-      state: 'st',
-      ecpUserId: 8,
-      claim: async () => pending(),
-      findUserIdByUnionId: async () => 8,
-      bind,
-      replay: async () => undefined,
-      complete: async () => undefined,
-      release: async () => undefined,
-      failClaimed: async () => undefined,
-    });
-    expect(result).toBe('replayed');
-    expect(bind).toHaveBeenCalledWith(8, 'on_1');
-  });
-
-  it('releases pending when replay fails', async () => {
-    const release = vi.fn(async () => undefined);
-    const result = await completeFeishuPendingAfterEcp({
-      state: 'st',
-      ecpUserId: 8,
-      claim: async () => pending(),
-      findUserIdByUnionId: async () => null,
-      bind: async () => undefined,
-      replay: async () => { throw new Error('boom'); },
-      complete: async () => undefined,
-      release,
-      failClaimed: async () => undefined,
-    });
-    expect(result).toBe('replay-failed');
-    expect(release).toHaveBeenCalledWith('st');
-  });
-
-  it('returns no-pending when the oauth state has no inbound message', async () => {
-    const result = await completeFeishuPendingAfterEcp({
-      state: 'st',
-      ecpUserId: 8,
-      claim: async () => null,
-      findUserIdByUnionId: async () => null,
-      bind: async () => undefined,
-      replay: async () => undefined,
-      complete: async () => undefined,
-      release: async () => undefined,
-      failClaimed: async () => undefined,
-    });
-    expect(result).toBe('no-pending');
-  });
-
-  it('does not steal the binding when ECP email maps to another user', async () => {
-    const bind = vi.fn(async () => undefined);
-    const replay = vi.fn(async () => undefined);
-    const failClaimed = vi.fn(async () => undefined);
-    const notifyMismatch = vi.fn(async () => undefined);
-    const result = await completeFeishuPendingAfterEcp({
-      state: 'st',
-      ecpUserId: 9,
-      claim: async () => pending(),
-      findUserIdByUnionId: async () => 3,
-      bind,
-      replay,
-      complete: async () => undefined,
-      release: async () => undefined,
-      failClaimed,
-      notifyMismatch,
-    });
-    expect(result).toBe('identity-mismatch');
-    expect(bind).not.toHaveBeenCalled();
-    expect(replay).not.toHaveBeenCalled();
-    expect(failClaimed).toHaveBeenCalledWith('st');
-    expect(notifyMismatch).toHaveBeenCalled();
-    expect(FEISHU_ECP_IDENTITY_MISMATCH_TEXT).toContain('邮箱不一致');
-  });
-
-  it('still marks identity-mismatch if notifying Feishu fails', async () => {
-    const result = await completeFeishuPendingAfterEcp({
-      state: 'st',
-      ecpUserId: 9,
-      claim: async () => pending(),
-      findUserIdByUnionId: async () => 3,
-      bind: async () => undefined,
-      replay: async () => undefined,
-      complete: async () => undefined,
-      release: async () => undefined,
-      failClaimed: async () => undefined,
-      notifyMismatch: async () => { throw new Error('send failed'); },
-    });
-    expect(result).toBe('identity-mismatch');
   });
 });
 

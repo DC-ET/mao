@@ -41,13 +41,14 @@ export function isContentTooLong(status: number, body: string): boolean {
   return /过长|too long|exceed|length|msgParam/i.test(body);
 }
 
-export function bindingCardParam(url: string): { msgKey: 'sampleActionCard'; msgParam: string } {
+/** 绑定卡：OAuth 档默认文案（3 分钟）；密码档传 overrides（15 分钟文案 + 「登录 Mao 并绑定」按钮）。 */
+export function bindingCardParam(url: string, overrides?: { text?: string; button?: string }): { msgKey: 'sampleActionCard'; msgParam: string } {
   return {
     msgKey: 'sampleActionCard',
     msgParam: JSON.stringify({
       title: '绑定 Mao',
-      text: '请先点击下方按钮完成账号绑定（3分钟内有效）。',
-      singleTitle: '点我绑定',
+      text: overrides?.text ?? '请先点击下方按钮完成账号绑定（3分钟内有效）。',
+      singleTitle: overrides?.button ?? '点我绑定',
       singleURL: url,
     }),
   };

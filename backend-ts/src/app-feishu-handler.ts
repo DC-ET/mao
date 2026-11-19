@@ -426,14 +426,15 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
     resolveUserId: createResolveUserIdHelper({ feishuBinding: d.feishuBinding }),
     authorizeSender: createAuthorizeSenderHelper({ feishuBinding: d.feishuBinding, feishuMessageRepository, ecpAuth: d.ecpAuth, ecpSessionRepo: d.ecpSessionRepo }),
     sendReply: async (accountId: any, event: any, text: string) => { await sendFeishuText(Number(accountId), event, text); },
-    sendUnauthorizedCard: createSendUnauthorizedCardHelper({ getFeishuClient, ecpAuth: d.ecpAuth, feishu: d.feishu, pendingBindingMessages: d.pendingBindingMessages }),
-    unauthorizedText: createUnauthorizedTextHelper({ ecpAuth: d.ecpAuth }),
+    sendUnauthorizedCard: createSendUnauthorizedCardHelper({ getFeishuClient, ecpAuth: d.ecpAuth, feishu: d.feishu, pendingBindingMessages: d.pendingBindingMessages, passwordEnabled: () => d.settingService.passwordLoginEnabled(), getSiteBaseUrl: () => d.settingService.getSiteBaseUrl() }),
+    unauthorizedText: createUnauthorizedTextHelper({ ecpAuth: d.ecpAuth, feishu: d.feishu, pendingBindingMessages: d.pendingBindingMessages, passwordEnabled: () => d.settingService.passwordLoginEnabled(), getSiteBaseUrl: () => d.settingService.getSiteBaseUrl() }),
   });
   ctx.pendingBindingProcessor = feishuInboundProcessor;
   const feishuCardActionService = new FeishuCardActionService({
     queuePort: feishuTaskQueue,
     renewAuthLink: createRenewAuthLinkHelper({
       ecpAuth: d.ecpAuth, feishu: d.feishu, pendingBindingMessages: d.pendingBindingMessages,
+      passwordEnabled: () => d.settingService.passwordLoginEnabled(), getSiteBaseUrl: () => d.settingService.getSiteBaseUrl(),
     }),
     interrupt: (sessionId: number) => feishuInboundHandler.interrupt(sessionId),
     interruptAndDrain: (sessionId: number) => feishuInboundHandler.interruptAndDrain(sessionId),

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { imageMessageParam, fileMessageParam, limitReply, markdownMessage, sendDingtalkMarkdown } from './send.service.js';
+import { bindingCardParam, imageMessageParam, fileMessageParam, limitReply, markdownMessage, sendDingtalkMarkdown } from './send.service.js';
 
 describe('dingtalk outbound message contract', () => {
   it('sends images with sampleImageMsg photoURL set to the uploaded media id', () => {
@@ -36,5 +36,20 @@ describe('dingtalk outbound message contract', () => {
   it('puts the first line into the markdown title', () => {
     const message = markdownMessage('标题行\n正文', 2000);
     expect(JSON.parse(message.msgParam)).toMatchObject({ title: '标题行', text: '标题行\n正文' });
+  });
+});
+
+describe('bindingCardParam', () => {
+  it('默认文案为 OAuth 档（3 分钟 + 点我绑定）', () => {
+    const card = JSON.parse(bindingCardParam('https://mao.example/api/v1/dingtalk/bind/s1').msgParam);
+    expect(card).toMatchObject({ title: '绑定 Mao', text: '请先点击下方按钮完成账号绑定（3分钟内有效）。', singleTitle: '点我绑定', singleURL: 'https://mao.example/api/v1/dingtalk/bind/s1' });
+  });
+
+  it('密码档 overrides：15 分钟文案 + 「登录 Mao 并绑定」按钮（§4.2）', () => {
+    const card = JSON.parse(bindingCardParam('https://mao.example/dingtalk/bind-pwd/s2', {
+      text: '登录 Mao 账号后核对信息并确认绑定，即可继续刚才的消息（15 分钟内有效）。',
+      button: '登录 Mao 并绑定',
+    }).msgParam);
+    expect(card).toMatchObject({ title: '绑定 Mao', text: '登录 Mao 账号后核对信息并确认绑定，即可继续刚才的消息（15 分钟内有效）。', singleTitle: '登录 Mao 并绑定', singleURL: 'https://mao.example/dingtalk/bind-pwd/s2' });
   });
 });

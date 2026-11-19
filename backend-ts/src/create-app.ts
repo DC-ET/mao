@@ -154,8 +154,10 @@ import { RecordingLlmChatClient } from './usage/recording-llm-chat-client.js';
 import { MysqlFeishuBindingRepository } from './feishu/binding.repository.js';
 import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
 import { MysqlFeishuPendingBindingRepository } from './feishu/pending-binding.repository.js';
+import type { FeishuPendingBindingMessage } from './feishu/pending-binding.repository.js';
 import { replayFeishuPendingMessage } from './feishu/pending-replay.js';
-import { completeFeishuPendingAfterEcp } from './feishu/ecp-inbound-gate.js';
+import { completePendingAfterBind, feishuUnionIdOf } from './channel-bind/bind-flow.js';
+import { registerFeishuPendingBindingRoutes } from './feishu/binding.routes.js';
 import type { DingtalkMediaSendSupport } from './harness/tool/impl/dingtalk-tools.js';
 import { FeishuAskFormStore } from './feishu/ask-form-store.js';
 import { FeishuActiveProgressRegistry } from './feishu/active-progress.js';
@@ -336,10 +338,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     async (user, state) => {
       if (user.id == null) return;
       // 返回值透出重放结局：通道绑定回调据此分档渲染（不得把「重放失败」报成绑定成功）
-      return completeFeishuPendingAfterEcp({
+      return completePendingAfterBind<FeishuPendingBindingMessage>({
         state,
-        ecpUserId: user.id,
+        bindUserId: user.id,
         claim: (s) => pendingBindingMessages.claim(s),
+        unionIdOf: feishuUnionIdOf,
         findUserIdByUnionId: (unionId) => earlyFeishuBinding.findUserIdByUnionId(unionId),
         bind: (userId, unionId) => earlyFeishuBinding.bind(userId, unionId),
         replay: async (pending) => {
@@ -355,6 +358,25 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       });
     },
   );
+  // 飞书密码绑定（技术方案 2026-11-19-channel-password-bind §4.3）：预览 / complete 路由。
+  // replay 经 ctx 延迟解引用——pendingBindingProcessor 在 app-feishu-handler 装配完成后才存在。
+  registerFeishuPendingBindingRoutes(app, {
+    jwt,
+    binding: earlyFeishuBinding,
+    pendingBindingMessages,
+    currentUser: async (userId) => {
+      const user = await userRepo.findById(userId).catch(() => null);
+      return user == null ? null : { id: userId, username: user.username, disabled: user.status != null && user.status === 0 };
+    },
+    replay: async (pending) => {
+      if (ctx.pendingBindingProcessor == null) throw new Error('飞书入站处理器未就绪');
+      await replayFeishuPendingMessage(ctx.pendingBindingProcessor, pending);
+    },
+    notifyMismatch: async (pending) => {
+      await ctx.notifyFeishuPendingMismatch?.(pending);
+    },
+  });
+
   const gitCredentials = new GitCredentialService(db, cfg.app.gitCredential.secretKey);
   // 系统默认 Git 凭据（技术方案 2026-11-12）：管理员按域名托管默认 Token，用户缺域时兜底；
   // 与用户凭据共用 APP_GIT_CREDENTIAL_SECRET，表空 = 功能未启用。

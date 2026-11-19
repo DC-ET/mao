@@ -100,6 +100,23 @@ export class MysqlFeishuPendingBindingRepository {
     };
   }
 
+  /**
+   * 按 state 取待完成行（密码绑定预览 / complete 用）：只认 SENT，带 createdAt 供 TTL 判断。
+   * 不消费状态；claim 才是原子消费点。
+   */
+  async findByState(state: string): Promise<(FeishuPendingBindingMessage & { createdAt?: string | null }) | null> {
+    const row = await this.db.queryOne<Record<string, unknown>>(
+      "SELECT * FROM feishu_pending_binding_message WHERE state = ? AND status = 'SENT' LIMIT 1", [state],
+    );
+    if (row == null) return null;
+    return {
+      id: Number(row.id), state: String(row.state), appId: Number(row.appId), messageId: String(row.messageId),
+      cardMessageId: row.cardMessageId == null ? null : String(row.cardMessageId),
+      event: JSON.parse(String(row.eventJson)) as FeishuNormalizedMessage, status: String(row.status),
+      createdAt: row.created_at == null ? null : String(row.created_at),
+    };
+  }
+
   async claim(state: string): Promise<FeishuPendingBindingMessage | null> {    const row = await this.db.queryOne<Record<string, unknown>>(
       "SELECT * FROM feishu_pending_binding_message WHERE state = ? AND (status = 'SENT' OR (status = 'CLAIMED' AND updated_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 10 MINUTE))) LIMIT 1", [state],
     );

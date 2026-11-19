@@ -42,7 +42,7 @@ IM 通道（飞书、钉钉）的新用户（未绑定 Mao 账号的发送者）
 | 补投 | `replayFeishuPendingMessage` → `process(skipClaim, bypassWindow)` | `pending.claim` → `process(skipClaim, bypassWindow)`（同构） |
 | 登录后回跳 | 路由守卫 + `safeRedirect`（`login-redirect.ts`）现成 | 同一套登录页（先例即出自钉钉） |
 | 通用绑定编排 | `completeFeishuPendingAfterEcp`（`ecp-inbound-gate.ts:141`，全回调注入，返回 no-pending/replayed/identity-mismatch/replay-failed 四档） | 无独立编排，逻辑内联在 `onCallback` |
-| 服务端结果页先例 | ECP 通道回调页三档渲染（`ecp-channel-callback-page.ts`） | —（密码档走 SPA 确认页，不需要服务端结果页） |
+| 服务端结果页先例 | ECP 通道回调页三档渲染（`auth/ecp-channel-callback-page.ts`） | —（密码档走 SPA 确认页，不需要服务端结果页） |
 
 ### 2.4 缺口
 
@@ -68,7 +68,9 @@ IM 通道（飞书、钉钉）的新用户（未绑定 Mao 账号的发送者）
 4. 登录成功顺带获得网页会话，可在网页查看会话（深链已有）。
 5. B 需自建登录周边（防爆破、表单维护），收益低；仅当实测「飞书/钉钉内置浏览器跑不动 SPA」时再降级（届时只换登录入口，绑定接口不变）。
 
-**前提**：桌面 Web 部署在 `site.baseUrl`（V170）下；`password.login.enabled` 开启。两通道链接生成统一改用 `getSiteBaseUrl()`（钉钉现状从 `oauth.redirectUri` 推 origin，密码档无 OAuth 可依赖，必须换 siteBaseUrl）。
+**前提**：桌面 Web 部署在 `site.baseUrl`（V170）下；`password.login.enabled` 开启。两通道链接生成统一改用 `getSiteBaseUrl()`（钉钉现状从 `oauth.redirectUri` 推 origin，密码档无 OAuth 可依赖，必须换 siteBaseUrl）。注意 `getSiteBaseUrl()` 的语义是「site.baseUrl 优先、留空回落 upload.baseUrl」（V170 迁移注释），触发条件按「返回值非空」计，不要另查配置项——绑定链接落在回落域名是可接受的（同一站点）。
+
+桌面 Web 端路由为 history 模式（`createAppHistory()` 仅 Electron file:// 与旧安卓内嵌包用 hash），`{siteBaseUrl}/feishu/bind/:state` 形状成立；卡片在 IM 内置浏览器/外部浏览器打开，恒走 Web 路径。
 
 ## 4. 详细设计
 
@@ -94,7 +96,9 @@ completePendingAfterBind(params: {
 
 调用方三处：ECP 回调（`create-app.ts:339`，原逻辑原样迁入）、飞书密码 complete、钉钉密码 complete。unionId 一律取待重放事件里的发送者身份（飞书 `senderUnionId ?? senderId`；钉钉 `senderUnionId`，`bind` 第三参传 `senderUserid`）。
 
-**本期不做「批量补投同发送者的其它待重放消息」**（原飞书版方案中的增强项降级为后续任务）：两侧 pending 表均无 sender 索引列，做它需要迁移；单条补投已满足本期需求，连发多条时未补投的行由启动恢复兜底（飞书已核实 `app-lifecycle.ts:113`；钉钉恢复机制实施时核实，若无则用户重发一条即正常）。
+**本期不做「批量补投同发送者的其它待重放消息」**（原飞书版方案中的增强项降级为后续任务）：两侧 pending 表均无 sender 索引列，做它需要迁移；单条补投已满足本期需求，连发多条时未补投的行由启动恢复兜底（飞书已核实 `app-lifecycle.ts:113`；钉钉已核实**无** pending 启动恢复——`inbound-queue.repository` 的 `listRecoverable` 是入站队列，另一回事——用户重发一条即正常）。
+
+另注：飞书启动恢复对 SENT 行的 claim+replay **不区分授权档位**——密码档 pending 行若在 TTL 内遇到重启，会被重放并再次发送引导卡（用户仍未绑定）。语义是「兜底再引导」而非「完成绑定」，与 ECP/OAuth 现状一致，不额外处理。
 
 ### 4.2 链接生成与引导卡（分通道）
 
@@ -111,7 +115,7 @@ completePendingAfterBind(params: {
 **钉钉**（`dingtalk/inbound-processor.ts` + `dingtalk/runtime.ts`）：
 
 1. `sendBindingGuide` 改为：OAuth 已配置 → `sendBindingCard`（不变）；未配置 → 尝试新增的 `sendPasswordBindCard`，失败再回退 `OAUTH_MISSING_TEXT`（文案改为「管理员尚未开启可用登录方式…」）。
-2. `sendPasswordBindCard`（`runtime.ts` 装配处新增，仿 `sendBindingCard`）：`state = randomUUID()` → `pending.insert({ state, botId, event }, new Date(Date.now() + PASSWORD_BIND_LINK_TTL_MS))`（钉钉 pending 表自带 expires_at，直接用）→ 复用 `bindingCardParam` 发 actionCard，链接 `{siteBaseUrl}/dingtalk/bind-pwd/{state}`，按钮文案「登录 Mao 并绑定」。无 OAuth、无 `dingtalk_oauth_state` 记录。
+2. `sendPasswordBindCard`（`runtime.ts` 装配处新增，仿 `sendBindingCard`）：`state = randomUUID()` → `pending.insert({ state, botId, event }, new Date(Date.now() + PASSWORD_BIND_LINK_TTL_MS))`（钉钉 pending 表自带 expires_at，直接用）→ 复用 `bindingCardParam` 发 actionCard，链接 `{siteBaseUrl}/dingtalk/bind-pwd/{state}`，按钮文案「登录 Mao 并绑定」。无 OAuth、无 `dingtalk_oauth_state` 记录。**完整序列必须照抄 `sendBindingCard`（`runtime.ts:408`）**：发卡成功后 `pending.markSent(state)`——钉钉 claim 只认 status='SENT'（`pending-binding.repository.ts:54`），漏了这步 complete 永远 no-pending；发送失败 `pending.fail(state)`。
 3. 密码档引导文案单档（钉钉现有引导不分群聊/单聊）：「登录 Mao 账号后核对信息并确认绑定，即可继续刚才的消息（15 分钟内有效）。」
 4. 钉钉 actionCard 无卡片回调按钮，**没有「重新获取链接」**：链接过期后用户重发一条消息即可拿到新卡（与现状 OAuth 卡过期行为一致）。
 
@@ -126,12 +130,13 @@ completePendingAfterBind(params: {
 
 - **预览**（失败不落库）：返回 `{ senderName, chatType, expiresAt, currentUser, willRebind }`。按 state 查 pending 行（状态 SENT、未过期；飞书按 `created_at + PASSWORD_BIND_LINK_TTL_MS` 判断，钉钉按 `expires_at` 列）；`willRebind` = 当前账号已有其它 unionId 绑定（`bind` 改绑语义的前置明示）。
 - **完成**：调 §4.1 编排，结局映射 `replayed → success`、`replay-failed → partial`、`identity-mismatch → failed`（文案复用 `FEISHU_ECP_IDENTITY_MISMATCH_TEXT` 同口径并触发 notifyMismatch——飞书走现有 `notifyFeishuPendingMismatch`；钉钉本期通知可先落结果页文案，飞书侧通知机制平移为后续增强）、`no-pending → failed`（「链接已失效或已使用」）。响应带 `senderName`。
-- 并发/幂等：`claim(state)` SENT→CLAIMED 原子更新，重复提交返回 `no-pending`；飞书启动恢复已兜底。
+- **TTL 校验在预览与 complete 两处都做**：飞书 `claim` 只查 status（SENT，或 CLAIMED 超 10 分钟可被接管恢复），**不拦 created_at 过期**；钉钉 claim 自带 `expires_at` 判断。飞书 complete 在调编排前按 `created_at + PASSWORD_BIND_LINK_TTL_MS` 复查，超期直接返回 failed——否则「预览已过期仍可 complete」。
+- 并发/幂等：`claim(state)` SENT→CLAIMED 原子更新（affectedRows 检查），重复提交返回 `no-pending`；飞书启动恢复已兜底。
 
 ### 4.4 桌面端通用确认页（desktop）
 
 1. **新组件** `ChannelBindConfirmView.vue`（`desktop/src/views/auth/`，通道无关）：按路由 meta 的 channel 调对应域接口。流程：
-   - 进入调预览 → 展示确认卡「飞书用户 张三 → Mao 账号 bob」（钉钉同构），`willRebind` 时明示「将替换现有飞书/钉钉绑定」；
+   - 进入调预览 → 展示确认卡「飞书用户 张三 → Mao 账号 bob」（钉钉同构），`willRebind` 时明示「将替换现有飞书/钉钉绑定」；`senderName` 飞书侧可为 undefined（`FeishuNormalizedMessage.senderName?`，钉钉必有），缺失姓名时兜底显示（如「飞书用户」+ unionId 尾段），不得直接渲染空；
    - **用户点「确认绑定」**才调 complete，进行中态「正在绑定…」，完成后按三档渲染结果（success / partial / failed，文案与 ECP 通道回调页口径一致）；
    - 预览失败直接展示失败结果，不出现确认按钮。
 2. **路由**（`desktop/src/router/index.ts`，Layout 子路由，均不设 `meta.public`）：`feishu/bind/:state`（新增）、`dingtalk/bind-pwd/:state`（新增，密码档专用）。钉钉既有 OAuth 流路由 `dingtalk/bind/:state`（`DingtalkBindRedirect.vue`）**不动**。未登录时现有守卫自动跳 `Login?redirect=...`，登录成功 `finishLogin` 回跳，零改动复用。
@@ -180,7 +185,7 @@ completePendingAfterBind(params: {
 | 场景 | 行为 |
 |---|---|
 | `site.baseUrl` 未配置 | 维持现状文本回退，文案提示「请联系管理员配置站点地址」 |
-| `password.login.enabled=false`（且各 OAuth/ECP 也关） | 配置校验 `assertInteractiveLoginRemains`（`settings.service.ts:800`）本就禁止这种组合，不会出现；若库被直改，回退文本不变 |
+| `password.login.enabled=false`（且各 OAuth/ECP 也关） | 配置校验 `assertInteractiveLoginRemains`（`settings/settings.service.ts:796`）本就禁止这种组合，不会出现；若库被直改，回退文本不变 |
 | 链接过期/已被使用 | 预览或 complete 返回 failed「链接已过期或已使用，请回 IM 重新发送一条消息」；飞书卡「重新获取链接」照常换发，钉钉重发消息 |
 | complete 成功但补投异常 | partial 档「绑定已生效，原消息未恢复，请回 IM 重发」；state 由 `release` 置回 SENT 供恢复重试（与 ECP 一致） |
 | 用户在确认页停留过久后点确认 | 超过 TTL → failed，引导重发 |
@@ -222,6 +227,7 @@ E2E（可选，`bash scripts/e2e-setup.sh` 后跑 Playwright）：IM 入口属�
 
 ## 10. 范围外（不做）
 
+- **不改设置页绑定按钮（`POST /v1/feishu/binding`、`POST /v1/dingtalk/binding`）的密码档**：§1 列举的「设置页无法绑定」问题本期不解决——设置页绑定没有待重放消息，pending 表复用不了，需要另一种 state 载体（如复用 oauth_states / 新状态表），单独立任务。
 - 不改飞书 OAuth / ECP / 钉钉 OAuth 既有链路的优先级与行为（钉钉 OAuth 卡片的登录回跳骨架原样保留）。
 - 不做账号自助注册（无账号用户仍需管理员开号，结果页可提示）。
 - 不做 IM 身份的反向核验（密码登录无法证明「登录者 = IM 发送者」，安全靠 §6.1 的身份明示 + 确认点击）。
