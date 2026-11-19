@@ -205,7 +205,9 @@ describe('HostStatusService.trend', () => {
   });
 });
 
-describe('hostDiskProbes', () => {
+// 磁盘探针路径按部署主机（Linux）语义断言：Windows 上 path.resolve 产出盘符反斜杠路径，
+// 属于运行平台的合理行为，用例仅在 POSIX 平台跑。
+describe.skipIf(process.platform === 'win32')('hostDiskProbes', () => {
   it('系统盘在前，数据目录按配置解析，Docker 数据用默认路径', () => {
     const probes = hostDiskProbes({
       workspaceRoot: 'workspace',

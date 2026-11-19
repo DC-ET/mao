@@ -79,6 +79,11 @@ async function startIfFree(port: number, label: string, command: string, args: s
     cwd,
     env: { ...process.env, ...env },
     stdio: ['ignore', 'ignore', 'pipe'],
+    // Windows 上 npx 是 npx.cmd，spawn 不带 shell 直接 ENOENT（同 mao-agent update 的 npm 口径）。
+    ...(process.platform === 'win32' && (command === 'npx' || command === 'npm') ? { shell: true } : {}),
+  })
+  child.on('error', (error) => {
+    console.error(`[e2e] ${label} 启动失败: ${(error as Error).message}`)
   })
   child.stderr?.on('data', (chunk: Buffer) => {
     process.stderr.write(`[e2e:${label}] ${chunk}`)
