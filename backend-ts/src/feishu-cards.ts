@@ -1,4 +1,5 @@
 import * as Lark from '@larksuiteoapi/node-sdk';
+import { clipByCodePoints } from './common/utf8.js';
 import { createFeishuPatchedProgress, type FeishuProgressHandle } from './feishu/patched-progress.js';
 import type { FeishuCardProgress } from './feishu/card-progress-listener.js';
 import { buildFeishuProgressCard } from './feishu/progress-card.js';
@@ -27,7 +28,7 @@ import { parseSqlTimeMs } from './app-utils.js';
 // ========== 排队卡片 ==========
 
 export function buildFeishuQueueCard(context: FeishuInboundContext, queueId: number, position: number): Record<string, unknown> {
-  const summary = context.text.length > 60 ? `${context.text.slice(0, 60)}…` : context.text;
+  const summary = context.text.length > 60 ? `${clipByCodePoints(context.text, 60)}…` : context.text;
   const showSender = context.chatType === 'group';
   const senderLabel = (context.senderLabel?.trim() || '用户');
   const body = showSender ? `${senderLabel}：${summary}` : summary;

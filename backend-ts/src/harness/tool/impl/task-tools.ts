@@ -186,7 +186,13 @@ export class TaskUpdateTool extends BaseTool {
     try {
       const args = parseObject(argumentsJson);
       if (!args) return errorJson('无效的JSON参数');
-      const items = Array.isArray(args.items) ? args.items as Record<string, unknown>[] : [];
+      // 与 task_create（0.0.341）同款守卫：非数组（模型把数组字符串化 / 传单个对象）必须报错。
+      // 当成空数组会返回无 summary、无 error 键的 {todos}，normalizeToolResult 判成功 → 假成功。
+      if (!Array.isArray(args.items)) {
+        return errorJson(`items 必须是数组，收到 ${args.items == null ? String(args.items) : typeof args.items}`);
+      }
+      const items = args.items as Record<string, unknown>[];
+      if (items.length === 0) return errorJson('items 不能为空');
       let transitionedToCompleted = false;
       const updatedSummaries: string[] = [];
       for (const item of items) {
@@ -289,7 +295,13 @@ export class TaskDeleteTool extends BaseTool {
     try {
       const args = parseObject(argumentsJson);
       if (!args) return errorJson('无效的JSON参数');
-      const items = Array.isArray(args.items) ? args.items as Record<string, unknown>[] : [];
+      // 与 task_create / task_update 同款守卫：非数组必须报错，当成空数组会返回
+      // 「已删除 0 个事项」的成功信封（normalizeToolResult 看不到 error 键判成功 → 假成功）。
+      if (!Array.isArray(args.items)) {
+        return errorJson(`items 必须是数组，收到 ${args.items == null ? String(args.items) : typeof args.items}`);
+      }
+      const items = args.items as Record<string, unknown>[];
+      if (items.length === 0) return errorJson('items 不能为空');
       // delete 只做逻辑删除且不返回命中行数：「已删除 N 个」若按入参条目计数，不存在的 id
       // 也会被报成删除成功（假计数）。先取当前未删除事项，按会话内真实存在的 id 逐个判定，
       // 命中才 delete + 计数；同一 id 重复入参只计第一次（逻辑删除后第二次命中 0 行）。

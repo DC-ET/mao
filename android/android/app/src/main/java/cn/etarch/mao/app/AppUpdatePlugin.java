@@ -118,13 +118,18 @@ public class AppUpdatePlugin extends Plugin {
         if (!dir.exists() && !dir.mkdirs()) {
             throw new IOException("无法创建下载目录");
         }
-        // 下载到临时文件，完成后改名，避免残留半成品
+        // 下载到临时文件，完成后改名，避免残留半成品；改名前做完整性校验：
+        // 声明了 Content-Length 时必须收满（弱网/代理/CDN 中途正常关流是 EOF 而非异常，
+        // 半成品 APK 装上去只会得到「解析包错误」且重试永远失败），空产物必须报错——
+        // 直接返回 apk 会把上次升级残留的旧包拉起安装并 resolve ok:true，前端
+        // useVersionCheck 据此置 appUpdateDownloaded 停止轮询，更新流程假完成。
         File tmp = new File(dir, "mao-update.apk.tmp");
         File apk = new File(dir, "mao-update.apk");
+        long done;
         try (InputStream in = conn.getInputStream();
              OutputStream out = new FileOutputStream(tmp)) {
             byte[] buf = new byte[8192];
-            long done = 0;
+            done = 0;
             int n;
             while ((n = in.read(buf)) != -1) {
                 out.write(buf, 0, n);
@@ -135,14 +140,22 @@ public class AppUpdatePlugin extends Plugin {
         } finally {
             conn.disconnect();
         }
-        if (tmp.exists() && tmp.length() > 0) {
-            if (apk.exists()) {
-                //noinspection ResultOfMethodCallIgnored
-                apk.delete();
-            }
-            if (!tmp.renameTo(apk)) {
-                throw new IOException("下载文件重命名失败");
-            }
+        if (total > 0 && done != total) {
+            //noinspection ResultOfMethodCallIgnored
+            tmp.delete();
+            throw new IOException("下载不完整: " + done + "/" + total + " 字节");
+        }
+        if (!tmp.exists() || tmp.length() == 0) {
+            //noinspection ResultOfMethodCallIgnored
+            tmp.delete();
+            throw new IOException("下载内容为空");
+        }
+        if (apk.exists()) {
+            //noinspection ResultOfMethodCallIgnored
+            apk.delete();
+        }
+        if (!tmp.renameTo(apk)) {
+            throw new IOException("下载文件重命名失败");
         }
         return apk;
     }

@@ -1,5 +1,6 @@
 import { formatDateTime } from '../../common/json.js';
 import { hasText } from '../../common/case.js';
+import { clipByCodePoints } from '../../common/utf8.js';
 
 /** 通知相位：终态 COMPLETED / FAILED，等待作答 ASK_USER，或等待本地审批 APPROVAL。 */
 export type TaskNotificationPhase = 'COMPLETED' | 'FAILED' | 'ASK_USER' | 'APPROVAL';
@@ -176,5 +177,5 @@ function trimToEmpty(value: string | null | undefined): string {
 }
 
 function truncate(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max)}…`;
+  return text.length <= max ? text : `${clipByCodePoints(text, max)}…`;
 }

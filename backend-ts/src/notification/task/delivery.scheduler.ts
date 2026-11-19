@@ -1,5 +1,6 @@
 import { formatDateTime } from '../../common/json.js';
 import { hasText, toSnakeRow } from '../../common/case.js';
+import { clipByCodePoints } from '../../common/utf8.js';
 import type { Db } from '../../db/db.js';
 import { DeliveryStatus, parseNotificationChannel, type TaskNotificationDelivery, type WebhookMessage } from './types.js';
 import type { WebhookSecretCipher } from './webhook-secret-cipher.js';
@@ -321,7 +322,7 @@ export class WebhookDeliveryScheduler {
 
   private truncate(value: string | null | undefined, maxLength: number): string | null {
     if (value == null) return null;
-    return value.length <= maxLength ? value : value.slice(0, maxLength);
+    return clipByCodePoints(value, maxLength);
   }
 }
 

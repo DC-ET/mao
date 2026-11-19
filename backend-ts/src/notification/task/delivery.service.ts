@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { formatDateTime } from '../../common/json.js';
 import { hasText } from '../../common/case.js';
+import { clipByCodePoints } from '../../common/utf8.js';
 import type { MessageQueueItem, Session } from '../../domain/types.js';
 import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
 import { DeliveryStatus, type TaskNotificationDelivery } from './types.js';
@@ -232,10 +233,10 @@ export class TaskNotificationDeliveryService {
 
   private normalizeTitle(title: string | null | undefined): string {
     const value = !hasText(title) ? '未命名任务' : title!.trim();
-    return value.length <= 255 ? value : value.slice(0, 255);
+    return clipByCodePoints(value, 255);
   }
 
   private truncate(value: string, maxLength: number): string {
-    return value.length <= maxLength ? value : value.slice(0, maxLength);
+    return clipByCodePoints(value, maxLength);
   }
 }
