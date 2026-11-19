@@ -58,6 +58,12 @@ export interface Tab {
    * 缺省表示当前会话工作区。
    */
   workspaceRoot?: string
+  /**
+   * Agent 发送文件（send_file）的会话副本 URL：存在时文件预览走远端 URL provider，
+   * 不与工作区相对路径混用。
+   */
+  deliveryUrl?: string
+  deliveryMime?: string
 }
 
 export interface SessionTabState {

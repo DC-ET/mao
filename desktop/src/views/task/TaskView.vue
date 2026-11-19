@@ -129,7 +129,7 @@ import { useCurrentDevice } from '../../composables/useCurrentDevice'
 import { useWorkspaceGitProvider } from '../../composables/workspace-git-provider'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import type { GitChangedFile } from '../../types/git'
-import type { FileChange } from '../../types/chat'
+import type { FileChange, SendDelivery } from '../../types/chat'
 import type { FileRangeQuotePayload } from '../../utils/selection-quote'
 import type { SideTaskContextMode } from '../../types/file-browser'
 import type { SideTaskEntryOptions } from '../../composables/useCenterTabs'
@@ -388,7 +388,11 @@ provide('quoteFileRangeToChat', quoteFileRangeToChat)
 
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { tabs, activeTab, activeTabId, openFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, reorderTab, closeRightTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, openFileManagerTab, openWorkspaceFileManagerTab, openGitTab, updateSideTaskTab, restoreSideTaskTabs, restoreSubagentTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
+const { tabs, activeTab, activeTabId, openFileTab, openDeliveryFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, reorderTab, closeRightTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, openFileManagerTab, openWorkspaceFileManagerTab, openGitTab, updateSideTaskTab, restoreSideTaskTabs, restoreSubagentTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
+
+provide('openDeliveryFile', (delivery: SendDelivery) => {
+  openDeliveryFileTab(delivery)
+})
 
 /** 文件管理器 / 文件树拖文件到中心 Tab 栏：去重 / 激活 / version 递增由 openFileTab 内建；跨工作区来源按其所属根路由 */
 function handleWorkspaceFileDrop(entries: WorkspaceDragEntry[]) {

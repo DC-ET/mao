@@ -282,6 +282,45 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     notifyTabsChanged()
   }
 
+  /**
+   * 打开 Agent 发送文件（send_file 会话副本）的文件预览 Tab。
+   * 以副本 URL 作为唯一键去重，filePath 取展示文件名供格式分发与代码高亮识别。
+   */
+  function openDeliveryFileTab(delivery: { url: string; filename: string; mime?: string }) {
+    if (!delivery.url) return
+    const state = getSessionState()
+    const id = `delivery:${delivery.url}`
+    const title = delivery.filename || '文件预览'
+    const normalizedMime = delivery.mime?.trim() || undefined
+    const existing = state.tabs.find(t => t.id === id)
+    if (existing) {
+      existing.title = title
+      existing.filePath = title
+      existing.deliveryUrl = delivery.url
+      if (normalizedMime) {
+        existing.deliveryMime = normalizedMime
+      } else {
+        delete existing.deliveryMime
+      }
+      existing.version = (existing.version ?? 0) + 1
+      state.activeTabId = existing.id
+      notifyTabsChanged()
+      return
+    }
+    const newTab: Tab = {
+      id,
+      type: 'file',
+      title,
+      filePath: title,
+      deliveryUrl: delivery.url,
+      ...(normalizedMime ? { deliveryMime: normalizedMime } : {}),
+      version: 0,
+    }
+    state.tabs.push(newTab)
+    state.activeTabId = id
+    notifyTabsChanged()
+  }
+
   function quoteRevisionFor(path: string): number {
     const workspace = sessionStore.getSessionEntity(currentSessionId.value)?.workspace
       || sessionStore.activeSession?.workspace
@@ -523,6 +562,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     const closing: string[] = []
     for (const tab of state.tabs) {
       if ((tab.type !== 'file' && tab.type !== 'diff') || !tab.filePath) continue
+      if (tab.deliveryUrl) continue
       const next = retargetTabPath(tab.filePath, change)
       if (next.action === 'keep') continue
       if (next.action === 'close') {
@@ -807,6 +847,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     activeTabId,
     activeTab,
     openFileTab,
+    openDeliveryFileTab,
     openDiffTab,
     openSideTaskTab,
     setSideTaskFork,

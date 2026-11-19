@@ -3,13 +3,20 @@
     <!-- Error state -->
     <div v-if="state === 'error'" class="file-message error">
       <p>文件读取失败：{{ errorMsg }}</p>
-      <button class="retry-btn" @click="loadFile">重试</button>
+      <div class="file-message-actions">
+        <button type="button" class="retry-btn" @click="loadFile">重试</button>
+        <button v-if="provider?.downloadFile" type="button" class="retry-btn primary" @click="downloadFile">
+          <el-icon :size="13"><Download /></el-icon>
+          <span>下载文件</span>
+        </button>
+        <button v-else-if="canShowInFinder" type="button" class="retry-btn" @click="showInFinder">在 Finder 中显示</button>
+      </div>
     </div>
 
     <!-- Image preview -->
     <div v-else-if="state === 'image'" class="file-message image-preview">
       <div class="viewer-toolbar" role="toolbar" aria-label="文件操作">
-        <button type="button" class="tool-btn" title="引用到对话" aria-label="引用到对话" @click="emit('add-file-to-chat', props.filePath)">
+        <button v-if="!isDelivery" type="button" class="tool-btn" title="引用到对话" aria-label="引用到对话" @click="emit('add-file-to-chat', props.filePath)">
           <el-icon :size="14"><ChatDotRound /></el-icon>
         </button>
         <button v-if="provider?.downloadFile" type="button" class="tool-btn" title="下载文件" aria-label="下载文件" @click="downloadFile">
@@ -44,7 +51,7 @@
       />
     </div>
 
-    <!-- ZIP browser -->
+    <!-- ZIP / TAR / TAR.GZ archive browser -->
     <div v-else-if="state === 'zip' && bytesData" class="file-content">
       <ArchiveBrowser
         :file-path="props.filePath"
@@ -86,12 +93,41 @@
     </div>
 
     <!-- Binary file -->
-    <div v-else-if="state === 'binary'" class="file-message">
+    <div v-else-if="state === 'binary'" class="file-message binary-preview">
+      <div class="viewer-toolbar" role="toolbar" aria-label="文件操作">
+        <button v-if="!isDelivery" type="button" class="tool-btn" title="引用到对话" aria-label="引用到对话" @click="emit('add-file-to-chat', props.filePath)">
+          <el-icon :size="14"><ChatDotRound /></el-icon>
+        </button>
+        <button v-if="provider?.downloadFile" type="button" class="tool-btn" title="下载文件" aria-label="下载文件" @click="downloadFile">
+          <el-icon :size="14"><Download /></el-icon>
+        </button>
+        <button type="button" class="tool-btn" title="刷新" aria-label="刷新" @click="loadFile">
+          <el-icon :size="14"><Refresh /></el-icon>
+        </button>
+      </div>
       <p>二进制文件，无法预览</p>
+      <div class="file-message-actions">
+        <button v-if="provider?.downloadFile" type="button" class="retry-btn primary" @click="downloadFile">
+          <el-icon :size="13"><Download /></el-icon>
+          <span>下载文件</span>
+        </button>
+        <button v-else-if="canShowInFinder" type="button" class="retry-btn" @click="showInFinder">在 Finder 中显示</button>
+      </div>
     </div>
 
     <!-- Empty file -->
-    <div v-else-if="state === 'empty'" class="file-message">
+    <div v-else-if="state === 'empty'" class="file-message empty-preview">
+      <div class="viewer-toolbar" role="toolbar" aria-label="文件操作">
+        <button v-if="!isDelivery" type="button" class="tool-btn" title="引用到对话" aria-label="引用到对话" @click="emit('add-file-to-chat', props.filePath)">
+          <el-icon :size="14"><ChatDotRound /></el-icon>
+        </button>
+        <button v-if="provider?.downloadFile" type="button" class="tool-btn" title="下载文件" aria-label="下载文件" @click="downloadFile">
+          <el-icon :size="14"><Download /></el-icon>
+        </button>
+        <button type="button" class="tool-btn" title="刷新" aria-label="刷新" @click="loadFile">
+          <el-icon :size="14"><Refresh /></el-icon>
+        </button>
+      </div>
       <p>空文件</p>
     </div>
 
@@ -139,7 +175,7 @@
         <button type="button" class="tool-btn" title="复制全文" aria-label="复制全文" @click="copyAll">
           <el-icon :size="14"><CopyDocument /></el-icon>
         </button>
-        <button type="button" class="tool-btn" title="引用到对话" aria-label="引用到对话" @click="emit('add-file-to-chat', props.filePath)">
+        <button v-if="!isDelivery" type="button" class="tool-btn" title="引用到对话" aria-label="引用到对话" @click="emit('add-file-to-chat', props.filePath)">
           <el-icon :size="14"><ChatDotRound /></el-icon>
         </button>
         <button v-if="provider?.downloadFile" type="button" class="tool-btn" title="下载文件" aria-label="下载文件" @click="downloadFile">
@@ -170,8 +206,10 @@
 import { ref, computed, onMounted, onUnmounted, watch, toRef, inject } from 'vue'
 import { useMonacoViewer } from '../../composables/useMonacoViewer'
 import { attachMonacoQuote } from '../../composables/useMonacoQuote'
+import { useShowInFinder } from '../../composables/useShowInFinder'
 import type { FileRangeQuotePayload } from '../../utils/selection-quote'
-import { isAndroidCapacitor } from '../../utils/capacitor'
+import { isAndroidCapacitor, openExternalUrl } from '../../utils/capacitor'
+import { isWechatBrowser } from '../../utils/user-agent'
 import MarkdownContent from '../common/MarkdownContent.vue'
 import PdfViewer from './PdfViewer.vue'
 import CsvTableView from './CsvTableView.vue'
@@ -183,7 +221,6 @@ import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useSessionStore } from '../../stores/session'
 import { useTheme } from '../../utils/theme'
 import { isExternalMarkdownLink, resolveMarkdownLink } from '../../utils/markdown-link'
-import { openExternalUrl } from '../../utils/capacitor'
 import { resolvePreviewKind, sniffContainerKind } from '../../utils/file-preview-format'
 import type { WorkspaceFileProvider } from '../../composables/workspace-file-provider'
 import { copyText } from '../../utils/clipboard'
@@ -195,6 +232,8 @@ const props = defineProps<{
   provider: WorkspaceFileProvider | null
   /** 从某个工作区目录的文件管理打开时，后续相对链接仍落在这个目录。 */
   workspaceRoot?: string
+  /** 是否为 Agent 发送文件（send_file 会话副本）预览页签：隐藏工作区专属的「引用到对话」。 */
+  isDelivery?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -204,6 +243,11 @@ const emit = defineEmits<{
 const sessionStore = useSessionStore()
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
 const { openFileTab } = useCenterTabs(activeSessionIdRef)
+
+const { canShowInFinder, showInFinder } = useShowInFinder(
+  () => props.provider,
+  () => props.filePath,
+)
 
 type LoadState = 'loading' | 'ready' | 'error' | 'binary' | 'empty' | 'image' | 'pdf' | 'csv' | 'zip' | 'xlsx' | 'docx' | 'media'
 
@@ -224,6 +268,7 @@ let detachQuote: (() => void) | null = null
 const displayedQuoteRev = ref(0)
 
 function currentQuoteRev(): number {
+  if (props.isDelivery) return 0
   const workspace = sessionStore.activeSession?.workspace || ''
   if (!workspace || !sessionStore.fileQuoteRevision) return 0
   return sessionStore.fileQuoteRevision(workspace, props.filePath)
@@ -256,7 +301,15 @@ async function copyAll() {
 
 async function downloadFile() {
   const name = props.filePath.split(/[/\\]/).pop() || props.filePath
-  await props.provider?.downloadFile?.(props.filePath, name)
+  const result = await props.provider?.downloadFile?.(props.filePath, name)
+  if (!result) return
+  if (!result.ok) {
+    ElMessage.error(result.error || '下载失败')
+    return
+  }
+  if (!props.isDelivery && result.url && (isWechatBrowser() || isAndroidCapacitor())) {
+    await openExternalUrl(result.url)
+  }
 }
 
 useMonacoViewer({
@@ -269,7 +322,7 @@ useMonacoViewer({
   onEditor(editor) {
     detachQuote?.()
     detachQuote = null
-    if (!editor || !quoteFileRangeToChat || isAndroidCapacitor()) return
+    if (!editor || props.isDelivery || !quoteFileRangeToChat || isAndroidCapacitor()) return
     detachQuote = attachMonacoQuote({
       editor,
       getFilePath: () => props.filePath,
@@ -294,6 +347,8 @@ async function handleMarkdownClick(e: MouseEvent) {
     await openExternalUrl(href)
     return
   }
+
+  if (props.isDelivery) return
 
   const resolvedPath = resolveMarkdownLink(props.filePath, href)
   if (!resolvedPath) return
@@ -409,7 +464,7 @@ async function loadFile() {
 
     const kind = resolvePreviewKind(props.filePath)
 
-    // 二进制类新格式（zip / xlsx / docx / media）：扩展名命中即在 readFile
+    // 二进制类新格式（zip/tar/tar.gz / xlsx / docx / media）：扩展名命中即在 readFile
     // 之前平行早返回，既有五条路径一行不动（技术方案 §6-A1）
     if (kind === 'zip' || kind === 'xlsx' || kind === 'docx' || kind === 'media') {
       await loadBinaryPreview(seq, kind)
@@ -487,6 +542,7 @@ watch(() => [props.filePath, props.provider] as const, () => {
 // 同路径第二次编辑不会增加变更条数（appendFileChange 原地合并）。
 // 重载看工作区修订号，预览里下一次引用才能拿到新内容。
 const fileQuoteRev = computed(() => {
+  if (props.isDelivery) return 0
   const workspace = sessionStore.activeSession?.workspace || ''
   if (!workspace || !sessionStore.fileQuoteRevision) return 0
   return sessionStore.fileQuoteRevision(workspace, props.filePath)
@@ -526,6 +582,7 @@ onUnmounted(() => {
 }
 
 .file-message {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -543,8 +600,13 @@ onUnmounted(() => {
   margin: 0 0 12px;
 }
 
+.file-message-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .image-preview {
-  position: relative;
   padding: 24px;
   gap: 12px;
 }
@@ -565,6 +627,9 @@ onUnmounted(() => {
 
 .retry-btn {
   height: var(--aw-btn-height);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: var(--aw-text-fine);
   color: var(--aw-primary);
   background: none;
@@ -576,6 +641,15 @@ onUnmounted(() => {
 
 .retry-btn:hover {
   background: var(--aw-primary-hover);
+}
+
+.retry-btn.primary {
+  background: var(--aw-primary);
+  color: var(--aw-on-primary);
+}
+
+.retry-btn.primary:hover {
+  background: var(--aw-primary-focus);
 }
 
 .file-content {

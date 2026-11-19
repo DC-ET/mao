@@ -72,12 +72,12 @@
         :hide-file-changes="true"
         :hide-subagent-process="hideSubagentProcess"
       />
+      <ChatDeliveryBar :deliveries="round.deliveries" />
       <FileChangePanel
         v-if="showFileChangePanel && round.fileChanges.length > 0"
         :changes="round.fileChanges"
         mode="history"
       />
-      <ChatDeliveryBar :deliveries="round.deliveries" />
       <!-- 压缩分隔线标记轮次边界：必须排在本轮回复与它的文件变更之后，
            插在中间会把一条回复和它自己的变更割开，读起来像分隔线属于下面那块面板。 -->
       <CompactionMarker
@@ -102,12 +102,12 @@
         :hide-file-changes="true"
         :hide-subagent-process="hideSubagentProcess"
       />
+      <ChatDeliveryBar :deliveries="round.deliveries" />
       <FileChangePanel
         v-if="showFileChangePanel && round.fileChanges.length > 0"
         :changes="round.fileChanges"
         mode="history"
       />
-      <ChatDeliveryBar :deliveries="round.deliveries" />
       <CompactionMarker
         v-for="ev in markersAfter(round.finalReply?.id)"
         :key="'c-' + ev.id"

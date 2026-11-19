@@ -16,7 +16,7 @@ export type NewPreviewKind = 'csv' | 'xlsx' | 'docx' | 'zip' | 'media'
 const CSV_EXTENSIONS = ['csv', 'tsv', 'tab']
 const XLSX_EXTENSIONS = ['xlsx', 'xlsm', 'xltx']
 const DOCX_EXTENSIONS = ['docx']
-const ZIP_EXTENSIONS = ['zip']
+const ARCHIVE_EXTENSIONS = ['zip', 'tar', 'tgz']
 
 function extOf(filePath: string): string {
   const base = filePath.split(/[/\\]/).pop() ?? filePath
@@ -32,12 +32,14 @@ function extOf(filePath: string): string {
  * 只在 sniff 兜底路径需要（见 sniffContainerKind）。
  */
 export function resolvePreviewKind(filePath: string): NewPreviewKind | null {
+  const base = (filePath.split(/[/\\]/).pop() ?? filePath).toLowerCase()
+  if (base.endsWith('.tar.gz') && base.length > '.tar.gz'.length) return 'zip'
   const ext = extOf(filePath)
   if (ext === '') return null
   if (CSV_EXTENSIONS.includes(ext)) return 'csv'
   if (XLSX_EXTENSIONS.includes(ext)) return 'xlsx'
   if (DOCX_EXTENSIONS.includes(ext)) return 'docx'
-  if (ZIP_EXTENSIONS.includes(ext)) return 'zip'
+  if (ARCHIVE_EXTENSIONS.includes(ext)) return 'zip'
   if (MEDIA_EXTENSIONS.includes(ext)) return 'media'
   return null
 }

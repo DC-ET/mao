@@ -15,9 +15,12 @@ describe('resolvePreviewKind', () => {
     expect(resolvePreviewKind('template.xltx')).toBe('xlsx')
   })
 
-  it('docx / zip 各自判定', () => {
+  it('docx 与归档格式（zip / tar / tar.gz / tgz）各自判定', () => {
     expect(resolvePreviewKind('spec.docx')).toBe('docx')
     expect(resolvePreviewKind('bundle.zip')).toBe('zip')
+    expect(resolvePreviewKind('archive.tar')).toBe('zip')
+    expect(resolvePreviewKind('ark-cli-skill-20261119.tar.gz')).toBe('zip')
+    expect(resolvePreviewKind('bundle.tgz')).toBe('zip')
   })
 
   it('媒体白名单判定为 media', () => {
@@ -44,8 +47,9 @@ describe('resolvePreviewKind', () => {
   })
 
   it('既有五态格式与未知格式一律返回 null（交回既有链路）', () => {
-    // 图片集合与后端 ImageFileSupport 对齐（png/jpg/jpeg/gif/webp），此处不应被新分支接走
-    for (const p of ['a.md', 'a.markdown', 'a.pdf', 'a.png', 'a.jpg', 'a.jpeg', 'a.gif', 'a.webp', 'a.txt', 'a.json', 'a.ts', 'a.exe', 'a.tar.gz', 'a.gz', 'a.tar']) {
+    // 图片集合与后端 ImageFileSupport 对齐（png/jpg/jpeg/gif/webp），此处不应被新分支接走；
+    // 裸 .gz（非 .tar.gz）与 .7z / .rar 仍交回既有链路
+    for (const p of ['a.md', 'a.markdown', 'a.pdf', 'a.png', 'a.jpg', 'a.jpeg', 'a.gif', 'a.webp', 'a.txt', 'a.json', 'a.ts', 'a.exe', 'a.gz', 'a.7z', 'a.rar']) {
       expect(resolvePreviewKind(p)).toBeNull()
     }
   })

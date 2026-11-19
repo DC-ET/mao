@@ -1,6 +1,8 @@
 import { computed, type Ref } from 'vue'
 import { api } from '../api'
 import { getToken } from '../utils/auth-storage'
+import { isAndroidCapacitor, openExternalUrl } from '../utils/capacitor'
+import { isWechatBrowser } from '../utils/user-agent'
 import { resolveWorkspaceFilePath } from '../utils/workspace-path'
 
 export interface DirectoryEntry {
@@ -100,7 +102,7 @@ export interface WorkspaceFileProvider {
    * 一次）才会触发复制，根未就绪时原样返回相对路径而非拼出错误路径。
    */
   getAbsolutePath?(relativePath: string): string
-  /** 下载单个文件到浏览器（仅 CLOUD 模式实现）。 */
+  /** 下载单个文件到本地/浏览器（CLOUD、LOCAL Electron 及投递文件预览均实现；新建态 project 不实现）。 */
   downloadFile?(relativePath: string, suggestedName: string): Promise<DownloadResult>
   /** 打包下载目录（zip）到浏览器（仅 CLOUD 模式实现）。 */
   downloadDirectory?(relativePath: string, suggestedName: string): Promise<DownloadResult>
@@ -234,6 +236,24 @@ export function createLocalProvider(workspace: string): WorkspaceFileProvider {
     },
     getAbsolutePath(relativePath: string) {
       return resolveWorkspaceFilePath(workspace, relativePath)
+    },
+    async downloadFile(relativePath: string, suggestedName: string): Promise<DownloadResult> {
+      try {
+        const api = localElectronApi()
+        if (!api) return { ok: false, error: LOCAL_FILE_UNAVAILABLE }
+        const result = await api.localReadBytes({
+          path: resolveWorkspaceFilePath(workspace, relativePath),
+        })
+        if (result.error) {
+          return { ok: false, error: result.error }
+        }
+        const raw = result.bytes ? new Uint8Array(result.bytes) : new Uint8Array(0)
+        const blob = new Blob([raw as BlobPart])
+        triggerBrowserDownload(blob, suggestedName || relativePath.split(/[/\\]/).pop() || 'download')
+        return { ok: true }
+      } catch (e: any) {
+        return { ok: false, error: apiErrorMessage(e, '下载失败') }
+      }
     },
   }
 }
@@ -711,6 +731,132 @@ function triggerBrowserDownload(blob: Blob, fileName: string) {
   a.remove()
   // 立即 revoke 存在「浏览器尚未开始读 blob 就注销 URL」的竞态；延后 1s 回收
   setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+}
+
+/** 将字节数组编码为 data URI（分块拼接避免大图片展开参数栈溢出）。 */
+function bytesToDataUri(bytes: Uint8Array, mime: string): string {
+  const CHUNK = 8192
+  let binary = ''
+  for (let i = 0; i < bytes.byteLength; i += CHUNK) {
+    const slice = bytes.subarray(i, Math.min(i + CHUNK, bytes.byteLength))
+    for (let j = 0; j < slice.length; j++) {
+      binary += String.fromCharCode(slice[j])
+    }
+  }
+  return `data:${mime};base64,${btoa(binary)}`
+}
+
+/**
+ * 下载 Agent 发送文件的会话副本 URL，并保留原始展示文件名（避免落成 `send-{uuid}.ext`）。
+ * 安卓壳 / 微信内置浏览器受 WebView Blob 下载限制，走外链打开；跨域失败时回退外链。
+ */
+export async function downloadDeliveryUrl(url: string, suggestedName: string): Promise<DownloadResult> {
+  const targetName = suggestedName.trim() || url.split('/').pop() || 'download'
+  if (isAndroidCapacitor() || isWechatBrowser()) {
+    const opened = await openExternalUrl(url)
+    return opened ? { ok: true, url } : { ok: false, error: '无法调起系统下载', url }
+  }
+  try {
+    const resp = await fetch(url)
+    if (!resp.ok) {
+      return { ok: false, error: await extractDownloadError(resp), url }
+    }
+    const blob = await resp.blob()
+    triggerBrowserDownload(blob, targetName)
+    return { ok: true, url }
+  } catch (e: any) {
+    // 跨域无 CORS 等场景兜底外跳系统浏览器
+    const opened = await openExternalUrl(url)
+    if (opened) return { ok: true, url }
+    return { ok: false, error: apiErrorMessage(e, '下载失败'), url }
+  }
+}
+
+/**
+ * Agent 发送文件（`send_file` 会话副本 URL）的只读预览与下载 provider。
+ * 供中心区 `FileViewer` 复用整套代码 / Markdown / PDF / 表格 / Word / 压缩包 / 音视频预览链路。
+ */
+export function createDeliveryFileProvider(delivery: {
+  url: string
+  filename: string
+  mime?: string
+}): WorkspaceFileProvider {
+  return {
+    async listDirectory() {
+      return { entries: [] }
+    },
+    async searchFiles() {
+      return { entries: [] }
+    },
+    async readFile(_relativePath: string, opts?: { offset?: number; limit?: number }): Promise<ReadFileResult> {
+      try {
+        const resp = await fetch(delivery.url)
+        if (!resp.ok) {
+          return { content: '', total_lines: 0, error: await extractDownloadError(resp) }
+        }
+        const headerMime = (resp.headers.get('content-type') || '').split(';')[0].trim().toLowerCase()
+        const effectiveMime = (delivery.mime || headerMime || '').toLowerCase()
+        const buffer = await resp.arrayBuffer()
+        const bytes = new Uint8Array(buffer)
+        if (effectiveMime.startsWith('image/')) {
+          return {
+            content: delivery.filename,
+            total_lines: 0,
+            media_type: 'image',
+            mime: effectiveMime,
+            data_uri: bytesToDataUri(bytes, effectiveMime),
+          }
+        }
+        if (bytes.byteLength === 0) {
+          return { content: '', total_lines: 0 }
+        }
+        const text = new TextDecoder('utf-8').decode(bytes)
+        const lines = text.split('\n')
+        const offset = Math.max(0, opts?.offset ?? 0)
+        const limit = Math.max(1, opts?.limit ?? 5000)
+        return {
+          content: lines.slice(offset, offset + limit).join('\n'),
+          total_lines: lines.length,
+          ...(effectiveMime ? { mime: effectiveMime } : {}),
+        }
+      } catch (e: any) {
+        return { content: '', total_lines: 0, error: apiErrorMessage(e, '读取文件失败') }
+      }
+    },
+    async previewFile(): Promise<PreviewFileResult> {
+      try {
+        const resp = await fetch(delivery.url)
+        if (!resp.ok) {
+          return { error: await extractDownloadError(resp) }
+        }
+        const buffer = await resp.arrayBuffer()
+        if (!buffer || buffer.byteLength === 0) {
+          return { error: 'PDF 内容为空' }
+        }
+        return { blob: new Blob([buffer], { type: 'application/pdf' }) }
+      } catch (e: any) {
+        return { error: apiErrorMessage(e, 'PDF 预览失败') }
+      }
+    },
+    async readFileBytes(): Promise<ReadFileBytesResult> {
+      try {
+        const resp = await fetch(delivery.url)
+        if (!resp.ok) {
+          return { error: await extractDownloadError(resp) }
+        }
+        const buffer = await resp.arrayBuffer()
+        if (!buffer || buffer.byteLength === 0) {
+          return { error: '文件内容为空' }
+        }
+        return { bytes: new Uint8Array(buffer), size: buffer.byteLength }
+      } catch (e: any) {
+        return { error: apiErrorMessage(e, '读取文件失败') }
+      }
+    },
+    downloadFile(_relativePath: string, suggestedName: string): Promise<DownloadResult> {
+      return downloadDeliveryUrl(delivery.url, suggestedName || delivery.filename)
+    },
+  }
 }
 
 export function useWorkspaceFileProvider(

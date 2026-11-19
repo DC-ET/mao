@@ -129,6 +129,7 @@ vi.mock('../../utils/markdown-link', () => ({
 }))
 
 vi.mock('../../utils/capacitor', () => ({
+  isAndroidCapacitor: () => false,
   openExternalUrl: vi.fn(),
 }))
 
@@ -229,9 +230,10 @@ interface ProviderImpl {
   readFile?: (path: string, opts?: { offset?: number; limit?: number }) => Promise<Record<string, unknown>>
   readFileBytes?: (path: string) => Promise<{ bytes?: Uint8Array; size?: number; error?: string }>
   previewFile?: (path: string) => Promise<{ blob?: Blob; error?: string }>
+  downloadFile?: (path: string, suggestedName: string) => Promise<{ ok: boolean; error?: string; url?: string }>
 }
 
-/** 记录真实调用序列（readFile / readFileBytes / previewFile + 路径）用于断言分支 */
+/** 记录真实调用序列（readFile / readFileBytes / previewFile / downloadFile + 路径）用于断言分支 */
 function makeProvider(impl: ProviderImpl = {}): { provider: WorkspaceFileProvider; calls: string[] } {
   const calls: string[] = []
   const provider: WorkspaceFileProvider = {
@@ -257,13 +259,25 @@ function makeProvider(impl: ProviderImpl = {}): { provider: WorkspaceFileProvide
           },
         }
       : {}),
+    ...(impl.downloadFile
+      ? {
+          downloadFile: async (path: string, suggestedName: string) => {
+            calls.push(`downloadFile:${path}:${suggestedName}`)
+            return impl.downloadFile!(path, suggestedName)
+          },
+        }
+      : {}),
   }
   return { provider, calls }
 }
 
-async function mountViewer(filePath: string, provider: WorkspaceFileProvider | null): Promise<StubEl> {
+async function mountViewer(
+  filePath: string,
+  provider: WorkspaceFileProvider | null,
+  extraProps: Record<string, unknown> = {},
+): Promise<StubEl> {
   const Host = defineComponent({
-    render: () => h(ClientViewer as never, { filePath, provider } as never),
+    render: () => h(ClientViewer as never, { filePath, provider, ...extraProps } as never),
   })
   const ops = nodeOps()
   const { createApp } = createRenderer(ops)
@@ -755,12 +769,48 @@ describe('FileViewer dispatch：既有路径不回归', () => {
     const { provider, calls } = makeProvider({
       readFile: async () => ({ content: '\u0000\u0001\u0002binary-payload', total_lines: 1 }),
       readFileBytes: async () => ({ bytes: new Uint8Array([1]), size: 1 }),
+      downloadFile: async () => ({ ok: true }),
     })
     const root = await mountViewer('archive', provider)
 
     expect(calls).toEqual(['readFile:archive'])
     expect(flatText(root)).toContain('二进制文件，无法预览')
+    expect(flatText(root)).toContain('下载文件')
     expect(archiveProps).toHaveLength(0)
     expect(csvProps).toHaveLength(0)
+  })
+
+  it('.tar.gz / .tgz 归档同样早返回字节分支交 ArchiveBrowser 预览', async () => {
+    const bytes = new Uint8Array([0x1f, 0x8b, 0x08, 0x00])
+    const { provider, calls } = makeProvider({
+      readFileBytes: async () => ({ bytes, size: bytes.byteLength }),
+    })
+    await mountViewer('ark-cli-skill-20261119.tar.gz', provider)
+
+    expect(calls).toEqual(['readFileBytes:ark-cli-skill-20261119.tar.gz'])
+    expect(archiveProps).toHaveLength(1)
+    expect(archiveProps[0].fileName).toBe('ark-cli-skill-20261119.tar.gz')
+  })
+
+  it('错误态与投递文件预览模式（isDelivery）：错误态提供下载按钮，投递模式隐藏「引用到对话」保留「下载文件」', async () => {
+    const { provider: errProvider, calls: errCalls } = makeProvider({
+      readFile: async () => ({ error: '二进制文件，无法预览' }),
+      downloadFile: async () => ({ ok: true }),
+    })
+    const errRoot = await mountViewer('release.dmg', errProvider)
+    expect(flatText(errRoot)).toContain('下载文件')
+    const dlAction = findAllByClass(errRoot, 'retry-btn').find(btn => flatText(btn).includes('下载文件'))
+    expect(dlAction).toBeTruthy()
+    ;(dlAction!.props.onClick as () => void)()
+    await flush()
+    expect(errCalls).toContain('downloadFile:release.dmg:release.dmg')
+
+    const { provider: okProvider } = makeProvider({
+      readFile: async () => ({ content: '# hello', total_lines: 1 }),
+      downloadFile: async () => ({ ok: true }),
+    })
+    const deliveryRoot = await mountViewer('SKILL.md', okProvider, { isDelivery: true })
+    expect(findButton(deliveryRoot, '引用到对话')).toBeUndefined()
+    expect(findButton(deliveryRoot, '下载文件')).toBeTruthy()
   })
 })

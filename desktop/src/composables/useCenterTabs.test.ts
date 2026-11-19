@@ -762,3 +762,62 @@ describe('Git 管理器 Tab 与提交 diff 的 id 隔离', () => {
     expect(diff?.fileChange?.path).toBe('lib/a.ts')
   })
 })
+
+describe('openDeliveryFileTab（Agent 发送文件预览页签）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+    removeSessionTabsFor(SESSION_ID)
+  })
+
+  it('按副本 URL 去重并递增 version，工作区重命名/删除不影响投递预览页签', async () => {
+    const tabs = setup()
+    tabs.openDeliveryFileTab({
+      url: 'https://mao.example.com/uploads/7/send-1.gz',
+      filename: 'ark-cli-skill-20261119.tar.gz',
+      mime: 'application/gzip',
+    })
+    await nextTick()
+
+    const first = tabs.tabs.value.find(t => t.type === 'file')
+    expect(first).toBeDefined()
+    expect(first?.id).toBe('delivery:https://mao.example.com/uploads/7/send-1.gz')
+    expect(first?.title).toBe('ark-cli-skill-20261119.tar.gz')
+    expect(first?.filePath).toBe('ark-cli-skill-20261119.tar.gz')
+    expect(first?.deliveryUrl).toBe('https://mao.example.com/uploads/7/send-1.gz')
+    expect(first?.deliveryMime).toBe('application/gzip')
+    expect(first?.version).toBe(0)
+    expect(tabs.activeTabId.value).toBe(first?.id)
+
+    // 再次点击同一投递文件（未传 mime）：复用该页签、递增 version，并清除旧 deliveryMime 属性
+    tabs.openDeliveryFileTab({
+      url: 'https://mao.example.com/uploads/7/send-1.gz',
+      filename: 'ark-cli-skill-20261119.tar.gz',
+    })
+    const reopened = tabs.tabs.value.find(t => t.type === 'file')
+    expect(tabs.tabs.value.filter(t => t.type === 'file')).toHaveLength(1)
+    expect(reopened?.version).toBe(1)
+    expect(reopened?.deliveryMime).toBeUndefined()
+    expect('deliveryMime' in (reopened ?? {})).toBe(false)
+
+    // 再次传入空白 mime 同样清除，与新建路径口径一致
+    tabs.openDeliveryFileTab({
+      url: 'https://mao.example.com/uploads/7/send-1.gz',
+      filename: 'ark-cli-skill-20261119.tar.gz',
+      mime: 'text/plain',
+    })
+    expect(tabs.tabs.value.find(t => t.type === 'file')?.deliveryMime).toBe('text/plain')
+    tabs.openDeliveryFileTab({
+      url: 'https://mao.example.com/uploads/7/send-1.gz',
+      filename: 'ark-cli-skill-20261119.tar.gz',
+      mime: '   ',
+    })
+    const clearedAgain = tabs.tabs.value.find(t => t.type === 'file')
+    expect(clearedAgain?.deliveryMime).toBeUndefined()
+    expect('deliveryMime' in (clearedAgain ?? {})).toBe(false)
+
+    // 工作区同名文件被删除时不得误关投递副本页签
+    tabs.applyWorkspacePathChange({ kind: 'delete', paths: ['ark-cli-skill-20261119.tar.gz'] })
+    expect(tabs.tabs.value.filter(t => t.type === 'file')).toHaveLength(1)
+  })
+})

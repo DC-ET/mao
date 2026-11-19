@@ -4,13 +4,14 @@
       <span class="archive-file-name" :title="filePath">{{ fileName }}</span>
       <span v-if="state === 'ready'" class="archive-meta">{{ entryCountLabel }}</span>
       <span class="archive-toolbar-spacer"></span>
-      <button class="tool-btn" title="刷新" @click="$emit('refresh')">
+      <button class="tool-btn" title="刷新" aria-label="刷新" @click="$emit('refresh')">
         <el-icon :size="14"><Refresh /></el-icon>
       </button>
       <button
         v-if="provider?.downloadFile"
         class="tool-btn"
-        title="下载"
+        title="下载压缩包"
+        aria-label="下载压缩包"
         @click="download"
       >
         <el-icon :size="14"><Download /></el-icon>
@@ -64,11 +65,20 @@
     <!-- 条目内嵌预览覆盖层（技术方案 §5.4 / §6-D3）：不开新 tab，状态组件内管理 -->
     <div v-if="preview" class="archive-preview">
       <div class="preview-toolbar">
-        <button class="tool-btn" title="返回条目列表" @click="closePreview">
+        <button class="tool-btn" title="返回条目列表" aria-label="返回条目列表" @click="closePreview">
           <el-icon :size="14"><Back /></el-icon>
         </button>
-        <span class="preview-name" :title="preview.name">{{ preview.name }}</span>
+        <span class="preview-name" :title="preview.entryName">{{ preview.name }}</span>
         <span class="preview-label">压缩包内预览</span>
+        <span class="archive-toolbar-spacer"></span>
+        <button
+          class="tool-btn"
+          title="下载当前条目"
+          aria-label="下载当前条目"
+          @click="downloadPreviewedEntry"
+        >
+          <el-icon :size="14"><Download /></el-icon>
+        </button>
       </div>
       <div class="preview-body">
         <img v-if="preview.kind === 'image'" :src="preview.url" :alt="preview.name" />
@@ -120,10 +130,16 @@ const { canShowInFinder, showInFinder } = useShowInFinder(
 
 type LoadState = 'loading' | 'ready' | 'error'
 type PreviewState =
-  | { kind: 'image'; name: string; url: string }
-  | { kind: 'pdf'; name: string; url: string }
-  | { kind: 'text'; name: string; content: string }
+  | { kind: 'image'; name: string; entryName: string; url: string }
+  | { kind: 'pdf'; name: string; entryName: string; url: string }
+  | { kind: 'text'; name: string; entryName: string; content: string }
   | null
+
+interface ArchiveBackend {
+  hasEntry(name: string): boolean
+  readText(name: string): Promise<string>
+  readBytes(name: string): Promise<Uint8Array>
+}
 
 const state = ref<LoadState>('loading')
 const errorMsg = ref('')
@@ -132,14 +148,32 @@ const entryError = ref('')
 const entries = ref<ArchiveEntry[]>([])
 const hasTooLargeEntries = ref(false)
 const preview = ref<PreviewState>(null)
-const zip = shallowRef<JSZip | null>(null)
+const archiveBackend = shallowRef<ArchiveBackend | null>(null)
 const entryCountLabel = computed(() => `${entries.value.length} 个条目`)
 
 // 压缩包加载与条目解压各自代际守卫：快速切换 / 连点时丢弃过期响应（§6-A2 / D2）
 let loadSeq = 0
 let entrySeq = 0
 
-/** jszip 动态 import：库本体不进首屏主 chunk（§6-C1） */
+function isTarCandidate(fileName: string, bytes: Uint8Array): boolean {
+  const lower = (fileName || '').trim().toLowerCase()
+  if (lower.endsWith('.tar') || lower.endsWith('.tar.gz') || lower.endsWith('.tgz')) return true
+  // GZIP 魔数（0x1f 0x8b）或 POSIX ustar 魔数
+  if (bytes.byteLength >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) return true
+  if (
+    bytes.byteLength >= 263
+    && bytes[257] === 0x75
+    && bytes[258] === 0x73
+    && bytes[259] === 0x74
+    && bytes[260] === 0x61
+    && bytes[261] === 0x72
+  ) {
+    return true
+  }
+  return false
+}
+
+/** jszip / tar-archive 均走动态 import：库本体不进首屏主 chunk（§6-C1） */
 async function loadArchive() {
   const seq = ++loadSeq
   state.value = 'loading'
@@ -148,11 +182,47 @@ async function loadArchive() {
   hasTooLargeEntries.value = false
   errorMsg.value = ''
   entryError.value = ''
+  archiveBackend.value = null
   try {
+    if (isTarCandidate(props.fileName || props.filePath, props.bytes)) {
+      const { loadTarArchive } = await import('../../utils/tar-archive')
+      const parsed = await loadTarArchive(props.bytes)
+      if (seq !== loadSeq) return
+      const byName = new Map(parsed.map(item => [item.name, item.data]))
+      const decoder = new TextDecoder('utf-8')
+      archiveBackend.value = {
+        hasEntry: (name) => byName.has(name),
+        readText: async (name) => decoder.decode(byName.get(name) ?? new Uint8Array(0)),
+        readBytes: async (name) => byName.get(name) ?? new Uint8Array(0),
+      }
+      const evaluation = evaluateArchive(parsed)
+      if (evaluation.rejected) {
+        state.value = 'error'
+        errorMsg.value = evaluation.rejected
+        return
+      }
+      entries.value = evaluation.entries
+      hasTooLargeEntries.value = evaluation.hasTooLargeEntries
+      state.value = 'ready'
+      return
+    }
+
     const { default: JSZip } = await import('jszip')
     const loaded = await JSZip.loadAsync(props.bytes)
     if (seq !== loadSeq) return
-    zip.value = loaded
+    archiveBackend.value = {
+      hasEntry: (name) => Boolean(loaded.file(name)),
+      readText: async (name) => {
+        const f = loaded.file(name)
+        if (!f) throw new Error('条目不存在')
+        return f.async('text')
+      },
+      readBytes: async (name) => {
+        const f = loaded.file(name)
+        if (!f) throw new Error('条目不存在')
+        return f.async('uint8array')
+      },
+    }
     const evaluation = evaluateArchive(extractEntries(loaded))
     if (evaluation.rejected) {
       state.value = 'error'
@@ -164,7 +234,7 @@ async function loadArchive() {
     state.value = 'ready'
   } catch (e: any) {
     if (seq !== loadSeq) return
-    // zip64（>4GB）/ 畸形包：JSZip 加载失败即降级下载（§12 残余风险）
+    // zip64（>4GB）/ 畸形包：加载失败即降级下载（§12 残余风险）
     state.value = 'error'
     errorMsg.value = e?.message || '压缩包解析失败'
   }
@@ -187,8 +257,8 @@ function extractEntries(loaded: JSZip) {
 }
 
 async function openEntry(entry: ArchiveEntry) {
-  const target = zip.value?.file(entry.name)
-  if (!target) return
+  const backend = archiveBackend.value
+  if (!backend || !backend.hasEntry(entry.name)) return
   const seq = ++entrySeq
   const kind = classifyArchiveEntry(entry.name)
   entryError.value = ''
@@ -196,26 +266,26 @@ async function openEntry(entry: ArchiveEntry) {
     if (kind === 'text') {
       // 超大文本不进 <pre>：超过软上限降级下载，避免渲染进程被冻住
       if (entry.uncompressedSize > ZIP_TEXT_PREVIEW_MAX_BYTES) {
-        await downloadEntry(entry)
+        await downloadEntryByName(entry.name)
         return
       }
-      const content = await target.async('text')
+      const content = await backend.readText(entry.name)
       if (seq !== entrySeq) return
       releasePreviewUrl()
-      preview.value = { kind: 'text', name: entry.displayName, content }
+      preview.value = { kind: 'text', name: entry.displayName, entryName: entry.name, content }
       return
     }
     if (kind === 'other') {
-      await downloadEntry(entry)
+      await downloadEntryByName(entry.name)
       return
     }
-    const bytes = await target.async('uint8array')
+    const bytes = await backend.readBytes(entry.name)
     if (seq !== entrySeq) return
     const url = replacePreviewUrl(bytes, entry.name)
     preview.value =
       kind === 'image'
-        ? { kind: 'image', name: entry.displayName, url }
-        : { kind: 'pdf', name: entry.displayName, url }
+        ? { kind: 'image', name: entry.displayName, entryName: entry.name, url }
+        : { kind: 'pdf', name: entry.displayName, entryName: entry.name, url }
   } catch (e: any) {
     if (seq !== entrySeq) return
     // 条目数据损坏（jszip: uncompressed data size mismatch / invalid distance 等）：
@@ -224,19 +294,24 @@ async function openEntry(entry: ArchiveEntry) {
   }
 }
 
-/** 单条目下载：整包下载之外的「其他」类型与超大文本的出口。 */
-async function downloadEntry(entry: ArchiveEntry) {
-  const target = zip.value?.file(entry.name)
-  if (!target) return
-  const bytes = await target.async('uint8array')
+/** 单条目下载：整包下载之外的「其他」类型、超大文本与内嵌预览下载出口。 */
+async function downloadEntryByName(entryName: string) {
+  const backend = archiveBackend.value
+  if (!backend || !backend.hasEntry(entryName)) return
+  const bytes = await backend.readBytes(entryName)
   const blob = new Blob([bytes as BlobPart])
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
   // 下载名取末段：条目名里的目录分隔与 ../ 不进文件名
-  a.download = displayNameOf(entry.name, false)
+  a.download = displayNameOf(entryName, false)
   a.click()
   URL.revokeObjectURL(url)
+}
+
+async function downloadPreviewedEntry() {
+  if (!preview.value) return
+  await downloadEntryByName(preview.value.entryName)
 }
 
 let previewUrl = ''

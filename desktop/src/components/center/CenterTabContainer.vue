@@ -8,6 +8,7 @@
         :file-path="activeTab.filePath || ''"
         :provider="activeProvider"
         :workspace-root="activeTab.workspaceRoot"
+        :is-delivery="Boolean(activeTab.deliveryUrl)"
         @add-file-to-chat="onAddFileToChat"
       />
       <FileDiffViewer
@@ -78,7 +79,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { createOwnedWorkspaceProvider } from '../../composables/workspace-file-provider'
+import { createDeliveryFileProvider, createOwnedWorkspaceProvider } from '../../composables/workspace-file-provider'
 import ChatPanel from '../chat/ChatPanel.vue'
 import FileViewer from './FileViewer.vue'
 import FileDiffViewer from './FileDiffViewer.vue'
@@ -126,8 +127,21 @@ const activeTab = computed(() => {
 })
 
 const ownedProviders = new Map<string, WorkspaceFileProvider>()
+const deliveryProviders = new Map<string, WorkspaceFileProvider>()
 
 const activeProvider = computed(() => {
+  const deliveryUrl = activeTab.value?.deliveryUrl
+  if (deliveryUrl) {
+    const filename = activeTab.value?.title || activeTab.value?.filePath || 'attachment'
+    const mime = activeTab.value?.deliveryMime
+    const cacheKey = `${deliveryUrl}\0${filename}\0${mime ?? ''}`
+    let provider = deliveryProviders.get(cacheKey)
+    if (!provider) {
+      provider = createDeliveryFileProvider({ url: deliveryUrl, filename, mime })
+      deliveryProviders.set(cacheKey, provider)
+    }
+    return provider
+  }
   const root = activeTab.value?.workspaceRoot
   if (!root) return props.fileProvider
   let provider = ownedProviders.get(root)
@@ -138,8 +152,9 @@ const activeProvider = computed(() => {
   return provider
 })
 
-/** 总览打开的目录不是当前会话工作区时，不要改当前会话的文件树和已打开文件。 */
+/** 总览打开的目录或 Agent 发送副本不是当前会话工作区时，不要改当前会话的文件树和已打开文件。 */
 function affectsCurrentSession(tab: Tab | null): boolean {
+  if (tab?.deliveryUrl) return false
   if (!tab?.workspaceRoot) return true
   return tab.workspaceRoot === props.workspace
 }

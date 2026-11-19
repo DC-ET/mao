@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { ref } from 'vue'
-import { createCloudProvider, createLocalProvider, createOwnedWorkspaceProvider, createProjectProvider, useWorkspaceFileProvider } from './workspace-file-provider'
+import { createCloudProvider, createDeliveryFileProvider, createLocalProvider, createOwnedWorkspaceProvider, createProjectProvider, useWorkspaceFileProvider } from './workspace-file-provider'
 
 const apiGet = vi.fn()
 vi.mock('../api', () => ({
@@ -306,5 +306,76 @@ describe('downloadEntriesZip（多选合并 zip 下载）', () => {
   it('会话未就绪 fallback：返回错误而非「不支持下载」', async () => {
     const provider = createCloudProvider('not-a-number')
     expect(await provider.downloadEntriesZip!(['a.txt'], 'selected.zip')).toEqual({ ok: false, error: '会话未就绪' })
+  })
+})
+
+describe('createLocalProvider.downloadFile 与 createDeliveryFileProvider', () => {
+  it('LOCAL provider：有 electronAPI 时经 localReadBytes 触发指定文件名下载，无 electronAPI 返回中文提示', async () => {
+    ;(globalThis as any).window = {}
+    const noElectron = createLocalProvider('/tmp/ws')
+    expect(await noElectron.downloadFile!('a.txt', 'a.txt')).toEqual({
+      ok: false,
+      error: '本地任务文件仅在桌面客户端内可浏览',
+    })
+
+    const anchor = { href: '', download: '', click: vi.fn(), remove: vi.fn() }
+    vi.stubGlobal('document', {
+      createElement: () => anchor,
+      body: { appendChild: vi.fn() },
+    })
+    const createObjectURL = vi.fn(() => 'blob:local-1')
+    const revokeObjectURL = vi.fn()
+    URL.createObjectURL = createObjectURL as never
+    URL.revokeObjectURL = revokeObjectURL as never
+    ;(globalThis as any).window = {
+      electronAPI: {
+        localReadBytes: vi.fn(async () => ({ bytes: new Uint8Array([1, 2, 3]).buffer, size: 3 })),
+      },
+    }
+
+    const local = createLocalProvider('/tmp/ws')
+    const res = await local.downloadFile!('sub/report.pdf', 'report.pdf')
+    expect(res).toEqual({ ok: true })
+    expect(anchor.download).toBe('report.pdf')
+    expect(anchor.click).toHaveBeenCalledTimes(1)
+  })
+
+  it('createDeliveryFileProvider：支持文本读取、字节读取、PDF 预览与保留原文件名下载', async () => {
+    const anchor = { href: '', download: '', click: vi.fn(), remove: vi.fn() }
+    vi.stubGlobal('document', {
+      createElement: () => anchor,
+      body: { appendChild: vi.fn() },
+    })
+    URL.createObjectURL = vi.fn(() => 'blob:delivery-1') as never
+    URL.revokeObjectURL = vi.fn() as never
+
+    const payloadBytes = new TextEncoder().encode('line1\nline2\nline3')
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      headers: { get: (k: string) => (k === 'content-type' ? 'text/markdown; charset=utf-8' : null) },
+      arrayBuffer: async () => payloadBytes.buffer.slice(payloadBytes.byteOffset, payloadBytes.byteOffset + payloadBytes.byteLength),
+      blob: async () => new Blob([payloadBytes]),
+    })))
+
+    const provider = createDeliveryFileProvider({
+      url: 'https://mao.example.com/uploads/7/send-uuid.md',
+      filename: 'SKILL.md',
+      mime: 'text/markdown',
+    })
+
+    const readRes = await provider.readFile('SKILL.md', { offset: 0, limit: 2 })
+    expect(readRes.content).toBe('line1\nline2')
+    expect(readRes.total_lines).toBe(3)
+
+    const bytesRes = await provider.readFileBytes!('SKILL.md')
+    expect(bytesRes.size).toBe(payloadBytes.byteLength)
+
+    const pdfRes = await provider.previewFile!('SKILL.md')
+    expect(pdfRes.blob?.size).toBe(payloadBytes.byteLength)
+
+    const dlRes = await provider.downloadFile!('SKILL.md', 'SKILL.md')
+    expect(dlRes.ok).toBe(true)
+    expect(anchor.download).toBe('SKILL.md')
+    expect(anchor.click).toHaveBeenCalledTimes(1)
   })
 })
