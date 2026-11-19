@@ -114,7 +114,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import type { UploadFile } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { User } from '@element-plus/icons-vue'
@@ -133,8 +133,13 @@ const authStore = useAuthStore()
 const { theme, setTheme } = useTheme()
 const { accent, setAccent, fontScale, setFontScale, ACCENT_PRESETS, FONT_SCALE_OPTIONS } = useAppearance()
 
-/** 主题模式：与 theme.ts 的单例 ref 同源，写入 localStorage 后立即生效 */
+/** 主题模式：与 theme.ts 的单例 ref 同源，写入 localStorage 后立即生效。
+ * 顶栏图标也会改同一单例，这里跟着回写，避免人在本页时单选组停在旧档。 */
 const themeMode = ref<ThemeMode>(theme.value)
+
+watch(theme, (mode) => {
+  themeMode.value = mode
+})
 
 function handleThemeChange(value: ThemeMode) {
   setTheme(value)

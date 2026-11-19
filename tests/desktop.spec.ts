@@ -302,11 +302,12 @@ test.describe('Desktop App - Logged In', () => {
     await mockLoggedInDesktopApi(page)
     await page.goto('/')
     await page.waitForSelector('.top-nav', { timeout: 15_000 })
-    // 顶栏右侧的动作图标（面板开关 / 搜索 / 用量 / 我的指令 / 终端 / 刷新 / 设置）
+    // 顶栏右侧的动作图标（面板开关 / 搜索 / 用量 / 我的指令 / 终端 / 刷新 / 设置 / 主题色）
     await expect(page.locator('.theme-toggle').first()).toBeVisible()
-    // 站内信、主题色切换图标已从头像菜单与设置页收敛；设置入口回到头像左侧齿轮图标
+    // 站内信仍不在顶栏；设置齿轮在头像左侧，主题色图标紧挨头像、位于齿轮右侧
     await expect(page.locator('.inbox-bell')).toHaveCount(0)
     await expect(page.locator('.nav-right .settings-toggle')).toBeVisible()
+    await expect(page.locator('.nav-right .theme-mode-toggle')).toBeVisible()
     await expect(page.locator('.nav-right .commands-toggle')).toBeVisible()
   })
 
@@ -396,15 +397,18 @@ test.describe('Desktop Theme', () => {
     expect(hasDark).toBe(prefersDark)
   })
 
-  test('设置页可切换主题色并立即生效（顶栏切换入口已移除）', async ({ page }) => {
+  test('设置页与顶栏都可切换主题色并立即生效', async ({ page }) => {
     await mockLoggedInDesktopApi(page)
     await page.goto('/settings/profile')
     await expect(page.getByRole('heading', { name: '个人信息' })).toBeVisible({ timeout: 15_000 })
 
-    // 主题色控件在设置页内，顶栏不再有切换图标（0.0.274 起已从头像菜单与顶栏移除）
     const themeCard = page.locator('.theme-card')
     await expect(themeCard).toBeVisible()
     await expect(themeCard.getByRole('radio', { name: '深色' })).toBeVisible()
+    // 设置页隐藏齿轮，主题图标仍留在头像左侧
+    await expect(page.locator('.nav-right .settings-toggle')).toHaveCount(0)
+    const themeToggle = page.locator('.nav-right .theme-mode-toggle')
+    await expect(themeToggle).toBeVisible()
 
     // el-radio-button 的可点区域是包裹隐藏 input 的 .el-radio-button 容器
     const pickTheme = (label: string) =>
@@ -413,10 +417,18 @@ test.describe('Desktop Theme', () => {
     await pickTheme('dark')
     await expect(page.locator('html')).toHaveClass(/dark/)
     expect(await page.evaluate(() => localStorage.getItem('aw-theme-mode'))).toBe('dark')
+    await expect(themeToggle).toHaveAttribute('aria-label', '深色（点击跟随系统）')
 
     await pickTheme('light')
     await expect(page.locator('html')).not.toHaveClass(/dark/)
     expect(await page.evaluate(() => localStorage.getItem('aw-theme-mode'))).toBe('light')
+    await expect(themeToggle).toHaveAttribute('aria-label', '浅色（点击切换深色）')
+
+    // 顶栏图标与单选组同一单例：点图标切到深色，页内选中态跟着变
+    await themeToggle.click()
+    await expect(page.locator('html')).toHaveClass(/dark/)
+    expect(await page.evaluate(() => localStorage.getItem('aw-theme-mode'))).toBe('dark')
+    await expect(themeCard.locator('input[value="dark"]')).toBeChecked()
 
     await pickTheme('auto')
     expect(await page.evaluate(() => localStorage.getItem('aw-theme-mode'))).toBe('auto')
@@ -424,6 +436,7 @@ test.describe('Desktop Theme', () => {
       window.matchMedia('(prefers-color-scheme: dark)').matches
     )
     expect(await page.locator('html').evaluate(el => el.classList.contains('dark'))).toBe(prefersDark)
+    await expect(themeToggle).toHaveAttribute('aria-label', '跟随系统（点击切换浅色）')
   })
 })
 

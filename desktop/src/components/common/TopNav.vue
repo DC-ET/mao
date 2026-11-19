@@ -103,6 +103,20 @@
             <el-icon :size="16"><Setting /></el-icon>
           </div>
         </el-tooltip>
+        <el-tooltip :content="themeTooltip" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
+          <div
+            class="theme-toggle theme-mode-toggle"
+            role="button"
+            :aria-label="themeTooltip"
+            @click="toggleTheme"
+          >
+            <el-icon :size="16">
+              <Sunrise v-if="theme === 'auto'" />
+              <Moon v-else-if="theme === 'light'" />
+              <Sunny v-else />
+            </el-icon>
+          </div>
+        </el-tooltip>
         <el-dropdown @command="handleCommand" trigger="click">
           <div class="nav-user" role="button" aria-label="用户菜单">
             <el-avatar :size="24" :src="authStore.user?.avatarUrl || undefined">
@@ -141,7 +155,7 @@
     <ShortcutHelpDialog ref="shortcutHelpRef" />
   </nav>
 </template><script setup lang="ts">
-import { ArrowLeft, ChatLineSquare, Reading, Refresh, Setting, SwitchButton, User } from '@element-plus/icons-vue'
+import { ArrowLeft, ChatLineSquare, Moon, Reading, Refresh, Setting, Sunrise, Sunny, SwitchButton, User } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -156,6 +170,7 @@ import { isElectronClient } from '../../utils/platform'
 import { terminalAvailability as computeTerminalAvailability } from '../../utils/terminal-availability'
 import { getLocalDeviceId } from '../../utils/device-info'
 import { goBackToWorkbench } from '../../utils/workbench-nav'
+import { useTheme } from '../../utils/theme'
 import SessionSearchPopover from '../search/SessionSearchPopover.vue'
 import UsageBell from '../usage/UsageBell.vue'
 import CommandManagerDrawer from '../command/CommandManagerDrawer.vue'
@@ -211,6 +226,14 @@ const commandHost: CommandHostActions = {
 
 const sessionStore = useSessionStore()
 const authStore = useAuthStore()
+const { theme, toggleTheme } = useTheme()
+
+/** 与登录页同一循环：浅色 → 深色 → 跟随系统。文案同时说明当前档和下一次点击。 */
+const themeTooltip = computed(() => {
+  if (theme.value === 'auto') return '跟随系统（点击切换浅色）'
+  if (theme.value === 'light') return '浅色（点击切换深色）'
+  return '深色（点击跟随系统）'
+})
 // 命令面板上下文动作的既有入口（批次 29 提案 3）：useCenterTabs 工厂内 watch 在组件作用域外
 // 创建会泄漏（永不自停），必须 setup 顶层建一次实例——TopNav 常驻不卸载，无回收问题
 const paletteCenterTabs = useCenterTabs(computed(() => sessionStore.activeSessionId))
