@@ -141,12 +141,14 @@ export class SessionEnvelopeBuilder {
  * PATH 注入由消费方拼接（MAO_DEPS_BIN 前置到现有 PATH），这里只给前缀根。
  */
 export function buildDepsEnv(depsRoot: string, userId: number): Record<string, string> {
-  const depsUserDir = path.join(path.resolve(depsRoot), String(userId));
+  // 这些路径在容器内消费（决策 15：宿主机与容器路径逐字节一致），固定 POSIX 语义：
+  // Windows 开发机上 path.join/resolve 会产出盘符反斜杠路径，注入容器即失效。
+  const depsUserDir = path.posix.join(path.posix.resolve(depsRoot), String(userId));
   return {
-    NPM_CONFIG_PREFIX: path.join(depsUserDir, 'npm'),
-    PIP_TARGET: path.join(depsUserDir, 'py'),
+    NPM_CONFIG_PREFIX: path.posix.join(depsUserDir, 'npm'),
+    PIP_TARGET: path.posix.join(depsUserDir, 'py'),
     PIP_BREAK_SYSTEM_PACKAGES: '1',
-    MAO_DEPS_BIN: path.join(depsUserDir, 'npm', 'bin'),
+    MAO_DEPS_BIN: path.posix.join(depsUserDir, 'npm', 'bin'),
     PIP_INDEX_URL: 'https://mirrors.cloud.tencent.com/pypi/simple/',
     PIP_TRUSTED_HOST: 'mirrors.cloud.tencent.com',
   };

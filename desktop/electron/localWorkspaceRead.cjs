@@ -71,13 +71,15 @@ function readWorkspaceBytes(workspace, relativePath, options) {
  * delivery_fetch 的执行端路径解析（方案 2026-11-18-unified-send-media §6.2）：相对路径，
  * 或「解析后仍在该会话 workspace 内」的绝对路径（send 工具允许 absolute-within-workspace）。
  * containment 是 realpath 口径（`..` / 父级目录 symlink 逃逸都靠 realpath 比对拒绝）；
- * 反斜杠与 NUL 直接拒绝，目标本身是符号链接也拒绝（工具约定「非符号链接」）。
+ * 相对路径的反斜杠与 NUL 直接拒绝，目标本身是符号链接也拒绝（工具约定「非符号链接」）。
+ * 反斜杠按平台语义放行：相对路径 `/` 为唯一分隔符；绝对路径在 Windows 上必然含反斜杠，
+ * 放行交给 realpath containment 兜底（agent-cli file-fetch.ts 同构，改动须双端同步）。
  * @returns {{ path: string } | { error: string }}
  */
 function resolveDeliveryWorkspacePath(workspace, filePath) {
   if (typeof workspace !== 'string' || workspace.trim() === '') return { error: '缺少工作区路径' }
   if (typeof filePath !== 'string' || filePath.trim() === '') return { error: '缺少文件路径' }
-  if (filePath.includes('\\')) return { error: '文件路径不合法' }
+  if (!path.isAbsolute(filePath) && filePath.includes('\\')) return { error: '文件路径不合法' }
   if (filePath.includes('\0')) return { error: '文件路径不合法' }
   const root = path.resolve(workspace)
   let rootReal

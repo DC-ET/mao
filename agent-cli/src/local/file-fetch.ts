@@ -82,11 +82,17 @@ export function chunkBuffer(bytes: Buffer, chunkBytes = FILE_FETCH_CHUNK_BYTES):
  * `delivery_fetch` 的执行端路径解析（方案 2026-11-18-unified-send-media §6.2）：相对路径，
  * 或「解析后仍在该会话 workspace 内」的绝对路径（send 工具允许 absolute-within-workspace）。
  * containment 是 realpath 口径（`..` / 父级目录 symlink 逃逸靠 realpath 比对拒绝）；
- * 反斜杠、NUL、目标本身是符号链接与越界路径一律拒绝，失败抛 Error 由 executor 静默吞掉。
+ * 相对路径的反斜杠、NUL、目标本身是符号链接与越界路径一律拒绝，失败抛 Error 由 executor 静默吞掉。
+ *
+ * 反斜杠按平台语义放行：相对路径 `/` 为唯一分隔符（拒 `a\\..\\..` 分段走私）；
+ * 绝对路径在 Windows 上必然含反斜杠，放行交给后面的 realpath containment 兜底
+ * （桌面端 localWorkspaceRead.cjs 同构，改动须双端同步）。
  */
 export async function resolveDeliveryWorkspacePath(workspace: string, filePath: string): Promise<string> {
   if (filePath.trim() === '') throw new Error('delivery_fetch: 缺少文件路径');
-  if (filePath.includes('\\')) throw new Error(`delivery_fetch: 路径含反斜杠，拒绝读取 ${filePath}`);
+  if (!path.isAbsolute(filePath) && filePath.includes('\\')) {
+    throw new Error(`delivery_fetch: 路径含反斜杠，拒绝读取 ${filePath}`);
+  }
   if (filePath.includes('\0')) throw new Error('delivery_fetch: 路径含非法字符，拒绝读取');
   const root = path.resolve(workspace);
   // path.resolve 对绝对 filePath 原样返回，containment 仍由下面的 realpath 比对兜住
