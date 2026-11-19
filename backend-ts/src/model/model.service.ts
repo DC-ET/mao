@@ -1,7 +1,8 @@
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { hasText } from '../common/case.js';
-import type { ClientImpersonation } from '@mao/contracts';
+import type { ClientImpersonation, ModelAuthType } from '@mao/contracts';
+import { normalizeModelAuthType } from './types.js';
 import type {
   LlmChatClient,
   LlmChatRequest,
@@ -19,6 +20,7 @@ const TTS_TEST_TEXT = '你好，欢迎使用 Mao 语音合成测试。';
 const TTS_TEST_AUDIO = { format: 'wav' };
 
 const CLIENT_IMPERSONATION_VALUES = ['none', 'codex', 'claude_code'] as const;
+const AUTH_TYPE_VALUES = ['api_key', 'ecp'] as const;
 
 function normalizeClientImpersonation(
   value: string | null | undefined,
@@ -33,6 +35,20 @@ function normalizeClientImpersonation(
     );
   }
   return trimmed as ClientImpersonation;
+}
+
+/** 凭证方式写侧解析：null/undefined/空串表示未提供（返回 null，不更新）；非法值抛参数错误。 */
+function normalizeAuthTypeInput(value: string | null | undefined): ModelAuthType | null {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  if (trimmed === '') return null;
+  if (!(AUTH_TYPE_VALUES as readonly string[]).includes(trimmed)) {
+    throw new BusinessException(
+      ErrorCode.PARAM_INVALID.code,
+      `authType 只能是 ${AUTH_TYPE_VALUES.join(' / ')} 之一`,
+    );
+  }
+  return trimmed as ModelAuthType;
 }
 
 const API_PROTOCOL_VALUES = ['', 'openai-compatible', 'anthropic', 'openai-responses'] as const;
@@ -116,7 +132,20 @@ export class ModelService {
     private readonly sessionRepo: SessionModelRepository,
     private readonly llmClient: LlmChatClient,
     private readonly llmClients?: Map<string, LlmChatClient>,
+    /** ECP 登录开关判定（写侧校验 ecp 凭证方式；未注入时视为未启用，fail-closed）。 */
+    private readonly isEcpEnabled?: () => Promise<boolean>,
   ) {}
+
+  /** ecp 凭证方式要求系统已启用 ECP 飞书登录。 */
+  private async requireEcpEnabled(): Promise<void> {
+    const enabled = this.isEcpEnabled != null ? await this.isEcpEnabled().catch(() => false) : false;
+    if (!enabled) {
+      throw new BusinessException(
+        ErrorCode.PARAM_INVALID.code,
+        'ECP 飞书登录未启用，无法选择「当前用户的 ECP Token」凭证方式',
+      );
+    }
+  }
 
   /** 按 apiProtocol 协议 code 选择连通性测试客户端，未注册的回落默认 OpenAI 兼容客户端。 */
   private chatClientFor(config: LlmModelConfig): LlmChatClient {
@@ -176,7 +205,7 @@ export class ModelService {
     name: string,
     provider: string | null | undefined,
     baseUrl: string,
-    apiKey: string,
+    apiKey: string | null | undefined,
     modelId: string,
     supportsVision: number | null | undefined,
     isDefault: number | null | undefined,
@@ -190,7 +219,15 @@ export class ModelService {
     priceCacheWrite: number | null | undefined,
     priceOutput: number | null | undefined,
     maxRequestBodyBytes?: number | null,
+    /** 凭证方式：api_key（默认）/ ecp（当前用户 ECP Token）。 */
+    authType?: string | null,
   ): Promise<LlmModel> {
+    const authTypeValue = normalizeAuthTypeInput(authType) ?? 'api_key';
+    if (authTypeValue === 'ecp') await this.requireEcpEnabled();
+    // api_key 模式必须有固定 Key：避免直连 API 创建出必然 401 的空 Key 模型（前端/CLI 均有必填校验）。
+    if (authTypeValue === 'api_key' && !hasText(apiKey)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID.code, '请输入 API Key');
+    }
     if (isDefault != null && isDefault === 1) {
       await this.modelRepo.clearDefaultFlag();
     }
@@ -200,10 +237,12 @@ export class ModelService {
       apiProtocol: normalizeApiProtocol(apiProtocol) ?? '',
       effort: normalizeEffort(effort) ?? '',
       baseUrl,
-      apiKey,
+      // api_key 列 NOT NULL：ecp 模式（或未提供 Key 的创建请求）统一写空串占位。
+      apiKey: apiKey ?? '',
       modelId,
       modelType: hasText(modelType) ? modelType!.trim() : 'text',
       clientImpersonation: normalizeClientImpersonation(clientImpersonation) ?? 'none',
+      authType: authTypeValue,
       supportsVision: supportsVision != null ? supportsVision : 0,
       isDefault: isDefault != null ? isDefault : 0,
       contextWindowTokens,
@@ -237,6 +276,8 @@ export class ModelService {
     priceCacheWrite: number | null | undefined,
     priceOutput: number | null | undefined,
     maxRequestBodyBytes?: number | null,
+    /** 凭证方式：未提供=保持原值；api_key / ecp 显式切换。 */
+    authType?: string | null,
   ): Promise<LlmModel> {
     const model = await this.getModel(id);
     if (name != null) model.name = name;
@@ -251,6 +292,15 @@ export class ModelService {
     if (hasText(modelType)) model.modelType = modelType!.trim();
     const impersonation = normalizeClientImpersonation(clientImpersonation);
     if (impersonation != null) model.clientImpersonation = impersonation;
+    const authTypeValue = normalizeAuthTypeInput(authType);
+    if (authTypeValue != null) {
+      // 仅在「从其它方式切到 ecp」时要求开关开启：开关关闭后仍允许编辑已是 ecp 的模型
+      // （改名称/价格等），也允许切回 api_key。
+      if (authTypeValue === 'ecp' && normalizeModelAuthType(model.authType) !== 'ecp') {
+        await this.requireEcpEnabled();
+      }
+      model.authType = authTypeValue;
+    }
     if (supportsVision != null) model.supportsVision = supportsVision;
     if (contextWindowTokens != null) model.contextWindowTokens = contextWindowTokens;
     const maxRequestBody = normalizeMaxRequestBodyBytes(maxRequestBodyBytes);
@@ -303,7 +353,7 @@ export class ModelService {
     await this.modelRepo.updateById(model);
   }
 
-  async testConnectivity(id: number): Promise<ModelTestResult> {
+  async testConnectivity(id: number, actorUserId?: number | null): Promise<ModelTestResult> {
     const model = await this.getModel(id);
     const config: LlmModelConfig = {
       id: model.id,
@@ -314,10 +364,11 @@ export class ModelService {
       apiKey: model.apiKey,
       modelId: model.modelId,
       clientImpersonation: normalizeClientImpersonation(model.clientImpersonation) ?? 'none',
+      authType: normalizeModelAuthType(model.authType),
     };
     const startTime = Date.now();
     if (model.modelType === 'audio') {
-      return this.testAudioSynthesis(config, startTime);
+      return this.testAudioSynthesis(config, startTime, actorUserId);
     }
 
     try {
@@ -326,7 +377,7 @@ export class ModelService {
       };
       const response = await LlmCallContext.runAsync({
         scene: LLM_CALL_SCENES.CONNECTIVITY_TEST,
-        userId: null,
+        userId: actorUserId ?? null,
         sessionId: null,
         agentId: null,
       }, async () => this.chatClientFor(config).chat(request, config));
@@ -345,7 +396,7 @@ export class ModelService {
     }
   }
 
-  private async testAudioSynthesis(config: LlmModelConfig, startTime: number): Promise<ModelTestResult> {
+  private async testAudioSynthesis(config: LlmModelConfig, startTime: number, actorUserId?: number | null): Promise<ModelTestResult> {
     try {
       const request: LlmChatRequest = {
         messages: [{ role: 'assistant', content: TTS_TEST_TEXT }],
@@ -353,7 +404,7 @@ export class ModelService {
       };
       const response = await LlmCallContext.runAsync({
         scene: LLM_CALL_SCENES.CONNECTIVITY_TEST,
-        userId: null,
+        userId: actorUserId ?? null,
         sessionId: null,
         agentId: null,
       }, async () => this.chatClientFor(config).chat(request, config));

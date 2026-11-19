@@ -225,6 +225,8 @@ export interface LlmModelRef {
   apiKey?: string | null;
   modelId?: string | null;
   clientImpersonation?: string | null;
+  /** 凭证方式：api_key=固定 Key（缺省/未知按此处理）；ecp=调用时使用当前用户的 ECP Token。 */
+  authType?: string | null;
   contextWindowTokens?: number | null;
   supportsVision?: number | null;
   isDefault?: number | null;

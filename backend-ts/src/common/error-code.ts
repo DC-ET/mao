@@ -80,6 +80,9 @@ export const ErrorCode = {
   /** 定时任务手动「立即执行」在飞 / 会话忙冲突（HTTP 200 业务信封）。 */
   SCHEDULED_TASK_RUNNING: { code: 3055, message: '该定时任务正在执行中，请稍后再试' },
 
+  /** 模型配置为「当前用户 ECP Token」，但当前调用取不到可用凭证（未登录/过期/续期失败/无用户上下文）。 */
+  MODEL_AUTH_ECP_UNAVAILABLE: { code: 3056, message: '该模型使用「当前用户 ECP Token」，请先完成 ECP 飞书登录后再试' },
+
   /** 用量预算 BLOCK 超线：message 动态携带 scope/当期消耗/上限（技术方案 §5.7）。 */
   BUDGET_EXCEEDED: { code: 3041, message: '用量预算已超限' },
 

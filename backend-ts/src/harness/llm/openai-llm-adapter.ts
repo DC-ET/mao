@@ -23,6 +23,7 @@ import { EmptyResponseExhaustedException } from './empty-response-exhausted.js';
 import { parseChatResponse, parseStreamChunk, parseStreamErrorEvent, parseUsageFromSse, serializeChatRequest } from './json.js';
 import { applyClientImpersonationHeaders } from './client-impersonation-headers.js';
 import { isSupported, markUnsupported, shouldDegrade } from './prompt-cache-key-support.js';
+import { createStaticOnlyAuthResolver, type LlmAuthResolver } from './llm-auth.js';
 
 const IMAGE_PLACEHOLDER = '「此处用户上传了图片」';
 
@@ -69,7 +70,10 @@ interface HttpResult {
 }
 
 export class OpenAiLlmAdapter implements LlmAdapter {
-  constructor(private readonly retry: LlmRetryConfig = DEFAULT_LLM_RETRY) {}
+  constructor(
+    private readonly retry: LlmRetryConfig = DEFAULT_LLM_RETRY,
+    private readonly authResolver: LlmAuthResolver = createStaticOnlyAuthResolver(),
+  ) {}
 
   async chat(
     request: ChatRequest,
@@ -77,13 +81,14 @@ export class OpenAiLlmAdapter implements LlmAdapter {
     cancelFlag?: { get(): boolean } | null,
     callback?: ChatCallback | null,
   ): Promise<ChatResponse> {
+    const apiKey = await this.authResolver.resolveApiKey(config);
     let payload = await this.buildRequestBody(request, config, false);
     const totalStarted = process.hrtime.bigint();
     for (let attempt = 1; ; attempt++) {
       if (this.isCancelled(cancelFlag)) throw this.cancelledException();
       const attemptStarted = process.hrtime.bigint();
       try {
-        const awaited = await this.awaitResponse(payload, config, false, cancelFlag, callback ?? null, config.modelId ?? '', attempt);
+        const awaited = await this.awaitResponse(payload, config, false, cancelFlag, callback ?? null, config.modelId ?? '', attempt, apiKey);
         harnessLog('info', `LLM response headers model=${config.modelId} phase=response_headers attempt=${attempt}`);
         if (this.isRetryableStatus(awaited.status)) {
           if (attempt > this.retry.rateLimitMaxRetries) {
@@ -147,6 +152,14 @@ export class OpenAiLlmAdapter implements LlmAdapter {
     callback: StreamCallback,
     cancelFlag?: { get(): boolean } | null,
   ): Promise<void> {
+    // 凭证解析失败不进入重试循环：onError 交给上层（agent-loop 会原样抛出并走失败收尾）。
+    let apiKey: string;
+    try {
+      apiKey = await this.authResolver.resolveApiKey(config);
+    } catch (e) {
+      callback.onError(e);
+      return;
+    }
     let payload = await this.buildRequestBody(request, config, true);
     const totalStarted = process.hrtime.bigint();
     for (let attempt = 1; ; attempt++) {
@@ -157,7 +170,7 @@ export class OpenAiLlmAdapter implements LlmAdapter {
       const attemptStarted = process.hrtime.bigint();
       let awaited: HttpResult;
       try {
-        awaited = await this.awaitResponse(payload, config, true, cancelFlag, callback, config.modelId ?? '', attempt);
+        awaited = await this.awaitResponse(payload, config, true, cancelFlag, callback, config.modelId ?? '', attempt, apiKey);
       } catch (e) {
         if (this.isCancelled(cancelFlag)) {
           callback.onError(this.cancelledException());
@@ -397,12 +410,13 @@ export class OpenAiLlmAdapter implements LlmAdapter {
     callback: Pick<StreamCallback, 'onWaiting'> | null,
     model: string,
     attempt: number,
+    apiKey: string,
   ): Promise<HttpResult> {
     return new Promise((resolve, reject) => {
       const url = new URL((config.baseUrl ?? '').replace(/\/$/, '') + '/chat/completions');
       const lib = url.protocol === 'https:' ? https : http;
       const headers: Record<string, string> = {
-        Authorization: `Bearer ${config.apiKey ?? ''}`,
+        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       };
       applyClientImpersonationHeaders(headers, config.clientImpersonation);

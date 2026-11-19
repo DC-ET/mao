@@ -111,6 +111,7 @@ export class MysqlLlmModelRepository implements LlmModelRepository {
       modelId: model.modelId,
       modelType: model.modelType ?? 'text',
       clientImpersonation: model.clientImpersonation ?? 'none',
+      authType: model.authType ?? 'api_key',
       contextWindowTokens: model.contextWindowTokens,
       maxRequestBodyBytes: model.maxRequestBodyBytes ?? null,
       priceInput: model.priceInput ?? null,
@@ -140,6 +141,7 @@ export class MysqlLlmModelRepository implements LlmModelRepository {
       modelId: model.modelId,
       modelType: model.modelType,
       clientImpersonation: model.clientImpersonation ?? 'none',
+      authType: model.authType ?? 'api_key',
       contextWindowTokens: model.contextWindowTokens,
       maxRequestBodyBytes: model.maxRequestBodyBytes ?? null,
       priceInput: model.priceInput ?? null,
@@ -169,10 +171,13 @@ export class MysqlLlmModelRepository implements LlmModelRepository {
     return Number(row?.cnt ?? 0);
   }
 
-  /** 启用且配置了 API Key 的 text 模型数：readiness 就绪判定用（0 = 实例还没法对话；口径与 findDefault / listActiveText 一致）。 */
+  /**
+   * 启用且可用的 text 模型数：readiness 就绪判定用（0 = 实例还没法对话；口径与 findDefault / listActiveText 一致）。
+   * 凭证方式为 ecp 的模型没有固定 Key，同样计入「可用」——否则纯 ECP 模型的实例会被误判为未就绪。
+   */
   async countEnabledWithApiKey(): Promise<number> {
     const row = await this.db.queryOne<{ cnt: number }>(
-      `SELECT COUNT(*) AS cnt FROM llm_model WHERE status = 1 AND model_type = 'text' AND api_key IS NOT NULL AND api_key <> '' AND ${notDeleted()}`,
+      `SELECT COUNT(*) AS cnt FROM llm_model WHERE status = 1 AND model_type = 'text' AND (auth_type = 'ecp' OR (api_key IS NOT NULL AND api_key <> '')) AND ${notDeleted()}`,
     );
     return Number(row?.cnt ?? 0);
   }

@@ -32,7 +32,7 @@ export type { FeedbackReason, FeedbackSource, FeedbackStatus } from './feedback'
 export type { ContainerEntrySummary, ContainerAdminRow, ContainerRecycleStatus, ContainerRecycleResult } from './container';
 export type { ToolVO } from './tool';
 export type { UserInfoVO, LoginVO } from './user';
-export type { ModelVO, ModelPageResult, ModelListFilter, ClientImpersonation, ApiProtocol } from './model';
+export type { ModelVO, ModelPageResult, ModelListFilter, ClientImpersonation, ApiProtocol, ModelAuthType } from './model';
 export type { ExperienceVO, SuggestedQuestionVO, AgentVO, AgentAvatarUploadVO } from './agent';
 export type { WeixinPreferenceVO, TaskPanelPreferenceState } from './preference';
 export type { OnboardingState, ReadinessVO, OnboardingCompleteInput } from './readiness';

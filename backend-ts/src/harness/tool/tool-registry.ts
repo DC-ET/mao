@@ -11,6 +11,7 @@ import type { WebSearchConfig } from '../../settings/types.js';
 import type { WebPageConfig } from './impl/open-web-page-tool.js';
 import type { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
 import type { ImageModelLookup } from './impl/generate-image-tool.js';
+import type { LlmAuthResolver } from '../llm/llm-auth.js';
 import type { WeixinMediaToolSupport, WeixinMediaUploadService, WeixinSendService } from './impl/wechat-tools.js';
 import type {
   FeishuChannelToolSupport, FeishuGroupMediaLookup, FeishuMediaDownloader, FeishuMessageDetailFetcher,
@@ -88,6 +89,8 @@ export interface DefaultToolRegistryDeps {
   webPage: WebPageConfig;
   runtimeDataResolver: RuntimeDataResolver;
   imageModelLookup: ImageModelLookup;
+  /** 图片出口凭证解析器（ecp 模式解析当前用户 ECP Token）；缺省时只用模型配置的固定 Key。 */
+  authResolver?: LlmAuthResolver;
   uploadDir: string;
   getUploadBaseUrl?: () => Promise<string>;
   /** servlet contextPath（默认 /api）：图片产物 image_url 派生静态 origin 用。 */
@@ -173,8 +176,8 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
       deps.localToolExecutor,
       deps.sessionMapper,
     ),
-    new GenerateImageTool(deps.imageModelLookup, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => ''), deps.uploadContextPath),
-    new EditImageTool(deps.imageModelLookup, deps.pathSandbox, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => ''), deps.sendBytesSupport, deps.uploadContextPath),
+    new GenerateImageTool(deps.imageModelLookup, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => ''), deps.uploadContextPath, deps.authResolver),
+    new EditImageTool(deps.imageModelLookup, deps.pathSandbox, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => ''), deps.sendBytesSupport, deps.uploadContextPath, deps.authResolver),
     new TaskCreateTool(deps.sessionTodoMapper),
     new TaskListTool(deps.sessionTodoMapper),
     new TaskUpdateTool(deps.sessionTodoMapper),

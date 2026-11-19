@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { BaseTool } from '../tool.js';
 import { asInt, asText, errorJson, parseObject, toJson } from '../json.js';
 import { harnessLog } from '../../log.js';
+import { createStaticOnlyAuthResolver, type LlmAuthResolver } from '../../llm/llm-auth.js';
 import type { LlmModel } from '../../deps.js';
 import {
   callImageGenerations,
@@ -101,6 +102,8 @@ export class GenerateImageTool extends BaseTool {
     private readonly getBaseUrl: () => Promise<string> = async () => '',
     /** servlet contextPath（默认 /api）：从 upload.baseUrl 剥后缀段派生静态 origin。 */
     private readonly contextPath: string = '/api',
+    /** 凭证解析器：ecp 模式在运行期解析当前调用用户的 ECP Token（缺省仅支持固定 API Key）。 */
+    private readonly authResolver: LlmAuthResolver = createStaticOnlyAuthResolver(),
   ) { super(); }
 
   getName(): string { return 'generate_image'; }
@@ -184,6 +187,14 @@ export class GenerateImageTool extends BaseTool {
       const cfg = buildImageApiConfig(model, modelOverride);
       if (!cfg.baseUrl) return errorJson('文生图模型未配置 base_url');
       if (!cfg.model) return errorJson('文生图模型未配置 model_id');
+      // 凭证解析：ecp 模式使用当前调用用户的 ECP Token（失败抛错，由外层 catch 统一转 errorJson）。
+      // 工具执行不在 LlmCallContext 内，显式传 userId 作为解析身份。
+      cfg.apiKey = await this.authResolver.resolveApiKey({
+        id: model.id,
+        modelId: model.modelId ?? undefined,
+        apiKey: cfg.apiKey,
+        authType: model.authType,
+      }, userId);
 
       const result = await callImageGenerations(cfg, {
         prompt,

@@ -6,6 +6,13 @@
 export type ClientImpersonation = 'none' | 'codex' | 'claude_code';
 
 /**
+ * 模型凭证方式：
+ * - api_key：使用模型配置的固定 API Key（存量默认，行为不变）；
+ * - ecp：调用时实时解析「本次调用触发用户」的 ECP Token 作为 Bearer，配置里的 API Key 不参与。
+ */
+export type ModelAuthType = 'api_key' | 'ecp';
+
+/**
  * API 协议 code，与 `llm_model.api_protocol` / `llm_call.protocol` 同取值。
  * 注意空串是第三种写法：存量数据用 '' 表示 OpenAI 兼容（见迁移 V091），
  * 入库原样保留，由聚合 SQL 与展示侧汉化表按此语义归一；联合内只声明显式 code。
@@ -24,6 +31,8 @@ export interface ModelVO {
   modelId?: string;
   modelType?: string | null;
   clientImpersonation?: ClientImpersonation;
+  /** 凭证方式；缺省/未知值按 'api_key' 处理（兼容存量行与旧前端）。 */
+  authType?: ModelAuthType;
   contextWindowTokens?: number | null;
   /** 供应商请求体上限（字节）；null=未声明。用于推导压缩的请求体体积阈值。 */
   maxRequestBodyBytes?: number | null;

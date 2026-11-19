@@ -53,6 +53,8 @@ export interface LlmModelConfig {
   contextWindowTokens?: number | null;
   supportsVision?: boolean;
   clientImpersonation?: ClientImpersonation;
+  /** 凭证方式：api_key=固定 Key（缺省/未知按此处理）；ecp=调用时使用当前用户的 ECP Token。 */
+  authType?: string | null;
 }
 
 export interface HarnessModelResolver {
@@ -251,6 +253,8 @@ function toConfig(model: LlmModelRef): LlmModelConfig {
     contextWindowTokens: model.contextWindowTokens,
     supportsVision: model.supportsVision != null && model.supportsVision === 1,
     clientImpersonation: toClientImpersonation(model.clientImpersonation),
+    // 凭证方式必须透传：遗漏会让 ecp 模型静默回退到库中保留的旧固定 Key。
+    authType: model.authType ?? null,
   };
 }
 

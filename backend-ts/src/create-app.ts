@@ -24,6 +24,8 @@ import { EcpIdentityRepository } from './auth/ecp-identity.repository.js';
 import { createLarkUatInjector } from './auth/lark-uat-injector.js';
 import { MysqlEcpOauthStateRepository } from './auth/ecp-oauth.repository.js';
 import { MysqlEcpSessionRepository } from './auth/ecp-session.repository.js';
+import { createEcpTokenProvider } from './auth/ecp-token-provider.js';
+import { createLlmAuthResolver } from './harness/llm/llm-auth.js';
 import { MysqlUserRepository } from './user/user.repository.js';
 import { UserService } from './user/user.service.js';
 import { GitCredentialService, assertGitCredentialSecret } from './user/git-credential.service.js';
@@ -379,6 +381,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const agentRepo = new MysqlAgentRepository(db);
   const experienceService = new AgentExperienceService(new MysqlAgentExperienceRepository(db));
   const suggestedQuestionService = new AgentSuggestedQuestionService(new MysqlAgentSuggestedQuestionRepository(db));
+  // 模型「当前用户 ECP Token」凭证解析链（技术方案 2026-11-19）：
+  // provider 对 user_ecp_session 解密取票（60s 正缓存、失败不缓存），resolver 被所有 LLM 出口共享。
+  const ecpTokenProvider = createEcpTokenProvider(ecpSessionRepo, {
+    isEnabled: () => ecpAuth.isEnabled(),
+  });
+  const llmAuthResolver = createLlmAuthResolver(ecpTokenProvider);
   const modelRepo = new MysqlLlmModelRepository(db);
   const agentService = new AgentService(agentRepo, experienceService, suggestedQuestionService, modelRepo);
   const llmCallService = new LlmCallService(
@@ -399,15 +407,15 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     (id) => modelRepo.findById(id),
   );
   const modelChatClient = new RecordingLlmChatClient(
-    new OpenAiChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 }),
+    new OpenAiChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000, authResolver: llmAuthResolver }),
     llmCallService,
   );
   const anthropicChatClient = new RecordingLlmChatClient(
-    new AnthropicChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 }),
+    new AnthropicChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000, authResolver: llmAuthResolver }),
     llmCallService,
   );
   const responsesChatClient = new RecordingLlmChatClient(
-    new ResponsesChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000 }),
+    new ResponsesChatClient({ timeoutMs: harnessTuning.llm.callTimeoutSeconds * 1000, authResolver: llmAuthResolver }),
     llmCallService,
   );
   const llmChatClients = new Map<string, LlmChatClient>([
@@ -425,6 +433,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     new MysqlSessionModelRepository(db),
     modelChatClient,
     llmChatClients,
+    // 写侧校验：authType=ecp 要求 ECP 飞书登录已启用（与读侧 provider 同源判定）。
+    () => ecpAuth.isEnabled(),
   );
 
   const settingService = new SystemSettingService(
@@ -620,6 +630,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     harnessTuning, llmCallService, skillLoader, pathSandbox, runtimeResolver,
     commandService, skillSync, workspaceRulesSnapshotService, sessionSvc,
     compactionSvc, sessionCompactionEventService, settingService, modelRepo,
+    authResolver: llmAuthResolver,
   });
   const { openAiLlmAdapter, anthropicLlmAdapter, responsesLlmAdapter, llmAdapter, promptEngine, tokenEstimator, compactionService, contextManager, compactionArchiveService, compactionConfig, historyLoader, activeContext, compactionModelResolver, orchestrator } = llmEngine;
 
@@ -853,6 +864,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
     sessionSvc, sessionMap, shellManager, outputManager, backgroundTasks, gitTokenResolver, jwt,
     userRepo, ecpInjector, larkUatInjector, settingService, runtimeResolver, modelService,
+    authResolver: llmAuthResolver,
     wechatBridges, feishuMessageService, feishuMessageRepository, getFeishuClient,
     sendBytesBridge, dingtalkMediaHolder, definitionRegistry, holder, subagentMapper,
     localToolSessions, localDeliveryFetch, visibility, backgroundSubagentManager,

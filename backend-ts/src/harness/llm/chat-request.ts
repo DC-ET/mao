@@ -136,7 +136,7 @@ export interface StreamChunk {
   choices?: DeltaChoice[];
 }
 
-import type { ClientImpersonation } from '@mao/contracts';
+import type { ClientImpersonation, ModelAuthType } from '@mao/contracts';
 
 export interface LlmModelConfig {
   id?: number;
@@ -156,6 +156,8 @@ export interface LlmModelConfig {
   maxRequestBodyBytes?: number | null;
   supportsVision?: boolean;
   clientImpersonation?: ClientImpersonation;
+  /** 凭证方式：api_key=固定 Key（缺省/未知按此处理）；ecp=调用时使用当前用户的 ECP Token。 */
+  authType?: ModelAuthType;
   /** 每百万「非缓存」输入 token 价格（成本单位）。随模型解析链下发用于成本快照；缺失时落库侧走兜底价格缓存。 */
   priceInput?: number | null;
   /** 每百万缓存命中输入 token 价格（成本单位）。语义同 priceInput。 */

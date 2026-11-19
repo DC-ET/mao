@@ -854,4 +854,37 @@ describe('OpenAiLlmAdapter', () => {
       promptTokensDetails: { cachedTokens: 400 },
     });
   });
+
+  it('ecp 凭证解析失败：不发起网络请求，错误经 onError 透出', async () => {
+    server = new QueueServer();
+    await server.start();
+    const ecpAdapter = new OpenAiLlmAdapter(
+      { ...DEFAULT_LLM_RETRY, rateLimitMaxRetries: 0 },
+      {
+        resolveApiKey: async () => {
+          throw new Error('该模型使用「当前用户 ECP Token」，请先完成 ECP 飞书登录后再试');
+        },
+      },
+    );
+    const callback = new CapturingCallback();
+    await ecpAdapter.stream(request('hi'), configOf(server, { authType: 'ecp', apiKey: 'sk-should-not-use' }), callback);
+    expect(server.requestCount).toBe(0);
+    expect(String((callback.error as Error | undefined)?.message)).toContain('ECP 飞书登录');
+  });
+
+  it('ecp 模式：请求头使用解析出的凭证而非配置 Key', async () => {
+    server = new QueueServer();
+    server.enqueueSse(
+      'data: {"id":"c","choices":[{"index":0,"delta":{"content":"ok"}}]}\n\n'
+      + 'data: {"id":"c","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
+    );
+    await server.start();
+    const ecpAdapter = new OpenAiLlmAdapter(
+      { ...DEFAULT_LLM_RETRY, rateLimitMaxRetries: 0 },
+      { resolveApiKey: async () => 'ecp-plain-token' },
+    );
+    const callback = new CapturingCallback();
+    await ecpAdapter.stream(request('hi'), configOf(server, { authType: 'ecp', apiKey: 'sk-should-not-use' }), callback);
+    expect(server.headers[0].authorization).toBe('Bearer ecp-plain-token');
+  });
 });
