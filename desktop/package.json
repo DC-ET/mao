@@ -13,7 +13,7 @@
     "preview": "vite preview",
     "test:unit": "vitest run && node --test \"electron/*.test.cjs\"",
     "test:unit:watch": "vitest",
-    "postinstall": "node ./node_modules/electron-rebuild/lib/src/cli.js -f -w node-pty"
+    "postinstall": "node ./node_modules/electron-rebuild/lib/src/cli.js -f -w node-pty && node ./scripts/fix-node-pty-perms.cjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

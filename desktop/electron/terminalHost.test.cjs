@@ -11,6 +11,7 @@ const {
   userIdFromToken,
   detectShell,
   toWsUrl,
+  ensurePtyHelpersExecutable,
   HOST_FRAME_MAX_BYTES,
   DROPPED_NOTICE,
 } = require('./terminalHost.cjs')
@@ -239,6 +240,37 @@ test('shutdown：杀掉全部中继 PTY 并关闭 socket', () => {
   assert.ok(pty.killed)
   assert.equal(socket.closedWith?.code, 1000)
   assert.equal(host.terminalIds().length, 0)
+})
+
+test('ensurePtyHelpersExecutable：缺 x 位补上且幂等；已有 x 位不动', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mao-pty-perms-')))
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'node-pty', main: './lib/index.js' }))
+  fs.mkdirSync(path.join(root, 'lib'), { recursive: true })
+  const entry = path.join(root, 'lib', 'index.js')
+  fs.writeFileSync(entry, '')
+  const prebuild = path.join(root, 'prebuilds', `${process.platform}-${process.arch}`)
+  fs.mkdirSync(prebuild, { recursive: true })
+  const helper = path.join(prebuild, 'spawn-helper')
+  fs.writeFileSync(helper, '#!/bin/sh\n')
+  fs.chmodSync(helper, 0o644)
+
+  ensurePtyHelpersExecutable(entry)
+  assert.equal(fs.statSync(helper).mode & 0o777, 0o755)
+  // 幂等：再次调用保持 0755
+  ensurePtyHelpersExecutable(entry)
+  assert.equal(fs.statSync(helper).mode & 0o777, 0o755)
+
+  // 已有 x 位的不改动
+  const other = path.join(prebuild, 'winpty-agent.exe')
+  fs.writeFileSync(other, '')
+  fs.chmodSync(other, 0o755)
+  ensurePtyHelpersExecutable(entry)
+  assert.equal(fs.statSync(other).mode & 0o777, 0o755)
+})
+
+test('ensurePtyHelpersExecutable：空 / 不存在入口静默不抛', () => {
+  assert.doesNotThrow(() => ensurePtyHelpersExecutable(''))
+  assert.doesNotThrow(() => ensurePtyHelpersExecutable(path.join(os.tmpdir(), 'mao-no-such-pty', 'lib', 'index.js')))
 })
 
 // ---- helpers ----

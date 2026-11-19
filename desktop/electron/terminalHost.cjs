@@ -17,6 +17,45 @@ const os = require('os')
 const path = require('path')
 const WebSocket = require('ws')
 
+/**
+ * node-pty 的 spawn-helper / winpty-agent.exe 可能被 npm / 打包落成不可执行
+ * （0644）：require 与 typeof spawn 都正常，第一次 spawn 才 posix_spawnp failed。
+ * 按入口文件逐级向上找包根，缺 x 位就补（幂等）。
+ * 与 agent-cli/src/local/terminal-host.ts 的 ensurePtyHelpersExecutable 同口径。
+ * @param {string} [entryPath] node-pty 包内入口（lib/index.js）；缺省 require.resolve('node-pty')，测试可传假路径
+ */
+function ensurePtyHelpersExecutable(entryPath) {
+  let entry
+  try {
+    entry = entryPath ?? require.resolve('node-pty')
+  } catch {
+    return // 模块未安装：无从修起
+  }
+  try {
+    let root = path.dirname(entry)
+    for (let depth = 0; depth < 4; depth++) {
+      if (fs.existsSync(path.join(root, 'package.json'))
+        && (fs.existsSync(path.join(root, 'prebuilds')) || fs.existsSync(path.join(root, 'build')))) break
+      const parent = path.dirname(root)
+      if (parent === root) return
+      root = parent
+    }
+    const candidates = [
+      path.join(root, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper'),
+      path.join(root, 'prebuilds', `${process.platform}-${process.arch}`, 'winpty-agent.exe'),
+      path.join(root, 'build', 'Release', 'spawn-helper'),
+    ]
+    for (const helper of candidates) {
+      if (!fs.existsSync(helper)) continue
+      const mode = fs.statSync(helper).mode
+      if ((mode & 0o111) !== 0) continue
+      fs.chmodSync(helper, (mode & 0o777) | 0o111)
+    }
+  } catch {
+    // 只读安装 / 权限不足：静默跳过，交给 spawn 的报错路径暴露真实原因
+  }
+}
+
 /** 主机 → 服务器单帧上限：服务器在 /ws/terminal-host 上按 256KB 校验，超限整条按断开处理。 */
 const HOST_FRAME_MAX_BYTES = 256 * 1024
 /**
@@ -113,6 +152,9 @@ class TerminalHost {
       // 顶层 require 会让 ubuntu --ignore-scripts 的测试环境直接失败；
       // 主进程里 node-pty 是常规依赖，但懒加载可以和 fake 注入共存
       this._pty = this.deps.ptyImpl ?? require('node-pty')
+      // node-pty 的 spawn-helper 可能被 npm / 打包落成不可执行：require 正常，第一次
+      // spawn 才 posix_spawnp failed。这里在加载期补一次 x 位（幂等）。
+      ensurePtyHelpersExecutable()
     }
     return this._pty
   }
@@ -449,6 +491,7 @@ module.exports = {
   userIdFromToken,
   detectShell,
   toWsUrl,
+  ensurePtyHelpersExecutable,
   HOST_FRAME_MAX_BYTES,
   HOST_DATA_CHUNK_BYTES,
   SOCKET_BACKPRESSURE_BYTES,

@@ -150,6 +150,7 @@
 | 新建终端报「仅云端任务支持远程终端」 | 当前任务既非 CLOUD 也未装配中继（LOCAL 终端走执行端的桌面客户端或 mao-agent 主机，需已升级的执行端在线） |
 | 新建终端报数量上限 | 达到 `terminal.maxSessionsPerTask` / `terminal.maxSessionsGlobal`，关掉不用的终端或调大配置（需重启后端） |
 | 打开终端后立刻报错/后端 `npm ci` 失败 | 服务器缺 `python3 make g++`，`node-pty` 原生模块没编译成功，装好后重新 `npm ci && npm run build` |
+| mao-agent 主机侧报「终端启动失败」（`require('node-pty')` 正常） | `node-pty` 的 `spawn-helper` 丢了可执行位（npm / 打包常给 0644）：0.2.0 起加载期自动补 x 位；旧版手动执行 `chmod +x "$(readlink -f "$(npm root -g)/mao-agent/node_modules/node-pty")/prebuilds/$(node -p process.platform)-$(node -p process.arch)/spawn-helper"` 后重启 `mao-agent local --serve` |
 | 终端全部消失 | 后端重启不恢复终端（预期）；或触发空闲/存活回收（`terminal.idleTimeoutMinutes`、`terminal.maxLifetimeHours`；切走任务或收起面板后终端开始计空闲）；任务被删除也会关闭其终端 |
 | 提示「终端已在其他窗口打开」 | 同一终端只能被一个连接接入，新连接会顶替旧连接。在新窗口继续用，或在旧窗口点面板顶部的「重新接管」夺回 |
 | 输出里出现「输出过快，已丢弃部分内容」 | 客户端消费不及时触发背压丢帧；减少 `cat` 大文件这类刷屏输出 |

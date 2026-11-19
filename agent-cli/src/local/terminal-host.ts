@@ -1,6 +1,7 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import WebSocket from 'ws';
-import { isWorkspaceWithin } from './sandbox';
+import { isWorkspaceWithin } from './sandbox.js';
 
 /**
  * mao-agent 的终端主机（技术方案 2026-11-18-local-terminal-remote §4.7）：
@@ -94,6 +95,56 @@ function toWsUrl(baseUrl: string): string {
   return `${baseUrl.replace(/^http/i, 'ws').replace(/\/+$/, '')}/ws/terminal-host`;
 }
 
+/** node-pty 目录下可选的辅助可执行文件名：spawn 时 execve 它，缺 x 位会 posix_spawnp 失败。 */
+const PTY_HELPER_FILES = ['spawn-helper', 'winpty-agent.exe'];
+
+/**
+ * 给 node-pty 的辅助可执行文件补可执行位（幂等，导出供测试直接驱动）。
+ *
+ * node-pty 是 optionalDependencies，npm / yarn / pnpm / 拷贝 / rsync 都可能把
+ * prebuilds 下的 spawn-helper 落成 0644：require 与 `typeof spawn === 'function'`
+ * 全部正常，直到第一次 spawn 才 posix_spawnp failed。安装期修（postinstall /
+ * 安装脚本）覆盖不了这些路径，因此在加载模块后按实际路径自查一次——只在缺 x 位时
+ * 调用 fs.chmodSync，正常安装零开销；失败（只读文件系统等）静默跳过，不阻断启动。
+ */
+export function ensurePtyHelpersExecutable(ptyModulePath?: string): void {
+  if (ptyModulePath != null && (typeof ptyModulePath !== 'string' || ptyModulePath === '')) return;
+  let resolved: string;
+  try {
+    resolved = ptyModulePath ?? require.resolve('node-pty');
+  } catch {
+    // 模块未安装（optionalDependencies 编译失败等）：无从修起，交给调用方的降级路径
+    return;
+  }
+  // require.resolve('node-pty') 给的是包内入口（如 lib/index.js），prebuilds/build 在包根，
+  // 因此从入口逐级向上找到同时含 package.json 与 prebuilds / build 的目录。
+  let root = path.dirname(resolved);
+  for (let depth = 0; depth < 4; depth++) {
+    if (fs.existsSync(path.join(root, 'package.json'))
+      && (fs.existsSync(path.join(root, 'prebuilds')) || fs.existsSync(path.join(root, 'build')))) {
+      break;
+    }
+    const parent = path.dirname(root);
+    if (parent === root) return;
+    root = parent;
+  }
+  const candidates = [
+    ...PTY_HELPER_FILES.map((name) => path.join(root, 'prebuilds', `${process.platform}-${process.arch}`, name)),
+    path.join(root, 'build', 'Release', 'spawn-helper'),
+  ];
+  for (const helper of candidates) {
+    try {
+      if (!fs.existsSync(helper)) continue;
+      const mode = fs.statSync(helper).mode;
+      // 已有任一可执行位即视为正常：不同打包器给的位组合不一，不做精确比对
+      if ((mode & 0o111) !== 0) continue;
+      fs.chmodSync(helper, (mode & 0o777) | 0o111);
+    } catch {
+      // 只读安装 / 权限不足：静默跳过，由 spawn 的报错路径暴露真实原因
+    }
+  }
+}
+
 export class TerminalHost {
   private readonly opts: TerminalHostOptions;
   private readonly debug?: (msg: string) => void;
@@ -120,11 +171,15 @@ export class TerminalHost {
     if (this.ptyFactory != null) return this.ptyFactory;
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const pty = require('node-pty') as {
+      const required = require('node-pty') as {
         spawn(shell: string, args: string[], options: Record<string, unknown>): HostPtyLike;
       };
+      // require 成功不等于 spawn 可用：npm 等可能丢掉 spawn-helper 的 x 位，直到第一次
+      // spawn 才 posix_spawnp failed。这里按模块实际路径自查一次，把「装上了却不能用」
+      // 的故障在加载期就修掉（幂等，仅在缺位时 chmod）。
+      ensurePtyHelpersExecutable();
       this.ptyFactory = (shell, cols, rows, cwd, env) =>
-        pty.spawn(shell, [], { name: 'xterm-256color', cols, rows, cwd, env: env as { [key: string]: string } });
+        required.spawn(shell, [], { name: 'xterm-256color', cols, rows, cwd, env: env as { [key: string]: string } });
     } catch (e) {
       this.debug?.(`node-pty 不可用，远程终端主机降级为 SPAWN_FAILED：${e instanceof Error ? e.message : String(e)}`);
       this.ptyFactory = () => {

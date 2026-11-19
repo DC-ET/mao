@@ -63,8 +63,26 @@ else
   npm install
 fi
 npm run build
+
+# node-pty 是可选依赖，npm / yarn / pnpm / 拷贝都可能把 prebuilds/*/spawn-helper 落成
+# 不可执行：require 正常，直到第一次 spawn 才 posix_spawnp failed（表现为「终端启动失败」）。
+# 运行时 TerminalHost 会幂等自愈，这里补一次是为了让安装完成即处于正确状态。
+fix_node_pty_perms() {
+  local helper pkg
+  pkg="$(node -p "try{require.resolve('node-pty/package.json')}catch{process.exit(1)}" 2>/dev/null)" || return 0
+  pkg="$(dirname "${pkg}")"
+  for helper in "${pkg}/prebuilds/${platform}-${arch}/spawn-helper" "${pkg}/build/Release/spawn-helper"; do
+    [[ -f "${helper}" ]] || continue
+    [[ -x "${helper}" ]] || chmod +x "${helper}"
+  done
+}
+platform="$(node -p 'process.platform')"
+arch="$(node -p 'process.arch')"
+fix_node_pty_perms || true
+
 # 覆盖旧的 npm link / 上次全局安装，方便重复执行升级
 npm install -g . --force
+fix_node_pty_perms || true
 
 BIN="$(command -v mao-agent || true)"
 [[ -n "${BIN}" ]] || die "npm install -g 成功，但 PATH 里没有 mao-agent。若使用 nvm，请新开一个终端或检查 npm prefix。"
