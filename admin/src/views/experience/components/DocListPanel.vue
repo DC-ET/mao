@@ -162,9 +162,6 @@
             <span v-else class="file-name">{{ row.doc.fileName }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="标题" min-width="160" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.isGroup ? '' : row.doc.title || '—' }}</template>
-        </el-table-column>
         <el-table-column label="关键词" min-width="150">
           <template #default="{ row }">
             <template v-if="!row.isGroup && tagsOf(row.doc).length > 0">
@@ -174,9 +171,6 @@
             <span v-else>—</span>
           </template>
         </el-table-column>
-        <el-table-column label="摘要" min-width="220" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.isGroup ? '' : row.doc.summary || '—' }}</template>
-        </el-table-column>
         <el-table-column label="最后验证" width="130">
           <template #default="{ row }">
             <template v-if="!row.isGroup">
@@ -184,9 +178,6 @@
               <el-tag v-if="isStaleVerified(row.doc.lastVerified)" size="small" type="info">久未验证</el-tag>
             </template>
           </template>
-        </el-table-column>
-        <el-table-column label="大小" width="90" align="right">
-          <template #default="{ row }">{{ row.isGroup ? '' : formatSize(row.doc.sizeBytes) }}</template>
         </el-table-column>
         <el-table-column label="更新时间" width="170">
           <template #default="{ row }">
@@ -280,7 +271,7 @@ const tableRows = computed<TableRow[]>(() => {
   return rows
 })
 
-const COLUMN_COUNT = 8
+const COLUMN_COUNT = 5
 
 function spanMethod({ row, columnIndex }: { row: TableRow; columnIndex: number }): { rowspan: number; colspan: number } | undefined {
   if (!row.isGroup) return undefined

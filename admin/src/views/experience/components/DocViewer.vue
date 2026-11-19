@@ -1,11 +1,6 @@
 <template>
   <section class="doc-viewer">
-    <div class="viewer-toolbar">
-      <el-button class="viewer-back" size="small" aria-label="返回列表" @click="store.closeViewer()">
-        <el-icon><Back /></el-icon>
-        返回列表
-      </el-button>
-      <div class="viewer-title" :title="titleText">{{ titleText }}</div>
+    <div v-if="mode !== 'edit'" class="viewer-toolbar">
       <div class="viewer-actions">
         <el-button
           v-if="payload.kind === 'doc'"
@@ -13,17 +8,15 @@
           aria-label="查看索引"
           @click="store.openIndex()"
         >索引</el-button>
-        <template v-if="mode !== 'edit'">
-          <el-button size="small" :type="mode === 'render' ? 'primary' : 'default'" @click="mode = 'render'">渲染态</el-button>
-          <el-button size="small" :type="mode === 'source' ? 'primary' : 'default'" @click="mode = 'source'">源码态</el-button>
-          <el-button v-if="payload.kind === 'doc' && canWrite" size="small" @click="startEdit">编辑</el-button>
-        </template>
+        <el-button size="small" :type="mode === 'render' ? 'primary' : 'default'" @click="mode = 'render'">渲染态</el-button>
+        <el-button size="small" :type="mode === 'source' ? 'primary' : 'default'" @click="mode = 'source'">源码态</el-button>
+        <el-button v-if="payload.kind === 'doc' && canWrite" size="small" @click="startEdit">编辑</el-button>
       </div>
     </div>
 
     <div v-if="store.viewerLoading" class="viewer-loading" v-loading="true" element-loading-text="加载中" />
 
-    <!-- 阅读列：全页布局下限制行宽保证长文可读性 -->
+    <!-- 阅读列限制行宽，长文在弹窗内保持可读 -->
     <div v-else class="viewer-body">
       <!-- 元数据卡（单篇经验） -->
       <div v-if="payload.kind === 'doc' && payload.meta" class="meta-card">
@@ -100,7 +93,6 @@
 <script setup lang="ts">
 import { computed, inject, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Back } from '@element-plus/icons-vue'
 import { renderMarkdown } from '../../session/composables/useMarkdown'
 import { formatDateTime } from '../../../utils/datetime'
 import { useAuthStore } from '../../../stores/auth'
@@ -123,13 +115,6 @@ const indexDocCount = computed(() => {
   if (props.payload.kind !== 'index') return 0
   const match = /<!-- count: (\d+) -->/.exec(props.payload.content)
   return match ? Number(match[1]) : 0
-})
-
-const titleText = computed(() => {
-  const v = props.payload
-  if (v.kind === 'index') return '索引 INDEX.md（系统自动生成）'
-  if (v.kind === 'create') return '新建经验'
-  return v.meta?.title || v.fileName
 })
 
 const tags = computed(() => (props.payload.kind === 'doc' ? splitKeywords(props.payload.meta?.keywords ?? '') : []))
@@ -215,22 +200,7 @@ async function submitSave(): Promise<void> {
 .viewer-toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-.viewer-back {
-  flex-shrink: 0;
-}
-.viewer-back :deep(.el-icon) {
-  margin-right: 4px;
-}
-.viewer-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-  font-size: 15px;
+  justify-content: flex-end;
 }
 .viewer-actions {
   display: flex;

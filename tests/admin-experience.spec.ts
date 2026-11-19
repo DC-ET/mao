@@ -52,6 +52,12 @@ test.describe('经验库管理页', () => {
       await expect(page.locator('.doc-table')).toContainText(`${FILE_A}`)
       await expect(page.locator('.doc-table')).toContainText(`${FILE_B}`)
       await expect(page.locator('.group-cell').first()).toContainText('2026-10 · 2 篇')
+      const headers = page.locator('.doc-table thead')
+      await expect(headers).toContainText('文件名')
+      await expect(headers).toContainText('关键词')
+      await expect(headers).not.toContainText('标题')
+      await expect(headers).not.toContainText('摘要')
+      await expect(headers).not.toContainText('大小')
 
       // 关键词搜索：只命中 A
       await page.fill('input[aria-label="搜索经验文档"]', '文档 A')
@@ -64,23 +70,25 @@ test.describe('经验库管理页', () => {
       await page.getByRole('button', { name: '重置' }).click()
       await expect(page.locator('.doc-table')).toContainText(FILE_B)
 
-      // 打开文档：整页阅读器（列表收起）+ 元数据卡 + Markdown 渲染态
+      // 打开文档：弹窗阅读（列表仍在）+ 元数据卡 + Markdown 渲染态
       await page.locator('.doc-table').getByText(FILE_A).first().click()
-      await expect(page.locator('.doc-viewer')).toContainText('经验库 e2e 文档 A')
+      const dialog = page.getByRole('dialog', { name: '经验库 e2e 文档 A' })
+      await expect(dialog).toBeVisible()
       await expect(page.locator('.meta-card')).toContainText('冒烟种子文档')
       await expect(page.locator('.doc-content h2')).toHaveText('现象')
-      await expect(page.locator('.doc-table')).toHaveCount(0)
+      await expect(page.locator('.doc-table')).toBeVisible()
 
       // 源码态展示原文
-      await page.locator('.doc-viewer').getByRole('button', { name: '源码态' }).click()
+      await dialog.getByRole('button', { name: '源码态' }).click()
       await expect(page.locator('.source-pre')).toContainText('## 现象')
 
       // 阅读器工具条直达索引视图：渲染 INDEX.md（按钮 aria-label 为「查看索引」）
-      await page.locator('.doc-viewer').getByRole('button', { name: '查看索引' }).click()
+      await dialog.getByRole('button', { name: '查看索引' }).click()
+      await expect(page.getByRole('dialog', { name: '索引 INDEX.md（系统自动生成）' })).toBeVisible()
       await expect(page.locator('.doc-viewer')).toContainText('INDEX.md 由系统自动生成')
 
-      // 返回列表
-      await page.getByRole('button', { name: '返回列表' }).click()
+      // 关闭弹窗回到列表
+      await page.getByRole('button', { name: '关闭此对话框' }).click()
       await expect(page.locator('.doc-table')).toBeVisible()
       await expect(page.locator('.doc-viewer')).toHaveCount(0)
     } finally {
@@ -130,21 +138,21 @@ test.describe('经验库管理页', () => {
     }
 
     try {
-      // 列表态先验证行内编辑（整页切换下阅读态时列表不可见，编辑入口在列表行）
+      // 列表态先验证行内编辑（编辑在弹窗内，列表仍在后面）
       await page.goto(`/admin/experience?agentId=${agentId}`)
       await expect(page.locator('.doc-table')).toContainText(FILE_A)
 
-      // 行内「编辑」：整页进编辑器且缓冲为原文
+      // 行内「编辑」：弹窗进编辑器且缓冲为原文
       await page.locator('.doc-table .el-table__body tr', { hasText: FILE_A }).getByRole('button', { name: '编辑' }).click()
       await expect(page.locator('.doc-viewer .editor')).toBeVisible()
       await expect(page.locator('.doc-viewer .editor textarea')).toHaveValue(DOC_A)
       await page.getByRole('button', { name: '取消' }).click()
       await expect(page.locator('.doc-viewer .editor')).toHaveCount(0)
-      // 取消后停留在该文档的渲染态（阅读器仍打开）
+      // 取消后停留在该文档的渲染态（弹窗仍打开）
       await expect(page.locator('.doc-content')).toBeVisible()
 
-      // 返回列表 → 分组切换（月 → 关键词）：groupCounts 随新口径刷新，行不丢失
-      await page.getByRole('button', { name: '返回列表' }).click()
+      // 关闭弹窗 → 分组切换（月 → 关键词）：groupCounts 随新口径刷新，行不丢失
+      await page.getByRole('button', { name: '关闭此对话框' }).click()
       await expect(page.locator('.doc-table')).toBeVisible()
       await page.locator('.list-controls .el-select').first().click()
       await page.locator('.el-select-dropdown:visible .el-select-dropdown__item', { hasText: '按关键词' }).click()
@@ -170,9 +178,10 @@ test.describe('经验库管理页', () => {
       await expect(page).not.toHaveURL(/file=/)
       await expect(page.locator('.doc-table')).toBeVisible()
 
-      // 直达有效 file：整页阅读器
+      // 直达有效 file：弹窗打开该文档，列表仍在
       await page.goto(`/admin/experience?agentId=${otherAgentId}&file=${encodeURIComponent(FILE_B)}`)
-      await expect(page.locator('.doc-viewer')).toContainText('经验库 e2e 文档 B')
+      await expect(page.getByRole('dialog', { name: '经验库 e2e 文档 B' })).toBeVisible()
+      await expect(page.locator('.doc-table')).toBeVisible()
     } finally {
       for (const [id, fileName] of [
         [agentId, FILE_A],

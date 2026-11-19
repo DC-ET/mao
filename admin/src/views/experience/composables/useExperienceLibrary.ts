@@ -174,6 +174,8 @@ export function useExperienceLibrary() {
   const appliedFile = ref('')
   /** 行内「编辑」按钮的临时意图：openDocContent 打开时套用，用完即复位（不入 URL）。 */
   let pendingEditMode: 'render' | 'edit' = 'render'
+  /** 阅读请求代次：关闭弹窗或发起新请求时递增，丢弃过期响应，避免关窗后被在途请求重新打开。 */
+  let viewerToken = 0
 
   function viewerFile(): string {
     return viewer.value?.kind === 'doc' ? viewer.value.fileName : ''
@@ -269,40 +271,49 @@ export function useExperienceLibrary() {
 
   async function openDocContent(fileName: string): Promise<void> {
     if (selectedAgentId.value == null) return
+    const token = ++viewerToken
+    const mode = pendingEditMode
     viewerLoading.value = true
     try {
       const { data } = await api.get<{ fileName: string; content: string }>(
         `/agents/${selectedAgentId.value}/experience-library/docs/content`,
         { params: { file: fileName } },
       )
+      if (token !== viewerToken) return
       const meta = docs.value.find((doc) => doc.fileName === fileName) ?? null
-      viewer.value = { kind: 'doc', fileName: data.fileName, meta, content: data.content, initialMode: pendingEditMode }
+      viewer.value = { kind: 'doc', fileName: data.fileName, meta, content: data.content, initialMode: mode }
     } catch {
-      // 直达 URL 指向已删文档等场景：拦截器统一 toast，右栏回默认态并移除 file（技术方案 §3.5）
+      if (token !== viewerToken) return
+      // 直达 URL 指向已删文档等场景：拦截器统一 toast，弹窗关闭并移除 file
       viewer.value = null
       patchState({ file: '' })
     } finally {
-      viewerLoading.value = false
-      pendingEditMode = 'render'
+      if (token === viewerToken) {
+        viewerLoading.value = false
+        pendingEditMode = 'render'
+      }
     }
   }
 
   async function openIndex(): Promise<void> {
     if (selectedAgentId.value == null) return
+    const token = ++viewerToken
     viewerLoading.value = true
     try {
       const { data } = await api.get<{ fileName: string; content: string; docCount: number }>(
         `/agents/${selectedAgentId.value}/experience-library/index`,
       )
+      if (token !== viewerToken) return
       viewer.value = { kind: 'index', fileName: data.fileName, meta: null, content: data.content, initialMode: 'render' }
     } catch {
       // 拦截器已弹错误提示
     } finally {
-      viewerLoading.value = false
+      if (token === viewerToken) viewerLoading.value = false
     }
   }
 
   function openCreate(): void {
+    viewerToken++
     viewer.value = { kind: 'create', fileName: '', meta: null, content: createTemplate(), initialMode: 'edit' }
   }
 
@@ -337,8 +348,12 @@ export function useExperienceLibrary() {
     groupBy.value = next.groupBy
     appliedFile.value = next.file
 
-    // 换库后旧库的右栏内容（文档/索引/新建草稿）全部失效
-    if (agentChanged) viewer.value = null
+    // 换库后旧库的弹窗内容（文档/索引/新建草稿）全部失效，并作废在途请求
+    if (agentChanged) {
+      viewerToken++
+      viewer.value = null
+      viewerLoading.value = false
+    }
     if (listChanged) await loadDocs()
     if (next.file !== '' && (fileChanged || agentChanged)) {
       await openDocContent(next.file)
@@ -468,9 +483,11 @@ export function useExperienceLibrary() {
     openIndex,
     openCreate,
     closeViewer(): void {
+      // 先作废在途请求并收起弹窗，再摘掉 URL 里的 file（文档视图由 file 驱动，索引/新建不入 URL）
+      viewerToken++
+      viewer.value = null
+      viewerLoading.value = false
       patchState({ file: '' })
-      // create/index 不入 URL：直接收起
-      if (viewer.value?.kind !== 'doc') viewer.value = null
     },
     async saveDoc(fileName: string, content: string, existing: boolean): Promise<boolean> {
       if (selectedAgentId.value == null) return false

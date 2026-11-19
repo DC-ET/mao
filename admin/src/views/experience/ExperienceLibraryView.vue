@@ -38,10 +38,18 @@
         </div>
       </template>
 
-      <!-- 整页两级切换（不做左右/上下分栏）：无打开文档 = 全宽列表页；打开文档/索引/新建 = 整页替换为阅读器，
-           由 URL file 参数驱动（返回列表/浏览器前进后退均可导航） -->
-      <DocListPanel v-if="store.viewer == null" />
-      <DocViewer v-else :payload="store.viewer" />
+      <!-- 列表常驻；打开文档 / 索引 / 新建走弹窗。文档由 URL file 参数驱动，刷新或分享可还原。 -->
+      <DocListPanel />
+      <ResponsiveDialog
+        :model-value="store.viewer != null"
+        :title="dialogTitle"
+        width="960px"
+        top="6vh"
+        class="experience-doc-dialog"
+        @update:model-value="onViewerDialog"
+      >
+        <DocViewer v-if="store.viewer" :payload="store.viewer" />
+      </ResponsiveDialog>
     </el-card>
   </div>
 </template>
@@ -50,6 +58,7 @@
 import { computed, provide } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { useAuthStore } from '../../stores/auth'
+import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 import DocListPanel from './components/DocListPanel.vue'
 import DocViewer from './components/DocViewer.vue'
 import { EXPERIENCE_LIBRARY_KEY, useExperienceLibrary } from './composables/useExperienceLibrary'
@@ -59,6 +68,18 @@ provide(EXPERIENCE_LIBRARY_KEY, store)
 
 const authStore = useAuthStore()
 const canWrite = computed(() => authStore.hasPermission('agent:write'))
+
+const dialogTitle = computed(() => {
+  const viewer = store.viewer
+  if (viewer == null) return ''
+  if (viewer.kind === 'index') return '索引 INDEX.md（系统自动生成）'
+  if (viewer.kind === 'create') return '新建经验'
+  return viewer.meta?.title || viewer.fileName
+})
+
+function onViewerDialog(open: boolean): void {
+  if (!open) store.closeViewer()
+}
 
 function onToggleEnabled(value: string | number | boolean): void {
   void store.toggleEnabled(!!value)
@@ -96,5 +117,25 @@ function onToggleEnabled(value: string | number | boolean): void {
 .switch-hint {
   color: var(--el-text-color-secondary);
   font-size: 12px;
+}
+</style>
+
+<style>
+.experience-doc-dialog.el-dialog {
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+.experience-doc-dialog .el-dialog__body {
+  min-height: 0;
+  overflow: auto;
+}
+.experience-doc-dialog .el-dialog__title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 24px;
 }
 </style>
