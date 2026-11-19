@@ -1,5 +1,5 @@
 import { accessSync, realpathSync, statSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, resolve, sep } from 'node:path';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { formatDateTime } from '../common/json.js';
@@ -923,6 +923,13 @@ export class WatcherService {
   /**
    * 相对路径 → 属主项目工作区内的绝对路径（双侧共用）：
    * 格式（非绝对、无 `..` 段）→ resolve → realpath（解析软链）→ isUnder(projectsRoot) 双验。
+   *
+   * 返回的是**配置视角**路径而非 realpath 结果：存储根可能是挂载根软链
+   * （如 `/opt/mao-data -> /data/mao-data`），realpath 会解析成宿主真实路径；
+   * 而该路径随后要下发到属主容器执行，容器内只有与配置逐字节一致的挂载点
+   * （决策 15「宿主机与容器路径一致」），宿主真实路径在容器内不存在——
+   * 表现为探针报「脚本文件不存在」，且容器每次重建后必现。
+   * 安全判定仍用 realFull/realRoot（防软链逃逸），仅返回口径做前缀还原。
    */
   private resolveScriptPathWithinProjectsRoot(userId: number, scriptPath: string | null): string {
     const rootResolver = this.deps.scriptProjectsRoot;
@@ -948,7 +955,7 @@ export class WatcherService {
     if (!isUnder(realFull, realRoot)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, `脚本路径越出项目工作区：${scriptPath}`);
     }
-    return realFull;
+    return toConfiguredViewPath(root, realRoot, realFull);
   }
 
   /**
@@ -1384,6 +1391,21 @@ function realpathSafe(target: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * 宿主真实路径 → 配置视角路径（前缀还原）：
+ * `realFull` 已被 isUnder 校验限定在 `realRoot` 内，二者不同只可能是存储根是挂载软链
+ * （如 `/opt/mao-data -> /data/mao-data`）。此时把 `realRoot` 前缀替换回配置值 `root`，
+ * 得到的路径在宿主（软链可读）与属主容器（挂载点等于配置值）两侧都可达。
+ * child 段原样保留——其内部软链在两侧是同一文件系统，替换后仍解析到同一目标。
+ */
+function toConfiguredViewPath(root: string, realRoot: string, realFull: string): string {
+  if (realRoot === root) return realFull;
+  if (realFull === realRoot) return root;
+  const prefix = realRoot.endsWith(sep) ? realRoot : `${realRoot}${sep}`;
+  if (!realFull.startsWith(prefix)) return realFull;
+  return `${root}${realFull.slice(realRoot.length)}`;
 }
 
 /** ScriptProbeResult → 既有判定管线的 ProbeResult（httpStatus 恒 null，exit code 由 check 行独立记录）。 */
