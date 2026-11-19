@@ -1,6 +1,6 @@
-import type { ClientImpersonation, ModelVO, ModelPageResult, ModelListFilter } from '@mao/contracts';
+import type { ClientImpersonation, ModelAuthType, ModelVO, ModelPageResult, ModelListFilter } from '@mao/contracts';
 import type { ChatUsage } from '../harness/llm/chat-request.js';
-export type { ClientImpersonation, ModelVO, ModelPageResult, ModelListFilter };
+export type { ClientImpersonation, ModelAuthType, ModelVO, ModelPageResult, ModelListFilter };
 
 export interface LlmModel {
   id?: number;
@@ -14,6 +14,8 @@ export interface LlmModel {
   modelId: string;
   modelType?: string | null;
   clientImpersonation?: string | null;
+  /** 凭证方式：api_key=固定 Key（缺省/未知按此处理）；ecp=调用时使用当前用户的 ECP Token。 */
+  authType?: string | null;
   contextWindowTokens?: number | null;
   /**
    * 供应商允许的请求体上限（字节）。用于推导会话压缩的体积触发阈值（上限 × 0.8）；
@@ -67,7 +69,7 @@ export interface LlmModelRepository {
   clearDefaultFlag(): Promise<void>;
   /** 除 id 外启用中的 text 模型数（与 findDefault 的 model_type = 'text' 口径一致）。 */
   countActiveTextExcept(id: number): Promise<number>;
-  /** 启用且配置了 API Key 的 text 模型数（readiness 就绪判定，口径同 findDefault）。 */
+  /** 启用且可用的 text 模型数（api_key 非空或 auth_type='ecp'；readiness 就绪判定，口径同 findDefault）。 */
   countEnabledWithApiKey(): Promise<number>;
 }
 
@@ -112,6 +114,8 @@ export interface LlmModelConfig {
   apiKey: string;
   modelId: string;
   clientImpersonation?: ClientImpersonation;
+  /** 凭证方式：api_key=固定 Key（缺省/未知按此处理）；ecp=调用时使用当前用户的 ECP Token。 */
+  authType?: ModelAuthType;
   supportsVision?: boolean;
   /** 每百万 token 价格（成本单位）；缺失时 LlmCallService 走兜底价格缓存（技术方案 §5.3）。 */
   priceInput?: number | null;
@@ -120,4 +124,9 @@ export interface LlmModelConfig {
 
 export interface LlmChatClient {
   chat(request: LlmChatRequest, config: LlmModelConfig): Promise<LlmChatResponse>;
+}
+
+/** 凭证方式读侧归一：未知/缺失一律按 'api_key'（存量行为，兼容旧行与旧前端）。 */
+export function normalizeModelAuthType(value: string | null | undefined): ModelAuthType {
+  return value === 'ecp' ? 'ecp' : 'api_key';
 }

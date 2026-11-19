@@ -2,6 +2,7 @@ import path from 'node:path';
 import { BaseTool } from '../tool.js';
 import { asInt, asText, errorJson, parseObject, toJson } from '../json.js';
 import { harnessLog } from '../../log.js';
+import { createStaticOnlyAuthResolver, type LlmAuthResolver } from '../../llm/llm-auth.js';
 import type { PathSandbox } from '../../safety/path-sandbox.js';
 import { ImageFileSupport } from '../image-file-support.js';
 import {
@@ -74,6 +75,8 @@ export class EditImageTool extends BaseTool {
     private readonly sendBytesSupport: SendBytesSupport | null = null,
     /** servlet contextPath（默认 /api）：从 upload.baseUrl 剥后缀段派生静态 origin。 */
     private readonly contextPath: string = '/api',
+    /** 凭证解析器：ecp 模式在运行期解析当前调用用户的 ECP Token（缺省仅支持固定 API Key）。 */
+    private readonly authResolver: LlmAuthResolver = createStaticOnlyAuthResolver(),
   ) { super(); }
 
   getName(): string { return 'edit_image'; }
@@ -215,6 +218,14 @@ export class EditImageTool extends BaseTool {
       const cfg = buildImageApiConfig(model, asText(args.model));
       if (!cfg.baseUrl) return errorJson('文生图模型未配置 base_url');
       if (!cfg.model) return errorJson('文生图模型未配置 model_id');
+      // 凭证解析：ecp 模式使用当前调用用户的 ECP Token（失败抛错，由外层 catch 统一转 errorJson）。
+      // 工具执行不在 LlmCallContext 内，显式传 userId 作为解析身份。
+      cfg.apiKey = await this.authResolver.resolveApiKey({
+        id: model.id,
+        modelId: model.modelId ?? undefined,
+        apiKey: cfg.apiKey,
+        authType: model.authType,
+      }, userId);
 
       const result = await callImageEdits(cfg, {
         prompt,

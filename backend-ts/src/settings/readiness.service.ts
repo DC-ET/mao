@@ -14,7 +14,7 @@ export interface ReadinessUser {
 
 export interface ReadinessDeps {
   userLookup: { findById(id: number): Promise<(ReadinessUser & { passwordHash?: string | null }) | null> };
-  /** 已启用且配置了 API Key 的模型数量（llm_model.status=1 且 api_key 非空）。 */
+  /** 已启用且可用的模型数量（llm_model.status=1；api_key 非空或 auth_type='ecp'）。 */
   modelsConfiguredCount(): Promise<number>;
   /** 启用中的 Agent 数量（agent.enabled=1 且未删除）。 */
   agentsEnabledCount(): Promise<number>;

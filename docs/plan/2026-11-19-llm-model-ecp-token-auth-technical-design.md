@@ -516,4 +516,15 @@ API Key      [****************]      ← 仅「固定 API Key」模式显示；E
 3. 用户未完成 ECP 登录时的错误引导是体验关键；
 4. 需要补齐 2 处缺失的 userId 上下文（管理端测试、微信语音）。
 
+## 十、实施修订（2026-11-19）
+
+实现与代码评审期间发现的差异，已按下列修订落地（代码以实际提交为准）：
+
+1. **出口清单修正**：§2.2 的 7 个出口之外，`feishu/group-context-summarizer.ts`（飞书群摘要）与 `file/git-commit-message.service.ts`（提交信息）各自字面量构造模型配置，实现时已补齐 `authType` 透传（`LlmModelRef` 与本地接口同步扩字段）；否则这两条链路会在 ecp 模型上静默回退到旧固定 Key，违反 D-3。
+2. **图片工具改为显式传入 userId**：`generate_image` / `edit_image` 的工具执行不在 `LlmCallContext` 作用域内（agent-loop 的 ALS 只包住 LLM 流式调用本身），因此 `LlmAuthResolver.resolveApiKey` 增加可选第二参 `explicitUserId`，两个图片工具传入自身入参 userId（这是 D-5「图片走 agent 上下文」的实际落地方式）。
+3. **创建接口空值护栏（api_key NOT NULL 闭环）**：ecp 创建请求可省略 `apiKey`——路由层 `?? ''` + 服务层 `?? ''` 双重兜底，前端创建时显式提交空串（编辑仍「留空=不修改」）。
+4. **开关关闭后的编辑放行**：`updateModel` 仅在「从非 ecp 切到 ecp」时校验开关；开关关闭后仍允许编辑已是 ecp 模型的其它字段，或切回 `api_key`（前端提示同步）。
+5. **`stream()` 凭证解析失败的传播保持 adapter 既有错误契约**（统一经 `callback.onError` 传出，不额外 `throw`）：agent-loop 与 compaction 两个消费者均在 `onError` 内 rethrow 使异常继续传播；重试循环内的同类早退也走回调。若追加 `throw` 会与「adapter 错误一律经回调」的契约不一致，故不采纳该建议。
+6. **图片产物 URL 下载**：ecp 模式下，同源的图片结果下载会携带用户 ECP token（跨源不带，`isSameOrigin` 门控）。语义上该 token 流向的是生成图片的同一网关，判定为可接受；如后续出现第三方托管图片域，需要重新评估。
+
 

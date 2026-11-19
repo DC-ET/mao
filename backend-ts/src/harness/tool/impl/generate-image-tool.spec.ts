@@ -351,6 +351,28 @@ describe('GenerateImageTool', () => {
     expect(lastHeaders['user-agent']).toBe('codex_cli_rs/0.146.0 (Linux 6.1.0; x86_64) xterm-256color');
     expect(lastHeaders.originator).toBe('codex_cli_rs');
   });
+
+  it('resolves auth with explicit userId for ecp models', async () => {
+    const seen: Array<{ userId?: number | null; authType?: string | null }> = [];
+    const dir = useTmpDir('img-ecp-');
+    const tool = new GenerateImageTool(
+      { findFirstActiveImageModel: async () => model({ authType: 'ecp' }) as never },
+      dir,
+      async () => 'https://mao.example/api',
+      '/api',
+      {
+        resolveApiKey: async (target, userId) => {
+          seen.push({ userId, authType: target.authType });
+          return 'ecp-token';
+        },
+      },
+    );
+    // 工具执行不在 LlmCallContext 内：必须把显式 userId 传给 resolver，否则 ecp 解析必失败。
+    const resp = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'a cat' }), 1, 7, null));
+    expect(resp.error).toBeUndefined();
+    expect(seen).toEqual([{ userId: 7, authType: 'ecp' }]);
+    expect(lastHeaders.authorization).toBe('Bearer ecp-token');
+  });
 });
 
 describe('EditImageTool', () => {

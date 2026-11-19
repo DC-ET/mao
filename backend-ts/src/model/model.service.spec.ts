@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
+import { LlmCallContext } from '../usage/llm-call-context.js';
 import { ModelService } from './model.service.js';
 import type {
   LlmChatClient,
@@ -523,4 +524,95 @@ describe('ModelService', () => {
       expect(llmClient.chat).not.toHaveBeenCalled();
     },
   );
+
+  it('createModelRequiresEcpLoginEnabledForEcpAuthType', async () => {
+    // 未注入开关判定（等价未启用）：ecp 抛参数错误
+    await expect(service.createModel(
+      'm', 'p', 'https://x', '', 'mid', 0, 0, 256000, 'text', 'none', 'openai-compatible', '',
+      null, null, null, null, null, 'ecp',
+    )).rejects.toThrow('ECP 飞书登录未启用');
+
+    const enabledService = new ModelService(modelRepo, sessionRepo, llmClient, undefined, async () => true);
+    const created = await enabledService.createModel(
+      'm', 'p', 'https://x', '', 'mid', 0, 0, 256000, 'text', 'none', 'openai-compatible', '',
+      null, null, null, null, null, 'ecp',
+    );
+    expect(created.authType).toBe('ecp');
+    expect(vi.mocked(modelRepo.insert)).toHaveBeenCalledWith(expect.objectContaining({ authType: 'ecp' }));
+  });
+
+  it('createModelDefaultsToApiKeyAuthType', async () => {
+    const created = await service.createModel(
+      'm', 'p', 'https://x', 'sk', 'mid', 0, 0, 256000, 'text', 'none', 'openai-compatible', '',
+      null, null, null, null, null, null,
+    );
+    expect(created.authType).toBe('api_key');
+  });
+
+  it('updateModelSwitchesAuthTypeWithEcpGate', async () => {
+    vi.mocked(modelRepo.findById).mockResolvedValue(model(9, 'switchable', 0, 1));
+
+    // 未启用：切到 ecp 报错
+    await expect(service.updateModel(
+      9, null, null, null, null, null, null, null, null, null, null,
+      undefined, undefined, null, null, null, null, null, 'ecp',
+    )).rejects.toThrow('ECP 飞书登录未启用');
+
+    const enabledService = new ModelService(modelRepo, sessionRepo, llmClient, undefined, async () => true);
+    const updated = await enabledService.updateModel(
+      9, null, null, null, null, null, null, null, null, null, null,
+      undefined, undefined, null, null, null, null, null, 'ecp',
+    );
+    expect(updated.authType).toBe('ecp');
+    expect(vi.mocked(modelRepo.updateById)).toHaveBeenCalledWith(expect.objectContaining({ authType: 'ecp' }));
+
+    // 切回 api_key 不要求开关开启
+    const back = await service.updateModel(
+      9, null, null, null, null, null, null, null, null, null, null,
+      undefined, undefined, null, null, null, null, null, 'api_key',
+    );
+    expect(back.authType).toBe('api_key');
+  });
+
+  it('testConnectivityPassesActorUserIdAndModelAuthType', async () => {
+    const captured: Array<{ userId: number | null | undefined; authType: string | undefined }> = [];
+    const client: LlmChatClient = {
+      chat: vi.fn(async (_req, config) => {
+        captured.push({ userId: LlmCallContext.get()?.userId, authType: config.authType });
+        return { choices: [{ message: { role: 'assistant', content: 'ok' } }] };
+      }),
+    };
+    const scopedService = new ModelService(modelRepo, sessionRepo, client);
+    const ecpModel = model(21, 'ecp-model', 0, 1);
+    ecpModel.authType = 'ecp';
+    ecpModel.modelType = 'text';
+    vi.mocked(modelRepo.findById).mockResolvedValue(ecpModel);
+
+    const result = await scopedService.testConnectivity(21, 7);
+    expect(result.connectivity).toBe(true);
+    expect(captured).toEqual([{ userId: 7, authType: 'ecp' }]);
+  });
+
+  it('updateModelAllowsEditingEcpModelWhenEcpLoginTurnedOff', async () => {
+    const ecpModel = model(31, 'already-ecp', 0, 1);
+    ecpModel.authType = 'ecp';
+    vi.mocked(modelRepo.findById).mockResolvedValue(ecpModel);
+    // 未注入开关判定（等价未启用）：已是 ecp 的模型保存其它字段不被拦（仅切到 ecp 才校验）。
+    const updated = await service.updateModel(
+      31, 'renamed', null, null, null, null, null, null, null, null, null,
+      undefined, undefined, null, null, null, null, null, 'ecp',
+    );
+    expect(updated.authType).toBe('ecp');
+    expect(updated.name).toBe('renamed');
+  });
+
+  it('createModelAcceptsMissingApiKeyForEcpAndStoresEmptyString', async () => {
+    const enabledService = new ModelService(modelRepo, sessionRepo, llmClient, undefined, async () => true);
+    const created = await enabledService.createModel(
+      'm', 'p', 'https://x', undefined, 'mid', 0, 0, 256000, 'text', 'none', 'openai-compatible', '',
+      null, null, null, null, null, 'ecp',
+    );
+    expect(created.apiKey).toBe('');
+    expect(created.authType).toBe('ecp');
+  });
 });

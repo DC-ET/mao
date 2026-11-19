@@ -19,8 +19,8 @@ const HELP = `用法:
   mao model list [--page] [--size] [--keyword] [--provider] [--status] [--supports-vision] [--is-default]
   mao model get --id <id>
   mao model providers
-  mao model create --name --provider --base-url --api-key --model-id [--context-window-tokens] [--supports-vision 0|1] [--is-default 0|1] [--price-input <n>] [--price-cache-read <n>] [--price-cache-write <n>] [--price-output <n>]
-  mao model update --id [--name] [--provider] [--base-url] [--api-key] [--model-id] [--context-window-tokens] [--supports-vision] [--is-default] [--price-input <n>] [--price-cache-read <n>] [--price-cache-write <n>] [--price-output <n>]
+  mao model create --name --provider --base-url [--api-key] --model-id [--auth-type api_key|ecp] [--context-window-tokens] [--supports-vision 0|1] [--is-default 0|1] [--price-input <n>] [--price-cache-read <n>] [--price-cache-write <n>] [--price-output <n>]
+  mao model update --id [--name] [--provider] [--base-url] [--api-key] [--model-id] [--auth-type api_key|ecp] [--context-window-tokens] [--supports-vision] [--is-default] [--price-input <n>] [--price-cache-read <n>] [--price-cache-write <n>] [--price-output <n>]
   mao model delete --id
   mao model set-status --id --status
   mao model test --id
@@ -43,13 +43,19 @@ function modelPrice(flags, name, label) {
 }
 
 function modelBody(flags, { requireAll = false } = {}) {
+  const authType = getString(flags, 'auth-type');
+  if (authType !== undefined && authType !== 'api_key' && authType !== 'ecp') {
+    throw createCliError('参数 --auth-type 只能是 api_key 或 ecp');
+  }
   if (requireAll) {
     return pickDefined({
       name: requireString(flags, 'name', '显示名称'),
       provider: requireString(flags, 'provider', '提供商'),
       baseUrl: requireString(flags, 'base-url', '模型 API Base URL'),
-      apiKey: requireString(flags, 'api-key', 'API Key'),
+      // ecp 模式不使用固定 API Key：未传时按空串提交（后端允许；需系统已启用 ECP 飞书登录）。
+      apiKey: authType === 'ecp' ? (getString(flags, 'api-key') ?? '') : requireString(flags, 'api-key', 'API Key'),
       modelId: requireString(flags, 'model-id', '模型 ID'),
+      authType,
       contextWindowTokens: getNumber(flags, 'context-window-tokens'),
       supportsVision: getBool01(flags, 'supports-vision'),
       isDefault: getBool01(flags, 'is-default'),
@@ -65,6 +71,7 @@ function modelBody(flags, { requireAll = false } = {}) {
     baseUrl: getString(flags, 'base-url'),
     apiKey: getString(flags, 'api-key'),
     modelId: getString(flags, 'model-id'),
+    authType,
     contextWindowTokens: getNumber(flags, 'context-window-tokens'),
     supportsVision: getBool01(flags, 'supports-vision'),
     isDefault: getBool01(flags, 'is-default'),

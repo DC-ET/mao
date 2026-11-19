@@ -23,15 +23,17 @@ export class WeixinVoiceReplyService {
     if (!(await this.isVoiceReplyEnabled(accountId))) return false;
     if (text == null || text.trim() === '') return false;
     try {
-      const wavBytes = await this.synthesisService.synthesizeWav(text);
-      if (wavBytes == null) return false;
-      const mp3Bytes = await this.codecService.wavToMp3(wavBytes);
-      if (mp3Bytes == null) return false;
+      // 语音合成可能走「当前用户 ECP Token」凭证：以微信绑定账号的归属用户作为执行身份。
+      // account 查询提前到合成之前（原先在合成后），两处用途共用同一次结果。
       const account = await this.accountRepository.findByAccountId(accountId);
       if (account == null) {
         console.warn(`微信语音回复：账号不存在, accountId=${accountId}`);
         return false;
       }
+      const wavBytes = await this.synthesisService.synthesizeWav(text, account.userId ?? null);
+      if (wavBytes == null) return false;
+      const mp3Bytes = await this.codecService.wavToMp3(wavBytes);
+      if (mp3Bytes == null) return false;
       const media = await this.uploadService.uploadFile(account, toUserId, mp3Bytes);
       if (media == null) return false;
       const sent = await this.sendService.sendFile(accountId, toUserId, media, VOICE_FILE_NAME);

@@ -465,7 +465,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     registerAgentExperienceLibraryRoutes(api, {
       agentService, agentRepository: agentRepo, experienceIndexService, permissionService,
     });
-    registerModelRoutes(api, { modelService, permissionService });
+    registerModelRoutes(api, { modelService, permissionService, ecpEnabled: () => ecpAuth.isEnabled() });
     registerSystemSettingRoutes(api, {
       systemSettingService: settingService,
       permissionService,

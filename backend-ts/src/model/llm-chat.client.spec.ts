@@ -123,4 +123,27 @@ describe('OpenAiChatClient', () => {
       ),
     ).rejects.toThrow(/LLM HTTP 401/);
   });
+
+  it('usesAuthResolverResultForBearerHeader', async () => {
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string>;
+      // ecp 模式：头里必须是解析器返回的凭证，而不是配置里的固定 Key。
+      expect(headers.Authorization).toBe('Bearer ecp-plain-token');
+      return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+
+    const client = new OpenAiChatClient({
+      fetchImpl,
+      authResolver: {
+        resolveApiKey: async (target) => (target.authType === 'ecp' ? 'ecp-plain-token' : target.apiKey ?? ''),
+      },
+    });
+    await client.chat(
+      { messages: [{ role: 'user', content: 'Hi' }] },
+      { baseUrl: 'https://api.example.test', apiKey: 'sk-should-not-be-used', modelId: 'gpt-4o', authType: 'ecp' },
+    );
+  });
 });

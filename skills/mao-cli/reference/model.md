@@ -142,7 +142,8 @@ mao model list --provider openai --status 1
 | `--name` | 是 | 字符串 | 显示名称 | `name` |
 | `--provider` | 是 | 字符串 | 提供商标识 | `provider` |
 | `--base-url` | 是 | 字符串 | 模型 API Base URL | `baseUrl` |
-| `--api-key` | 是 | 字符串 | API Key | `apiKey` |
+| `--api-key` | 条件 | 字符串 | API Key；`--auth-type ecp` 时可省略（不走固定 Key） | `apiKey` |
+| `--auth-type` | 否 | `api_key`/`ecp` | 凭证方式：`api_key`（默认，固定 Key）/ `ecp`（调用时使用触发用户自己的 ECP Token，要求系统已启用 ECP 飞书登录；适用于接受 ECP Bearer 的内部网关） | `authType` |
 | `--model-id` | 是 | 字符串 | 上游模型 ID | `modelId` |
 | `--context-window-tokens` | 否 | 整数 | 上下文窗口 token 数 | `contextWindowTokens` |
 | `--supports-vision` | 否 | `0`/`1` | 是否支持视觉 | `supportsVision` |
@@ -196,6 +197,7 @@ mao model create \
 | `--provider` | 否 | 字符串 | 提供商 | `provider` |
 | `--base-url` | 否 | 字符串 | 模型 API 地址 | `baseUrl` |
 | `--api-key` | 否 | 字符串 | API Key；**留空表示不修改**（0.0.84 起编辑弹窗不回填掩码值，误提交掩码会被拦截提示） | `apiKey` |
+| `--auth-type` | 否 | `api_key`/`ecp` | 凭证方式切换（不传=保持原值）；切到 `ecp` 要求系统已启用 ECP 飞书登录，且不要求再填 `--api-key` | `authType` |
 | `--model-id` | 否 | 字符串 | 模型 ID | `modelId` |
 | `--context-window-tokens` | 否 | 整数 | 上下文窗口 | `contextWindowTokens` |
 | `--supports-vision` | 否 | `0`/`1` | 视觉 | `supportsVision` |

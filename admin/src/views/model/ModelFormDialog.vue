@@ -107,8 +107,26 @@
               <template #append><span class="api-suffix">{{ apiProtocolSuffix }}</span></template>
             </el-input>
           </el-form-item>
-          <el-form-item label="API Key" prop="apiKey">
+          <el-form-item label="凭证方式">
+            <el-radio-group v-model="form.authType">
+              <el-radio value="api_key">固定 API Key</el-radio>
+              <el-radio value="ecp" :disabled="!ecpEnabled">当前用户的 ECP Token</el-radio>
+            </el-radio-group>
+            <span v-if="!ecpEnabled" class="form-hint-inline">
+              {{ form.authType === 'ecp'
+                ? 'ECP 飞书登录已关闭：该模型仍是 ECP 模式，可直接改回「固定 API Key」；如需继续使用 ECP 请先在系统配置中启用'
+                : '需先在系统配置中启用 ECP 飞书登录' }}
+            </span>
+            <span v-else-if="form.authType === 'ecp'" class="form-hint-inline">
+              调用时使用触发本次任务的实际用户（会话归属/发言者）的 ECP 登录凭证；用户未完成 ECP 飞书登录将无法调用该模型
+            </span>
+            <span v-else class="form-hint-inline">使用模型配置里固定的 API Key</span>
+          </el-form-item>
+          <el-form-item v-if="form.authType === 'api_key'" label="API Key" prop="apiKey">
             <el-input v-model="form.apiKey" type="password" show-password :placeholder="isEdit ? '已回填当前 Key，可查看或修改；留空则不修改' : '请输入 API Key'" />
+          </el-form-item>
+          <el-form-item v-else label="API Key">
+            <span class="form-hint-inline">ECP 模式不使用固定 Key；原 Key 保留在库中，切回「固定 API Key」即可继续使用</span>
           </el-form-item>
           <el-form-item v-if="isTextType" label="输入价格">
             <el-input-number
@@ -232,7 +250,21 @@ const FIELD_TAB: Record<string, 'basic' | 'access'> = {
   name: 'basic',
   modelId: 'basic',
   baseUrl: 'access',
-  apiKey: 'access'
+  apiKey: 'access',
+  authType: 'access'
+}
+
+// ECP 选项可用性（系统配置「启用 ECP 飞书登录」）；每次打开弹窗刷新一次。
+const ecpEnabled = ref(false)
+
+async function loadEcpAvailability() {
+  try {
+    const { data } = await api.get('/models/ecp-availability')
+    ecpEnabled.value = !!data?.enabled
+  } catch {
+    // 读取失败按不可用处理（fail-closed）；拦截器已提示失败
+    ecpEnabled.value = false
+  }
 }
 
 async function loadProviderOptions() {
@@ -257,6 +289,7 @@ const form = reactive({
   clientImpersonation: 'none',
   baseUrl: '',
   apiKey: '',
+  authType: 'api_key',
   contextWindowTokens: 256000,
   maxRequestBodyMb: null as number | null,
   priceInput: undefined as number | undefined | null,
@@ -274,7 +307,7 @@ const rules = computed<FormRules>(() => ({
     { required: true, message: '请输入 API 地址', trigger: 'blur' },
     { pattern: /^https?:\/\//, message: '需以 http:// 或 https:// 开头', trigger: 'blur' }
   ],
-  apiKey: isEdit.value
+  apiKey: isEdit.value || form.authType === 'ecp'
     ? []
     : [{ required: true, message: '请输入 API Key', trigger: 'blur' }]
 }))
@@ -290,6 +323,7 @@ function resetForm() {
     clientImpersonation: 'none',
     baseUrl: '',
     apiKey: '',
+    authType: 'api_key',
     contextWindowTokens: 256000,
     maxRequestBodyMb: null,
     priceInput: null,
@@ -304,6 +338,7 @@ function resetForm() {
 watch(() => props.visible, (val) => {
   if (!val) return
   activeTab.value = 'basic'
+  void loadEcpAvailability()
   if (props.modelData) {
     Object.assign(form, {
       modelType: props.modelData.modelType || 'text',
@@ -318,6 +353,7 @@ watch(() => props.visible, (val) => {
       // 供查看与复制；掩码串（****xxxx，无权限/旧数据）不回填，以免原样提交把
       // 掩码写成新密钥导致模型调用全部鉴权失败。编辑时留空 = 不修改，由后端保留原值。
       apiKey: isMaskedApiKey(props.modelData.apiKey) ? '' : props.modelData.apiKey || '',
+      authType: props.modelData.authType || 'api_key',
       contextWindowTokens: props.modelData.contextWindowTokens || 256000,
       maxRequestBodyMb: props.modelData.maxRequestBodyBytes != null
         ? Math.round((props.modelData.maxRequestBodyBytes / 1_000_000) * 100) / 100
@@ -344,8 +380,8 @@ async function handleSubmit() {
   })
   if (!valid) return
 
-  // 防御：掩码串不应被当作新密钥提交
-  if (isMaskedApiKey(form.apiKey)) {
+  // 防御：掩码串不应被当作新密钥提交（仅 api_key 模式需要）
+  if (form.authType !== 'ecp' && isMaskedApiKey(form.apiKey)) {
     activeTab.value = 'access'
     ElMessage.error('API Key 含掩码字符，请重新填写完整密钥')
     return
@@ -372,8 +408,15 @@ async function handleSubmit() {
       payload.priceCacheWrite = null
       payload.priceOutput = null
     }
-    // In edit mode, omit apiKey when left blank so the existing key is preserved.
-    if (isEdit.value && !form.apiKey) {
+    // ECP 模式不使用固定 Key：编辑时不提交（保留原值）；创建时提交空串占位（api_key 列 NOT NULL）。
+    if (form.authType === 'ecp') {
+      if (isEdit.value) {
+        delete payload.apiKey
+      } else {
+        payload.apiKey = ''
+      }
+    } else if (isEdit.value && !form.apiKey) {
+      // In edit mode, omit apiKey when left blank so the existing key is preserved.
       delete payload.apiKey
     }
     if (isEdit.value && props.modelData?.id) {

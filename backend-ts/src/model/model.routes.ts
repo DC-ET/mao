@@ -3,12 +3,15 @@ import type { ClientImpersonation } from '@mao/contracts';
 import { requirePermission, requireUserId, sendOk } from '../common/http-error.js';
 import { bodyOf, pathId, queryInt, queryOptInt, queryOptStr } from '../common/request.js';
 import { parsePriceColumn } from '../usage/cost-micros.js';
+import { normalizeModelAuthType } from './types.js';
 import type { ModelService } from './model.service.js';
 import type { LlmModel, ModelVO } from './types.js';
 
 export interface ModelRouteDeps {
   modelService: ModelService;
   permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
+  /** ECP 登录开关（auth.ecp.config 的 enabled && appCode && baseUrl）：模型表单据此决定 ECP 选项是否可选。 */
+  ecpEnabled?: () => Promise<boolean>;
 }
 
 interface CreateModelRequest {
@@ -21,6 +24,8 @@ interface CreateModelRequest {
   modelId?: string;
   modelType?: string;
   clientImpersonation?: string;
+  /** 凭证方式：api_key（缺省） / ecp（当前用户 ECP Token，要求 ECP 登录已启用）。 */
+  authType?: string;
   contextWindowTokens?: number;
   maxRequestBodyBytes?: number | null;
   priceInput?: number | null;
@@ -81,6 +86,13 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
     return sendOk(reply, await modelService.listProviders());
   });
 
+  // 模型表单「凭证方式」可用性：仅暴露布尔，不要求 settings:read（模型编辑者只需 model:write）。
+  app.get('/v1/models/ecp-availability', async (request, reply) => {
+    requireUserId(request);
+    const enabled = deps.ecpEnabled != null ? await deps.ecpEnabled().catch(() => false) : false;
+    return sendOk(reply, { enabled });
+  });
+
   app.get('/v1/models/default', async (request, reply) => {
     const reveal = await revealApiKey(request);
     const model = await modelService.getDefaultModel();
@@ -99,7 +111,7 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
       body.name!,
       body.provider,
       body.baseUrl!,
-      body.apiKey!,
+      body.apiKey ?? '',
       body.modelId!,
       body.supportsVision,
       body.isDefault,
@@ -113,6 +125,7 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
       body.priceCacheWrite,
       body.priceOutput,
       body.maxRequestBodyBytes,
+      body.authType,
     );
     return sendOk(reply, toVO(model, true));
   });
@@ -139,6 +152,7 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
       body.priceCacheWrite,
       body.priceOutput,
       body.maxRequestBodyBytes,
+      body.authType,
     );
     return sendOk(reply, toVO(model, true));
   });
@@ -157,8 +171,10 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
   });
 
   app.post('/v1/models/:id/test', async (request, reply) => {
-    await requireModelWrite(request);
-    return sendOk(reply, await modelService.testConnectivity(pathId(request)));
+    const userId = requireUserId(request);
+    await requirePermission(permissionService, userId, 'model:write');
+    // 凭证方式为 ecp 时用「发起测试的管理员本人」的 ECP Token（无有效票则返回可读错误）。
+    return sendOk(reply, await modelService.testConnectivity(pathId(request), userId));
   });
 }
 
@@ -169,6 +185,7 @@ function maskApiKey(apiKey: string | null | undefined): string {
 }
 
 function toVO(entity: LlmModel, revealApiKey: boolean): ModelVO {
+  const authType = normalizeModelAuthType(entity.authType);
   return {
     id: entity.id,
     name: entity.name,
@@ -176,10 +193,12 @@ function toVO(entity: LlmModel, revealApiKey: boolean): ModelVO {
     apiProtocol: entity.apiProtocol,
     effort: entity.effort,
     baseUrl: entity.baseUrl,
-    apiKey: revealApiKey ? entity.apiKey : maskApiKey(entity.apiKey),
+    // ecp 模式不含固定 Key 语义：无论 reveal 与否都返回空串，避免管理员误读为仍在使用的 Key。
+    apiKey: authType === 'ecp' ? '' : (revealApiKey ? entity.apiKey : maskApiKey(entity.apiKey)),
     modelId: entity.modelId,
     modelType: entity.modelType,
     clientImpersonation: normalizeVoClientImpersonation(entity.clientImpersonation),
+    authType,
     contextWindowTokens: entity.contextWindowTokens,
     maxRequestBodyBytes: entity.maxRequestBodyBytes ?? null,
     priceInput: parsePriceColumn(entity.priceInput),

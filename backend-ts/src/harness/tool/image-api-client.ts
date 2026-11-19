@@ -13,6 +13,7 @@ const RETRY_STATUS = new Set([429, 502, 503, 504]);
 export interface ImageApiConfig {
   /** 服务根地址，含 /v1；客户端会去掉尾部斜杠。 */
   baseUrl: string;
+  /** 已解析的凭证：api_key 模式为模型固定 Key；ecp 模式为当前用户的 ECP Token（由工具层解析后覆写）。 */
   apiKey: string;
   /** 已归一的完整模型名。 */
   model: string;

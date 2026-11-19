@@ -12,6 +12,7 @@ import type { ShellSessionManager, OutputManager } from './harness/shell/shell-s
 import type { BackgroundTaskManager } from './harness/core/background-task-manager.js';
 import type { RuntimeDataResolver } from './harness/runtime/runtime-data-resolver.js';
 import type { ModelService } from './model/model.service.js';
+import type { LlmAuthResolver } from './harness/llm/llm-auth.js';
 import type { SystemSettingService } from './settings/settings.service.js';
 import type { FeishuMessageService } from './feishu/message.service.js';
 import type { MysqlFeishuMessageRepository } from './feishu/message.repository.js';
@@ -105,6 +106,8 @@ export interface HarnessEngineDeps {
   settingService: SystemSettingService;
   runtimeResolver: RuntimeDataResolver;
   modelService: ModelService;
+  /** LLM 出站凭证解析器（图片工具等 ecp 模式用）；缺省时只用模型配置的固定 Key。 */
+  authResolver?: LlmAuthResolver;
   wechatBridges: any;
   feishuMessageService: FeishuMessageService;
   feishuMessageRepository: MysqlFeishuMessageRepository;
@@ -204,6 +207,7 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     webPage: harnessTuning.webPage,
     runtimeDataResolver: d.runtimeResolver,
     imageModelLookup: d.modelService,
+    authResolver: d.authResolver,
     uploadDir,
     onFileChanged: d.experienceIndexService != null
       ? (absPath: string) => d.experienceIndexService!.refreshIfUnderRoot(absPath)

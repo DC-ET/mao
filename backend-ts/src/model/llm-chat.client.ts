@@ -1,22 +1,28 @@
 import type { LlmChatClient, LlmChatRequest, LlmChatResponse, LlmModelConfig } from './types.js';
 import { applyClientImpersonationHeaders } from '../harness/llm/client-impersonation-headers.js';
+import { createStaticOnlyAuthResolver, type LlmAuthResolver } from '../harness/llm/llm-auth.js';
 import { parseUsage } from '../harness/llm/json.js';
 
 export interface OpenAiChatClientOptions {
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
+  /** 凭证解析器：ecp 模式在运行期解析当前调用用户的 ECP Token（缺省仅支持固定 API Key）。 */
+  authResolver?: LlmAuthResolver;
 }
 
 export class OpenAiChatClient implements LlmChatClient {
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly authResolver: LlmAuthResolver;
 
   constructor(options: OpenAiChatClientOptions = {}) {
     this.timeoutMs = options.timeoutMs ?? 120_000;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.authResolver = options.authResolver ?? createStaticOnlyAuthResolver();
   }
 
   async chat(request: LlmChatRequest, config: LlmModelConfig): Promise<LlmChatResponse> {
+    const apiKey = await this.authResolver.resolveApiKey(config);
     const url = `${stripTrailingSlash(config.baseUrl)}/chat/completions`;
     const body: Record<string, unknown> = {
       model: config.modelId,
@@ -31,7 +37,7 @@ export class OpenAiChatClient implements LlmChatClient {
     }
 
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${config.apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     };
     applyClientImpersonationHeaders(headers, config.clientImpersonation);

@@ -1,6 +1,6 @@
 import type { ChatRequest, ChatUsage, LlmModelConfig } from './llm/chat-request.js';
 import type { Db } from '../db/db.js';
-import type { ClientImpersonation } from '@mao/contracts';
+import type { ClientImpersonation, ModelAuthType } from '@mao/contracts';
 import { parsePriceColumn } from '../usage/cost-micros.js';
 
 export interface Session {
@@ -78,6 +78,8 @@ export interface LlmModel {
   apiKey?: string | null;
   modelId?: string | null;
   clientImpersonation?: string | null;
+  /** 凭证方式：api_key=固定 Key（缺省/未知按此处理）；ecp=调用时使用当前用户的 ECP Token。 */
+  authType?: string | null;
   contextWindowTokens?: number | null;
   /** 供应商请求体上限（字节）；null=未声明。用于推导压缩体积阈值。 */
   maxRequestBodyBytes?: number | null;
@@ -335,6 +337,7 @@ export function llmModelToConfig(model: LlmModel): LlmModelConfig {
     maxRequestBodyBytes: model.maxRequestBodyBytes ?? undefined,
     supportsVision: model.supportsVision === 1 || model.supportsVision === true,
     clientImpersonation: toClientImpersonation(model.clientImpersonation),
+    authType: toModelAuthType(model.authType),
     // 价格随模型解析链下发（成本快照主路径，决策 8）；NULL 价归一为 undefined，
     // 落库侧对 undefined 走兜底缓存再解析同一行，结果一致（NULL → 成本 NULL）。
     priceInput: parsePriceColumn(model.priceInput) ?? undefined,
@@ -347,6 +350,11 @@ export function llmModelToConfig(model: LlmModel): LlmModelConfig {
 function toClientImpersonation(value: string | null | undefined): ClientImpersonation {
   if (value === 'codex' || value === 'claude_code') return value;
   return 'none';
+}
+
+/** 凭证方式归一：未知/缺失一律按 'api_key'（存量行为）。 */
+function toModelAuthType(value: string | null | undefined): ModelAuthType {
+  return value === 'ecp' ? 'ecp' : 'api_key';
 }
 
 export function boolish(value: boolean | number | null | undefined): boolean | undefined {

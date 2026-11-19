@@ -1,6 +1,7 @@
 import type { ClientImpersonation } from '@mao/contracts';
 import type { LlmAdapter } from '../harness/llm/chat-request.js';
 import type { LlmModel } from '../model/types.js';
+import { normalizeModelAuthType } from '../model/types.js';
 import type { WeixinBotConfig } from './types.js';
 import { WeixinVoiceTextSanitizer } from './voice-text-sanitizer.js';
 import { LLM_CALL_SCENES, LlmCallContext } from '../usage/llm-call-context.js';
@@ -43,7 +44,7 @@ export class WeixinVoiceSynthesisService {
     return clipSpeechText(text, this.weixinBotConfig.voiceMaxSeconds);
   }
 
-  async synthesizeWav(text: string | null | undefined): Promise<Buffer | null> {
+  async synthesizeWav(text: string | null | undefined, userId?: number | null): Promise<Buffer | null> {
     if (text == null || text.trim() === '') return null;
     const model = await this.modelService.findFirstActiveAudioModel();
     if (model == null) {
@@ -59,7 +60,7 @@ export class WeixinVoiceSynthesisService {
     try {
       const response = await LlmCallContext.runAsync({
         scene: LLM_CALL_SCENES.VOICE_SYNTHESIS,
-        userId: null,
+        userId: userId ?? null,
         sessionId: null,
         agentId: null,
       }, async () => this.llmAdapter.chat(
@@ -76,6 +77,7 @@ export class WeixinVoiceSynthesisService {
           apiKey: model.apiKey,
           modelId: model.modelId,
           clientImpersonation: toClientImpersonation(model.clientImpersonation),
+          authType: normalizeModelAuthType(model.authType),
         },
       ));
       const audio = response?.choices?.[0]?.message?.audio;

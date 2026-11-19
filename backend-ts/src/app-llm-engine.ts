@@ -17,6 +17,7 @@ import { OpenAiLlmAdapter } from './harness/llm/openai-llm-adapter.js';
 import { AnthropicLlmAdapter } from './harness/llm/anthropic-llm-adapter.js';
 import { ResponsesLlmAdapter } from './harness/llm/responses-llm-adapter.js';
 import { LlmAdapterFacade } from './harness/llm/llm-adapter-facade.js';
+import type { LlmAuthResolver } from './harness/llm/llm-auth.js';
 import { RecordingLlmAdapter } from './usage/recording-llm-adapter.js';
 import { PromptEngine } from './harness/core/prompt-engine.js';
 import { TokenEstimator } from './harness/core/token-estimator.js';
@@ -43,6 +44,8 @@ export interface LlmEngineDeps {
   sessionCompactionEventService: SessionCompactionEventService;
   settingService: SystemSettingService;
   modelRepo: MysqlLlmModelRepository;
+  /** LLM 出站凭证解析器（ecp 模式解析当前用户 ECP Token）；缺省时各适配器只用固定 API Key。 */
+  authResolver?: LlmAuthResolver;
 }
 
 export interface LlmEngineResult {
@@ -63,7 +66,7 @@ export interface LlmEngineResult {
 }
 
 export function assembleLlmEngine(deps: LlmEngineDeps): LlmEngineResult {
-  const { harnessTuning, llmCallService, skillLoader, pathSandbox, runtimeResolver, commandService, skillSync, workspaceRulesSnapshotService, sessionSvc, compactionSvc, sessionCompactionEventService, settingService, modelRepo } = deps;
+  const { harnessTuning, llmCallService, skillLoader, pathSandbox, runtimeResolver, commandService, skillSync, workspaceRulesSnapshotService, sessionSvc, compactionSvc, sessionCompactionEventService, settingService, modelRepo, authResolver } = deps;
 
   const openAiLlmAdapter = new OpenAiLlmAdapter({
     rateLimitMaxRetries: harnessTuning.llm.rateLimitMaxRetries,
@@ -72,7 +75,7 @@ export function assembleLlmEngine(deps: LlmEngineDeps): LlmEngineResult {
     callTimeoutSeconds: harnessTuning.llm.callTimeoutSeconds,
     httpCallTimeoutSeconds: harnessTuning.llm.httpCallTimeoutSeconds,
     streamIdleTimeoutSeconds: harnessTuning.llm.streamIdleTimeoutSeconds,
-  });
+  }, authResolver);
   const anthropicLlmAdapter = new AnthropicLlmAdapter({
     rateLimitMaxRetries: harnessTuning.llm.rateLimitMaxRetries,
     rateLimitRetryDelaySeconds: harnessTuning.llm.rateLimitRetryDelaySeconds,
@@ -83,7 +86,7 @@ export function assembleLlmEngine(deps: LlmEngineDeps): LlmEngineResult {
   }, {
     autoCacheEnabled: harnessTuning.llm.anthropicAutoCache,
     cacheTtl: harnessTuning.llm.anthropicCacheTtl,
-  });
+  }, authResolver);
   const responsesLlmAdapter = new ResponsesLlmAdapter({
     rateLimitMaxRetries: harnessTuning.llm.rateLimitMaxRetries,
     rateLimitRetryDelaySeconds: harnessTuning.llm.rateLimitRetryDelaySeconds,
@@ -91,7 +94,7 @@ export function assembleLlmEngine(deps: LlmEngineDeps): LlmEngineResult {
     callTimeoutSeconds: harnessTuning.llm.callTimeoutSeconds,
     httpCallTimeoutSeconds: harnessTuning.llm.httpCallTimeoutSeconds,
     streamIdleTimeoutSeconds: harnessTuning.llm.streamIdleTimeoutSeconds,
-  });
+  }, authResolver);
   const llmAdapter = new RecordingLlmAdapter(
     new LlmAdapterFacade(
       new Map<string, LlmAdapter>([

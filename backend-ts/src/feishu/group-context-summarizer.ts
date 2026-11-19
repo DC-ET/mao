@@ -1,5 +1,6 @@
 import type { ClientImpersonation } from '@mao/contracts';
 import type { LlmChatClient, LlmChatRequest, LlmModel, LlmModelConfig } from '../model/types.js';
+import { normalizeModelAuthType } from '../model/types.js';
 import { LLM_CALL_SCENES, LlmCallContext } from '../usage/llm-call-context.js';
 
 const SYSTEM_PROMPT = `你是群聊记录摘要助手。把群聊记录压缩为一份简明摘要，供 AI 助手在后续对话中了解此前的讨论背景。
@@ -23,6 +24,7 @@ export function feishuSummarizerModelConfig(model: LlmModel): LlmModelConfig {
     provider: model.provider ?? undefined,
     apiProtocol: model.apiProtocol ?? undefined,
     clientImpersonation: (model.clientImpersonation ?? 'none') as ClientImpersonation,
+    authType: normalizeModelAuthType(model.authType),
   };
 }
 
