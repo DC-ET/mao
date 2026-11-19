@@ -172,7 +172,9 @@ describe('BUG-5 LocalExecutor：投票回声等待在断线后必须立刻失败
       policy: approvalPolicy({ onApproval: 'ask' }),
       // 本地模态按 Y：返回本地选择的同时走 submitApprovalVote 上行投票（真实宿主同款时序）
       askApproval: async (req) => {
-        void executor.submitApprovalVote(req.requestId, 'allow');
+        const requestId = req.requestId;
+        if (!requestId) throw new Error('tool_execute 缺少 requestId');
+        void executor.submitApprovalVote(requestId, 'allow');
         return 'allow';
       },
     });
