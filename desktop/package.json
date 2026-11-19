@@ -1,7 +1,7 @@
 {
   "name": "desktop",
   "private": true,
-  "version": "0.0.527",
+  "version": "0.0.528",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
