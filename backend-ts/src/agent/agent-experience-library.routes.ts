@@ -233,6 +233,8 @@ export function registerAgentExperienceLibraryRoutes(app: FastifyInstance, deps:
     const abnormal = requireEnumParam(q.abnormal, 'abnormal', ABNORMAL, '');
     const keyword = requireSearchParam(q.keyword, 'keyword', 200);
     const tag = requireSearchParam(q.tag, 'tag', 60);
+    // tagSearch 只收窄下拉候选（facets），不参与文档过滤——否则「输入即筛列表」会与候选搜索互相打架
+    const tagSearch = requireSearchParam(q.tagSearch, 'tagSearch', 60);
     const verifiedFrom = requireDateParam(q.verifiedFrom, 'verifiedFrom');
     const verifiedTo = requireDateParam(q.verifiedTo, 'verifiedTo');
     const updatedFrom = requireDateParam(q.updatedFrom, 'updatedFrom');
@@ -240,17 +242,22 @@ export function registerAgentExperienceLibraryRoutes(app: FastifyInstance, deps:
 
     const all = experienceIndexService.listDocs(agentDir);
 
-    // tag facets（全库未过滤口径，供筛选下拉）
+    // tag facets（全库未过滤口径，供筛选下拉；tagSearch 只按子串收窄候选，计数仍是全库篇数）
     const tagCounts = new Map<string, number>();
     for (const doc of all) {
       for (const t of splitKeywords(doc.keywords)) {
         tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
       }
     }
-    const keywords = [...tagCounts.entries()]
+    const tagSearchLower = tagSearch.trim().toLowerCase();
+    const matchedTags = [...tagCounts.entries()].filter(
+      ([t]) => tagSearchLower === '' || t.toLowerCase().includes(tagSearchLower),
+    );
+    const keywords = matchedTags
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .slice(0, KEYWORD_FACET_LIMIT)
       .map(([t, count]) => ({ tag: t, count }));
+    const keywordsTotal = matchedTags.length;
 
     // 内存过滤（扫描产物本就是全量元数据，无额外 IO）
     let filtered = all;
@@ -290,7 +297,7 @@ export function registerAgentExperienceLibraryRoutes(app: FastifyInstance, deps:
       groupCounts = sortGroupCounts([...counts.entries()].map(([key, count]) => ({ key, count })), groupBy);
     }
 
-    return sendOk(reply, { enabled, total, page, size, docs, groupCounts, keywords });
+    return sendOk(reply, { enabled, total, page, size, docs, groupCounts, keywords, keywordsTotal });
   });
 
   app.get('/v1/agents/:id/experience-library/index', async (request, reply) => {

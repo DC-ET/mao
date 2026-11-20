@@ -49,6 +49,8 @@ export interface DocListResponse {
   docs: ExperienceDoc[]
   groupCounts: GroupCount[]
   keywords: KeywordFacet[]
+  /** 当前库（或 tagSearch 命中）的不同 tag 总数：候选被截到 50 条时 UI 用来提示。 */
+  keywordsTotal: number
 }
 
 export type SortField = 'fileName' | 'title' | 'updatedAt' | 'sizeBytes' | 'lastVerified'
@@ -154,6 +156,14 @@ export function useExperienceLibrary() {
   const page = ref(1)
   const groupCounts = ref<GroupCount[]>([])
   const keywordFacets = ref<KeywordFacet[]>([])
+  /** 当前库不同 tag 总数（未收窄口径）；keywords 只返回前 50 条，提示用。 */
+  const keywordFacetsTotal = ref(0)
+  /** tag 远程搜索结果：null = 未在搜，展示 keywordFacets。 */
+  const tagSearchFacets = ref<KeywordFacet[] | null>(null)
+  const tagSearchTotal = ref(0)
+  const tagSearching = ref(false)
+  /** 远程搜索请求序号：慢请求回来时丢弃旧结果，避免候选被覆盖成上一次输入的内容。 */
+  let tagSearchSeq = 0
   const listLoading = ref(false)
 
   const keyword = ref('')
@@ -235,6 +245,8 @@ export function useExperienceLibrary() {
       total.value = 0
       groupCounts.value = []
       keywordFacets.value = []
+      keywordFacetsTotal.value = 0
+      tagSearchFacets.value = null
       enabled.value = true
       return
     }
@@ -262,10 +274,43 @@ export function useExperienceLibrary() {
       total.value = data.total
       groupCounts.value = data.groupCounts
       keywordFacets.value = data.keywords
+      keywordFacetsTotal.value = data.keywordsTotal
+      // 列表刷新（换库/筛选/保存后）回退到全库候选，避免残留上一次的搜索片段
+      tagSearchFacets.value = null
     } catch {
       // 拦截器已弹错误提示（如库目录不存在）；列表保持空态
     } finally {
       listLoading.value = false
+    }
+  }
+
+  /**
+   * 关键词下拉的远程搜索：输入即按子串收窄候选（只取 facets，size=1 即可）。
+   * 请求序号用于丢弃过期响应——快速连打时后到的旧结果不能覆盖新候选。
+   */
+  async function searchTags(text: string): Promise<void> {
+    if (selectedAgentId.value == null) return
+    const query = text.trim()
+    if (query === '') {
+      tagSearchSeq += 1
+      tagSearchFacets.value = null
+      tagSearching.value = false
+      return
+    }
+    const seq = ++tagSearchSeq
+    tagSearching.value = true
+    try {
+      const { data } = await api.get<DocListResponse>(
+        `/agents/${selectedAgentId.value}/experience-library/docs`,
+        { params: { page: 1, size: 1, tagSearch: query } },
+      )
+      if (seq !== tagSearchSeq) return
+      tagSearchFacets.value = data.keywords
+      tagSearchTotal.value = data.keywordsTotal
+    } catch {
+      // 拦截器已弹错误提示；保留上一次候选
+    } finally {
+      if (seq === tagSearchSeq) tagSearching.value = false
     }
   }
 
@@ -399,6 +444,10 @@ export function useExperienceLibrary() {
     pageSize: PAGE_SIZE,
     groupCounts,
     keywordFacets,
+    keywordFacetsTotal,
+    tagSearchFacets,
+    tagSearchTotal,
+    tagSearching,
     listLoading,
     keyword,
     tag,
@@ -420,8 +469,11 @@ export function useExperienceLibrary() {
       patchState({ keyword: text, page: 1 })
     },
     setTag(value: string): void {
+      // 选中/清空后收起远程搜索态：下次展开从全库候选重新开始
+      tagSearchFacets.value = null
       patchState({ tag: value, page: 1 })
     },
+    searchTags,
     setVerifiedRange(range: [string, string] | null): void {
       patchState({
         verifiedFrom: range?.[0] ?? '',

@@ -218,6 +218,32 @@ describe('agent experience library routes', () => {
     }
   });
 
+  it('narrows keyword facets by tagSearch without filtering docs', async () => {
+    const { app, experienceIndexService } = makeApp(true);
+    try {
+      seedDoc(experienceIndexService, 1, '2026-10-01-a.md', DOC_A);
+      seedDoc(experienceIndexService, 1, '2026-10-15-b.md', DOC_B);
+      seedDoc(experienceIndexService, 1, '2026-11-01-c.md', DOC_C);
+
+      const all = (await app.inject({ method: 'GET', url: '/v1/agents/1/experience-library/docs' })).json().data;
+      expect(all.keywordsTotal).toBe(5);
+
+      // 子串 + 大小写不敏感；计数仍是全库篇数，候选总数按命中口径
+      const hit = (await app.inject({ method: 'GET', url: '/v1/agents/1/experience-library/docs?tagSearch=MY' })).json().data;
+      expect(hit.keywords).toEqual([{ tag: 'mysql', count: 2 }]);
+      expect(hit.keywordsTotal).toBe(1);
+      // tagSearch 只收窄候选，不动文档列表
+      expect(hit.total).toBe(3);
+      expect(hit.docs).toHaveLength(3);
+
+      const none = (await app.inject({ method: 'GET', url: '/v1/agents/1/experience-library/docs?tagSearch=zzz' })).json().data;
+      expect(none.keywords).toEqual([]);
+      expect(none.keywordsTotal).toBe(0);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('filters updatedAt by UTC+8 date boundary consistent with admin display', async () => {
     const { app, experienceIndexService } = makeApp(true);
     try {
@@ -240,6 +266,7 @@ describe('agent experience library routes', () => {
         'sort=bogus', 'order=up', 'groupBy=year', 'abnormal=weird',
         'verifiedFrom=2026/01/01', 'updatedTo=2026-1-1',
         `keyword=${encodeURIComponent('k'.repeat(201))}`,
+        `tagSearch=${'k'.repeat(61)}`,
       ]) {
         const res = await app.inject({ method: 'GET', url: `/v1/agents/1/experience-library/docs?${query}` });
         expect(res.json().code, query).not.toBe(0);

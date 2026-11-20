@@ -60,12 +60,22 @@
             :model-value="store.tag"
             clearable
             filterable
-            placeholder="全部"
-            style="width: 140px"
+            remote
+            :remote-method="onTagSearch"
+            :loading="store.tagSearching"
+            placeholder="输入搜索标签"
+            style="width: 170px"
             aria-label="按关键词标签筛选"
             @update:model-value="store.setTag(String($event ?? ''))"
           >
-            <el-option v-for="f in store.keywordFacets" :key="f.tag" :label="`${f.tag}（${f.count}）`" :value="f.tag" />
+            <el-option v-for="f in tagOptions" :key="f.tag" :label="tagLabel(f)" :value="f.tag" />
+            <el-option
+              v-if="tagTruncated"
+              key="__tag-hint__"
+              value="__tag-hint__"
+              disabled
+              :label="`共 ${tagTotal} 个标签，输入可缩小范围`"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="最后验证">
@@ -216,12 +226,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
 import { SortDown, SortUp } from '@element-plus/icons-vue'
 import { formatDateTime } from '../../../utils/datetime'
 import { useAuthStore } from '../../../stores/auth'
 import ResponsivePagination from '../../../components/ResponsivePagination.vue'
-import { EXPERIENCE_LIBRARY_KEY, type AbnormalFilter, type ExperienceDoc, type GroupBy, type SortField } from '../composables/useExperienceLibrary'
+import { EXPERIENCE_LIBRARY_KEY, type AbnormalFilter, type ExperienceDoc, type GroupBy, type KeywordFacet, type SortField } from '../composables/useExperienceLibrary'
 import { formatDate, formatSize, groupKeyOf, isStaleVerified, splitKeywords } from '../experience-format'
 
 const store = inject(EXPERIENCE_LIBRARY_KEY)!
@@ -240,6 +250,37 @@ watch(() => store.keyword, (value) => { keywordInput.value = value })
 function submitSearch(): void {
   store.search(keywordInput.value)
 }
+
+/** 下拉候选：远程搜索结果优先，未搜索时用列表接口带回的全库 top50。 */
+const tagOptions = computed<KeywordFacet[]>(() => {
+  const base = store.tagSearchFacets ?? store.keywordFacets
+  // 已选 tag 可能来自阅读页点击（长尾标签，不在候选里）：补一条无计数占位，避免下拉回显裸值
+  if (store.tag !== '' && !base.some((f) => f.tag === store.tag)) {
+    return [{ tag: store.tag, count: 0 }, ...base]
+  }
+  return base
+})
+
+const tagTotal = computed(() => (store.tagSearchFacets !== null ? store.tagSearchTotal : store.keywordFacetsTotal))
+const tagTruncated = computed(() => tagTotal.value > (store.tagSearchFacets ?? store.keywordFacets).length)
+
+function tagLabel(facet: KeywordFacet): string {
+  return facet.count > 0 ? `${facet.tag}（${facet.count}）` : facet.tag
+}
+
+/** 输入防抖：连打时只发最后一次，避免每个字符一次全库扫描。 */
+let tagSearchTimer: ReturnType<typeof setTimeout> | null = null
+function onTagSearch(query: string): void {
+  if (tagSearchTimer) clearTimeout(tagSearchTimer)
+  tagSearchTimer = setTimeout(() => {
+    tagSearchTimer = null
+    void store.searchTags(query)
+  }, 250)
+}
+
+onBeforeUnmount(() => {
+  if (tagSearchTimer) clearTimeout(tagSearchTimer)
+})
 
 const hasFilter = computed(() =>
   store.keyword.trim() !== '' ||
