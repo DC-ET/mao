@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildFeishuProgressCard, createSessionDetailUrlResolver, feishuSessionDetailUrl, formatFeishuDuration, type FeishuSubagentSummary } from './progress-card.js';
+import { buildFeishuProgressCard, createSessionDetailUrlResolver, feishuSessionDetailUrl, formatFeishuDuration, limitMarkdownTables, type FeishuSubagentSummary } from './progress-card.js';
 
 type CardElement = {
   tag?: string;
@@ -434,5 +434,57 @@ describe('飞书进度卡片运行中子代理', () => {
     expect(line).toBe('- 审查 · 审查 卡片 代码');
     expect(line).not.toContain('*');
     expect(line).not.toContain('`');
+  });
+});
+
+describe('limitMarkdownTables（飞书卡片表格数上限 5）', () => {
+  const table = (n: number): string => `| 列A | 列B |\n|---|---|\n| 值${n} | ${n} |`;
+  const cards = (n: number): string => Array.from({ length: n }, (_, i) => table(i + 1)).join('\n\n');
+
+  it('5 张及以内原样输出', () => {
+    expect(limitMarkdownTables(cards(3))).toBe(cards(3));
+    expect(limitMarkdownTables(cards(5))).toBe(cards(5));
+  });
+
+  it('第 6 张起整体转 fenced code block，前 5 张保持表格', () => {
+    const out = limitMarkdownTables(cards(7));
+    expect(out.match(/^```$/gm)?.length).toBe(4); // 第 6、7 张各一对围栏
+    // 前 5 张表格完整保留在代码块外
+    for (let i = 1; i <= 5; i++) expect(out).toContain(`| 值${i} | ${i} |`);
+    // 第 6、7 张被围栏包住
+    expect(out).toContain('```\n| 列A | 列B |\n|---|---|\n| 值6 | 6 |\n```');
+    expect(out).toContain('```\n| 列A | 列B |\n|---|---|\n| 值7 | 7 |\n```');
+  });
+
+  it('代码块内看似表格的管道行不参与计数', () => {
+    const inFence = ['```markdown', ...[1, 2, 3, 4, 5, 6, 7].map(table), '```'].join('\n');
+    const content = `${inFence}\n\n${table(99)}`;
+    // 唯一一张真实表格（第 8 个形态）仍在限额内，不应新增围栏
+    expect(limitMarkdownTables(content).match(/^```/gm)?.length).toBe(2);
+  });
+
+  it('无表格内容不做任何改动', () => {
+    const content = '# 标题\n\n- 列表项\n\n普通正文，含 a|b 但不是表格。';
+    expect(limitMarkdownTables(content)).toBe(content);
+  });
+
+  it('每张表独立计数（空行分隔）', () => {
+    const out = limitMarkdownTables(cards(6));
+    expect(out.match(/^```$/gm)?.length).toBe(2);
+    expect(out).toContain('| 值5 | 5 |');
+    expect(out).not.toContain('| 值6 | 6 |\n\n'); // 第 6 张被围栏包住
+  });
+
+  it('buildFeishuProgressCard 正文同样受限（终态长报告不再整张卡失败）', () => {
+    const card = buildFeishuProgressCard('COMPLETED', 8, cards(8), []);
+    const body = elementsOf(card)
+      .filter((element) => element.tag === 'markdown')
+      .map((element) => element.content ?? '')
+      .find((content) => content.includes('列A')) ?? '';
+    // 卡片正文里只剩 5 张表格，其余 3 张在代码块中
+    const fenceTables = (body.match(/^```$/gm) ?? []).length / 2;
+    expect(fenceTables).toBe(3);
+    expect(body).toContain('| 值5 | 5 |');
+    expect(body).toContain('| 值8 | 8 |');
   });
 });
