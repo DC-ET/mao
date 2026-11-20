@@ -4,6 +4,8 @@ import { JwtService } from '../crypto/jwt.service.js';
 import { UserService } from '../user/user.service.js';
 import type { LoginVO, PasswordHasher, User, UserInfoVO, UserRepository } from '../user/types.js';
 import type { PermissionService } from '../permission/permission.service.js';
+import { loginLockKey } from './login-lockout.js';
+import type { LoginLockout } from './login-lockout.js';
 import type { LdapAuthService } from './ldap-auth.service.js';
 
 export class AuthService {
@@ -14,6 +16,7 @@ export class AuthService {
     private readonly ldapAuthService: LdapAuthService | null,
     private readonly permissionService?: PermissionService,
     private readonly isPasswordLoginEnabled: () => Promise<boolean> = async () => true,
+    private readonly loginLockout: LoginLockout | null = null,
   ) {}
 
   passwordLoginEnabled(): Promise<boolean> {
@@ -23,22 +26,44 @@ export class AuthService {
   /**
    * 管理后台登录不看「账号密码登录」开关，给本地 admin 留入口。
    * 桌面 / Web / 安卓 / CLI 走默认路径，开关关闭时直接拒绝。
+   * 传 clientIp 时启用登录失败锁定：锁定状态直接拒绝（不查库不验密）；失败计数在
+   * 「验过密码但未通过」时累加（本地密码错误、用户不存在与 LDAP 兜底失败同口径），
+   * 正确密码清零。
    */
-  async login(username: string, password: string, options?: { ignorePasswordSwitch?: boolean }): Promise<LoginVO> {
+  async login(
+    username: string,
+    password: string,
+    options?: { ignorePasswordSwitch?: boolean; clientIp?: string },
+  ): Promise<LoginVO> {
     if (!options?.ignorePasswordSwitch && !(await this.passwordLoginEnabled())) {
       throw new BusinessException(ErrorCode.LOGIN_FAILED, '账号密码登录已关闭');
     }
+    const lockout = this.loginLockout;
+    const lockKey = loginLockKey(username, options?.clientIp);
+    if (lockout != null) {
+      const remainingSeconds = lockout.lockedSecondsRemaining(lockKey);
+      if (remainingSeconds > 0) {
+        throw new BusinessException(
+          ErrorCode.LOGIN_FAILED,
+          `登录失败次数过多，请约 ${Math.ceil(remainingSeconds / 60)} 分钟后再试`,
+        );
+      }
+    }
     const user = await this.userRepo.findByUsername(username);
     if (user && user.passwordHash && (await this.passwordHasher.matches(password, user.passwordHash))) {
+      lockout?.recordSuccess(lockKey);
       return this.buildLoginResult(user);
     }
     if (this.ldapAuthService != null && await this.ldapAuthService.isConfigured()) {
       try {
-        return await this.ldapAuthService.authenticate(username, password);
+        const vo = await this.ldapAuthService.authenticate(username, password);
+        lockout?.recordSuccess(lockKey);
+        return vo;
       } catch {
         // fall through
       }
     }
+    lockout?.recordFailure(lockKey);
     throw new BusinessException(ErrorCode.LOGIN_FAILED);
   }
 

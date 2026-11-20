@@ -47,6 +47,8 @@
 | `MYSQL_URL` / `MYSQL_USERNAME` / `MYSQL_PASSWORD` | **是** | MySQL |
 | `JWT_SECRET` | 生产**是** | JWT 签名，禁止默认值 |
 | `JWT_SHELL_EXPIRATION` | 否 | CLOUD shell 临时 JWT，默认 2h |
+| `LOGIN_MAX_FAILURES` | 否 | 登录失败锁定阈值：同一 用户名+IP 在滑动窗口内连续失败 N 次后临时锁定，期间正确密码也被拒。默认 5；`0` = 关闭锁定（e2e 默认关闭）。**部署在 nginx 等反代后必须配置 `TRUSTED_PROXY_ADDRESSES`**（见上文 TLS 终止代理段落），否则所有请求共享代理 IP，锁键退化为按用户名全局锁，可被远程持续锁死登录 |
+| `LOGIN_LOCK_MINUTES` | 否 | 登录锁定时长（分钟），窗口与锁定同一时长，默认 15，最小 1 |
 | `APP_GIT_CREDENTIAL_SECRET` | **是** | Git Token AES 密钥；未配置拒绝启动 |
 | `APP_NOTIFICATION_WEBHOOK_SECRET` | 建议 | 任务通知 Webhook 加密；同时加密开放接口（Webhook 触发器 / 出站订阅）的 secret。未配置时回退内置默认密钥，生产建议显式设置 |
 | `APP_MCP_SECRET` | MCP 时建议 | MCP 环境变量加密 |

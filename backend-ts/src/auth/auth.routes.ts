@@ -19,7 +19,7 @@ export function registerAuthRoutes(
     if (!hasText(body.username) || !hasText(body.password)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '用户名不能为空');
     }
-    return sendOk(reply, await auth.login(body.username!, body.password!));
+    return sendOk(reply, await auth.login(body.username!, body.password!, { clientIp: request.ip }));
   });
 
   /** 管理后台登录。账号密码开关关闭时这里仍然可用，避免本地 admin 进不去。 */
@@ -28,7 +28,7 @@ export function registerAuthRoutes(
     if (!hasText(body.username) || !hasText(body.password)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '用户名不能为空');
     }
-    return sendOk(reply, await auth.login(body.username!, body.password!, { ignorePasswordSwitch: true }));
+    return sendOk(reply, await auth.login(body.username!, body.password!, { ignorePasswordSwitch: true, clientIp: request.ip }));
   });
 
   app.get('/v1/auth/features', async (_request, reply) => {

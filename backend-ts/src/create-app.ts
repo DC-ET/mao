@@ -14,6 +14,7 @@ import { runFlywayIfEnabled } from './db/flyway.js';
 import { JwtService } from './crypto/jwt.service.js';
 import { hashPassword, matchesPassword } from './crypto/password.js';
 import { AuthService } from './auth/auth.service.js';
+import { LoginLockout } from './auth/login-lockout.js';
 import { LdapAuthService } from './auth/ldap-auth.service.js';
 import { FeishuAuthService } from './auth/feishu-auth.service.js';
 import { MysqlFeishuOauthStateRepository } from './auth/feishu-oauth.repository.js';
@@ -298,6 +299,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const authService = new AuthService(
     userRepo, jwt, hasher, ldap, permissionService,
     () => settingService.passwordLoginEnabled(),
+    new LoginLockout(),
   );
   const earlyFeishuBinding = new MysqlFeishuBindingRepository(db);
   const pendingBindingMessages = new MysqlFeishuPendingBindingRepository(db);
