@@ -57,7 +57,6 @@ import { StatisticsService, StatisticsDbStore } from './statistics/statistics.se
 import { AdminAnalyticsService, AdminAnalyticsDbStore } from './admin/admin-analytics.service.js';
 import { McpServerValidatorImpl } from './agent/mcp-validator.js';
 import { fetchFeishuMessageDetail } from './feishu/message-detail.js';
-import { sendFeishuFile, sendFeishuImage } from './feishu/media-sender.js';
 
 export interface FeishuHandlerDeps {
   db: Db;
@@ -130,6 +129,12 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
   const feishuInboundHandler = new AgentFeishuInboundHandler({
     registry: d.wsRegistry,
     cardToolTickMs: cfg.feishu.bot.cardToolTickMs,
+    // 图片/文件 reply 锚点：轮次开始记录触发消息、结束清空（媒体优先锚定本轮触发消息）。
+    replyAnchor: {
+      begin: (sessionId: number, messageId: string | null | undefined) =>
+        feishuMessageService.setReplyAnchor(sessionId, messageId),
+      end: (sessionId: number) => feishuMessageService.clearReplyAnchor(sessionId),
+    },
     // 跨通道队列接力（0.0.434）：WS 侧执行占用时让行；飞书队列排空后消费平台排队消息。
     isSessionExecuting: (sessionId: number) => d.wsHandler?.hasExecutionClaim(sessionId) === true,
     onQueuesDrained: createPlatformQueueRelay({ sessionService: d.sessionService, wsHandler: d.wsHandler }),

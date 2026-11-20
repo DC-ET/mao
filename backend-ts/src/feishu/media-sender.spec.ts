@@ -146,4 +146,33 @@ describe('reply mode (replyMessageId)', () => {
     expect(client.im.v1.message.create).toHaveBeenCalled();
     expect(messageId).toBe('om_new');
   });
+
+  it('falls back to message.create when reply is explicitly rejected (code != 0)', async () => {
+    const client = makeClient();
+    client.im.v1.image.create.mockResolvedValue({ image_key: 'img_v2' });
+    // 触发消息被撤回/删除等飞书明确拒绝：降级普通消息，图仍送达。
+    client.im.v1.message.reply.mockResolvedValue({ code: 230001, msg: 'message is deleted' });
+    client.im.v1.message.create.mockResolvedValue({ code: 0, data: { message_id: 'om_new' } });
+
+    const target = { ...feishuSendTargetOf('1', 'oc_chat'), replyMessageId: 'om_recalled' };
+    const messageId = await sendFeishuImage(client, target, Buffer.from('png'));
+
+    expect(client.im.v1.message.create).toHaveBeenCalledWith({
+      params: { receive_id_type: 'chat_id' },
+      data: { receive_id: 'oc_chat', msg_type: 'image', content: JSON.stringify({ image_key: 'img_v2' }) },
+    });
+    expect(messageId).toBe('om_new');
+  });
+
+  it('does not fall back to message.create when reply throws (unknown outcome)', async () => {
+    const client = makeClient();
+    client.im.v1.image.create.mockResolvedValue({ image_key: 'img_v2' });
+    // 网络超时等未知结果：不猜测成功与否，不降级重发，避免同一张图发两遍。
+    client.im.v1.message.reply.mockRejectedValue(new Error('timeout'));
+    client.im.v1.message.create.mockResolvedValue({ code: 0, data: { message_id: 'om_dup' } });
+
+    const target = { ...feishuSendTargetOf('1', 'oc_chat'), replyMessageId: 'om_trigger' };
+    await expect(sendFeishuImage(client, target, Buffer.from('png'))).rejects.toThrow('timeout');
+    expect(client.im.v1.message.create).not.toHaveBeenCalled();
+  });
 });

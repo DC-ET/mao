@@ -116,12 +116,31 @@ export class FeishuMessageService {
     }
   }
 
-  /** 查询会话最新入站消息 ID（用于 reply 发送）；失败降级 null。 */
-  async findLatestInboundMessageId(sessionId: number, channel: { appId: string; chatId: string; chatType: 'p2p' | 'group' }): Promise<string | null> {
+  /** 记录本轮触发消息锚点；失败只告警（发送时回退最新入站）。空 messageId 视为 no-op。 */
+  async setReplyAnchor(sessionId: number, messageId: string | null | undefined): Promise<void> {
+    if (messageId == null || messageId === '') return;
     try {
-      return await this.repository.findLatestInboundMessageId(sessionId, channel);
+      await this.repository.setReplyAnchor(sessionId, messageId);
     } catch (error) {
-      console.warn(`查询飞书最新入站消息ID失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(`记录飞书触发消息锚点失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** 清空 reply 锚点；失败只告警（下轮 begin 会覆盖）。 */
+  async clearReplyAnchor(sessionId: number): Promise<void> {
+    try {
+      await this.repository.clearReplyAnchor(sessionId);
+    } catch (error) {
+      console.warn(`清除飞书触发消息锚点失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** 查询 reply 锚点（本轮触发消息优先，缺省回退最新入站）；查询失败降级 null → 发送侧回退 create。 */
+  async findReplyAnchorMessageId(sessionId: number, channel: { appId: string; chatId: string; chatType: 'p2p' | 'group' }): Promise<string | null> {
+    try {
+      return await this.repository.findReplyAnchorMessageId(sessionId, channel);
+    } catch (error) {
+      console.warn(`查询飞书reply锚点失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
   }

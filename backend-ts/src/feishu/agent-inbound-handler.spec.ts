@@ -1966,4 +1966,117 @@ describe('AgentFeishuInboundHandler 平台队列接力（0.0.434）', () => {
     // 失败不自动消费下一条的契约同样适用于平台队列接力
     expect(onQueuesDrained).not.toHaveBeenCalled();
   });
+
+  it('records the reply anchor before saving the user message and clears it after the round', async () => {
+    const sessionService = makeSessionService();
+    const order: string[] = [];
+    sessionService.saveUserMessage.mockImplementation(async () => { order.push('saveUserMessage'); });
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => { order.push('execute'); }) };
+    const replyAnchor = {
+      begin: vi.fn(async () => { order.push('begin'); }),
+      end: vi.fn(async () => { order.push('end'); }),
+    };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      replyAnchor,
+    });
+    await handler.onMessage(makeContext({ messageId: 'om_trigger', text: '锚点轮' }));
+    expect(replyAnchor.begin).toHaveBeenCalledWith(7, 'om_trigger');
+    expect(replyAnchor.end).toHaveBeenCalledWith(7);
+    expect(order).toEqual(['begin', 'saveUserMessage', 'execute', 'end']);
+  });
+
+  it('queued rounds restore the trigger messageId from the queue row for the anchor', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const replyAnchor = { begin: vi.fn(async () => undefined), end: vi.fn(async () => undefined) };
+    const queueRow = {
+      id: 2, botId: 1, sessionId: 7, messageId: 'om_queued', cardMessageId: null,
+      senderOpenId: 'ou_user', maoUserId: null, rankNo: 0, status: 'QUEUED',
+      payload: JSON.stringify({
+        message: '排队消息',
+        context: { accountId: '1', chatType: 'group', chatId: 'oc_group', senderId: 'ou_user', senderUnionId: 'on_user', messageId: 'om_queued', senderLabel: '李四' },
+        botId: 1,
+      }),
+    };
+    // claimNext 只发一次行（否则 COMPLETED 后 drainNext 接力再领取，无限循环执行）。
+    let claimed = false;
+    const queueService = makeQueueService({
+      hasPending: vi.fn(async () => !claimed),
+      claimNext: vi.fn(async () => {
+        if (claimed) return null;
+        claimed = true;
+        return { ...queueRow, status: 'RUNNING' };
+      }),
+    });
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      releaseCancelFlag: vi.fn(),
+      listenerFactory: async () => listener,
+      queueService,
+      replyAnchor,
+    });
+    handler.interruptAndDrain(7);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(harness.execute).toHaveBeenCalledTimes(1);
+    expect(replyAnchor.begin).toHaveBeenCalledWith(7, 'om_queued');
+    expect(replyAnchor.end).toHaveBeenCalledWith(7);
+  });
+
+  it('clears the reply anchor even when the execution fails or is cancelled', async () => {
+    const replyAnchorFail = { begin: vi.fn(async () => undefined), end: vi.fn(async () => undefined) };
+    const handlerFail = new AgentFeishuInboundHandler({
+      sessionService: makeSessionService(),
+      harnessService: { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => { throw new Error('boom'); }) } as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      replyAnchor: replyAnchorFail,
+      onReply: vi.fn(async (): Promise<string | null> => null),
+    });
+    await handlerFail.onMessage(makeContext({ text: '失败轮' }));
+    expect(replyAnchorFail.end).toHaveBeenCalledWith(7);
+
+    // 取消路径：execute 中置位 cancel flag → CANCELLED 分支的 return 也要经过 finally。
+    const flag = makeFlag();
+    const replyAnchorCancel = { begin: vi.fn(async () => undefined), end: vi.fn(async () => undefined) };
+    const handlerCancel = new AgentFeishuInboundHandler({
+      sessionService: makeSessionService(),
+      harnessService: { prepareMessage: vi.fn(() => 'e2'), execute: vi.fn(async () => { flag.set(true); }) } as never,
+      createCancelFlag: () => flag,
+      listenerFactory: async () => listener,
+      replyAnchor: replyAnchorCancel,
+      onReply: vi.fn(async (): Promise<string | null> => null),
+    });
+    await handlerCancel.onMessage(makeContext({ messageId: 'om_c', text: '取消轮' }));
+    expect(replyAnchorCancel.end).toHaveBeenCalledWith(7);
+  });
+
+  it('keeps the round running when the reply anchor port itself throws', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const replyAnchor = {
+      begin: vi.fn(async () => { throw new Error('anchor down'); }),
+      end: vi.fn(async () => { throw new Error('anchor down'); }),
+    };
+    const onReply = vi.fn(async (): Promise<string | null> => null);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      replyAnchor,
+      onReply,
+    });
+    await handler.onMessage(makeContext({ messageId: 'om_t', text: '端口抛错轮' }));
+    // begin/end 抛错不外溢：轮次正常完成并回复（runExecution 自身吞错，不依赖端口实现自觉）。
+    expect(harness.execute).toHaveBeenCalledTimes(1);
+    expect(onReply).toHaveBeenCalledWith(expect.anything(), 'assistant text', 7);
+    expect(replyAnchor.begin).toHaveBeenCalled();
+    expect(replyAnchor.end).toHaveBeenCalled();
+  });
 });

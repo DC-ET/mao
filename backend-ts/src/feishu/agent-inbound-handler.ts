@@ -232,6 +232,12 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     ) => Promise<boolean>;
     /** 进度卡在途工具耗时刷新间隔（ms）；缺省用监听器默认值（与 app-config feishu.bot.cardToolTickMs 对齐）。 */
     cardToolTickMs?: number;
+    /** 图片/文件 reply 锚点：轮次开始记录触发消息，结束清空（发送侧优先锚定本轮触发消息）。
+     *  实现内部吞错，不阻断执行；未配置时跳过（媒体发送回退「最新入站」口径）。 */
+    replyAnchor?: {
+      begin(sessionId: number, messageId: string | null | undefined): Promise<void>;
+      end(sessionId: number): Promise<void>;
+    };
   }) {}
 
   authorizeDirectMessage(): boolean { return true; }
@@ -756,6 +762,13 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     let executionId = '';
     let cardListener: FeishuCardProgressListener | null = null;
     try {
+      // 图片/文件 reply 锚点：本轮开始记录触发消息、finally 清空。两处各自吞错——finally 里直接
+      // await 一旦 reject 会顶掉 try 块的原返回值，begin 抛错则会把整轮误标 FAILED（不依赖端口实现自觉吞错）。
+      try {
+        await this.options.replyAnchor?.begin(sessionId, context.messageId);
+      } catch (error) {
+        console.warn(`记录飞书触发消息锚点失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
       try {
         const progress = await this.options.createProgressCard?.(context, sessionId) ?? null;
         if (progress != null) cardListener = new FeishuCardProgressListener(progress, 0, this.options.cardToolTickMs);
@@ -801,6 +814,13 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       await this.options.onExecutionFinished?.(sessionId, context, executionId, 'FAILED', failText);
       const replyText = cardListener == null || cardUpdated === false ? failText : null;
       return { text: replyText, phase: 'FAILED', round: cardListener?.currentRound };
+    } finally {
+      // 轮次结束清空锚点（CANCELLED / COMPLETED / FAILED 三条路径都经过）：主动推送回到「最新入站」口径。
+      try {
+        await this.options.replyAnchor?.end(sessionId);
+      } catch (error) {
+        console.warn(`清除飞书触发消息锚点失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
   }
 

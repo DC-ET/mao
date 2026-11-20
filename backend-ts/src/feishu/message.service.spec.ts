@@ -35,7 +35,9 @@ describe('FeishuMessageService', () => {
       upsertSessionChannel: vi.fn(async () => undefined),
       findSessionChannel: vi.fn(async () => null),
       clearAwaitingFirstMessageTitle: vi.fn(async () => undefined),
-      findLatestInboundMessageId: vi.fn(async () => null),
+      setReplyAnchor: vi.fn(async () => undefined),
+      clearReplyAnchor: vi.fn(async () => undefined),
+      findReplyAnchorMessageId: vi.fn(async () => null),
       findThreadRootMessageId: vi.fn(async () => null),
       ...overrides,
     };
@@ -252,6 +254,49 @@ describe('FeishuMessageService', () => {
     }));
     // 新会话标记「等待首条消息命名」（持久化，重启安全）。
     expect(repository.upsertSessionChannel).toHaveBeenCalledWith(20, '1', 'p2p:union:on_user', 'p2p', true);
+  });
+
+  it('records and clears the reply anchor tolerantly, no-op on empty message ids', async () => {
+    const repository = makeRepo();
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
+    await service.setReplyAnchor(7, 'om_trigger');
+    expect(repository.setReplyAnchor).toHaveBeenCalledWith(7, 'om_trigger');
+    await service.clearReplyAnchor(7);
+    expect(repository.clearReplyAnchor).toHaveBeenCalledWith(7);
+    // 空 messageId 视为 no-op。
+    await service.setReplyAnchor(7, null);
+    await service.setReplyAnchor(7, '');
+    expect(repository.setReplyAnchor).toHaveBeenCalledTimes(1);
+    // 写/清失败不外抛（锚点失败不阻断执行主流程），且必须留下 warn 排障痕迹。
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const failing = makeRepo({
+        setReplyAnchor: vi.fn(async () => { throw new Error('db down'); }),
+        clearReplyAnchor: vi.fn(async () => { throw new Error('db down'); }),
+      });
+      const serviceFailing = new FeishuMessageService(failing as never, { create: vi.fn() } as never, 20, 120);
+      await expect(serviceFailing.setReplyAnchor(7, 'om_1')).resolves.toBeUndefined();
+      await expect(serviceFailing.clearReplyAnchor(7)).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('记录飞书触发消息锚点失败'));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('清除飞书触发消息锚点失败'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('finds the reply anchor and degrades to null on failure', async () => {
+    const repository = makeRepo({ findReplyAnchorMessageId: vi.fn(async () => 'om_trigger') });
+    const service = new FeishuMessageService(repository as never, { create: vi.fn() } as never, 20, 120);
+    expect(await service.findReplyAnchorMessageId(7, { appId: '1', chatId: 'oc_group', chatType: 'group' })).toBe('om_trigger');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const failing = makeRepo({ findReplyAnchorMessageId: vi.fn(async () => { throw new Error('db down'); }) });
+      const serviceFailing = new FeishuMessageService(failing as never, { create: vi.fn() } as never, 20, 120);
+      expect(await serviceFailing.findReplyAnchorMessageId(7, { appId: '1', chatId: 'oc_group', chatType: 'group' })).toBeNull();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('查询飞书reply锚点失败'));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('finds session channel and clears the awaiting-title flag tolerantly', async () => {

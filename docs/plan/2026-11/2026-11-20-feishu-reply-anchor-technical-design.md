@@ -1,15 +1,15 @@
 # 飞书图片 / 文件引用锚点改为「本轮触发消息」技术方案
 
-- 状态：待评审（本文只做方案，不含实现）
+- 状态：已评审可行（2026-11-21 评审，4 处事实性偏差与 1 处加固已直接合入本文；本文只做方案，不含实现）
 - 日期：2026-11-20
 - 一句话：`send_image` / `send_file` 推到飞书时，改为引用**本轮执行的那条触发消息**；没有触发消息的主动推送（定时任务、平台排队）保持今天的「最新入站」口径。
 - 关联代码（撰写时已核实的现状，全部为当前 `main`）：
   - 发送工具：`backend-ts/src/harness/tool/impl/send-media-tool.ts:291-324`（`FeishuSendStrategy`）
-  - 发送目标解析：`backend-ts/src/app-harness-engine.ts:244-271`（`feishuMediaSendSupport.resolveSendTarget`）
+  - 发送目标解析：`backend-ts/src/app-harness-engine.ts:249-277`（`feishuMediaSendSupport.resolveSendTarget`，锚点调用在 `:257`）
   - 锚点查询：`backend-ts/src/feishu/message.repository.ts:337-356`（`findLatestInboundMessageId`）
   - 发送落地：`backend-ts/src/feishu/media-sender.ts:62-82`（`sendFeishuMediaMessage`）
   - 会话→通道绑定表：`backend-ts/db/migration/V101__feishu_p2p_multi_session.sql:19-30`（`feishu_session_channel`）
-  - 文本回复对照路径：`backend-ts/src/feishu/inbound-processor.ts:313-314` → `app-feishu-handler.ts:428` → `feishu-client.ts:58-71`
+  - 文本回复对照路径：`backend-ts/src/feishu/inbound-processor.ts:313-314` → `app-feishu-handler.ts:428` → `backend-ts/src/feishu-client.ts:58-71`（注意 `feishu-client.ts` 在 `src/` 根，不在 `src/feishu/`）
 - 关联方案：[2026-11-18-unified-send-media-technical-design.md](./2026-11-18-unified-send-media-technical-design.md)（本次改动落在其「通道推送」一侧，不影响会话副本）
 
 ## 0. 名词约定
@@ -39,9 +39,9 @@
 
 ### 1.2 与文本回复的口径差异
 
-文本最终回复走的是另一条路：`inbound-processor.ts:313-314` 把 `first.event` 传给 `sendReply`，`app-feishu-handler.ts:428` → `feishu-client.ts:58-71` 直接用 `event.messageId` 做 `message.reply`，**锚定的是触发消息**。
+文本最终回复走的是另一条路：`inbound-processor.ts:313-314` 把 `first.event` 传给 `sendReply`，`app-feishu-handler.ts:428` → `feishu-client.ts:58-71` 直接用 `event.messageId` 做 `message.reply`，**锚定的是触发消息**（仅群聊；私聊文本因 `chatType === 'group'` 分支不命中走 `message.create()`，本就不带引用）。
 
-于是同一轮里，文字回 A、图片回 B（B = 发图那一刻群里的最后一条消息）。
+于是群聊里同一轮「文字回 A、图片回 B（B = 发图那一刻群里的最后一条消息）」；私聊里则是「文本无引用、图片回最新一条」。
 
 ### 1.3 线上证据（2026-11-20 09:02 那条）
 
@@ -73,7 +73,7 @@
 
 ### 2.2 非目标
 
-- 不改文本回复链路（`sendFeishuText` 已经是触发消息锚定）。
+- 不改文本回复链路（群聊 `sendFeishuText` 已是触发消息锚定；私聊文本本就不带引用，改后会出现「私聊媒体有引用、文本无引用」的不对称，属有意保留——媒体引用突出附件归属，文本紧跟在进度卡片之后不致歧义）。
 - 不给 `send_image` / `send_file` 增加「指定引用某条消息」的参数：模型不能自选锚点。
 - 不改 `feishu_group_message_log` 结构，不改群上下文注入与水位线逻辑。
 - 不迁移历史消息、不做存量回填（新列 `NULL` 即旧口径）。
@@ -175,7 +175,7 @@ async findReplyAnchorMessageId(sessionId: number, channel): Promise<string | nul
 
 ### 4.4 发送目标解析（`app-harness-engine.ts`）
 
-只改一行调用（`:252`）：
+只改一行调用（`:257`）：
 
 ```ts
 const replyMessageId = await d.feishuMessageService.findReplyAnchorMessageId(sessionId, channel);
@@ -192,13 +192,15 @@ private async runExecution(sessionId, context, message, executionUserId, cancelF
   let executionId = '';
   let cardListener: FeishuCardProgressListener | null = null;
   try {
-    await this.options.replyAnchor?.begin(sessionId, context.messageId);   // ← 新增：本轮锚点
+    try { await this.options.replyAnchor?.begin(sessionId, context.messageId); }  // ← 新增：本轮锚点
+    catch (error) { console.warn(`记录飞书触发消息锚点失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`); }
     try { /* 进度卡片（不变） */ } catch { /* 不变 */ }
     …（原有执行体不变）
   } catch (error) {
     …（原有失败分支不变）
   } finally {
-    await this.options.replyAnchor?.end(sessionId);                        // ← 新增：轮次结束清空
+    try { await this.options.replyAnchor?.end(sessionId); }                       // ← 新增：轮次结束清空
+    catch (error) { console.warn(`清除飞书触发消息锚点失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`); }
   }
 }
 ```
@@ -216,8 +218,10 @@ replyAnchor?: {
 要点：
 
 - **三个 return（CANCELLED / COMPLETED / FAILED）都经过 finally**，锚点不会漏清。
+- **`begin` / `end` 各自包一层本地 `try/catch`**：服务层（message.service）已吞错，这里是第二道结构保险——`finally` 里直接 `await end()` 一旦 reject 会**顶掉 try 块的原返回值**（JS 语义），`begin` 抛错则会落进外层 catch 把整轮误标 FAILED。目标 4（锚点失败不阻断主流程）必须由 `runExecution` 自身结构保证，不能依赖端口实现自觉。生产适配器吞错后此层 warn 不会触发，也不会与服务层 warn 双份打日志。
 - 锚点在 `saveUserMessage` 之前写入，与 `harnessService.execute` 内的工具调用之间有足够时序余量。
 - 排队消息在自己的轮次开始时才写锚点（`reconstructFromQueue` 已恢复 `context.messageId`，`agent-inbound-handler.ts:147`），因此"排队两条各引各的"天然成立。
+- 同一会话轮次经 busy/mutex 串行，上一轮 `finally` 清空先于下一轮 `begin` 写入，中断/排队接力场景不会出现「新一轮锚点被旧一轮收尾清掉」。
 
 ### 4.6 装配（`app-feishu-handler.ts`）
 
@@ -288,7 +292,7 @@ async function sendFeishuMediaMessage(client, target, msgType, content, label) {
 | 6 | 合并窗口批内多条 | 引用最后入库的一条 | 引用批内首条（与文本回复一致） |
 | 7 | 定时任务播报（含图片） | 引用群里最新一条 | **不变**（锚点已清空 → 最新一条） |
 | 8 | 触发消息被撤回后发图 | reply 失败，整次发送失败 | 降级普通消息，图仍发到群里 |
-| 9 | 会话缺 `feishu_session_channel` 行 | 无锚点 → `message.create()` | 不变（UPDATE 0 行 / SELECT 无行 → create） |
+| 9 | 会话缺 `feishu_session_channel` 行 | 无锚点 → `message.create()` | 行为不变：`resolveSendTarget` 解析不到目标即报错/回落父会话，锚点查询不会执行；仓储/服务的「SELECT 无行、锚点空串 → 回退」分支保留作兜底（UPDATE 0 行同样静默） |
 | 10 | 边路任务回落父会话发图 | 引用父会话最新入站 | 引用父会话本轮触发消息 |
 
 ## 6. 兼容与迁移
@@ -298,7 +302,7 @@ async function sendFeishuMediaMessage(client, target, msgType, content, label) {
 | 迁移 | `V199`，只加列；Flyway 启动执行（`db/flyway.ts` + `create_lock`）。旧实例不读该列，蓝绿期间双向兼容 |
 | 存量数据 | 不回填。`NULL` 的行为与今天完全一致，直到对应会话下一轮触发写入 |
 | 回滚 | 回退代码即可；列留在库里无副作用（旧代码不 SELECT 它） |
-| 方法改名 | `findLatestInboundMessageId` → `findReplyAnchorMessageId`，调用点仅 3 处：`app-harness-engine.ts:252`、`message.service.ts:120-122`、`message.service.spec.ts:38`（替身）。仓储里的私有实现保留原名 `latestInboundMessageId` 作为回退分支 |
+| 方法改名 | `findLatestInboundMessageId` → `findReplyAnchorMessageId`，调用点仅 3 处：`app-harness-engine.ts:257`、`message.service.ts:120-122`、`message.service.spec.ts:38`（替身）。仓储里的私有实现保留原名 `latestInboundMessageId` 作为回退分支 |
 | 测试替身 | `replyAnchor` 为可选端口，`agent-inbound-handler.spec.ts` 现有 options 不需要补字段；只在新增用例里注入 |
 
 ## 7. 风险与对策
@@ -320,7 +324,7 @@ async function sendFeishuMediaMessage(client, target, msgType, content, label) {
 |---|---|
 | `feishu/message.repository.spec.ts` | ① 锚点非空 → 只查 `feishu_session_channel`，不查日志表；② 锚点为空 / 无行 → 回退 p2p、话题根、群最新三分支（各一条）；③ `setReplyAnchor` / `clearReplyAnchor` 的 SQL 与参数断言 |
 | `feishu/message.service.spec.ts` | ① 仓储抛错 → `findReplyAnchorMessageId` 返回 null 且 warn；② `setReplyAnchor` / `clearReplyAnchor` 异常不外抛；③ 空 messageId no-op |
-| `feishu/agent-inbound-handler.spec.ts` | ① 普通轮次：`begin(sessionId, messageId)` 在 `saveUserMessage` 前调用、`end(sessionId)` 在结束后调用；② 排队轮次：`begin` 使用队列行恢复的 `messageId`；③ 执行抛错 / 取消：`end` 仍被调用；④ `begin` 抛错时执行继续（端口内部吞错，用真实 service 替身校验） |
+| `feishu/agent-inbound-handler.spec.ts` | ① 普通轮次：`begin(sessionId, messageId)` 在 `saveUserMessage` 前调用、`end(sessionId)` 在结束后调用；② 排队轮次：`begin` 使用队列行恢复的 `messageId`；③ 执行抛错 / 取消：`end` 仍被调用；④ 注入直接抛错的端口替身：`begin` / `end` 抛错不外溢、轮次终态与返回值不受影响（校验 runExecution 自身的 try/catch，而非依赖 service 吞错） |
 | `feishu/media-sender.spec.ts` | ① `reply` 返回 `code≠0` → 走 `create` 并返回新 messageId；② `reply` 抛异常 → 直接抛、不调 `create`；③ 无 `replyMessageId` → 直接 `create`（现有用例保留） |
 
 ### 8.2 手工验证（测试群）
@@ -353,12 +357,12 @@ FROM feishu_session_channel WHERE session_id = ?;
 | 6 | `app-feishu-handler.ts` | 端口装配 | +4 |
 | 7 | `feishu/media-sender.ts` | reply 失败降级 | +12 / -4 |
 | 8 | 三个 spec + `media-sender.spec.ts` | 见 §8.1 | +70 |
-| 9 | `CHANGELOG.md`、`docs/agents/feishu-thread-push.md` | 变更记录与「图片引用口径」补一段 | +12 |
+| 9 | `changelog/unreleased/YYYY-MM-DD-feishu-reply-anchor.md` | 按 unreleased 约定新增碎片（只写 `### 后端` 小节和条目；根 `CHANGELOG.md` 是索引勿手改）。「图片引用口径」的完整说明由本方案文档承担，`docs/agents/` 目录不存在、不新建运维文档 | +8 |
 
-合计 **9 项改动、13 个文件**（1 个迁移 + 6 个源码 + 4 个 spec + CHANGELOG 与 1 篇 agents 文档），约 **165 行**，其中生产代码约 75 行。
+合计 **9 项改动、12 个文件**（1 个迁移 + 6 个源码 + 4 个 spec + 1 个 changelog 碎片），约 **160 行**，其中生产代码约 75 行。
 
 实施顺序：迁移 → 仓储/服务 → 装配与轮次生命周期 → 发送侧降级 → 单测 → 文档。
-验证：`npm run build`、`npx vitest run src/feishu`；发布走 `bash deploy-mao.sh --backend-only`（含迁移，蓝绿重启）。
+验证：`npm run build`、`npx vitest run src/feishu`。发布：工作区提交并推 `origin/main`，线上在 `/opt/mao` 拉取后跑 `restart-backend.sh`（Flyway 随启动执行 V199，蓝绿重启；仓库内部署脚本只有 admin/desktop 两个，后端无 `deploy-mao.sh`）。
 
 ## 10. 待确认
 

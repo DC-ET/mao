@@ -254,7 +254,7 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
         const target = feishuSendTargetOf(channel.appId, channel.chatId);
         // 边路回落到父会话时，p2p 消息落库要记到真正命中的会话上（边路在飞书侧没有行）
         target.sessionId = sessionId;
-        const replyMessageId = await d.feishuMessageService.findLatestInboundMessageId(sessionId, channel);
+        const replyMessageId = await d.feishuMessageService.findReplyAnchorMessageId(sessionId, channel);
         if (replyMessageId != null) target.replyMessageId = replyMessageId;
         return target;
       },

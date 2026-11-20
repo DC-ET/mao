@@ -58,7 +58,9 @@ export function feishuFileTypeOf(fileName: string): 'opus' | 'mp4' | 'pdf' | 'do
   return 'stream';
 }
 
-/** 发送媒体消息；群聊优先用 message.reply() 回复触发消息（话题群中落入当前话题），私聊或无 replyMessageId 时回退 message.create()。成功返回飞书 message_id。 */
+/** 发送媒体消息；有 replyMessageId 时优先 message.reply()（锚定本轮触发消息，话题群中落入当前话题），
+ *  飞书明确拒绝（非 0 code，典型：锚点消息已撤回/删除）时降级 message.create()；网络超时等抛异常不降级，
+ *  避免未知结果下重发。无 replyMessageId（主动推送）时直接 message.create()。成功返回飞书 message_id。 */
 async function sendFeishuMediaMessage(
   client: Lark.Client,
   target: FeishuSendTarget,
@@ -66,15 +68,22 @@ async function sendFeishuMediaMessage(
   content: string,
   label: string,
 ): Promise<string | null> {
-  const response = target.replyMessageId != null && target.replyMessageId !== ''
-    ? await client.im.v1.message.reply({
-        path: { message_id: target.replyMessageId },
-        data: { msg_type: msgType, content },
-      })
-    : await client.im.v1.message.create({
-        params: { receive_id_type: target.receiveIdType },
-        data: { receive_id: target.receiveId, msg_type: msgType, content },
-      });
+  const replyId = target.replyMessageId;
+  if (replyId != null && replyId !== '') {
+    const replied = await client.im.v1.message.reply({
+      path: { message_id: replyId },
+      data: { msg_type: msgType, content },
+    });
+    if (Number(replied.code ?? 0) === 0) {
+      return (replied as { data?: { message_id?: string } }).data?.message_id ?? null;
+    }
+    // 触发消息被撤回/删除等明确拒绝：降级为普通消息，避免整次发送失败（reply 原因只进日志，create 失败抛 create 的 code/msg）。
+    console.warn(`飞书${label}消息 reply 失败，降级为普通消息: messageId=${replyId}, code=${replied.code}, msg=${replied.msg}`);
+  }
+  const response = await client.im.v1.message.create({
+    params: { receive_id_type: target.receiveIdType },
+    data: { receive_id: target.receiveId, msg_type: msgType, content },
+  });
   if (Number(response.code ?? 0) !== 0) {
     throw new Error(`飞书${label}消息发送失败: code=${response.code ?? 'unknown'}, msg=${response.msg ?? 'no message'}`);
   }

@@ -89,8 +89,13 @@ export interface FeishuMessageRepository {
   findSessionChannel(sessionId: number): Promise<{ sessionId: number; appId: string; chatId: string; chatType: 'p2p' | 'group'; awaitingFirstMessageTitle: number } | null>;
   /** 清除「等待首条消息命名」标志（命名完成后调用，幂等）。 */
   clearAwaitingFirstMessageTitle(sessionId: number): Promise<void>;
-  /** 查询会话最新入站消息 ID（用于 reply 发送）。私聊查 feishu_p2p_message，群聊查 feishu_group_message_log，话题查 feishu_thread_session.root_message_id。未找到返回 null。 */
-  findLatestInboundMessageId(sessionId: number, channel: { appId: string; chatId: string; chatType: 'p2p' | 'group' }): Promise<string | null>;
+  /** 记录本轮触发消息作为 media reply 锚点（runExecution 开始时调用；UPDATE 0 行静默跳过）。 */
+  setReplyAnchor(sessionId: number, messageId: string): Promise<void>;
+  /** 清空 reply 锚点：主动推送回到「最新入站」口径（幂等）。 */
+  clearReplyAnchor(sessionId: number): Promise<void>;
+  /** reply 锚点：优先本轮触发消息（feishu_session_channel.last_trigger_message_id）；
+   *  为空 / 无行时回退最新入站（私聊 feishu_p2p_message、话题 feishu_thread_session.root_message_id、群 feishu_group_message_log）。 */
+  findReplyAnchorMessageId(sessionId: number, channel: { appId: string; chatId: string; chatType: 'p2p' | 'group' }): Promise<string | null>;
   /** 查询话题会话的话题根消息 ID（reply 该 ID 会落入当前话题）；非话题会话返回 null。 */
   findThreadRootMessageId(sessionId: number): Promise<string | null>;
 }
@@ -334,7 +339,33 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
     );
   }
 
-  async findLatestInboundMessageId(sessionId: number, channel: { appId: string; chatId: string; chatType: 'p2p' | 'group' }): Promise<string | null> {
+  async setReplyAnchor(sessionId: number, messageId: string): Promise<void> {
+    // 历史异常数据缺通道行时 UPDATE 命中 0 行：静默跳过，读取侧自然回退最新入站。
+    await this.db.execute(
+      'UPDATE feishu_session_channel SET last_trigger_message_id = ? WHERE session_id = ?',
+      [messageId, sessionId],
+    );
+  }
+
+  async clearReplyAnchor(sessionId: number): Promise<void> {
+    await this.db.execute(
+      'UPDATE feishu_session_channel SET last_trigger_message_id = NULL WHERE session_id = ?',
+      [sessionId],
+    );
+  }
+
+  async findReplyAnchorMessageId(sessionId: number, channel: { appId: string; chatId: string; chatType: 'p2p' | 'group' }): Promise<string | null> {
+    const row = await this.db.queryOne<{ lastTriggerMessageId: string | null }>(
+      'SELECT last_trigger_message_id FROM feishu_session_channel WHERE session_id = ? LIMIT 1',
+      [sessionId],
+    );
+    const anchor = row?.lastTriggerMessageId;
+    if (anchor != null && anchor !== '') return anchor;
+    return this.latestInboundMessageId(sessionId, channel);
+  }
+
+  /** 回退分支：会话无锚点时按旧口径取最新入站。私聊查 feishu_p2p_message，群聊查 feishu_group_message_log，话题查 feishu_thread_session.root_message_id。 */
+  private async latestInboundMessageId(sessionId: number, channel: { appId: string; chatId: string; chatType: 'p2p' | 'group' }): Promise<string | null> {
     if (channel.chatType === 'p2p') {
       const row = await this.db.queryOne<{ messageId: string }>(
         'SELECT message_id FROM feishu_p2p_message WHERE session_id = ? AND direction = ? ORDER BY created_at DESC LIMIT 1',
