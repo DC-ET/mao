@@ -2,7 +2,7 @@
   <ResponsiveDialog
     :model-value="visible"
     :title="dialogTitle"
-    width="580px"
+    width="720px"
     @update:model-value="$emit('update:visible', $event)"
     @close="$emit('update:visible', false)"
   >
@@ -128,7 +128,9 @@
           <el-form-item v-else label="API Key">
             <span class="form-hint-inline">ECP 模式不使用固定 Key；原 Key 保留在库中，切回「API Key」即可继续使用</span>
           </el-form-item>
-          <el-form-item v-if="isTextType" label="输入价格">
+        </el-tab-pane>
+        <el-tab-pane v-if="isTextType" label="价格" name="price">
+          <el-form-item label="输入价格">
             <el-input-number
               v-model="form.priceInput"
               :min="0"
@@ -141,7 +143,7 @@
             />
             <span class="form-hint-inline">每百万非缓存输入 Token 价格（成本单位；仅影响后续调用，不追溯历史）</span>
           </el-form-item>
-          <el-form-item v-if="isTextType" label="缓存读价格">
+          <el-form-item label="缓存读价格">
             <el-input-number
               v-model="form.priceCacheRead"
               :min="0"
@@ -154,7 +156,7 @@
             />
             <span class="form-hint-inline">每百万缓存命中输入 Token 价格（Anthropic cache_read / OpenAI cached_tokens）</span>
           </el-form-item>
-          <el-form-item v-if="isTextType" label="缓存写价格">
+          <el-form-item label="缓存写价格">
             <el-input-number
               v-model="form.priceCacheWrite"
               :min="0"
@@ -167,7 +169,7 @@
             />
             <span class="form-hint-inline">每百万缓存写入 Token 价格（Anthropic cache_creation；OpenAI 系无此概念可留空）</span>
           </el-form-item>
-          <el-form-item v-if="isTextType" label="输出价格">
+          <el-form-item label="输出价格">
             <el-input-number
               v-model="form.priceOutput"
               :min="0"
@@ -243,9 +245,9 @@ const apiProtocolSuffix = computed(() => {
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
 const providerOptions = ref<string[]>([])
-const activeTab = ref<'basic' | 'access'>('basic')
+const activeTab = ref<'basic' | 'access' | 'price'>('basic')
 
-const FIELD_TAB: Record<string, 'basic' | 'access'> = {
+const FIELD_TAB: Record<string, 'basic' | 'access' | 'price'> = {
   modelType: 'basic',
   name: 'basic',
   modelId: 'basic',
@@ -334,6 +336,10 @@ function resetForm() {
     isDefault: false
   })
 }
+
+watch(() => form.modelType, (type) => {
+  if (type !== 'text' && activeTab.value === 'price') activeTab.value = 'basic'
+})
 
 watch(() => props.visible, (val) => {
   if (!val) return
