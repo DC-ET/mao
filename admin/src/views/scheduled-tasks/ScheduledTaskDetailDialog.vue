@@ -39,6 +39,9 @@
         <span v-else class="text-muted">-</span>
       </el-descriptions-item>
       <el-descriptions-item label="连续失败">{{ task.consecutiveFailures ?? 0 }}</el-descriptions-item>
+      <el-descriptions-item label="失败重试">{{ retryMaxLabel(task.retryMax) }}</el-descriptions-item>
+      <el-descriptions-item label="重试间隔">{{ retryIntervalLabel(task.retryIntervalMinutes) }}</el-descriptions-item>
+      <el-descriptions-item label="错过补偿">{{ missedPolicyLabel(task.missedPolicy) }}</el-descriptions-item>
       <el-descriptions-item label="触发次数">{{ task.fireCount }}</el-descriptions-item>
       <el-descriptions-item label="上次触发">{{ formatDateTime(task.lastFireTime) }}</el-descriptions-item>
       <el-descriptions-item label="下次触发">{{ formatDateTime(task.nextFireTime) }}</el-descriptions-item>
@@ -93,7 +96,7 @@ import { ElMessage } from 'element-plus'
 import { api } from '../../api'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 import { formatDateTime } from '../../utils/datetime'
-import { execStatusLabel, execStatusTagType } from './task-display'
+import { execStatusLabel, execStatusTagType, missedPolicyLabel, retryIntervalLabel, retryMaxLabel } from './task-display'
 import type { ScheduledTaskRow, ScheduledTaskRunRow } from './types'
 
 const runs = ref<ScheduledTaskRunRow[]>([])

@@ -16,6 +16,30 @@ export function execStatusLabel(status: string | null | undefined): string {
   return EXEC_STATUS_LABELS[status] || status
 }
 
+/** 与编辑表单、后端 normalize 同一口径：缺省按默认重试 2 次、间隔 5 分钟、补最近一次。 */
+const DEFAULT_RETRY_MAX = 2
+const DEFAULT_RETRY_INTERVAL_MINUTES = 5
+
+function finiteInt(value: number | null | undefined, fallback: number): number {
+  if (value == null || !Number.isFinite(Number(value))) return fallback
+  return Math.trunc(Number(value))
+}
+
+/** 同一次计划触发上的额外重试次数，不含首次执行。0 表示失败后不自动重试。 */
+export function retryMaxLabel(value: number | null | undefined): string {
+  const n = finiteInt(value, DEFAULT_RETRY_MAX)
+  if (n <= 0) return '不重试'
+  return `${n} 次（不含首次）`
+}
+
+export function retryIntervalLabel(value: number | null | undefined): string {
+  return `${finiteInt(value, DEFAULT_RETRY_INTERVAL_MINUTES)} 分钟`
+}
+
+export function missedPolicyLabel(value: string | null | undefined): string {
+  return value === 'SKIP' ? '只记录不补' : '补最近一次'
+}
+
 export function execStatusTagType(status: string | null | undefined): TagType {
   switch (status) {
     case 'COMPLETED': return 'success'
