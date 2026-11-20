@@ -122,7 +122,7 @@ v1 的两个关键卖点是"public 保留共享投放"与"经验库原位不动"
 ### 2.6 决策点（v2）——**已全部拍板（2026-11-09）**
 
 > 决策记录：形态 **C（双树私有、零公共区、经验库原位）**；本次**仅做 share 维度**（五件套等另立项）；**代码零兼容 + 脚本化迁移**。正式技术方案与迁移脚本见：
-> - `docs/plan/2026-11-09-share-per-agent-isolation-technical-design.md`
+> - `docs/plan/2026-11/2026-11-09-share-per-agent-isolation-technical-design.md`
 > - `scripts/migrate-share-per-agent.sh`（plan 只读预演 / apply phase1-3 / verify）
 
 | # | 决策点 | 结论 |

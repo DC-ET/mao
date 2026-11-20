@@ -2,7 +2,7 @@
  * 逻辑 BUG 审查第二轮（2026-10-29）——agent-cli 本地文件工具口径 + localShell 运行时。
  *
  * 每个测试断言「正确行为」，当前代码因对应 BUG 而失败——测试失败即证明 BUG 真实存在。
- * 配套文档：docs/code-review/2026-10-29-logic-bug-audit-round2.md
+ * 配套文档：docs/code-review/2026-10/2026-10-29-logic-bug-audit-round2.md
  */
 import fs from 'node:fs';
 import os from 'node:os';

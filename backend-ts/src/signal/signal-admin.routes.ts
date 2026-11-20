@@ -9,7 +9,7 @@ import { isSignalCompareMode, isSignalWatcherStatus } from './types.js';
 import type { WatcherService } from './watcher.service.js';
 
 /**
- * 信号哨兵管理后台只读接口（docs/plan/2026-10-11-signal-watcher-technical-design.md §5.9）：
+ * 信号哨兵管理后台只读接口（docs/plan/2026-10/2026-10-11-signal-watcher-technical-design.md §5.9）：
  * 清单分页 + 筛选、单条配置详情、轮询记录，全部只读，`signal:read` 权限；
  * 详情与记录复用用户侧的脱敏口径（敏感请求头打码、body 只回长度）。
  */

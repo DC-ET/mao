@@ -1,6 +1,6 @@
 # 工作区规则会话级快照（排障与运维）
 
-> 面向：运维 / 客服 / 排障。技术方案见 `docs/plan/2026-10-14-workspace-rules-snapshot-technical-design.md`。
+> 面向：运维 / 客服 / 排障。技术方案见 `docs/plan/2026-10/2026-10-14-workspace-rules-snapshot-technical-design.md`。
 > 关键词：workspace-rules、前缀缓存塌陷、8~9k 命中指纹、快照、排障日志。
 
 ## 1. 一句话说明

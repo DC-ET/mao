@@ -1,5 +1,5 @@
 -- 信号哨兵：HTTP 探针轮询外部信号，只在判定值变化时触发 Agent 运行
--- （docs/plan/2026-10-11-signal-watcher-technical-design.md §4）
+-- （docs/plan/2026-10/2026-10-11-signal-watcher-technical-design.md §4）
 CREATE TABLE IF NOT EXISTS `signal_watcher` (
     `id`                    BIGINT PRIMARY KEY AUTO_INCREMENT,
     `user_id`               BIGINT NOT NULL COMMENT '属主',

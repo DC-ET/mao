@@ -1,4 +1,4 @@
-// 回归：工作区文件跨面板拖拽（技术方案 docs/plan/2026-11-07-workspace-drag-into-chat-technical-design.md）。
+// 回归：工作区文件跨面板拖拽（技术方案 docs/plan/2026-11/2026-11-07-workspace-drag-into-chat-technical-design.md）。
 //
 // 纯函数用 DataTransfer stub 直测；组件接线无挂载测试先例，
 // 与 chat-a11y.test.ts 同构：readFileSync 源码级静态断言，锁死接线与既有行为不退化。

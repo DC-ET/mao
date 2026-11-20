@@ -1,5 +1,5 @@
 /**
- * 每日运营摘要域类型（技术方案 docs/plan/2026-10-12-daily-digest-technical-design.md §5.1）。
+ * 每日运营摘要域类型（技术方案 docs/plan/2026-10/2026-10-12-daily-digest-technical-design.md §5.1）。
  * 六个板块全部来自既有表聚合；板块无数据时服务层置 null（空板块不渲染）。
  */
 

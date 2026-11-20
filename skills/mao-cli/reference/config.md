@@ -86,7 +86,7 @@
 | 管理后台回调 URL | `https://mao.example.com/admin/auth/ecp/feishu-callback` | 同上 |
 | 通道公网回调 URL | 空 | 飞书通道「点我绑定」用，须在 ECP 登记；留空回落桌面回调 URL，此时外网（无内网/VPN）用户点卡片会卡在回调页 |
 
-升级需执行 V111 迁移。`mao-cli` 本期不提供浏览器飞书登录，仅 Web/管理后台/Electron 入口。设计见 `docs/plan/2026-09-14-ecp-native-login-technical-design.md`。
+升级需执行 V111 迁移。`mao-cli` 本期不提供浏览器飞书登录，仅 Web/管理后台/Electron 入口。设计见 `docs/plan/2026-09/2026-09-14-ecp-native-login-technical-design.md`。
 
 ECP 换票响应的 `data.user` 含可选 `avatar`：合法头像地址（http(s) 或 `/` 开头、无空白、≤512 字符）在首次自动建号时写入用户头像，缺失、为空或非法值忽略且不影响换票；已有账号的头像永不被覆盖。renew 响应不含用户信息，与此无关。
 

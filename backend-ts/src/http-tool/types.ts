@@ -1,5 +1,5 @@
 /**
- * 自定义 HTTP 工具域类型与常量（docs/plan/2026-10-21-custom-http-tools-agent-scoped-technical-design.md §5.1）。
+ * 自定义 HTTP 工具域类型与常量（docs/plan/2026-10/2026-10-21-custom-http-tools-agent-scoped-technical-design.md §5.1）。
  * 定义态（管理员 CRUD）在此；运行态装配见 harness/core/custom-http-tools-catalog.ts，
  * 执行内核见 harness/tool/impl/http-api-executor.ts。
  * 归属模型：管理员配置 + 按 Agent 关联（agent.http_tool_ids），无属主列。

@@ -1,7 +1,7 @@
 # 子代理追问（delegate_followup）技术方案
 
 > 状态：需求已与用户逐项确认，本文为可执行方案（未改任何代码）
-> 关联文档：[subagent-visibility.md](./subagent-visibility.md)、[2026-08-04-loop-compaction-reuse-session-design.md](../2026-08-04-loop-compaction-reuse-session-design.md)
+> 关联文档：[subagent-visibility.md](./subagent-visibility.md)、[2026-08-04-loop-compaction-reuse-session-design.md](../2026-08/2026-08-04-loop-compaction-reuse-session-design.md)
 
 ## 1. 需求背景
 

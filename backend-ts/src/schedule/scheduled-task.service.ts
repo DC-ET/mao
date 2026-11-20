@@ -892,7 +892,7 @@ export class ScheduledTaskService {
 
   /**
    * 手动「立即执行」试跑入口（POST /v1/scheduled-tasks/:id/run）。
-   * 独立窄入口（技术方案 docs/plan/2026-11-03-scheduled-task-run-now-technical-design.md D1-D5），
+   * 独立窄入口（技术方案 docs/plan/2026-11/2026-11-03-scheduled-task-run-now-technical-design.md D1-D5），
    * 与 executeTask 的关键差异：
    * - 不推进 nextFireTime、不改写 finished/once；PAUSED / 已完结任务允许试跑且跑完保持原状态（D2/D5）；
    * - 运行行 attempt=0 标记手动：finishRun 不重试、不计连续失败（D4）；

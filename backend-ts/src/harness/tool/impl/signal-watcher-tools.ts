@@ -4,7 +4,7 @@ import type { SessionService } from '../../deps.js';
 import type { WatcherService } from '../../../signal/watcher.service.js';
 
 /**
- * 信号哨兵内置工具（V189，docs/plan/2026-11-10-shell-script-signal-watcher-technical-design.md §4 步骤 6）。
+ * 信号哨兵内置工具（V189，docs/plan/2026-11/2026-11-10-shell-script-signal-watcher-technical-design.md §4 步骤 6）。
  *
  * 只开放「列表 + 创建」两面：哨兵的修改、启停、删除是 UI 职责（表单已有完整编辑能力），
  * 避免 Agent 擅自改用户既有哨兵的判定语义。创建走 WatcherService.create 既有校验链

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 /**
- * 2026-11-13 逻辑 BUG 审查的存在性验证用例（对应 docs/code-review/2026-11-13-logic-bug-review-01.md）。
+ * 2026-11-13 逻辑 BUG 审查的存在性验证用例（对应 docs/code-review/2026-11/2026-11-13-logic-bug-review-01.md）。
  *
  * 惯例同 logic-bug-review-2026-11-04/11：用例按「正确契约」书写，在缺陷代码上真实失败即确认缺陷；
  * 确认后以 `bugIt = it.fails` 固化为 expected-failure 保持 CI 绿色，修复后转正为普通 it 作为回归。

@@ -4,7 +4,7 @@ import type { ContainerEntry } from './container-registry.js';
 import type { ChannelConnection } from './runtime-channel-server.js';
 
 /**
- * 宿主侧脚本探针桥（docs/plan/2026-11-10-script-probe-container-isolation-technical-design.md §4 步骤 4）。
+ * 宿主侧脚本探针桥（docs/plan/2026-11/2026-11-10-script-probe-container-isolation-technical-design.md §4 步骤 4）。
  * Docker 模式把探针送进属主容器；失败抛 ScriptProbeInfrastructureError，调用方不得改在宿主执行。
  */
 

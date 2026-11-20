@@ -214,7 +214,7 @@ describe('getToolInputPreview 子代理与定时任务/微信补全（0.0.468）
   })
 })
 
-describe('BUG-7：码点安全截断（docs/code-review/2026-11-10-logic-bug-audit-01.md）', () => {
+describe('BUG-7：码点安全截断（docs/code-review/2026-11/2026-11-10-logic-bug-audit-01.md）', () => {
   const LONE_HIGH = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/
   const LONE_LOW = /(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
 

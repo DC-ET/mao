@@ -1,6 +1,6 @@
 /**
  * 开放接口域共享类型（API Token / 入站 Webhook 触发器 / 出站事件订阅）。
- * 对应技术方案 docs/plan/2026-10-05-open-api-webhook-technical-design.md。
+ * 对应技术方案 docs/plan/2026-10/2026-10-05-open-api-webhook-technical-design.md。
  */
 
 /** openapi 域自有 scope 字典（不进 V121 permission 目录，见技术方案决策 5）；首期仅 open:run。 */

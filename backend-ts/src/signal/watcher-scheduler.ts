@@ -2,7 +2,7 @@ import { formatDateTime } from '../common/json.js';
 import type { MysqlSignalWatcherRepository } from './signal.repository.js';
 
 /**
- * 信号哨兵轮询调度（docs/plan/2026-10-11-signal-watcher-technical-design.md §5.3）。
+ * 信号哨兵轮询调度（docs/plan/2026-10/2026-10-11-signal-watcher-technical-design.md §5.3）。
  *
  * 结构对齐 `openapi/outbound-delivery.scheduler.ts`：setTimeout 链 + `dispatching`
  * 防重入 + `stopped` 标志 + `execute` 注入（装配层线程池 / 测试同步 runner）。

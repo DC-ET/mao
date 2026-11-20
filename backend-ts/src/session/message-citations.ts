@@ -3,7 +3,7 @@ import type { SessionService } from './session.service.js';
 import { extractCitationMarkers } from './util/citation-markers.js';
 
 /**
- * 回复引用溯源（技术方案 docs/plan/2026-10-12-answer-citations-technical-design.md §5.2）：
+ * 回复引用溯源（技术方案 docs/plan/2026-10/2026-10-12-answer-citations-technical-design.md §5.2）：
  * 任务完成（TASK_COMPLETED）时，从本轮 web_search / open_web_page 的工具结果构建 URL
  * 白名单（registry），对最终回复里的 `[^n^]` 标记做白名单校验，把被引用的条目写入
  * 最终 ASSISTANT 消息的 metadata.citations。编号权在系统：n 即 registry 序号。

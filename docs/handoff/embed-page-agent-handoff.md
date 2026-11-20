@@ -402,12 +402,12 @@ cd ../sdk/embed && npm run build && npm test
 之前已经产生多轮 review 文档，重要报告包括：
 
 ```text
-docs/code-review/2026-09-08-code-review-02.md
-docs/code-review/2026-09-08-code-review-03.md
-docs/code-review/2026-09-08-code-review-04.md
-docs/code-review/2026-09-08-code-review-05.md
-docs/code-review/2026-09-08-code-review-06.md
-docs/code-review/2026-09-08-code-review-07.md
+docs/code-review/2026-09/2026-09-08-code-review-02.md
+docs/code-review/2026-09/2026-09-08-code-review-03.md
+docs/code-review/2026-09/2026-09-08-code-review-04.md
+docs/code-review/2026-09/2026-09-08-code-review-05.md
+docs/code-review/2026-09/2026-09-08-code-review-06.md
+docs/code-review/2026-09/2026-09-08-code-review-07.md
 ```
 
 最近有效报告明确指出：

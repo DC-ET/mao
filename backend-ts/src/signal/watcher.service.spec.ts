@@ -1573,7 +1573,7 @@ describe('存量 {{...}} 字面量头的兼容（review round 1）', () => {
   });
 });
 
-// ── Shell 脚本探针分流（V189，docs/plan/2026-11-10-shell-script-signal-watcher-technical-design.md）──
+// ── Shell 脚本探针分流（V189，docs/plan/2026-11/2026-11-10-shell-script-signal-watcher-technical-design.md）──
 
 describe('SCRIPT 哨兵（V189）', () => {
   let projectsRoot: string;

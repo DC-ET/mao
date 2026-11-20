@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { SignalCompareMode } from './types.js';
 
 /**
- * 判定值计算与 diff 构造（docs/plan/2026-10-11-signal-watcher-technical-design.md §5.6）。
+ * 判定值计算与 diff 构造（docs/plan/2026-10/2026-10-11-signal-watcher-technical-design.md §5.6）。
  * 纯函数，无 IO，便于单测。
  */
 

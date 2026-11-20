@@ -3,7 +3,7 @@ import { ErrorCode } from '../common/error-code.js';
 import { isPrivateOrReservedHostname } from '../common/ssrf.js';
 
 /**
- * 哨兵探针 URL 与请求头校验（docs/plan/2026-10-11-signal-watcher-technical-design.md §5.4）。
+ * 哨兵探针 URL 与请求头校验（docs/plan/2026-10/2026-10-11-signal-watcher-technical-design.md §5.4）。
  * URL 协议 http/https 均可（决策 3），主机名复用 common/ssrf.ts 的私网/环回判定；
  * 请求头禁覆盖 hop-by-hop 与 Host，防走私与探测偏移。
  */

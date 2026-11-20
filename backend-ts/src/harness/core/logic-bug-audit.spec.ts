@@ -5,7 +5,7 @@
  * 每个测试断言"正确行为"，预期会因对应 BUG 而失败——
  * 测试失败即证明 BUG 真实存在。
  *
- * 配套文档：docs/code-review/2026-10-29-logic-bug-audit.md
+ * 配套文档：docs/code-review/2026-10/2026-10-29-logic-bug-audit.md
  */
 import { describe, expect, it, vi } from 'vitest';
 import { writeFileSync } from 'node:fs';

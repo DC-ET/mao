@@ -1,4 +1,4 @@
--- V158: 用户 / 工作区 / 系统三级环境变量（技术方案 docs/plan/2026-10-18-env-variables-technical-design.md）。
+-- V158: 用户 / 工作区 / 系统三级环境变量（技术方案 docs/plan/2026-10/2026-10-18-env-variables-technical-design.md）。
 -- 值一律 AES-CBC 加密（复用 APP_GIT_CREDENTIAL_SECRET），VARCHAR(4096) 存的是密文：
 -- 明文上限 2048 字符 → PKCS7 补齐后 2064 字节 → base64 2752 字符 + IV/分隔符，余量充足。
 

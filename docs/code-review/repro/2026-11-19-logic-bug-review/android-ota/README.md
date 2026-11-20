@@ -1,6 +1,6 @@
 # BUG-2 验证 harness：android OTA 下载完整性（AppUpdatePlugin.downloadToFile）
 
-对应 `docs/code-review/2026-11-19-logic-bug-review-01.md` 的 BUG-2。
+对应 `docs/code-review/2026-11/2026-11-19-logic-bug-review-01.md` 的 BUG-2。
 
 **状态（2026-11-19）：缺陷已修复，本 harness 转正为回归**——期望两个场景均 reject
 （修复前的存在性实证输出保留在文末「修复前实测输出」）。

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // 回归：搜索跳转「焦点回归触发按钮」与目标视图自动聚焦的双向竞争
-// （技术方案 docs/plan/2026-11-07-keyboard-focus-hit-area-technical-design.md 目标 5；
+// （技术方案 docs/plan/2026-11/2026-11-07-keyboard-focus-hit-area-technical-design.md 目标 5；
 //   review round1 Bug 1：跨页路径联动晚于 restoreFocus 运行（网络往返后）抢焦；
 //   review round2 Bug 2：同页边路路径联动先于 restoreFocus 运行，且 tiptap v3 focus
 //   命令把真实 view.focus() 推迟到 requestAnimationFrame，后写落在 restoreFocus 之后——

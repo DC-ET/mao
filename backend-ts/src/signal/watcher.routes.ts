@@ -7,7 +7,7 @@ import { requireJwtIdentity } from '../openapi/access.js';
 import type { WatcherService, WatcherInput } from './watcher.service.js';
 
 /**
- * 信号哨兵用户级 API（docs/plan/2026-10-11-signal-watcher-technical-design.md §5.7）。
+ * 信号哨兵用户级 API（docs/plan/2026-10/2026-10-11-signal-watcher-technical-design.md §5.7）。
  * 全部为登录态 + 本人数据，不加管理权限码。
  */
 

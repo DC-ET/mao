@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// 消息代码块折叠 / 换行增强回归（技术方案 docs/plan/2026-11-08-message-code-block-polish-technical-design.md 步骤 4）：
+// 消息代码块折叠 / 换行增强回归（技术方案 docs/plan/2026-11/2026-11-08-message-code-block-polish-technical-design.md 步骤 4）：
 // - 纯函数：行数统计（去尾空行）、内容哈希键、换行偏好读写；
 // - DOM：enhanceCodeBlocks 的折叠 / 徽标 / 按钮 / 宿主隔离 / Mermaid 跳过 / 损坏跳过 / 幂等；
 // - 委托：toggle 切 Set + class + 文案 + aria-expanded，wrap 写偏好并切换全部增强块；

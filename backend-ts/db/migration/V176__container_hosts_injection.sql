@@ -1,4 +1,4 @@
--- V176: Docker 模式容器 /etc/hosts 注入（技术方案 docs/plan/2026-10-31-container-hosts-injection.md）。
+-- V176: Docker 模式容器 /etc/hosts 注入（技术方案 docs/plan/2026-10/2026-10-31-container-hosts-injection.md）。
 -- 消费方 ContainerHostsResolver：创建容器时把「宿主机 /etc/hosts 自定义条目 + 后台自定义规则」
 -- 逐条转成 docker run --add-host；配置指纹漂移时 ensureRunning 自动重建容器。
 INSERT IGNORE INTO `system_setting` (`setting_key`, `value`, `category`, `description`, `editable`, `is_secret`) VALUES

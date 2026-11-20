@@ -1,7 +1,7 @@
 # 复现脚本 · 2026-10-29 长文本用户消息「文件化」第 1 轮审查
 
 被审对象：工作区未提交改动（`dump_user_messages` 工具 + 粘贴超长文本转附件 + Electron `write_local_text_file`）。
-对应报告：`docs/code-review/2026-10-29-long-user-message-file-export-round1.md`。
+对应报告：`docs/code-review/2026-10/2026-10-29-long-user-message-file-export-round1.md`。
 
 三个脚本都**不修改仓库源码**，只读取现有实现：
 

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 /**
- * 2026-11-19 逻辑 BUG 审查的回归用例（对应 docs/code-review/2026-11-19-logic-bug-review-01.md）。
+ * 2026-11-19 逻辑 BUG 审查的回归用例（对应 docs/code-review/2026-11/2026-11-19-logic-bug-review-01.md）。
  *
  * 惯例同 logic-bug-review-2026-11-04/11/13：用例按「正确契约」书写，在缺陷代码上真实失败即确认缺陷；
  * 确认后曾以 `it.fails` 固化为 expected-failure 保持 CI 绿色，**2026-11-19 同日已修复，

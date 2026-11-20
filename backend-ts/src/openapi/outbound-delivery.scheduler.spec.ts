@@ -3,7 +3,7 @@ import { OutboundDeliveryScheduler } from './outbound-delivery.scheduler.js';
 import type { OutboundDelivery } from './types.js';
 
 /**
- * 抛出型失败收口回归（docs/code-review/2026-11-10-logic-bug-audit-01.md BUG-3）：
+ * 抛出型失败收口回归（docs/code-review/2026-11/2026-11-10-logic-bug-audit-01.md BUG-3）：
  * deliver 的 catch 只打日志会让行停在 SENDING，被 recoverInterrupted 反复复位重认领
  * 且 attempt_count 不推进，永远到不了 3 次重试后的 FAILED 终态与审计。
  * 修复口径：抛出与 result 失败同走 attempt+1 的退避/终态链。

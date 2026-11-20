@@ -1,5 +1,5 @@
 /**
- * 2026-11-07 逻辑 BUG 审查——回归测试（BUG-1 ~ BUG-6，详见 docs/code-review/2026-11-07-logic-bug-review-01.md）。
+ * 2026-11-07 逻辑 BUG 审查——回归测试（BUG-1 ~ BUG-6，详见 docs/code-review/2026-11/2026-11-07-logic-bug-review-01.md）。
  *
  * 本文件最初以「存在性证明」形态落地：用例断言正确行为、当时实现必然失败，默认以 it.fails
  * 固化（expected-failure 通过，CI 保持绿色）；把 bugIt 改成 it 再跑即得各 BUG 的真实失败输出。

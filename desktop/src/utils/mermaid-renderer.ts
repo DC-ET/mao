@@ -1,5 +1,5 @@
 /**
- * Mermaid 图渲染调度（技术方案 docs/plan/2026-10-25-message-rendering-technical-design.md §5.2）。
+ * Mermaid 图渲染调度（技术方案 docs/plan/2026-10/2026-10-25-message-rendering-technical-design.md §5.2）。
  *
  * marked 层产出占位（data-mermaid = base64 源码，初始内容为可复制的原代码块），本模块在
  * MarkdownContent 的 v-html 落盘后完成渲染与原位替换：

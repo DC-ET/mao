@@ -1,5 +1,5 @@
 /**
- * HTML → Markdown 转换（技术方案 docs/plan/2026-11-10-rich-paste-annotate-technical-design.md §4.2）。
+ * HTML → Markdown 转换（技术方案 docs/plan/2026-11/2026-11-10-rich-paste-annotate-technical-design.md §4.2）。
  *
  * turndown + turndown-plugin-gfm 动态加载（进按需 chunk，`desktop/scripts/check-main-chunk.mjs`
  * 的 FORBIDDEN 门禁防其字面量进主 chunk）；模块级单例由 ChatInput setup 预热。

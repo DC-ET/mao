@@ -25,7 +25,7 @@ function daysBetweenYmd(fromYmd: string, toYmd: string): number {
 }
 
 /**
- * 管理后台「用户用量」视图（用户详情抽屉"用量"Tab，方案 docs/plan/2026-11-10-admin-user-usage-product-design.md）：
+ * 管理后台「用户用量」视图（用户详情抽屉"用量"Tab，方案 docs/plan/2026-11/2026-11-10-admin-user-usage-product-design.md）：
  * - `GET /v1/admin/users/:id/usage/summary`：单用户周期总账 + 按模型 / 场景 / Agent 分布；
  * - `GET /v1/admin/users/:id/usage/trends`：单用户周期趋势（day/hour 分桶，后端补零）。
  *

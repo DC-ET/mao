@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * 容器运行时闭包指纹（技术方案 docs/plan/2026-10-31-container-runtime-build-drift-auto-restart-technical-design.md）。
+ * 容器运行时闭包指纹（技术方案 docs/plan/2026-10/2026-10-31-container-runtime-build-drift-auto-restart-technical-design.md）。
  *
  * - 构建期：`scripts/emit-container-runtime-build.mjs` 调用 computeContainerClosureBuild，把
  *   runtime-agent 的静态相对 import 闭包内容哈希写入 `dist/harness/container/runtime-build.json`；

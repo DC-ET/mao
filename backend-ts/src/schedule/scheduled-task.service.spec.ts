@@ -1219,7 +1219,7 @@ describe('ScheduledTaskService 预算 BLOCK 闸门（§5.7）', () => {
   });
 });
 
-// 手动「立即执行」（docs/plan/2026-11-03-scheduled-task-run-now-technical-design.md §7.1）。
+// 手动「立即执行」（docs/plan/2026-11/2026-11-03-scheduled-task-run-now-technical-design.md §7.1）。
 // 核心不变量：runNow 全链路不得出现 nextFireTime / finished / finishedAt / once / status /
 // consecutiveFailures 写键；手动行 attempt=0：不重试、不计连续失败。
 describe('ScheduledTaskService runNow（手动立即执行）', () => {

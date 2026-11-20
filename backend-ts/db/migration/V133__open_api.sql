@@ -1,4 +1,4 @@
--- 开放 API：个人 API Token + 入站 Webhook 触发器 + 出站事件订阅（docs/plan/2026-10-05-open-api-webhook-technical-design.md §5.1）。
+-- 开放 API：个人 API Token + 入站 Webhook 触发器 + 出站事件订阅（docs/plan/2026-10/2026-10-05-open-api-webhook-technical-design.md §5.1）。
 -- message_queue 增加来源两列，类比 V108 的 scheduled_task_id 绑定：入队时落列，
 -- 队列消费侧凭 open_trigger_id 回写触发器连续失败计数（source_type 供收件箱来源透传）。
 

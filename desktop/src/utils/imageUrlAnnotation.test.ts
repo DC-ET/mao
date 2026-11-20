@@ -39,7 +39,7 @@ describe('userVisibleText', () => {
   })
 })
 
-describe('BUG-5：展示口径恒等 vs 比对口径恒收敛（docs/code-review/2026-11-10-logic-bug-audit-01.md）', () => {
+describe('BUG-5：展示口径恒等 vs 比对口径恒收敛（docs/code-review/2026-11/2026-11-10-logic-bug-audit-01.md）', () => {
   it('userVisibleText 对不含注入行的内容保持恒等（尾随空行不裁）', () => {
     expect(userVisibleText('正文\n\n')).toBe('正文\n\n')
     expect(userVisibleText('正文\n')).toBe('正文\n')

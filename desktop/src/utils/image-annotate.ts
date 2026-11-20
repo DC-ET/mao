@@ -1,5 +1,5 @@
 /**
- * 图片轻标注纯函数（技术方案 docs/plan/2026-11-10-rich-paste-annotate-technical-design.md §4.4）。
+ * 图片轻标注纯函数（技术方案 docs/plan/2026-11/2026-11-10-rich-paste-annotate-technical-design.md §4.4）。
  *
  * 操作栈重放模型：ops 逐条重放到标注层 canvas，底层原图 canvas 只读不写——撤销 = 栈弹出 +
  * 清层重放，零原图损伤；导出 = 底图 + 标注层合并为 PNG。马赛克从底图 getImageData 取块均值

@@ -1,4 +1,4 @@
-// 回归：键盘、焦点与命中区可达性（技术方案 docs/plan/2026-11-07-keyboard-focus-hit-area-technical-design.md）。
+// 回归：键盘、焦点与命中区可达性（技术方案 docs/plan/2026-11/2026-11-07-keyboard-focus-hit-area-technical-design.md）。
 //
 // 六组断点全为纯桌面端属性/样式/焦点逻辑（零后端、零迁移），组件无挂载测试先例，
 // 故与 SignalWatchersView.layout.test.ts 同构：readFileSync 源码级静态断言，锁死本次修复不退化。

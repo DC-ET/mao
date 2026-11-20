@@ -1,4 +1,4 @@
--- 开放接口入站调用流水（docs/plan/2026-10-09-open-api-call-center-technical-design.md §5）
+-- 开放接口入站调用流水（docs/plan/2026-10/2026-10-09-open-api-call-center-technical-design.md §5）
 CREATE TABLE IF NOT EXISTS `open_api_call_log` (
     `id`                   BIGINT PRIMARY KEY AUTO_INCREMENT,
     `token_id`             BIGINT NULL COMMENT 'API Token；查无此 token 时为 NULL',

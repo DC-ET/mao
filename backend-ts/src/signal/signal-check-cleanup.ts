@@ -2,7 +2,7 @@ import { formatDateTime } from '../common/json.js';
 import type { MysqlSignalCheckRepository } from './signal.repository.js';
 
 /**
- * 哨兵轮询记录滚动清理（docs/plan/2026-10-11-signal-watcher-technical-design.md §5.7）。
+ * 哨兵轮询记录滚动清理（docs/plan/2026-10/2026-10-11-signal-watcher-technical-design.md §5.7）。
  * 结构对齐 `openapi/open-api-call-log.cleanup.ts`：setInterval + stopped + 分批删除。
  */
 

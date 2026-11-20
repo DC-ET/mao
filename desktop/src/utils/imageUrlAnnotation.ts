@@ -1,5 +1,5 @@
 /**
- * 聊天图片 URL 注入行（技术方案 docs/plan/2026-10-22-chat-image-url-injection-technical-design.md §5.1）
+ * 聊天图片 URL 注入行（技术方案 docs/plan/2026-10/2026-10-22-chat-image-url-injection-technical-design.md §5.1）
  * 的桌面端剥离工具：与后端 backend-ts/src/session/util/image-url-annotation.ts 同款格式、各自实现
  * （与 citationMarkers.ts 同一约定：展示层语法不进 shared/contracts）。
  *

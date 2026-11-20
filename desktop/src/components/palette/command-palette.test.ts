@@ -1,4 +1,4 @@
-// 回归：全局命令面板（技术方案 docs/plan/2026-11-07-command-palette-technical-design.md 步骤 5）。
+// 回归：全局命令面板（技术方案 docs/plan/2026-11/2026-11-07-command-palette-technical-design.md 步骤 5）。
 //
 // 纯函数部分直接调 registry（依赖模块 vi.mock，node 环境不触 DOM/网络）；
 // 源码级部分 readFileSync 静态断言，仿 chat-a11y.test.ts 模式（组件无挂载测试先例）：

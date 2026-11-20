@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 生成容器运行时闭包指纹 manifest（技术方案 docs/plan/2026-10-31-container-runtime-build-drift-auto-restart-technical-design.md）。
+ * 生成容器运行时闭包指纹 manifest（技术方案 docs/plan/2026-10/2026-10-31-container-runtime-build-drift-auto-restart-technical-design.md）。
  *
  * 由 `npm run build`（tsc 之后）调用，输出 `dist/harness/container/runtime-build.json`。
  * 消费方：

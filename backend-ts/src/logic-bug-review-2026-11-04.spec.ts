@@ -1,5 +1,5 @@
 /**
- * 2026-11-04 逻辑 BUG 审查的验证用例（对应 docs/code-review/2026-11-04-logic-bug-review.md）。
+ * 2026-11-04 逻辑 BUG 审查的验证用例（对应 docs/code-review/2026-11/2026-11-04-logic-bug-review.md）。
  *
  * 每个用例按「正确行为」书写。初评为未修复缺陷时用 `bugIt = it.fails` 固化为
  * expected-failure（CI 绿色）；**2026-11-04 当日全部修复后转正为普通 it**——

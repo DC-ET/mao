@@ -1,5 +1,5 @@
 /**
- * 聊天消息代码块「折叠 + 换行」DOM 增强（技术方案 docs/plan/2026-11-08-message-code-block-polish-technical-design.md）。
+ * 聊天消息代码块「折叠 + 换行」DOM 增强（技术方案 docs/plan/2026-11/2026-11-08-message-code-block-polish-technical-design.md）。
  *
  * MarkdownContent（仅消息宿主开启）渲染完成后调用 enhanceCodeBlocks：遍历宿主内
  * pre.code-block（跳过 .mermaid-block 占位内的），给块头插行数徽标与按钮、给 pre 加

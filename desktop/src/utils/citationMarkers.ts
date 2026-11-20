@@ -1,5 +1,5 @@
 /**
- * 回复引用溯源（技术方案 docs/plan/2026-10-12-answer-citations-technical-design.md）的
+ * 回复引用溯源（技术方案 docs/plan/2026-10/2026-10-12-answer-citations-technical-design.md）的
  * 桌面端标记工具：模型在回复里用 `[^n^]` 标记外部信息来源，n 为本轮 URL 白名单
  * （registry）序号；前端把标记渲染为可点击上标，上标与来源区统一用展示序号（1..k）。
  *

@@ -1,5 +1,5 @@
 /**
- * 回复引用溯源（技术方案 docs/plan/2026-10-12-answer-citations-technical-design.md）的
+ * 回复引用溯源（技术方案 docs/plan/2026-10/2026-10-12-answer-citations-technical-design.md）的
  * 管理后台侧标记剥离：admin 不渲染来源区，`[^n^]` 原样露出会像没渲染干净的模板变量。
  * 与桌面 desktop/src/utils/citationMarkers.ts 同款语法、各自实现（shared/contracts
  * 按约定只导纯类型）。

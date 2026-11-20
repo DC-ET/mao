@@ -24,7 +24,7 @@ import { useTmpDirOutsideRepo } from './testing/tmp-dir.js';
 import { registerLlmCallRoutes } from './usage/llm-call.routes.js';
 
 /**
- * 2026-11-03 逻辑 BUG 审查的验证用例（对应 docs/code-review/2026-11-03-logic-bug-review.md）。
+ * 2026-11-03 逻辑 BUG 审查的验证用例（对应 docs/code-review/2026-11/2026-11-03-logic-bug-review.md）。
  *
  * 每个用例按「正确行为」书写。对应缺陷已修复，这些断言是常驻回归。
  *

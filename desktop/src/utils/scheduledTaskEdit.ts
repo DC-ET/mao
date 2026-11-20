@@ -1,5 +1,5 @@
 /**
- * 定时任务桌面端编辑（技术方案 docs/plan/2026-10-26-scheduled-task-editing-technical-design.md）
+ * 定时任务桌面端编辑（技术方案 docs/plan/2026-10/2026-10-26-scheduled-task-editing-technical-design.md）
  * 的纯函数模块：表单构建、Cron 本地预校验、可提交判定、一次性开关派生、保存载荷构造与
  * 可靠性配置摘要。组件（ScheduledTaskEditDialog / ScheduledTaskPanel）只留模板接线，
  * 全部可测逻辑收敛在这里——desktop 无组件测试基建，纯函数是单测的唯一抓手。

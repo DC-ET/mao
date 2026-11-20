@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { dirname } from 'node:path';
 
 /**
- * 信号哨兵 Shell 脚本探针执行器（docs/plan/2026-11-10-shell-script-signal-watcher-technical-design.md §4 步骤 3）。
+ * 信号哨兵 Shell 脚本探针执行器（docs/plan/2026-11/2026-11-10-shell-script-signal-watcher-technical-design.md §4 步骤 3）。
  *
  * 与 HTTP 探针（probe-client.ts）同构：任何 exit code 都是执行结果——0 视为取得判定值（ok=true，
  * stdout 进既有判定管线），非 0 / 超时 / 输出超限 / 启动失败为失败（ok=false，计连败走既有退避）。

@@ -37,7 +37,7 @@ Mao 自己的管理后台是 Embed SDK 的第一个「自家宿主」：`admin/i
 - **本地开发**：admin dev（:5200）需同时运行 desktop dev server（:5201）——`admin/vite.config.ts` 已把 `/embed` 代理到 :5201，`/api` 代理开了 `ws: true`（SDK 的 WS 走同源升级）。
 - **已知限制**：浮窗 z-index 极高会覆盖 `el-dialog` / `el-drawer`（默认收起不遮挡）；主题不跟随 admin；切换 `embed.agentId` 后浮窗历史不再显示旧 Agent 的会话（SDK 历史按 agentId 过滤，会话本身在「会话管理」可见）。
 
-设计文档：仓库 `docs/plan/2026-10-16-admin-embed-chat-technical-design.md`。
+设计文档：仓库 `docs/plan/2026-10/2026-10-16-admin-embed-chat-technical-design.md`。
 
 ## 页面操作 Agent
 
@@ -200,4 +200,4 @@ npm run build                       # 源码改完后在本地构建一次
 
 上线验证与独立 MySQL 测试见仓库 [company-sso-validation.md](../../../docs/guides/company-sso-validation.md)，默认跳过的数据库测试不能算通过。
 
-设计文档：仓库 `docs/plan/2026-09-04-embed-sdk-technical-design.md`；评审记录：`docs/plan/2026-09-04-embed-sdk-review.md`。
+设计文档：仓库 `docs/plan/2026-09/2026-09-04-embed-sdk-technical-design.md`；评审记录：`docs/plan/2026-09/2026-09-04-embed-sdk-review.md`。

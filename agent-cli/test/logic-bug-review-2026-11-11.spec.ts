@@ -1,6 +1,6 @@
 /**
  * 2026-11-11 逻辑 BUG 审查——BUG-2/BUG-3 回归用例
- * （详见 docs/code-review/2026-11-11-logic-bug-review-01.md）。
+ * （详见 docs/code-review/2026-11/2026-11-11-logic-bug-review-01.md）。
  *
  * 原为 it.fails 存在性证明；两处修复（globToRegExp 的 globstar 零目录语义 +
  * globWithNode 去掉目录遍历的 reBase 兜底）落地后已转正为常规断言。

@@ -7,7 +7,7 @@ import { isUnder } from '../safety/path-sandbox.js';
 import type { ScriptProbeFrameCredentials, ScriptProbeFrameDeps, ScriptProbeFrameEnv } from './runtime-channel-protocol.js';
 
 /**
- * 容器内执行脚本探针（docs/plan/2026-11-10-script-probe-container-isolation-technical-design.md §4 步骤 2）。
+ * 容器内执行脚本探针（docs/plan/2026-11/2026-11-10-script-probe-container-isolation-technical-design.md §4 步骤 2）。
  *
  * 身份与根目录只读本容器启动时注入的 env，不读帧里的 userId。子进程 env 白名单重建，
  * 不展开 runtime-agent 的 process.env（里面有 MAO_CHANNEL_TOKEN）。

@@ -6,7 +6,7 @@
 
 ## 1. 现状：信号哨兵架构摘要（证据清单）
 
-现有实现全部在 `backend-ts/src/signal/`，技术方案见 `docs/plan/2026-10-11-signal-watcher-technical-design.md`。
+现有实现全部在 `backend-ts/src/signal/`，技术方案见 `docs/plan/2026-10/2026-10-11-signal-watcher-technical-design.md`。
 
 | 环节 | 现状 | 证据 |
 |---|---|---|

@@ -2,7 +2,7 @@
 # =============================================================================
 # migrate-share-per-agent.sh —— /opt/mao-data/share 按 Agent 隔离（形态 C）迁移脚本
 #
-# 依据：docs/plan/2026-11-09-share-per-agent-isolation-technical-design.md（决策 2026-11-09）
+# 依据：docs/plan/2026-11/2026-11-09-share-per-agent-isolation-technical-design.md（决策 2026-11-09）
 #   · 形态 C：agent-experience/{A}（原位）+ agents/{A}（私有区），取消公共投放区
 #   · 零兼容代码：本脚本承担全部存量数据搬迁与引用更新
 #

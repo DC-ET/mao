@@ -1,9 +1,9 @@
 # Docker 容器隔离维度从「人」到「人+Agent」的可行性调研
 
 > 状态：调研完成（2026-11-07），仅调研，未改任何代码。方案方向与全部 6 项决策点已于 2026-11-07 对话拍板（见 §6.8 决策记录；技术方案评审追加决策 13：share 维持整根 rw），调研收口。
-> 技术方案：[2026-11-07-user-agent-container-isolation-technical-design.md](../plan/2026-11-07-user-agent-container-isolation-technical-design.md)（已据此方案核实修正本文 §3.4/§8 的群聊路由身份表述）。
+> 技术方案：[2026-11-07-user-agent-container-isolation-technical-design.md](../plan/2026-11/2026-11-07-user-agent-container-isolation-technical-design.md)（已据此方案核实修正本文 §3.4/§8 的群聊路由身份表述）。
 > 上游讨论：2026-11-07 与用户的架构对话。
-> 核心前置：[2026-10-14-user-runtime-container-isolation-design.md](../plan/2026-10-14-user-runtime-container-isolation-design.md)（当前按用户隔离容器的设计）、[2026-10-24-agent-experience-library-technical-design.md](../plan/2026-10-24-agent-experience-library-technical-design.md)（团队经验库）、[2026-10-21-shared-directory-technical-design.md](../plan/2026-10-21-shared-directory-technical-design.md)（share 目录）、[2026-10-29-in-session-agent-switch-technical-design.md](../plan/2026-10-29-in-session-agent-switch-technical-design.md)（会话内切换 Agent，已实施）。
+> 核心前置：[2026-10-14-user-runtime-container-isolation-design.md](../plan/2026-10/2026-10-14-user-runtime-container-isolation-design.md)（当前按用户隔离容器的设计）、[2026-10-24-agent-experience-library-technical-design.md](../plan/2026-10/2026-10-24-agent-experience-library-technical-design.md)（团队经验库）、[2026-10-21-shared-directory-technical-design.md](../plan/2026-10/2026-10-21-shared-directory-technical-design.md)（share 目录）、[2026-10-29-in-session-agent-switch-technical-design.md](../plan/2026-10/2026-10-29-in-session-agent-switch-technical-design.md)（会话内切换 Agent，已实施）。
 
 ---
 

@@ -203,7 +203,7 @@ describe('OpenRunService（P1/P2 共用执行流）', () => {
   });
 });
 
-describe('message 门禁与队列列宽契约（BUG-4，docs/code-review/2026-11-10-logic-bug-audit-01.md）', () => {
+describe('message 门禁与队列列宽契约（BUG-4，docs/code-review/2026-11/2026-11-10-logic-bug-audit-01.md）', () => {
   it('门禁仍按 32000 字拒绝超长 message（列宽放宽不改变门禁行为）', async () => {
     const h = makeHarness();
     const longMessage = '汉'.repeat(OPEN_RUN_MESSAGE_MAX_LENGTH + 1);

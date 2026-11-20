@@ -219,4 +219,4 @@ mao open calls get --id 100
 | 订阅回调验签失败 / 想先验证连通性 | 用桌面端「测试投递」或 `POST /v1/open/subscriptions/:id/test` 立即验证（payload 带 `test: true`，接收方据此过滤测试事件）；再用 `open subscription deliveries` 看 `lastHttpStatus` / `lastError` |
 | 订阅一直重试 | 目标 URL 非 2xx；用 `open subscription deliveries --id <id>` 看 `lastHttpStatus` / `lastError` |
 
-相关文档：桌面端「设置 → 开放接口」页面（含内嵌「接口文档」卡片的查阅 / 下载 / 复制）；设计细节见仓库 `docs/plan/2026-10-05-open-api-webhook-technical-design.md`。
+相关文档：桌面端「设置 → 开放接口」页面（含内嵌「接口文档」卡片的查阅 / 下载 / 复制）；设计细节见仓库 `docs/plan/2026-10/2026-10-05-open-api-webhook-technical-design.md`。

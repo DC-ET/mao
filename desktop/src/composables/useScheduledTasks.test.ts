@@ -97,7 +97,7 @@ describe('useScheduledTasks.updateTask / fetchTaskDetail', () => {
   })
 })
 
-// 手动「立即执行」（docs/plan/2026-11-03-scheduled-task-run-now-technical-design.md §7.2）：
+// 手动「立即执行」（docs/plan/2026-11/2026-11-03-scheduled-task-run-now-technical-design.md §7.2）：
 // 锁 runningIds 防重入 + 成功/失败返回值 + 请求路径正确。
 describe('useScheduledTasks.runNow', () => {
   it('成功返回 true 且请求 POST /scheduled-tasks/:id/run，结束后清 runningIds', async () => {

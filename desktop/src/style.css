@@ -392,7 +392,7 @@ html.android-capacitor .terminal-keybar-btn {
 
 /* ============================================
    Accent Presets — html[data-accent] 切换（blue 默认不写属性，属性缺省即 :root 现值）
-   色值定案见 docs/plan/2026-11-08-appearance-personalization-technical-design.md §3.1。
+   色值定案见 docs/plan/2026-11/2026-11-08-appearance-personalization-technical-design.md §3.1。
    亮色块 10 项（含 EP 主色派生 5 项覆写，默认派生保留字面量不改）；
    暗色块在 9 项 --aw-* 之外显式覆写 EP 主色本值 / hover（--el-color-primary /
    --el-color-primary-dark-2）：EP 暗色皮肤 html.dark (0,1,1) 定义了 EP 蓝字面量，

@@ -5,7 +5,7 @@ import type { ContentPart } from '../../domain/types.js';
  *
  * 背景：消息里的图片只走多模态视觉通道（适配器下载后转 base64），Agent 拿不到文件本体。
  * 把 URL 以文本形式注入用户消息正文后，模型需要文件时可自行用 shell（curl/wget/python3）下载。
- * 技术方案：docs/plan/2026-10-22-chat-image-url-injection-technical-design.md
+ * 技术方案：docs/plan/2026-10/2026-10-22-chat-image-url-injection-technical-design.md
  */
 const IMAGE_URL_LINE_PREFIX = '[图片 ';
 

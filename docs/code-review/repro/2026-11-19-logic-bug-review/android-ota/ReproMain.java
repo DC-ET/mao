@@ -60,7 +60,7 @@ public final class ReproMain {
         }
 
         if (failures > 0) {
-            System.out.println("\nRESULT: " + failures + " 项与正确契约不符 —— BUG-2 缺陷回归（审查报告 docs/code-review/2026-11-19-logic-bug-review-01.md）。");
+            System.out.println("\nRESULT: " + failures + " 项与正确契约不符 —— BUG-2 缺陷回归（审查报告 docs/code-review/2026-11/2026-11-19-logic-bug-review-01.md）。");
             System.exit(1);
         }
         System.out.println("\nRESULT: 2 项均符合正确契约 —— 修复已生效（修复前本 harness 在缺陷代码上实证 2 项失败，见 README 修复前记录）。");

@@ -1,6 +1,6 @@
 /**
  * 2026-11-11 逻辑 BUG 审查——BUG-1 回归用例
- * （详见 docs/code-review/2026-11-11-logic-bug-review-01.md）。
+ * （详见 docs/code-review/2026-11/2026-11-11-logic-bug-review-01.md）。
  *
  * 原为 it.fails 存在性证明；`legacyMode: false` 落地后已转正为常规断言。
  * 另保留单方受限 expression 的回归，防止 AND 语义误伤常见的

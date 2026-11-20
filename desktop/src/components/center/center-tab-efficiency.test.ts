@@ -1,5 +1,5 @@
 // 中心 Tab 效率补完回归：reorderTab / closeRightTabs 功能测试 + 中键/拖拽/键盘接线的源码级断言
-// （技术方案 docs/plan/2026-11-08-center-tab-efficiency-technical-design.md 步骤 4）。
+// （技术方案 docs/plan/2026-11/2026-11-08-center-tab-efficiency-technical-design.md 步骤 4）。
 //
 // 功能测试对齐既有先例 composables/useCenterTabs.test.ts：vi.mock session store（useCenterTabs
 // 无条件 ensureSideTaskReadWatch 依赖）、localStorage stub（desktop vitest 为 node 环境）、

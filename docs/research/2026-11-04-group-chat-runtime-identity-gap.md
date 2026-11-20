@@ -3,7 +3,7 @@
 > 日期：2026-11-04。**仅调研与取证，不含代码改动。**
 > 触发案例：飞书群 `oc_6db395f2fe2cad6b7ad21db1d57b9c95`（会话 1607，归属用户 17 王昭文）——群成员 67 秦翌翔 @ 机器人执行时，`read_file` 读技能文档被容器沙箱判越界（`Path escape attempt`），且技能对应 CLI 在发言者容器整体缺失。
 > 相关背景：`system_setting.runtime.mode=docker`（DB 最近更新 2026-10-31 21:28:37，当前 89/90 用户跟随 docker）、技能视图按用户物化（CHANGELOG 0.0.425，11-03）。
-> 后续方案：`docs/plan/2026-11-04-group-chat-runtime-identity-technical-design.md`（定稿 V1：运行身份对齐 + 可解释性；容量优化改用「内容寻址 + 硬链接」，**已废弃** agent 级共享视图挂载）。
+> 后续方案：`docs/plan/2026-11/2026-11-04-group-chat-runtime-identity-technical-design.md`（定稿 V1：运行身份对齐 + 可解释性；容量优化改用「内容寻址 + 硬链接」，**已废弃** agent 级共享视图挂载）。
 
 ## 一、结论摘要
 

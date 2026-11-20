@@ -1749,11 +1749,11 @@ describe('AgentFeishuInboundHandler p2p multi-session', () => {
     await handler.onMessage(makeContext({
       threadId: 'omt_abc', messageId: 'om_root', parentId: null, senderLabel: '杨佳毅',
       text: '@梁子',
-      groupContext: '[2026-11-03 11:19:59] 杨佳毅：@docs/plan/2026-11-03-session-source-client-form-technical-design.md开始开发，需求较复杂，不要遗漏任何细节。',
+      groupContext: '[2026-11-03 11:19:59] 杨佳毅：@docs/plan/2026-11/2026-11-03-session-source-client-form-technical-design.md开始开发，需求较复杂，不要遗漏任何细节。',
     }));
     await new Promise((resolve) => setTimeout(resolve, 10));
     const generated = titleGenerator.generate.mock.calls[0]?.[1] as string;
-    expect(generated).toContain('【群内最近消息】\n[2026-11-03 11:19:59] 杨佳毅：@docs/plan/2026-11-03-session-source-client-form-technical-design.md开始开发');
+    expect(generated).toContain('【群内最近消息】\n[2026-11-03 11:19:59] 杨佳毅：@docs/plan/2026-11/2026-11-03-session-source-client-form-technical-design.md开始开发');
     expect(generated).toContain('【用户消息】\n杨佳毅：@梁子');
     expect(control.finalizeNewSessionTitle).toHaveBeenCalledWith(10, '表单技术方案开发');
   });

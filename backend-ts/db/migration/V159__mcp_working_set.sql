@@ -1,4 +1,4 @@
--- V159: MCP 工作集（Working Set）模式（docs/plan/2026-10-18-mcp-working-set-design.md §5.1）。
+-- V159: MCP 工作集（Working Set）模式（docs/plan/2026-10/2026-10-18-mcp-working-set-design.md §5.1）。
 --
 -- 模式是「用户级单值偏好」，与 per-server 的 user_mcp_preference（user_id + server_id + enabled）
 -- 粒度不同，必须独立建表：

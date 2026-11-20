@@ -1,5 +1,5 @@
 -- 自定义 HTTP 工具（懒加载集成）：用户声明式 HTTP 工具定义 + 参数定义
--- （docs/plan/2026-10-19-custom-http-tools-technical-design.md §5.1）。
+-- （docs/plan/2026-10/2026-10-19-custom-http-tools-technical-design.md §5.1）。
 -- 执行口径（方案二）：http_call 进 SERVER_ONLY_TOOLS 后端直连、无审批门；
 -- SSRF 默认拒私网，管理员经 tools.http.privateAllowlist 显式放行内网段（环回与云元数据永拒）。
 CREATE TABLE IF NOT EXISTS `user_tool` (

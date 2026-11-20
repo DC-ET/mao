@@ -2,7 +2,7 @@ import http from 'node:http';
 import https from 'node:https';
 
 /**
- * 信号哨兵探针执行器（docs/plan/2026-10-11-signal-watcher-technical-design.md §5.2）。
+ * 信号哨兵探针执行器（docs/plan/2026-10/2026-10-11-signal-watcher-technical-design.md §5.2）。
  *
  * 与 `harness/tool/impl/fetch-bytes.ts` 的差异：支持任意方法 + 自定义请求头 + body，
  * 且**任何完成响应的状态码都是合法判定输入**（ok=true），只有网络错误 / 超时 / 超大小

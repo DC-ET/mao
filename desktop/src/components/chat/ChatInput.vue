@@ -765,7 +765,7 @@ function resolveLocalFilePath(file: File): string {
   return ''
 }
 
-// ===== 图片轻标注（技术方案 docs/plan/2026-11-10-rich-paste-annotate-technical-design.md §4.5） =====
+// ===== 图片轻标注（技术方案 docs/plan/2026-11/2026-11-10-rich-paste-annotate-technical-design.md §4.5） =====
 // 持条目对象引用而非下标：对话框打开期间条目可能被移除/增删，confirm 时按身份回查当前位置
 const annotatingEntry = ref<{ file: File; previewUrl: string; localPath?: string; originalFile?: File } | null>(null)
 const annotatingFile = computed(() => {

@@ -30,7 +30,7 @@ defineProps<{
   removeFile: (index: number) => void
 }>()
 
-// 图片轻标注（技术方案 docs/plan/2026-11-10-rich-paste-annotate-technical-design.md §4.5）：
+// 图片轻标注（技术方案 docs/plan/2026-11/2026-11-10-rich-paste-annotate-technical-design.md §4.5）：
 // 仅图片条目渲染标注按钮；全部执行模式可用（图片发送通道无模式分支，见方案 §8-6）
 const emit = defineEmits<{
   annotate: [index: number]

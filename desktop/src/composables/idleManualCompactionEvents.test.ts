@@ -7,7 +7,7 @@ import { createPinia, setActivePinia } from 'pinia'
 // executionId=manual_compact_<ts> 下发 compaction_* / context_window，该 id 不经 RUNNING 帧登记；
 // 若陈旧帧门不豁免 sentinel id，过程事件会被整批丢弃（违反技术方案 §11.3 的「过程实时可见 / 水位下降 /
 // 分隔线 / isCompacting 点亮」验收）。
-// 来源：docs/plan/2026-10-06-context-inspector-technical-design.md 决策 11 / 验收 3。
+// 来源：docs/plan/2026-10/2026-10-06-context-inspector-technical-design.md 决策 11 / 验收 3。
 
 vi.mock('../utils/auth-storage', () => ({ getToken: () => 'test-token' }))
 vi.mock('element-plus', () => ({

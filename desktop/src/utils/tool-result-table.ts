@@ -1,5 +1,5 @@
 /**
- * 工具结果表格化（技术方案 docs/plan/2026-11-10-tool-result-table-view-technical-design.md）：
+ * 工具结果表格化（技术方案 docs/plan/2026-11/2026-11-10-tool-result-table-view-technical-design.md）：
  * 「列表形 JSON 结果」解析为 `string[][]` 供 TableGrid 渲染，与 RFC 4180 CSV 序列化、
  * 按工具名的视图偏好读写。全部纯函数 / 设备本地副作用，零依赖。
  *

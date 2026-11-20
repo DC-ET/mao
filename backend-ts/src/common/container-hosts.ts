@@ -6,7 +6,7 @@ import { ipv4ToUint32, isCloudMetadataIp, isLoopbackIp } from './ssrf.js';
  * 消费方：
  * - settings.service#validateValue：保存前校验后台自定义规则（CONTAINER_EXTRA_HOSTS_KEY）；
  * - ContainerHostsResolver：运行时读取宿主机 /etc/hosts 与自定义规则，合并为注入条目。
- * 技术方案：docs/plan/2026-10-31-container-hosts-injection.md
+ * 技术方案：docs/plan/2026-10/2026-10-31-container-hosts-injection.md
  */
 export interface ContainerHostsEntry {
   host: string;

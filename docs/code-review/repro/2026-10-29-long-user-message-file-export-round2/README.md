@@ -1,6 +1,6 @@
 # 复现脚本 · 2026-10-29 长文本用户消息「文件化」第 2 轮审查（复核修复）
 
-复核对象：第 1 轮两个问题（`docs/code-review/2026-10-29-long-user-message-file-export-round1.md`）的修复，
+复核对象：第 1 轮两个问题（`docs/code-review/2026-10/2026-10-29-long-user-message-file-export-round1.md`）的修复，
 以及修复是否引入新问题。**本轮未发现新的功能缺陷**（故无 `-round2.md` 报告），本目录只保留验证脚本与实测输出。
 
 ## 三个待确认问题的验证结论

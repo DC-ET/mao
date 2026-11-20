@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // 回归：搜索跳转焦点交接判定（composables/searchJumpFocus.ts）。
-// 技术方案 docs/plan/2026-11-07-keyboard-focus-hit-area-technical-design.md 目标 5；
+// 技术方案 docs/plan/2026-11/2026-11-07-keyboard-focus-hit-area-technical-design.md 目标 5；
 // review round1 Bug 1（跨页联动抢焦）+ round2 Bug 2（同页边路联动先于 restoreFocus 且
 // tiptap rAF 后写）——「跳转在途窗口 + 焦点停驻判定」两个让位条件的语义在此锁定。
 import { beforeEach, describe, expect, it } from 'vitest'

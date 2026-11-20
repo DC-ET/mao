@@ -5,7 +5,7 @@ import { encryptAesGcmNonNull } from '../crypto/aes-gcm.js';
 const SECRET = 'unit-secret-key';
 
 /**
- * 复现钉钉侧已修复的同类缺陷（docs/code-review/2026-10-13-code-review-03.md BUG-3）：
+ * 复现钉钉侧已修复的同类缺陷（docs/code-review/2026-10/2026-10-13-code-review-03.md BUG-3）：
  * 飞书 FeishuMonitorService 把退避计数 failureCount 声明在「一次 launch」的局部，
  * 而重连动作跨多次 launch —— onFailure 到点后删 entry 并靠 reconcile() 重新 launch，
  * 新 closure 里 failureCount 又是 0。于是指数退避永远是第一档，

@@ -1,5 +1,5 @@
 /**
- * 回复引用溯源（技术方案 docs/plan/2026-10-12-answer-citations-technical-design.md）的
+ * 回复引用溯源（技术方案 docs/plan/2026-10/2026-10-12-answer-citations-technical-design.md）的
  * 标记语法共享工具：模型在回复里用 `[^n^]` 标记外部信息来源，n 为本轮 URL 白名单
  * （registry）序号。编号权在系统，模型只插标记。
  *

@@ -2,7 +2,7 @@
 -- 同一会话内「工作区规则」节（AGENTS.md 前 200 行）文本冻结：会话内编辑 AGENTS.md
 -- 不再打掉 system 前缀，只对新会话 / 压缩提交后 / 会话删除后生效。
 -- 落库而非进程内存：蓝绿重启后沿用同一文本，避免部署窗口制造一次全站前缀塌陷。
--- 详见 docs/plan/2026-10-14-workspace-rules-snapshot-technical-design.md
+-- 详见 docs/plan/2026-10/2026-10-14-workspace-rules-snapshot-technical-design.md
 CREATE TABLE IF NOT EXISTS `session_workspace_rules` (
     `session_id`    BIGINT       NOT NULL COMMENT '会话ID（一行一会话）',
     `workspace`     VARCHAR(512) NOT NULL COMMENT '冻结时的有效工作区绝对路径；与当前值不一致视为无效快照',

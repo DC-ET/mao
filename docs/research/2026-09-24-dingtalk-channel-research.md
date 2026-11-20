@@ -345,8 +345,8 @@ SessionService / HarnessService / 现有工具（通道专用工具另注册）
 
 - `backend-ts/src/feishu/`，入口 `monitor.service.ts`、`inbound-processor.ts`、`agent-inbound-handler.ts`、`progress-card.ts`、`card-action.service.ts`
 - `skills/mao-cli/reference/feishu-bot.md`
-- `docs/plan/2026-08-25-feishu-bot-technical-design.md`（初版范围，卡片和多会话以当前代码为准）
-- `docs/plan/2026-09-24-feishu-card-ask-user-questions-design.md`
+- `docs/plan/2026-08/2026-08-25-feishu-bot-technical-design.md`（初版范围，卡片和多会话以当前代码为准）
+- `docs/plan/2026-09/2026-09-24-feishu-card-ask-user-questions-design.md`
 
 钉钉开放平台（2026-09-24 检索）：
 

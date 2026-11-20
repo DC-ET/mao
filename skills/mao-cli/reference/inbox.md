@@ -108,4 +108,4 @@
 
 ## 实时通道
 
-每次写入 / 已读 / 删除后服务端重算未读数，经 WebSocket `inbox_updated` 帧（`{ unreadCount }`，只带数字不带条目内容）广播给该用户全部在线连接；前端在重连与打开抽屉时会主动重拉兜底。WS 通道细节见 [reference/desktop.md](desktop.md) 与仓库 `docs/plan/2026-10-02-task-inbox-technical-design.md`。
+每次写入 / 已读 / 删除后服务端重算未读数，经 WebSocket `inbox_updated` 帧（`{ unreadCount }`，只带数字不带条目内容）广播给该用户全部在线连接；前端在重连与打开抽屉时会主动重拉兜底。WS 通道细节见 [reference/desktop.md](desktop.md) 与仓库 `docs/plan/2026-10/2026-10-02-task-inbox-technical-design.md`。
