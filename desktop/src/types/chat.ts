@@ -1,3 +1,5 @@
+import type { DeliveryWorkspaceRef } from '@mao/contracts'
+
 export interface ToolCall {
   id: string
   name: string
@@ -70,12 +72,17 @@ export interface Citation {
 }
 
 /**
- * 发送媒体会话副本（统一发送媒体方案 2026-11-18 D5/D6）：send_image / send_file 工具结果里的
- * delivery，从本轮工具调用收集后画在该轮回复下方。url 为 uploads 副本绝对地址。
+ * 发送媒体会话副本 / 活引用（统一发送媒体方案 2026-11-18 D5/D6；活引用 2026-11-20 §4.1）：
+ * send_image / send_file 工具结果里的 delivery，从本轮工具调用收集后画在该轮回复下方。
+ * 三种形态：url 指向 uploads 副本（形态 C，存量）、url 指向既有 uploads 产物（形态 B）、
+ * ref 携带工作区相对路径由消费端实时取数（形态 A）。url 与 ref 二者有其一。
  */
 export interface SendDelivery {
   kind: 'image' | 'file'
-  url: string
+  /** 形态 B / C：uploads 绝对地址。形态 A（活引用）为 undefined。 */
+  url?: string
+  /** 形态 A：工作区活引用；消费端渲染 / 下载时实时拼 workspace-download URL（§5.2）。 */
+  ref?: DeliveryWorkspaceRef
   mime?: string
   bytes?: number
   filename: string

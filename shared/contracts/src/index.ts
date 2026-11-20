@@ -41,6 +41,7 @@ export type { AuditLog, AuditListFilter } from './audit';
 export type { MessageSearchGroup, MessageSearchHit, MessageSearchResult, SessionSource } from './session';
 export type { OnlineDeviceConnection, OnlineDeviceDeviceInfo, OnlineDevicesVo, HostCpuSnapshot, HostMemorySnapshot, HostDiskSnapshot, HostDiskIoSnapshot, HostProcessSnapshot, HostContainerSnapshot, HostDockerDiskSnapshot, HostStatusVo, HostTrendSample } from './statistics';
 export type { WorkspaceKind, WorkspaceChannel, WorkspaceChatType } from './workspace';
+export type { DeliveryWorkspaceRef, DeliveryRef } from './delivery';
 export type {
   WsClientType,
   WsAuthFrame,

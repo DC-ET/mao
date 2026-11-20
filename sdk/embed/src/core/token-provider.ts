@@ -38,7 +38,12 @@ export class TokenProvider {
     void this.get().catch(() => {});
   };
 
-  constructor(private readonly supplier: () => Promise<string>, private readonly sso?: SsoOptions) {
+  constructor(
+    private readonly supplier: () => Promise<string>,
+    private readonly sso?: SsoOptions,
+    /** 当前令牌变化通知（取到 / 轮换 / 失效）：活引用取数 URL 的渲染期 token 同步用 */
+    private readonly onCurrent?: (token: string | null) => void,
+  ) {
     if (sso && typeof window !== 'undefined') {
       window.addEventListener('online', this.wake);
       window.addEventListener('pageshow', this.wake);
@@ -65,6 +70,16 @@ export class TokenProvider {
     if (rejectedToken && rejectedToken !== this.current) return;
     this.current = null;
     this.refreshAt = 0;
+    this.onCurrent?.(null);
+  }
+
+  /** 同步读取当前有效令牌（无则 null）：不触发取号，供渲染期拼取数 URL。 */
+  peek(): string | null {
+    return this.current !== null && Date.now() < this.expiresAt ? this.current : null;
+  }
+
+  private emitCurrent() {
+    this.onCurrent?.(this.peek());
   }
 
   resume() {
@@ -92,6 +107,7 @@ export class TokenProvider {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.sso?.onStatus(status);
+    this.emitCurrent();
     return error;
   }
 
@@ -108,6 +124,7 @@ export class TokenProvider {
       const token = await this.supplier();
       if (this.destroyed) throw new Error('Authentication destroyed');
       this.current = token;
+      this.emitCurrent();
       return token;
     }
     let retryAfter = 0;
@@ -161,6 +178,7 @@ export class TokenProvider {
         this.serverRetryAt = 0;
         this.sso.onUpdate({ token: this.current, userId: this.user, expiresAt: this.expiresAt }, previous);
         this.sso.onStatus('authenticated');
+        this.emitCurrent();
         this.schedule(this.refreshAt - Date.now());
         return this.current;
       }
@@ -186,6 +204,7 @@ export class TokenProvider {
     this.abort?.abort();
     this.current = null;
     this.user = null;
+    this.emitCurrent();
     if (typeof window !== 'undefined') {
       window.removeEventListener('online', this.wake);
       window.removeEventListener('pageshow', this.wake);

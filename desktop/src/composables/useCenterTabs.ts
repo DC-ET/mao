@@ -283,13 +283,16 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
   }
 
   /**
-   * 打开 Agent 发送文件（send_file 会话副本）的文件预览 Tab。
-   * 以副本 URL 作为唯一键去重，filePath 取展示文件名供格式分发与代码高亮识别。
+   * 打开 Agent 发送文件（send_file 投递）的文件预览 Tab。
+   * 以 `key`（缺省回退 url）作为唯一键去重，filePath 取展示文件名供格式分发与代码高亮识别。
+   * 活引用（2026-11-20 §5.2）：`url` 是渲染期解析出来的取数地址（形态 A 含 token），不能拿来
+   * 做 id——token 轮换会开出重复页签，且 id 会经 recordActiveTabFor 明文写进 localStorage
+   * （见 auth-storage 对 token 落盘的既定约束）。调用方传稳定 key（形态 A 用 ref 身份）。
    */
-  function openDeliveryFileTab(delivery: { url: string; filename: string; mime?: string }) {
+  function openDeliveryFileTab(delivery: { url: string; filename: string; mime?: string; key?: string }) {
     if (!delivery.url) return
     const state = getSessionState()
-    const id = `delivery:${delivery.url}`
+    const id = `delivery:${delivery.key ?? delivery.url}`
     const title = delivery.filename || '文件预览'
     const normalizedMime = delivery.mime?.trim() || undefined
     const existing = state.tabs.find(t => t.id === id)

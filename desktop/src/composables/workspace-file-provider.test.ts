@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { ref } from 'vue'
-import { createCloudProvider, createDeliveryFileProvider, createLocalProvider, createOwnedWorkspaceProvider, createProjectProvider, useWorkspaceFileProvider } from './workspace-file-provider'
+import { createCloudProvider, createDeliveryFileProvider, createLocalProvider, createOwnedWorkspaceProvider, createProjectProvider, useWorkspaceFileProvider, downloadDeliveryUrl } from './workspace-file-provider'
 
 const apiGet = vi.fn()
 vi.mock('../api', () => ({
@@ -377,5 +377,56 @@ describe('createLocalProvider.downloadFile 与 createDeliveryFileProvider', () =
     expect(dlRes.ok).toBe(true)
     expect(anchor.download).toBe('SKILL.md')
     expect(anchor.click).toHaveBeenCalledTimes(1)
+  })
+
+  it('活引用形态 A（2026-11-20 §5.2）：workspace-download 业务错误信封报错，不存成文件 / 不渲染信封文本', async () => {
+    // CLOUD workspace-download 的业务错误（如「文件不存在」）经 handleError 映射为 HTTP 200 + code 信封
+    const refUrl = 'http://localhost:9080/api/v1/files/workspace-download?sessionId=42&path=reports%2Fa.png&token=t'
+    const envelope = {
+      ok: true,
+      status: 200,
+      headers: { get: (k: string) => (k === 'content-type' ? 'application/json; charset=utf-8' : null) },
+      json: async () => ({ code: 1002, message: '文件不存在：reports/a.png' }),
+      arrayBuffer: async () => new TextEncoder().encode('{"code":1002}').buffer,
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => envelope))
+    const provider = createDeliveryFileProvider({
+      url: refUrl,
+      filename: 'a.png',
+      mime: 'image/png',
+    })
+
+    const readRes = await provider.readFile('a.png')
+    expect(readRes.error).toBe('文件不存在：reports/a.png')
+    expect(readRes.content).toBe('')
+
+    const bytesRes = await provider.readFileBytes!('a.png')
+    expect(bytesRes.error).toBe('文件不存在：reports/a.png')
+    expect(bytesRes.bytes).toBeUndefined()
+
+    const pdfRes = await provider.previewFile!('a.png')
+    expect(pdfRes.error).toBe('文件不存在：reports/a.png')
+
+    const dlRes = await downloadDeliveryUrl(refUrl, 'a.png')
+    expect(dlRes).toEqual({ ok: false, error: '文件不存在：reports/a.png', url: refUrl })
+  })
+
+  it('/uploads 静态 URL 不触发信封判定：含数字 code 字段的 JSON 文件照常下载', async () => {
+    const payload = new TextEncoder().encode('{"code":1002,"hello":1}')
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (k: string) => (k === 'content-type' ? 'application/json' : null) },
+      arrayBuffer: async () => payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength),
+      blob: async () => new Blob([payload]),
+    })))
+    const provider = createDeliveryFileProvider({
+      url: 'https://mao.example.com/uploads/7/send-uuid.json',
+      filename: 'data.json',
+      mime: 'application/json',
+    })
+    const bytesRes = await provider.readFileBytes!('data.json')
+    expect(bytesRes.error).toBeUndefined()
+    expect(bytesRes.size).toBe(payload.byteLength)
   })
 })

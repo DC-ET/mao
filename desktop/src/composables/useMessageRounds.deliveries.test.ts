@@ -1,5 +1,6 @@
-// round.deliveries 收集（统一发送媒体方案 2026-11-18 D6/§7.1）：按调用顺序收 send_image / send_file
-// 结果 JSON 里的 delivery；非目标工具、无结果、解析失败、无 delivery.url 一律不收。
+// round.deliveries 收集（统一发送媒体方案 2026-11-18 D6/§7.1；活引用 2026-11-20 §5.2）：按调用顺序收
+// send_image / send_file 结果 JSON 里的 delivery；非目标工具、无结果、解析失败、
+// delivery 既无 url 又无 ref 一律不收。
 import { describe, expect, it } from 'vitest'
 import { collectRoundDeliveries, useMessageRounds } from './useMessageRounds'
 import type { ChatMessage } from '../types/chat'
@@ -72,6 +73,45 @@ describe('collectRoundDeliveries', () => {
     ]
     expect(collectRoundDeliveries(messages)).toEqual([
       { kind: 'file', url: 'https://h/uploads/7/send-abc.bin', mime: undefined, bytes: undefined, filename: 'send-abc.bin' },
+    ])
+  })
+
+  it('活引用形态 A：ref 形态照常收集，无 url', () => {
+    const messages = [
+      msg('s1', 'assistant', {
+        toolCalls: [
+          sendToolCall('t1', 'send_image', { success: true, channel: 'chat', channelStatus: 'skipped', filename: 'a.png', delivery: { kind: 'image', filename: 'a.png', mime: 'image/png', bytes: 12, ref: { type: 'workspace', sessionId: 42, path: 'reports/a.png' } } }),
+        ],
+      }),
+    ]
+    expect(collectRoundDeliveries(messages)).toEqual([
+      { kind: 'image', ref: { type: 'workspace', sessionId: 42, path: 'reports/a.png' }, mime: 'image/png', bytes: 12, filename: 'a.png' },
+    ])
+  })
+
+  it('活引用形态 A：ref 字段残缺（type/path/sessionId 不齐）不收', () => {
+    const messages = [
+      msg('s1', 'assistant', {
+        toolCalls: [
+          sendToolCall('t1', 'send_image', { delivery: { kind: 'image', ref: { type: 'workspace', sessionId: 42 } } }),
+          sendToolCall('t2', 'send_image', { delivery: { kind: 'image', ref: { type: 'workspace', path: 'a.png' } } }),
+          sendToolCall('t3', 'send_image', { delivery: { kind: 'image', ref: { type: 'other', sessionId: 42, path: 'a.png' } } }),
+        ],
+      }),
+    ]
+    expect(collectRoundDeliveries(messages)).toEqual([])
+  })
+
+  it('活引用形态 A：filename 与 delivery.filename 都缺失时回落 ref.path basename', () => {
+    const messages = [
+      msg('s1', 'assistant', {
+        toolCalls: [
+          sendToolCall('t1', 'send_file', { success: true, delivery: { kind: 'file', mime: 'application/pdf', ref: { type: 'workspace', sessionId: 42, path: 'docs/报告.pdf' } } }),
+        ],
+      }),
+    ]
+    expect(collectRoundDeliveries(messages)).toEqual([
+      { kind: 'file', ref: { type: 'workspace', sessionId: 42, path: 'docs/报告.pdf' }, mime: 'application/pdf', bytes: undefined, filename: '报告.pdf' },
     ])
   })
 })

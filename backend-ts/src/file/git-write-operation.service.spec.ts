@@ -519,7 +519,8 @@ describeGit('GitWriteOperationService git', () => {
     const status = await service.refreshRemoteStatus(session(repo), null);
     expect(status.behindCount).toBe(1);
     expect(branch).toBeTruthy();
-  });
+    // 真实 git clone/push/fetch：全量套件并行下常超过默认 5s 超时（非逻辑问题）
+  }, 30_000);
 
   it('fetchRemoteFetchesEveryRemote', async () => {
     const dir = useTmpDir('mao-gfetch-all-');
@@ -648,7 +649,8 @@ describeGit('GitWriteOperationService git', () => {
     expect(run(repo, 'git', 'rev-parse', '--abbrev-ref', 'HEAD').trim()).toBe(branch);
     expect(run(repo, 'git', 'stash', 'list')).toBe('');
     expect(require('node:fs').readFileSync(join(repo, 'base.txt'), 'utf8')).toBe('local edit\n');
-  });
+    // 真实 git clone/push/checkout/stash：全量套件并行下常超过默认 5s 超时（非逻辑问题）
+  }, 30_000);
 
   it('switchBranchCreatesTrackingBranchFromRemoteRef', async () => {
     const dir = useTmpDir('mao-gswitch-track-');

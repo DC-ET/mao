@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { WsAskUserQuestionAnswer } from '@mao/contracts';
-import type { ChatMessage, PendingQuestion } from '../types';
+import type { ChatMessage, PendingQuestion, SendDelivery } from '../types';
 import type { PageActionLogEntry, PageAuthorizationLevel, PageConfirmRequest } from '../page';
 import type { PendingAttachment } from '../core/attachment';
 import AssistantMark from './AssistantMark.vue';
@@ -14,6 +14,7 @@ import MaoIcon from './MaoIcon.vue';
 import ThinkingRow from './ThinkingRow.vue';
 import ToolCallGroup from './ToolCallGroup.vue';
 import { useRounds } from './useRounds';
+import { deliveryKey } from './deliveryUrl';
 import { renderMarkdown } from './markdown';
 import { ICON_ARROW_DOWN } from './icons';
 import type { EmbedSessionListItem } from '../controller';
@@ -46,6 +47,11 @@ const props = defineProps<{
   activeSessionId: number | null;
   /** Agent 推荐问题：仅空白态展示，点击填入输入框 */
   suggestedQuestions: string[];
+  /**
+   * 投递取数 URL 解析（活引用形态 A，2026-11-20）：形态 A 拼 workspace-download + 渲染期 token，
+   * 形态 B/C 原样返回 url。由 controller 提供（token 从 TokenProvider 读取，响应式刷新）。
+   */
+  resolveDeliveryUrl: (d: SendDelivery) => string;
 }>();
 
 const emit = defineEmits<{
@@ -216,23 +222,24 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
               <span /><span /><span />
             </div>
           </template>
-          <!-- 发送媒体副本（统一发送媒体方案 2026-11-18 D6）：回复下方、折叠区之外，与桌面端一致 -->
+          <!-- 发送媒体投递（统一发送媒体方案 2026-11-18 D6）：回复下方、折叠区之外，与桌面端一致。
+               活引用（2026-11-20）：href/src 走 resolveDeliveryUrl（形态 A 实时拼 token），key 用稳定身份 -->
           <div v-if="round.deliveries.length > 0" class="mao-deliveries">
-            <template v-for="d in round.deliveries" :key="d.url">
+            <template v-for="d in round.deliveries" :key="deliveryKey(d)">
               <a
                 v-if="d.kind === 'image'"
                 class="mao-delivery mao-delivery--image"
-                :href="d.url"
+                :href="props.resolveDeliveryUrl(d)"
                 target="_blank"
                 rel="noopener"
                 :title="d.filename"
               >
-                <img :src="d.url" :alt="d.filename" loading="lazy" />
+                <img :src="props.resolveDeliveryUrl(d)" :alt="d.filename" loading="lazy" />
               </a>
               <a
                 v-else
                 class="mao-delivery mao-delivery--file"
-                :href="d.url"
+                :href="props.resolveDeliveryUrl(d)"
                 target="_blank"
                 rel="noopener"
                 :title="d.filename"

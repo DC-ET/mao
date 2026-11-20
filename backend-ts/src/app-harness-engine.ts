@@ -22,6 +22,7 @@ import type { AgentDefinitionRegistry } from './harness/delegate/agent-definitio
 import type { SubagentExecutionMapper } from './harness/delegate/subagent-execution.mapper.js';
 import type { LocalToolSessionRegistry } from './harness/local/local-tool-session-registry.js';
 import type { LocalDeliveryFetchService } from './harness/local/delivery-fetch.service.js';
+import type { SendWorkspaceRefOracle } from './harness/tool/impl/send-media-tool.js';
 import type { SubAgentVisibilityService } from './harness/delegate/subagent-visibility-service.js';
 import type { BackgroundSubagentManager } from './harness/delegate/background-subagent-manager.js';
 import type { MessageRepository } from './session/session.repository.js';
@@ -120,6 +121,10 @@ export interface HarnessEngineDeps {
   localToolSessions: LocalToolSessionRegistry;
   /** LOCAL 发送字节委托读取（2026-11-18-unified-send-media §6）。 */
   localDeliveryFetch: LocalDeliveryFetchService;
+  /** 工作区活引用 oracle（2026-11-20-send-media-live-reference D5）：WorkspaceBrowseService。 */
+  workspaceRefOracle?: SendWorkspaceRefOracle | null;
+  /** 会话 Agent 经验库目录解析（活引用资格判定排除经验挂载来源用）。 */
+  experienceDirForAgent?: ((agentId: number) => string) | null;
   visibility: SubAgentVisibilityService;
   backgroundSubagentManager: BackgroundSubagentManager;
   messageRepo: MessageRepository;
@@ -272,6 +277,8 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     },
     sendBytesSupport: d.sendBytesBridge,
     localDeliveryFetchService: d.localDeliveryFetch,
+    workspaceRefOracle: d.workspaceRefOracle ?? null,
+    experienceDirForAgent: d.experienceDirForAgent ?? null,
     dingtalkMediaSendSupport: {
       resolveSendTarget: (sessionId: number | null) => d.dingtalkMediaHolder.current?.resolveSendTarget(sessionId) ?? Promise.resolve(null),
       sendImage: async (target: any, bytes: any, fileName: string) => {

@@ -820,4 +820,37 @@ describe('openDeliveryFileTab（Agent 发送文件预览页签）', () => {
     tabs.applyWorkspacePathChange({ kind: 'delete', paths: ['ark-cli-skill-20261119.tar.gz'] })
     expect(tabs.tabs.value.filter(t => t.type === 'file')).toHaveLength(1)
   })
+
+  // 活引用（2026-11-20 §5.2）：形态 A 的 url 含渲染期 token，页签 id 必须走稳定 key，
+  // 否则 token 轮换会开出重复页签，并让 token 经激活态记录明文落 localStorage
+  it('活引用形态 A：key 稳定则 token 轮换不重开页签，激活态记录不含 token', async () => {
+    const tabs = setup()
+    const stableKey = 'ref:42:workspace:reports/报告.pdf'
+    tabs.openDeliveryFileTab({
+      url: 'https://mao.example.com/api/v1/files/workspace-download?sessionId=42&path=reports%2F报告.pdf&token=old-jwt',
+      filename: '报告.pdf',
+      key: stableKey,
+    })
+    await nextTick()
+    expect(tabs.tabs.value.filter(t => t.type === 'file')).toHaveLength(1)
+    expect(tabs.activeTabId.value).toBe(`delivery:${stableKey}`)
+
+    // token 轮换后再次点击同一文件：复用页签、刷新取数 URL，不新增
+    tabs.openDeliveryFileTab({
+      url: 'https://mao.example.com/api/v1/files/workspace-download?sessionId=42&path=reports%2F报告.pdf&token=new-jwt',
+      filename: '报告.pdf',
+      key: stableKey,
+    })
+    await nextTick()
+    const fileTabs = tabs.tabs.value.filter(t => t.type === 'file')
+    expect(fileTabs).toHaveLength(1)
+    expect(fileTabs[0]!.id).toBe(`delivery:${stableKey}`)
+    expect(fileTabs[0]!.deliveryUrl).toContain('token=new-jwt')
+    expect(fileTabs[0]!.version).toBe(1)
+
+    // 激活态持久化只写 tab id：不得夹带 token
+    const persisted = getPersistedActiveTab(SESSION_ID)
+    expect(persisted?.tabId).toBe(`delivery:${stableKey}`)
+    expect(JSON.stringify(persisted)).not.toContain('token')
+  })
 })

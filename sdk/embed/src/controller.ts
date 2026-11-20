@@ -3,6 +3,7 @@ import type { MaoChatEvent, MaoChatInitOptions, PendingQuestion } from './types'
 import { isPageEnabled, resolveApiBase, resolveAssetUrl } from './types';
 import RootApp from './ui/RootApp.vue';
 import styleText from './ui/style.css?inline';
+import { resolveDeliveryUrl } from './ui/deliveryUrl';
 import { WsClient } from './core/ws-client';
 import { ChatStore } from './core/store';
 import { SessionManager } from './core/session-manager';
@@ -14,7 +15,7 @@ import { TokenProvider, AUTH_MESSAGES, tokenSubject } from './core/token-provide
 import { TabsCoordinator } from './core/tabs';
 import { ContextCollector, PREFIX_SEPARATOR, extractQuotedSelection, stripContextPrefix } from './context/collector';
 import { SelectionTracker } from './context/selection';
-import type { ChatMessage, MessageSegment, ToolCallItem } from './types';
+import type { ChatMessage, MessageSegment, SendDelivery, ToolCallItem } from './types';
 import type { PageActionLogEntry, PageAuthorizationLevel, PageConfirmRequest, PageHighlightTarget } from './page';
 import { PageEngine, isPageToolName } from './page';
 import type {
@@ -103,6 +104,13 @@ export interface UiState {
   historyError: string | null;
   /** 当前活跃会话 id：历史列表高亮用 */
   activeSessionId: number | null;
+  /**
+   * 当前访问令牌（TokenProvider 同步 peek，响应式）：活引用投递（形态 A）渲染期拼
+   * workspace-download URL 用，token 轮换时驱动投递条重渲染（2026-11-20 §5.2）。
+   */
+  authToken: string | null;
+  /** 投递取数 URL 解析：形态 A 拼 workspace-download + 渲染期 token，形态 B/C 原样返回 url */
+  resolveDeliveryUrl: (d: SendDelivery) => string;
 }
 
 /** 历史列表条目：与 EmbedSessionVO 字段子集对齐 */
@@ -116,7 +124,7 @@ export interface EmbedSessionListItem {
 export function createUiState(options: MaoChatInitOptions): UiState {
   // 禁用态无授权语义：pageAuthorization 固定 per_action，不读 initialLevel。
   const pageEnabled = isPageEnabled(options);
-  return reactive({
+  const state = reactive({
     identityVersion: 0,
     launcherVisible: options.launcher?.visible !== false,
     panelOpen: false,
@@ -147,7 +155,11 @@ export function createUiState(options: MaoChatInitOptions): UiState {
     historyHasMore: false,
     historyError: null,
     activeSessionId: null,
-  });
+    authToken: null,
+    // 取数 URL 解析闭包读 state.authToken（reactive）：模板调用时建立依赖，token 轮换即重渲染。
+    resolveDeliveryUrl: (d: SendDelivery) => resolveDeliveryUrl(d, resolveApiBase(options.serverUrl), state.authToken),
+  }) as UiState;
+  return state;
 }
 
 /** Shadow DOM 挂载：launcher 与 panel 同挂一个 host */
@@ -301,6 +313,8 @@ export class EmbedController {
     host: HTMLElement | null = null,
   ) {
     setController(this);
+    // 令牌变化同步进 UiState：活引用投递（形态 A）的取数 URL 渲染期拼 token，token 轮换即重渲染
+    const onCurrentToken = (token: string | null) => { this.ui.authToken = token; };
     this.tokens = options.auth ? new TokenProvider(options.auth.getSsoToken, {
       apiBase: resolveApiBase(options.serverUrl),
       checkUrl: options.auth.checkUrl,
@@ -321,11 +335,11 @@ export class EmbedController {
         if (status !== 'authenticated' && status !== 'service_unavailable') this.ws.disconnect(true);
         if (status === 'authenticated') this.resumeAuthenticatedPanel();
       },
-    }) : new TokenProvider(async () => {
+    }, onCurrentToken) : new TokenProvider(async () => {
       const token = await options.getToken();
       this.setIdentity(tokenSubject(token));
       return token;
-    });
+    }, undefined, onCurrentToken);
     this.rest = new RestClient(resolveApiBase(options.serverUrl), () => this.tokens.get(), (token, final) => {
       if (final && options.auth) this.tokens.rejectAuthentication(token);
       else this.tokens.invalidate(token);

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { lookup as mimeLookup } from 'mime-types';
+import type { DeliveryWorkspaceRef } from '@mao/contracts';
 import { BaseTool } from '../tool.js';
 import { asText, errorJson, parseObject, toJson } from '../json.js';
 import { ImageFileSupport } from '../image-file-support.js';
@@ -10,7 +12,9 @@ import {
   type SendBytesSupport,
 } from './send-file-bytes.js';
 import { toStaticUploadBase } from './generate-image-tool.js';
-import { SecurityException, type PathSandbox } from '../../safety/path-sandbox.js';
+import { isUnder, SecurityException, type PathSandbox } from '../../safety/path-sandbox.js';
+import { StrictPathResolver } from '../../safety/strict-path.js';
+import { experienceDirForSession, isExperienceMountRelative } from '../../experience/experience-mount-path.js';
 import { BusinessException } from '../../../common/business-exception.js';
 import { ErrorCode } from '../../../common/error-code.js';
 import { WEIXIN_PROJECT_KEY } from '../../../domain/types.js';
@@ -45,6 +49,8 @@ export interface SendMediaSession {
   workspace?: string | null;
   projectKey?: string | null;
   parentSessionId?: number | null;
+  /** 团队经验挂载解析用（活引用资格判定把经验目录来源排除在 ref 外）。 */
+  agentId?: number | null;
 }
 
 export interface SendMediaSessionLookup {
@@ -415,9 +421,123 @@ export function basenameOfSource(source: string): string {
   return source.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || source;
 }
 
+/** 活引用 delivery 载荷（与 @mao/contracts 的 SendDelivery 对齐；副本链路的 delivery 同构）。 */
+export interface SendRefDelivery {
+  kind: 'image' | 'file';
+  filename: string;
+  mime: string;
+  bytes?: number;
+  url?: string;
+  ref?: DeliveryWorkspaceRef;
+}
+
+/**
+ * 活引用结果合并（§4.2）：ref / 原地引用侧恒 ok——chat-only 恒 success=true；
+ * 绑通道 push 失败（含 loadBytes 读字节失败）只算通道侧失败，沿用今天
+ * 「副本成功 + 推送失败」的形状（success=true + 通道侧 error），仅文案去掉
+ * 「已放入当前对话」前缀。副本回落路径仍走 combineSendResult，一字不改。
+ */
+export function combineSendRefResult(
+  filename: string,
+  channel: SendChannel,
+  delivery: SendRefDelivery,
+  push: ChannelPushResult,
+): string {
+  const channelStatus: 'skipped' | 'sent' | 'failed' = channel === 'chat' ? 'skipped' : (push.ok ? 'sent' : 'failed');
+  const error = channel !== 'chat' && !push.ok
+    ? `${CHANNEL_LABELS[channel]}发送失败：${push.error}`
+    : null;
+  const result: Record<string, unknown> = { success: true, channel, channelStatus, filename, delivery };
+  if (error != null) result.error = error;
+  return toJson(result);
+}
+
+// ─────────────────────────── 活引用资格判定（2026-11-20-send-media-live-reference §5.1） ───────────────────────────
+
+/**
+ * 工作区活引用 oracle（D5）：与 `GET /v1/files/workspace-download` 同一个
+ * `WorkspaceBrowseService.downloadFile`——同一 resolvePath、同一套存在性 / 普通文件 /
+ * 符号链接检查，不读字节。缺省（未装配）时活引用整体关闭，全部走会话副本。
+ */
+export interface SendWorkspaceRefOracle {
+  downloadFile(
+    sessionWorkspace: string,
+    relativePath: string | null | undefined,
+    experienceDir?: string | null,
+  ): { path: string; size: number; fileName: string };
+}
+
+/** 命中活引用时的装配结果：工作区 ref（形态 A）或 uploads 原地引用（形态 B）。 */
+export type SendLiveRef =
+  | { form: 'workspace'; ref: DeliveryWorkspaceRef; absPath: string; mime: string; bytes: number }
+  | { form: 'uploads'; url: string; mime: string; bytes: number | null };
+
+/** 判定结果：命中 ref、硬性失败（现状文案直接报错）或回落副本链路。 */
+export type SendRefDecision =
+  | { action: 'ref'; live: SendLiveRef }
+  | { action: 'error'; error: string }
+  | { action: 'copy' };
+
+/** send_image 原地引用允许的扩展名（今天 http 来源要过 COPY_IMAGE_MIMES 字节嗅探；引用化不读字节，以扩展名近似把关）。 */
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']);
+
+/** 读文件头 count 字节（图片嗅探用；不读全量）。 */
+function readHeadBytes(filePath: string, count: number): Buffer {
+  const fd = openSync(filePath, 'r');
+  try {
+    const buf = Buffer.alloc(count);
+    const read = readSync(fd, buf, 0, count, 0);
+    return buf.subarray(0, read);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * uploads 静态 URL 是否指向发送者本人的目录（形态 B URL 形态）：URL 路径中
+ * `uploads` 段的下一跳必须严格等于发送者 userId（段精确匹配，`uploads/77` 不算 7）。
+ */
+export function isOwnUploadsUrl(source: string, userId: number | null): boolean {
+  if (userId == null || !/^https?:\/\//i.test(source)) return false;
+  try {
+    const segments = new URL(source).pathname.split('/').filter((s) => s !== '');
+    const idx = segments.indexOf('uploads');
+    return idx >= 0 && segments[idx + 1] === String(userId) && segments.length > idx + 2;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * URL 的 host 是否与本站上传静态 origin 一致（形态 B URL 形态的 host 把关，评审补充）：
+ * 路径段命中只说明「长得像本站上传地址」，不看 host 的话 `https://evil.com/uploads/7/x.png`
+ * 也会被原地引用，等于指使浏览器打向任意外域 / localhost（且该形态不做大小校验）。
+ * origin 解析失败（空串）一律不命中，回落副本链路。
+ */
+function isSameUploadOrigin(source: string, origin: string): boolean {
+  if (origin === '') return false;
+  try {
+    return new URL(source).origin === new URL(origin).origin;
+  } catch {
+    return false;
+  }
+}
+
+/** 扩展名 → mime（与 workspace-download 响应头同口径：mimeLookup + octet-stream 兜底）。 */
+function mimeForExtension(ext: string): string {
+  return mimeLookup(ext) || 'application/octet-stream';
+}
+
+/** 工作区相对路径归一化（POSIX 分隔；供 ref.path 落盘）。 */
+function toWorkspaceRelative(workspace: string, absPath: string): string | null {
+  const rel = path.relative(path.resolve(workspace), path.resolve(absPath));
+  if (rel.startsWith('..') || path.isAbsolute(rel) || rel === '') return null;
+  return rel.split(path.sep).join('/');
+}
+
 // ─────────────────────────── 两个新工具 ───────────────────────────
 
-const SEND_TOOL_BASE_PROMPT = '网页、桌面、安卓打开这条会话时，附件出现在该轮回复下方。这条会话若绑定了微信、飞书或钉钉，同一份内容再发给对应的用户或群。支持本地文件路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp）或 http(s) URL。结果含 error 时，向用户说明原因。结果里已有 delivery，或 channelStatus 为 sent 的那一侧已经完成，不要把同一份内容再发一次。';
+const SEND_TOOL_BASE_PROMPT = '网页、桌面、安卓打开这条会话时，附件出现在该轮回复下方。这条会话若绑定了微信、飞书或钉钉，同一份内容再发给对应的用户或群。支持本地文件路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp）或 http(s) URL。发送会话工作区内的文件时不做副本，附件直接引用工作区里的这份文件：之后修改或删除源文件，会话里看到的附件会跟着变化或失效；要交付「定稿快照」就先复制一份再发。发送你自己 uploads 目录里已有的文件（如生成图）同样直接引用。结果含 error 时，向用户说明原因。结果里已有 delivery，或 channelStatus 为 sent 的那一侧已经完成，不要把同一份内容再发一次。';
 
 /** LOCAL 读本机文件的执行端拉取（D10）：缺省 null（未装配时 LOCAL 本机路径直接失败）。 */
 export interface SendDeliveryFetcher {
@@ -440,6 +560,8 @@ abstract class SendMediaToolBase extends BaseTool {
     protected readonly dingtalk: DingtalkSendStrategy | null,
     protected readonly sendBytesSupport?: SendBytesSupport | null,
     protected readonly deliveryFetch?: SendDeliveryFetcher | null,
+    protected readonly workspaceRefOracle?: SendWorkspaceRefOracle | null,
+    protected readonly experienceDirForAgent?: ((agentId: number) => string) | null,
   ) { super(); }
 
   protected abstract kind(): 'image' | 'file';
@@ -481,6 +603,147 @@ abstract class SendMediaToolBase extends BaseTool {
     }
   }
 
+  /**
+   * 活引用资格判定（2026-11-20-send-media-live-reference §5.1 三步，顺序执行，命中即走引用分支）：
+   * 1. 工作区活引用（形态 A，仅 CLOUD、非 http(s)）：downloadFile 同一解析器预检（D5），
+   *    且归一化相对路径不以经验挂载开头（经验目录来源不做引用）→ ref；send_image 追加
+   *    读 16 字节嗅探（不读全量），不合格按现状文案报错。
+   * 2. uploads 原地引用（形态 B）：本人 uploads 的 http(s) URL（段精确匹配）或经 extraRoots
+   *    解析后落在本人 uploads 目录内的路径；扩展名可用才命中（可执行内容照旧回落净化），
+   *    send_image 追加图片扩展名检查（引用化不读字节，无法字节嗅探）。
+   * 3. 都不命中 → 回落会话副本链路。
+   * 上限语义（评审补充）：形态 A 用 stat size、形态 B 路径形态用 stat 套用既有上限，
+   * 超限回落副本链路（loadBytes 报与今天一致的「文件过大」）；形态 A 空文件按现状文案报错；
+   * 形态 B URL 形态不 stat、bytes 省略。downloadFile 抛错一律回落——错误文案由 loadBytes
+   * 与今天完全同路径地给出，不在资格判定里另造一套。
+   */
+  protected async decideLiveRef(
+    source: string,
+    session: SendMediaSession | null,
+    ctx: { userId: number | null; sessionId: number | null; workspace: string | null },
+  ): Promise<SendRefDecision> {
+    const kind = this.kind();
+    const isHttp = /^https?:\/\//i.test(source);
+
+    // ── 1. 工作区活引用（形态 A）──
+    if (!isHttp
+      && session != null
+      && session.executionMode !== 'LOCAL'
+      && session.workspace != null && session.workspace.trim() !== ''
+      && ctx.sessionId != null
+      && this.workspaceRefOracle != null) {
+      const experienceDir = experienceDirForSession(session, this.experienceDirForAgent ?? undefined);
+      try {
+        const resolved = this.workspaceRefOracle.downloadFile(session.workspace, source, experienceDir);
+        const rel = toWorkspaceRelative(session.workspace, resolved.path);
+        // 经验挂载命中（含绝对路径经挂载解析）→ 不进 ref，回落副本链路（§2.2）
+        if (rel != null && !isExperienceMountRelative(rel)) {
+          if (resolved.size === 0) return { action: 'error', error: this.emptyBytesError() };
+          if (resolved.size > this.maxBytes()) return { action: 'copy' };
+          if (kind === 'image') {
+            const sniffed = sniffImageMime(readHeadBytes(resolved.path, 16));
+            if (sniffed == null || !COPY_IMAGE_MIMES.has(sniffed)) {
+              return { action: 'error', error: '不支持的图片格式（副本支持 PNG/JPG/JPEG/GIF/WebP/BMP）' };
+            }
+          }
+          return {
+            action: 'ref',
+            live: {
+              form: 'workspace',
+              ref: { type: 'workspace', sessionId: ctx.sessionId, path: rel },
+              absPath: resolved.path,
+              mime: mimeForExtension(path.extname(resolved.path)),
+              bytes: resolved.size,
+            },
+          };
+        }
+      } catch {
+        // 文件不存在 / 不是普通文件 / 路径拒绝：继续形态 B / 回落副本链路，
+        // 错误文案由 loadBytes 与今天同路径给出，资格判定不另造一套
+      }
+    }
+
+    // ── 2. uploads 原地引用（形态 B）──
+    if (ctx.userId != null) {
+      let absPath: string | null = null;
+      let size: number | null = null;
+      let extSource: string | null = null;
+      if (isOwnUploadsUrl(source, ctx.userId)) {
+        // URL 形态：不 stat、bytes 省略（§4.1 评审补充）；扩展名取 URL 路径。
+        // host 还必须与本站上传 origin 一致（评审补充）：路径段像不等于就是本站文件，
+        // 外域一律回落副本链路，不把外域地址原样塞进 delivery.url。
+        const origin = await this.resolveUploadOrigin();
+        if (isSameUploadOrigin(source, origin)) extSource = source;
+      } else if (!isHttp) {
+        try {
+          const primaryRoot = ctx.workspace != null && ctx.workspace !== ''
+            ? ctx.workspace
+            : this.pathSandbox.getEffectiveWorkspaceRoot(null);
+          const resolved = new StrictPathResolver(primaryRoot, this.sendBytesSupport?.extraRoots(ctx.userId) ?? []).resolve(source);
+          const uploadsDir = path.join(this.copyDeps.uploadDir, String(ctx.userId));
+          if (isUnder(resolved, uploadsDir) && statSync(resolved).isFile()) {
+            absPath = resolved;
+            size = statSync(resolved).size;
+            extSource = source;
+          }
+        } catch {
+          // 越界 / 不存在：回落副本链路（他人 uploads 等错误文案仍由 loadBytes 给出）
+        }
+      }
+      if (extSource != null) {
+        const ext = deriveSendCopyExtension(extSource);
+        if (ext !== '.bin') {
+          if (kind === 'image' && !IMAGE_EXTENSIONS.has(ext.slice(1).toLowerCase())) {
+            return { action: 'copy' };
+          }
+          if (size != null && size > this.maxBytes()) return { action: 'copy' };
+          if (absPath == null) {
+            // URL 形态：delivery.url 原样指向既有文件（评审补充：不下载不重写）
+            return { action: 'ref', live: { form: 'uploads', url: source, mime: mimeForExtension(ext), bytes: null } };
+          }
+          // 路径形态：URL 由 toStaticUploadBase 口径拼出；origin 解析失败回落副本链路
+          const origin = await this.resolveUploadOrigin();
+          // 相对 uploads 根（而非 basename）拼 URL：{uploadDir}/{userId} 按用户挂进容器，
+          // Agent 能在里面建子目录，取 basename 会拼出错误 URL 甚至让不同文件撞同一个地址
+          const relPath = toWorkspaceRelative(path.join(this.copyDeps.uploadDir, String(ctx.userId)), absPath);
+          if (origin !== '' && relPath != null) {
+            return {
+              action: 'ref',
+              live: {
+                form: 'uploads',
+                url: `${origin}/uploads/${String(ctx.userId)}/${relPath.split('/').map(encodeURIComponent).join('/')}`,
+                mime: mimeForExtension(ext),
+                bytes: size,
+              },
+            };
+          }
+        }
+      }
+    }
+
+    return { action: 'copy' };
+  }
+
+  private async resolveUploadOrigin(): Promise<string> {
+    try {
+      const baseUrl = await this.copyDeps.getUploadBaseUrl();
+      return toStaticUploadBase(baseUrl, this.copyDeps.uploadContextPath ?? '/api');
+    } catch (e) {
+      harnessLog('warn', 'send live-ref uploads origin resolve failed', e);
+      return '';
+    }
+  }
+
+  /** ref 形态 delivery 组装：形态 A 带 ref、形态 B 带 url，均带 filename（与形态 A 对齐，Agent 自定义文件名时不丢）。 */
+  private buildRefDelivery(live: SendLiveRef, filename: string): SendRefDelivery {
+    if (live.form === 'workspace') {
+      return { kind: this.kind(), filename, mime: live.mime, bytes: live.bytes, ref: live.ref };
+    }
+    const delivery: SendRefDelivery = { kind: this.kind(), url: live.url, mime: live.mime, filename };
+    if (live.bytes != null) delivery.bytes = live.bytes;
+    return delivery;
+  }
+
   protected override async executeWithUser(argumentsJson: string, sessionId: number | null, userId: number | null, workspace: string | null): Promise<string> {
     const kind = this.kind();
     const argName = this.sourceArgName();
@@ -502,6 +765,27 @@ abstract class SendMediaToolBase extends BaseTool {
         if (session == null) return errorJson('当前会话不存在，无法发送');
       }
       const channel = detectSendChannel(session);
+      const decision = await this.decideLiveRef(source, session, { userId, sessionId, workspace });
+      if (decision.action === 'error') return errorJson(decision.error);
+      const filename = asText(args.filename) || basenameOfSource(source);
+      if (decision.action === 'ref') {
+        // 活引用分支：chat-only 不读全量字节；绑通道仍读全量推送（推送需要），
+        // loadBytes 失败只算通道侧失败（§4.2 评审补充），两侧不写副本
+        const delivery = this.buildRefDelivery(decision.live, filename);
+        let push: ChannelPushResult = { ok: true, error: null };
+        const strategy = this.strategyFor(channel);
+        if (strategy != null) {
+          try {
+            const loaded = await this.loadBytes(source, { userId, sessionId, workspace }, this.maxBytes(), session?.executionMode ?? null);
+            const pushInput = { sessionId, parentSessionId: session?.parentSessionId ?? null, userId, bytes: loaded.bytes, filename };
+            push = kind === 'image' ? await strategy.pushImage(pushInput) : await strategy.pushFile(pushInput);
+          } catch (e) {
+            harnessLog('warn', `send ${kind} channel push bytes failed channel=${channel}`, e);
+            push = { ok: false, error: e instanceof Error ? e.message : String(e) };
+          }
+        }
+        return combineSendRefResult(filename, channel, delivery, push);
+      }
       let loaded: { bytes: Buffer; contentType: string | null };
       try {
         loaded = await this.loadBytes(source, { userId, sessionId, workspace }, this.maxBytes(), session?.executionMode ?? null);
@@ -511,7 +795,6 @@ abstract class SendMediaToolBase extends BaseTool {
       }
       const bytes = loaded.bytes;
       if (bytes.length === 0) return errorJson(this.emptyBytesError());
-      const filename = asText(args.filename) || basenameOfSource(source);
       const copy = await saveSendCopy(this.copyDeps, kind, bytes, source, userId, loaded.contentType);
       const strategy = this.strategyFor(channel);
       let push: ChannelPushResult = { ok: true, error: null };
@@ -542,7 +825,11 @@ export class SendImageTool extends SendMediaToolBase {
     dingtalk: DingtalkSendStrategy | null,
     sendBytesSupport?: SendBytesSupport | null,
     deliveryFetch?: SendDeliveryFetcher | null,
-  ) { super(pathSandbox, sessionLookup, copyDeps, wechat, feishu, dingtalk, sendBytesSupport, deliveryFetch); }
+    workspaceRefOracle?: SendWorkspaceRefOracle | null,
+    experienceDirForAgent?: ((agentId: number) => string) | null,
+  ) {
+    super(pathSandbox, sessionLookup, copyDeps, wechat, feishu, dingtalk, sendBytesSupport, deliveryFetch, workspaceRefOracle, experienceDirForAgent);
+  }
 
   getName(): string { return 'send_image'; }
   getDescription(): string {
@@ -589,7 +876,11 @@ export class SendFileTool extends SendMediaToolBase {
     dingtalk: DingtalkSendStrategy | null,
     sendBytesSupport?: SendBytesSupport | null,
     deliveryFetch?: SendDeliveryFetcher | null,
-  ) { super(pathSandbox, sessionLookup, copyDeps, wechat, feishu, dingtalk, sendBytesSupport, deliveryFetch); }
+    workspaceRefOracle?: SendWorkspaceRefOracle | null,
+    experienceDirForAgent?: ((agentId: number) => string) | null,
+  ) {
+    super(pathSandbox, sessionLookup, copyDeps, wechat, feishu, dingtalk, sendBytesSupport, deliveryFetch, workspaceRefOracle, experienceDirForAgent);
+  }
 
   getName(): string { return 'send_file'; }
   getDescription(): string {

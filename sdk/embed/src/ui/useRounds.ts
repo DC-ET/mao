@@ -8,6 +8,7 @@
  * segment 序列扁平化处理，规则一致。
  */
 import { computed, reactive, type Ref } from 'vue';
+import type { DeliveryWorkspaceRef } from '@mao/contracts';
 import type { ChatMessage, MessageSegment, SendDelivery, ToolCallItem } from '../types';
 import { formatRoundDuration } from './elapsed';
 
@@ -54,7 +55,8 @@ const SEND_MEDIA_TOOL_NAMES = new Set(['send_image', 'send_file']);
 
 /**
  * 从一轮的助手消息里按调用顺序收 `delivery`（统一发送媒体方案 D6）：结果 JSON 能解析且含
- * `delivery.url` 才收；message.toolCalls 与 segments 可能同时持有同一调用，按 toolCallId 去重。
+ * `delivery.url` 或 `delivery.ref`（活引用形态 A，2026-11-20）才收；
+ * message.toolCalls 与 segments 可能同时持有同一调用，按 toolCallId 去重。
  */
 function collectDeliveries(messages: ChatMessage[]): SendDelivery[] {
   const seen = new Set<string>();
@@ -74,20 +76,35 @@ function collectDeliveries(messages: ChatMessage[]): SendDelivery[] {
   return deliveries;
 }
 
+/** 解析 delivery.ref（活引用形态 A，2026-11-20）：type/sessionId/path 三键齐备才认，否则视为存量 url 形态。 */
+function parseDeliveryRef(raw: unknown): DeliveryWorkspaceRef | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (r.type !== 'workspace' || typeof r.sessionId !== 'number' || typeof r.path !== 'string' || r.path === '') {
+    return null;
+  }
+  return { type: 'workspace', sessionId: r.sessionId, path: r.path };
+}
+
 function extractDelivery(call: ToolCallItem): SendDelivery | null {
   if (!call.resultText) return null;
   try {
     const parsed = JSON.parse(call.resultText) as Record<string, unknown>;
     const delivery = parsed.delivery as Record<string, unknown> | undefined;
     if (!delivery || typeof delivery !== 'object') return null;
-    const url = delivery.url;
-    if (typeof url !== 'string' || url === '') return null;
+    const url = typeof delivery.url === 'string' && delivery.url !== '' ? delivery.url : null;
+    const ref = parseDeliveryRef(delivery.ref);
+    if (url == null && ref == null) return null;
     const filename = typeof parsed.filename === 'string' && parsed.filename.trim() !== ''
       ? parsed.filename
-      : (url.split('/').pop() || 'attachment');
+      : typeof delivery.filename === 'string' && delivery.filename.trim() !== ''
+        ? delivery.filename
+        // 形态 A 无 url：回落 ref.path basename（评审补充 §5.2）
+        : (ref ? ref.path.split('/').pop() : url?.split('/').pop()) || 'attachment';
     return {
       kind: delivery.kind === 'file' ? 'file' : 'image',
-      url,
+      ...(url != null ? { url } : {}),
+      ...(ref != null ? { ref } : {}),
       mime: typeof delivery.mime === 'string' ? delivery.mime : undefined,
       bytes: typeof delivery.bytes === 'number' ? delivery.bytes : undefined,
       filename,

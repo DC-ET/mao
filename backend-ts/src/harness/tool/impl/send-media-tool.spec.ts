@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -11,16 +11,22 @@ import {
   FeishuSendStrategy,
   DingtalkSendStrategy,
   combineSendResult,
+  combineSendRefResult,
+  isOwnUploadsUrl,
   deriveSendCopyExtension,
   mimeForSendCopy,
   basenameOfSource,
   detectSendChannel,
+  SEND_IMAGE_MAX_BYTES,
   type SendCopyDeps,
   type SendMediaSession,
 } from './send-media-tool.js';
 import { WEIXIN_PROJECT_KEY } from '../../../domain/types.js';
 import { BusinessException } from '../../../common/business-exception.js';
 import { ErrorCode } from '../../../common/error-code.js';
+import { EXPERIENCE_MOUNT_NAME } from '../../experience/experience-index.service.js';
+import { PathSandbox } from '../../safety/path-sandbox.js';
+import { WorkspaceBrowseService } from '../../../file/workspace-browse.service.js';
 import type { SendBytesSupport } from './send-file-bytes.js';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -56,9 +62,18 @@ interface Harness {
   fileTool: SendFileTool;
 }
 
-function build(session: SendMediaSession | null, sendBytesSupport: SendBytesSupport | null = null): Harness {
+function build(
+  session: SendMediaSession | null,
+  sendBytesSupport: SendBytesSupport | null = null,
+  opts: { refOracle?: boolean; ownWorkspace?: boolean; uploadDir?: string; experienceDirForAgent?: (agentId: number) => string } = {},
+): Harness {
   const workspace = tmpDir('send-media-ws-');
-  const uploadDir = tmpDir('send-media-up-');
+  const uploadDir = opts.uploadDir ?? tmpDir('send-media-up-');
+  // 活引用资格判定用 session.workspace（与 workspace-download 端点同源）；ownWorkspace
+  // 把假 workspace 覆盖为 harness 真实 tmpDir，让 downloadFile 预检真实命中
+  const effectiveSession = opts.ownWorkspace === true && session != null
+    ? { ...session, workspace }
+    : session;
   const wechat = {
     resolveAccount: vi.fn(async () => ({ accountId: 'acc', wxUserId: 'wx' })),
     uploadImage: vi.fn(async () => ({ mediaId: 'mid' })),
@@ -77,7 +92,7 @@ function build(session: SendMediaSession | null, sendBytesSupport: SendBytesSupp
     sendFile: vi.fn(async () => 'file.pdf'),
   };
   const deliveryFetch = { fetch: vi.fn() };
-  const sessionLookup = { getSession: vi.fn(async () => session) };
+  const sessionLookup = { getSession: vi.fn(async () => effectiveSession) };
   const copyDeps: SendCopyDeps = {
     uploadDir,
     getUploadBaseUrl: async () => 'https://mao.example.com/api',
@@ -96,6 +111,8 @@ function build(session: SendMediaSession | null, sendBytesSupport: SendBytesSupp
     new DingtalkSendStrategy({ resolveSendTarget: dingtalk.resolveSendTarget, sendImage: dingtalk.sendImage, sendFile: dingtalk.sendFile } as never),
     sendBytesSupport,
     { fetch: deliveryFetch.fetch } as never,
+    opts.refOracle === true ? new WorkspaceBrowseService(new PathSandbox(workspace)) : null,
+    opts.experienceDirForAgent ?? null,
   ] as const;
   const imageTool = new SendImageTool(...common);
   const fileTool = new SendFileTool(...common);
@@ -468,6 +485,324 @@ describe('send_image / send_file（统一发送，2026-11-18-unified-send-media 
   });
 });
 
+describe('send_image / send_file 活引用（2026-11-20-send-media-live-reference §9）', () => {
+  /** 会记录读字节调用的 support 替身：ref 命中时断言容器 / 宿主读取均未触发。 */
+  function spySupport(extraRoots: string[] = []): SendBytesSupport {
+    return {
+      readBytes: vi.fn(async () => null),
+      extraRoots: () => extraRoots,
+      foreignPathMessage: vi.fn(async () => null),
+    } as unknown as SendBytesSupport;
+  }
+
+  function sendCopyFiles(dir: string): string[] {
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir).filter((f) => f.startsWith('send-'));
+  }
+
+  it('CLOUD + 工作区文件 + chat-only：形态 A，不读全量字节、不写副本、path 归一化', async () => {
+    const support = spySupport();
+    const h = build({ projectKey: null, executionMode: 'CLOUD' }, support, { refOracle: true, ownWorkspace: true });
+    mkdirSync(join(h.workspace, 'reports'), { recursive: true });
+    writeFileSync(join(h.workspace, 'reports', 'a.png'), PNG);
+    const r = JSON.parse(await h.imageTool.execute(JSON.stringify({ image: 'reports/a.png' }), 11, 7, h.workspace)) as {
+      success: boolean; channel: string; channelStatus: string; filename: string;
+      delivery: { url?: string; mime: string; bytes: number; ref: { type: string; sessionId: number; path: string } }; error?: string;
+    };
+    expect(r.success).toBe(true);
+    expect(r.channel).toBe('chat');
+    expect(r.channelStatus).toBe('skipped');
+    expect(r.error).toBeUndefined();
+    expect(r.delivery.url).toBeUndefined();
+    expect(r.delivery.ref).toEqual({ type: 'workspace', sessionId: 11, path: 'reports/a.png' });
+    expect(r.delivery.mime).toBe('image/png');
+    expect(r.delivery.bytes).toBe(PNG.length);
+    // 未写副本、未触发容器 / 宿主读取
+    expect(sendCopyFiles(join(h.uploadDir, '7'))).toEqual([]);
+    expect((support.readBytes as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    expect((support.foreignPathMessage as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+  });
+
+  it('CLOUD + 工作区文件（绝对路径入参）：ref.path 归一化为工作区相对路径', async () => {
+    const h = build({ projectKey: null, executionMode: 'CLOUD' }, spySupport(), { refOracle: true, ownWorkspace: true });
+    mkdirSync(join(h.workspace, 'x'), { recursive: true });
+    writeFileSync(join(h.workspace, 'x', 'abs.png'), PNG);
+    const r = JSON.parse(await h.imageTool.execute(JSON.stringify({ image: join(h.workspace, 'x', 'abs.png') }), 11, 7, h.workspace)) as {
+      delivery: { ref: { path: string } };
+    };
+    expect(r.delivery.ref.path).toBe('x/abs.png');
+  });
+
+  it('绑定通道 + 工作区文件：推送成功且仍无副本，channelStatus sent，delivery 为形态 A', async () => {
+    const h = build({ projectKey: 'feishu-1-private-7', executionMode: 'CLOUD' }, spySupport(), { refOracle: true, ownWorkspace: true });
+    writeFileSync(join(h.workspace, 'f.png'), PNG);
+    const r = JSON.parse(await h.imageTool.execute(JSON.stringify({ image: 'f.png' }), 11, 7, h.workspace)) as {
+      success: boolean; channelStatus: string; delivery: { ref: { path: string } };
+    };
+    expect(r.success).toBe(true);
+    expect(r.channelStatus).toBe('sent');
+    expect(r.delivery.ref.path).toBe('f.png');
+    expect(h.feishu.sendImage).toHaveBeenCalledTimes(1);
+    expect(sendCopyFiles(join(h.uploadDir, '7'))).toEqual([]);
+  });
+
+  it('绑定通道 + 引用：push 失败 success=true、error 只含通道侧、channelStatus failed、delivery 仍在', async () => {
+    const h = build({ projectKey: 'feishu-1-private-7', executionMode: 'CLOUD' }, spySupport(), { refOracle: true, ownWorkspace: true });
+    h.feishu.sendImage.mockRejectedValueOnce(new Error('飞书 API 超时'));
+    writeFileSync(join(h.workspace, 'g.png'), PNG);
+    const r = JSON.parse(await h.imageTool.execute(JSON.stringify({ image: 'g.png' }), 11, 7, h.workspace)) as {
+      success: boolean; channelStatus: string; error: string; delivery?: { ref: { path: string } };
+    };
+    expect(r.success).toBe(true);
+    expect(r.channelStatus).toBe('failed');
+    expect(r.error).toBe('飞书发送失败：飞书 API 超时');
+    expect(r.delivery?.ref.path).toBe('g.png');
+  });
+
+  it('绑定通道 + 引用：loadBytes 读字节失败只算通道侧（delivery 形态 A 照常、success=true）', async () => {
+    const support = {
+      readBytes: vi.fn(async () => { throw new Error('容器读取失败'); }),
+      extraRoots: () => [],
+      foreignPathMessage: vi.fn(async () => null),
+    } as unknown as SendBytesSupport;
+    const h = build({ projectKey: 'feishu-1-private-7', executionMode: 'CLOUD' }, support, { refOracle: true, ownWorkspace: true });
+    writeFileSync(join(h.workspace, 'h.png'), PNG);
+    const r = JSON.parse(await h.imageTool.execute(JSON.stringify({ image: 'h.png' }), 11, 7, h.workspace)) as {
+      success: boolean; channelStatus: string; error: string; delivery?: { ref: { path: string } };
+    };
+    expect(r.success).toBe(true);
+    expect(r.channelStatus).toBe('failed');
+    expect(r.error).toBe('飞书发送失败：容器读取失败');
+    expect(r.delivery?.ref.path).toBe('h.png');
+  });
+
+  it('资格回落：文件不存在 / 路径逃逸 → 按现状报错，不产出 ref', async () => {
+    const h = build({ projectKey: null, executionMode: 'CLOUD' }, spySupport(), { refOracle: true, ownWorkspace: true });
+    const missing = JSON.parse(await h.imageTool.execute(JSON.stringify({ image: 'missing.png' }), 11, 7, h.workspace)) as { error: string; delivery?: unknown };
+    expect(missing.error).toContain('文件不存在');
+    expect(missing.delivery).toBeUndefined();
+
+    const escape = JSON.parse(await h.imageTool.execute(JSON.stringify({ image: '../outside.png' }), 11, 7, h.workspace)) as { error: string };
+    expect(escape.error).toContain('Path escape');
+    expect(sendCopyFiles(join(h.uploadDir, '7'))).toEqual([]);
+  });
+
+  it('形态 A 保留既有上限与空文件语义：超限回落报「文件过大」、空文件按现状文案', async () => {
+    const h = build({ projectKey: null, executionMode: 'CLOUD' }, spySupport(), { refOracle: true, ownWorkspace: true });
+    writeFileSync(join(h.workspace, 'big.png'), Buffer.concat([PNG, Buffer.alloc(SEND_IMAGE_MAX_BYTES + 1)]));
+    const big = JSON.parse(await h.imageTool.execute(JSON.stringify({ image: 'big.png' }), 11, 7, h.workspace)) as { error: string };
+    expect(big.error).toContain('文件过大');
+    expect(sendCopyFiles(join(h.uploadDir, '7'))).toEqual([]);
+
+    writeFileSync(join(h.workspace, 'empty.png'), '');
+    const empty = JSON.parse(await h.imageTool.execute(JSON.stringify({ image: 'empty.png' }), 11, 7, h.workspace)) as { error: string };
+    expect(empty.error).toBe('图片内容为空');
+  });
+
+  it('send_image 工作区来源嗅探拒绝非图片（不读全量，文案与现状一致）', async () => {
+    const h = build({ projectKey: null, executionMode: 'CLOUD' }, spySupport(), { refOracle: true, ownWorkspace: true });
+    writeFileSync(join(h.workspace, 'fake.png'), 'not really a png');
+    const r = JSON.parse(await h.imageTool.execute(JSON.stringify({ image: 'fake.png' }), 11, 7, h.workspace)) as { error: string; delivery?: unknown };
+    expect(r.error).toBe('不支持的图片格式（副本支持 PNG/JPG/JPEG/GIF/WebP/BMP）');
+    expect(r.delivery).toBeUndefined();
+    expect(sendCopyFiles(join(h.uploadDir, '7'))).toEqual([]);
+  });
+
+  it('经验挂载命中不进 ref：回落副本链路并按现状报错（§2.2）', async () => {
+    const expDir = tmpDir('send-media-exp-');
+    writeFileSync(join(expDir, 'x.png'), PNG);
+    const h = build(
+      { projectKey: null, executionMode: 'CLOUD', agentId: 5 },
+      spySupport(),
+      { refOracle: true, ownWorkspace: true, experienceDirForAgent: () => expDir },
+    );
+    symlinkSync(expDir, join(h.workspace, EXPERIENCE_MOUNT_NAME));
+    const r = JSON.parse(await h.imageTool.execute(JSON.stringify({ image: `${EXPERIENCE_MOUNT_NAME}/x.png` }), 11, 7, h.workspace)) as {
+      error: string; delivery?: { ref?: unknown };
+    };
+    expect(r.error).toContain('Path escape');
+    expect(r.delivery?.ref).toBeUndefined();
+    expect(sendCopyFiles(join(h.uploadDir, '7'))).toEqual([]);
+  });
+
+  it('uploads 原地引用 URL 形态：delivery.url 原样指向既有文件，不下载不重写，bytes 省略', async () => {
+    const source = 'https://mao.example.com/uploads/7/generated-ab12.png';
+    const h = build({ projectKey: null, executionMode: 'CLOUD' }, spySupport(), { refOracle: true, ownWorkspace: true });
+    const r = JSON.parse(await h.imageTool.execute(JSON.stringify({ image: source }), 11, 7, h.workspace)) as {
+      success: boolean; delivery: { url: string; mime: string; bytes?: number; ref?: unknown };
+    };
+    expect(r.success).toBe(true);
+    expect(r.delivery.url).toBe(source);
+    expect(r.delivery.mime).toBe('image/png');
+    expect(r.delivery.bytes).toBeUndefined();
+    expect(r.delivery.ref).toBeUndefined();
+    expect(sendCopyFiles(join(h.uploadDir, '7'))).toEqual([]);
+  });
+
+  it('uploads 原地引用路径形态：URL 按 toStaticUploadBase 口径拼出，无副本、不读字节', async () => {
+    const uploadDir = tmpDir('send-media-up-path-');
+    const uploadsDir = join(uploadDir, '7');
+    mkdirSync(uploadsDir, { recursive: true });
+    const gen = join(uploadsDir, 'generated-ab12.png');
+    writeFileSync(gen, PNG);
+    const support = spySupport([uploadsDir]);
+    const h = build({ projectKey: null, executionMode: 'CLOUD' }, support, { refOracle: true, ownWorkspace: true, uploadDir });
+    const r = JSON.parse(await h.imageTool.execute(JSON.stringify({ image: gen }), 11, 7, h.workspace)) as {
+      success: boolean; delivery: { url: string; mime: string; bytes: number };
+    };
+    expect(r.success).toBe(true);
+    expect(r.delivery.url).toBe('https://mao.example.com/uploads/7/generated-ab12.png');
+    expect(r.delivery.mime).toBe('image/png');
+    expect(r.delivery.bytes).toBe(PNG.length);
+    expect((support.readBytes as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+  });
+
+  it('uploads 原地引用：URL 段精确匹配本人 userId，他人 uploads URL 不命中（回落副本）', async () => {
+    const own = 'https://mao.example.com/uploads/7/x.png';
+    expect(isOwnUploadsUrl(own, 7)).toBe(true);
+    expect(isOwnUploadsUrl('https://mao.example.com/api/uploads/7/x.png', 7)).toBe(true);
+    expect(isOwnUploadsUrl('https://mao.example.com/uploads/77/x.png', 7)).toBe(false);
+    expect(isOwnUploadsUrl('https://mao.example.com/uploads/7/', 7)).toBe(false);
+    expect(isOwnUploadsUrl('https://mao.example.com/uploads/9/x.png', 7)).toBe(false);
+    expect(isOwnUploadsUrl('/uploads/7/x.png', 7)).toBe(false);
+    expect(isOwnUploadsUrl(own, null)).toBe(false);
+
+    // 他人 uploads URL：不命中 → 回落副本（本地 http 源真实取字节后按 send-* 落盘）
+    const h = build({ projectKey: null, executionMode: 'CLOUD' }, spySupport(), { refOracle: true, ownWorkspace: true });
+    await withHttpServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'image/png' });
+      res.end(PNG);
+    }, async (port) => {
+      const r = JSON.parse(await h.imageTool.execute(
+        JSON.stringify({ image: `http://127.0.0.1:${port}/uploads/9/x.png` }), 11, 7, h.workspace,
+      )) as { success: boolean; delivery: { url: string } };
+      expect(r.success).toBe(true);
+      expect(r.delivery.url).toContain('/uploads/7/send-');
+    });
+  });
+
+  it('send_image + uploads 原地引用：非图片扩展名回落副本（照旧字节嗅探拒绝）', async () => {
+    const uploadDir = tmpDir('send-media-up-txt-');
+    const uploadsDir = join(uploadDir, '7');
+    mkdirSync(uploadsDir, { recursive: true });
+    writeFileSync(join(uploadsDir, 'notes.txt'), 'not an image');
+    const support = spySupport([uploadsDir]);
+    const h = build({ projectKey: null, executionMode: 'CLOUD' }, support, { refOracle: true, ownWorkspace: true, uploadDir });
+    const r = JSON.parse(await h.imageTool.execute(JSON.stringify({ image: join(uploadsDir, 'notes.txt') }), 11, 7, h.workspace)) as {
+      success: boolean; error: string; delivery?: unknown;
+    };
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('不支持的图片格式');
+    expect(r.delivery).toBeUndefined();
+  });
+
+  it('uploads 可执行内容（.html）来源回落副本成 .bin + octet-stream（D4 净化不丢）', async () => {
+    const uploadDir = tmpDir('send-media-up-html-');
+    const uploadsDir = join(uploadDir, '7');
+    mkdirSync(uploadsDir, { recursive: true });
+    writeFileSync(join(uploadsDir, 'evil.html'), '<html><body>x</body></html>');
+    const support = spySupport([uploadsDir]);
+    const h = build({ projectKey: null, executionMode: 'CLOUD' }, support, { refOracle: true, ownWorkspace: true, uploadDir });
+    const r = JSON.parse(await h.fileTool.execute(JSON.stringify({ file: join(uploadsDir, 'evil.html') }), 11, 7, h.workspace)) as {
+      success: boolean; delivery: { url: string; mime: string };
+    };
+    expect(r.success).toBe(true);
+    expect(r.delivery.url.endsWith('.bin')).toBe(true);
+    expect(r.delivery.mime).toBe('application/octet-stream');
+  });
+
+  it('形态 B 路径形态 origin 解析失败 → 回落副本链路', async () => {
+    const uploadDir = tmpDir('send-media-up-origin-');
+    const uploadsDir = join(uploadDir, '7');
+    mkdirSync(uploadsDir, { recursive: true });
+    const gen = join(uploadsDir, 'generated-zz.png');
+    writeFileSync(gen, PNG);
+    const support = spySupport([uploadsDir]);
+    const h = build({ projectKey: null, executionMode: 'CLOUD' }, support, { refOracle: true, ownWorkspace: true, uploadDir });
+    // origin 空 → saveSendCopy 失败（与今天「对话页没有可打开的附件地址」同路径）
+    const tool = new SendFileTool(
+      { getEffectiveWorkspaceRoot: () => h.workspace } as never,
+      { getSession: async () => ({ projectKey: null, executionMode: 'CLOUD', workspace: h.workspace }) } as never,
+      { uploadDir, getUploadBaseUrl: async () => '' },
+      null, null, null,
+      support,
+      null,
+      new WorkspaceBrowseService(new PathSandbox(h.workspace)),
+      null,
+    );
+    const r = JSON.parse(await tool.execute(JSON.stringify({ file: gen }), 11, 7, h.workspace)) as { success: boolean; error: string };
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('对话页没有可打开的附件地址');
+  });
+  // 评审补充：host 把关。路径段「长得像」本站上传地址不等于就是本站文件——
+  // 不看 origin 会把外域地址原样塞进 delivery.url，让浏览器直接打向该域。
+  it('uploads 路径段命中但 host 不一致（同 userId 的外域 / localhost）→ 回落副本', async () => {
+    const h = build({ projectKey: null, executionMode: 'CLOUD' }, spySupport(), { refOracle: true, ownWorkspace: true });
+    await withHttpServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'image/png' });
+      res.end(PNG);
+    }, async (port) => {
+      // 同 userId（7）但 origin 是 localhost，不是本站 https://mao.example.com
+      const r = JSON.parse(await h.imageTool.execute(
+        JSON.stringify({ image: `http://127.0.0.1:${port}/uploads/7/x.png` }), 11, 7, h.workspace,
+      )) as { success: boolean; delivery: { url: string; ref?: unknown } };
+      expect(r.success).toBe(true);
+      expect(r.delivery.ref).toBeUndefined();
+      // 回落副本：取真实字节后按 send-* 落到本人 uploads，而不是引用 localhost 地址
+      expect(r.delivery.url).toContain('/uploads/7/send-');
+      expect(r.delivery.url).not.toContain('127.0.0.1');
+      expect(sendCopyFiles(join(h.uploadDir, '7'))).toHaveLength(1);
+    });
+  });
+
+  it('普通外链（无 uploads 路径段）仍走副本（§9 回归）', async () => {
+    const h = build({ projectKey: null, executionMode: 'CLOUD' }, spySupport(), { refOracle: true, ownWorkspace: true });
+    await withHttpServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'image/png' });
+      res.end(PNG);
+    }, async (port) => {
+      const r = JSON.parse(await h.imageTool.execute(
+        JSON.stringify({ image: `http://127.0.0.1:${port}/images/a.png` }), 11, 7, h.workspace,
+      )) as { success: boolean; delivery: { url: string } };
+      expect(r.success).toBe(true);
+      expect(r.delivery.url).toContain('/uploads/7/send-');
+    });
+  });
+
+  it('uploads 路径形态子目录 + 空格：URL 保留相对路径并逐段编码（不塌成 basename）', async () => {
+    const uploadDir = tmpDir('send-media-up-sub-');
+    const uploadsDir = join(uploadDir, '7');
+    mkdirSync(join(uploadsDir, 'sub dir'), { recursive: true });
+    const gen = join(uploadsDir, 'sub dir', 'my 图.png');
+    writeFileSync(gen, PNG);
+    const support = spySupport([uploadsDir]);
+    const h = build({ projectKey: null, executionMode: 'CLOUD' }, support, { refOracle: true, ownWorkspace: true, uploadDir });
+    const r = JSON.parse(await h.imageTool.execute(JSON.stringify({ image: gen }), 11, 7, h.workspace)) as {
+      success: boolean; delivery: { url: string; filename: string; bytes: number };
+    };
+    expect(r.success).toBe(true);
+    expect(r.delivery.url).toBe('https://mao.example.com/uploads/7/sub%20dir/my%20%E5%9B%BE.png');
+    // 形态 B 也带 filename：Agent 传自定义名时不丢（与形态 A 对齐）
+    expect(r.delivery.filename).toBe('my 图.png');
+    expect(r.delivery.bytes).toBe(PNG.length);
+  });
+
+  it('形态 B delivery.filename 取 Agent 显式传入的 filename', async () => {
+    const uploadDir = tmpDir('send-media-up-name-');
+    const uploadsDir = join(uploadDir, '7');
+    mkdirSync(uploadsDir, { recursive: true });
+    writeFileSync(join(uploadsDir, 'generated-zz.png'), PNG);
+    const support = spySupport([uploadsDir]);
+    const h = build({ projectKey: null, executionMode: 'CLOUD' }, support, { refOracle: true, ownWorkspace: true, uploadDir });
+    const r = JSON.parse(await h.imageTool.execute(
+      JSON.stringify({ image: join(uploadsDir, 'generated-zz.png'), filename: '封面图.png' }), 11, 7, h.workspace,
+    )) as { success: boolean; filename: string; delivery: { url: string; filename: string } };
+    expect(r.success).toBe(true);
+    expect(r.filename).toBe('封面图.png');
+    expect(r.delivery.filename).toBe('封面图.png');
+  });
+});
+
 describe('combineSendResult / 纯函数', () => {
   const copyOk = { ok: true as const, url: 'https://x/uploads/7/send-1.png', mime: 'image/png', bytes: 3 };
   const copyFail = { ok: false as const, error: '附件写入失败' };
@@ -493,6 +828,21 @@ describe('combineSendResult / 纯函数', () => {
 
     const chatFail = JSON.parse(combineSendResult('image', 'a.png', 'chat', copyFail, pushOk)) as Record<string, unknown>;
     expect(chatFail).toMatchObject({ success: false, channelStatus: 'skipped', error: '对话页保存失败：附件写入失败' });
+  });
+
+  it('combineSendRefResult：ref 侧恒 ok；绑通道 push 失败只算通道侧（§4.2）', () => {
+    const refDelivery = { kind: 'image', mime: 'image/png', bytes: 3, ref: { type: 'workspace', sessionId: 11, path: 'a.png' } };
+    const chat = JSON.parse(combineSendRefResult('a.png', 'chat', refDelivery, pushOk)) as Record<string, unknown>;
+    expect(chat).toMatchObject({ success: true, channel: 'chat', channelStatus: 'skipped', filename: 'a.png', delivery: refDelivery });
+    expect(chat.error).toBeUndefined();
+
+    const sent = JSON.parse(combineSendRefResult('a.png', 'wechat', refDelivery, pushOk)) as Record<string, unknown>;
+    expect(sent).toMatchObject({ success: true, channelStatus: 'sent' });
+    expect(sent.error).toBeUndefined();
+
+    const failed = JSON.parse(combineSendRefResult('a.png', 'wechat', refDelivery, pushFail)) as Record<string, unknown>;
+    expect(failed).toMatchObject({ success: true, channelStatus: 'failed', error: '微信发送失败：图片超过 10MB 上限' });
+    expect(failed.delivery).toEqual(refDelivery);
   });
 
   it('deriveSendCopyExtension：白名单外与路径穿越样式回落 .bin，http 按 URL 路径取', () => {

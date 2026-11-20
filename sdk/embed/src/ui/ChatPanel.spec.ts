@@ -60,6 +60,7 @@ function mountPanel(overrides: Partial<PanelState> = {}) {
         historyHasMore: false,
         historyError: null,
         activeSessionId: null,
+        resolveDeliveryUrl: (d: { url?: string }) => d.url ?? '',
         onSend: (content: string, attachments: unknown[]) => sent.push({ content, attachments }),
         onClose: () => {},
         onNewSession: () => {},

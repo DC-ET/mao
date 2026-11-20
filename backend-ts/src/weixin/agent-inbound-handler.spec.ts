@@ -63,7 +63,8 @@ describe('AgentWeixinInboundHandler', () => {
     expect(url).not.toBe(original);
     // 原 data URI 不被修改（落盘/预览仍用原图）
     expect(ctx.imageDataUris![0]).toBe(original);
-  });
+    // sharp 真实压缩 1200x1200 噪声图：全量套件并行下常超过默认 5s 超时（非逻辑问题）
+  }, 30_000);
 
   it('buildMessageContent_fileOnly_injectsPathMarker', async () => {
     const ctx: WeixinInboundMessageContext = { accountId: 'a', body: '' };

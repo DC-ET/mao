@@ -705,6 +705,26 @@ async function extractDownloadError(resp: Response): Promise<string> {
   return `下载失败（HTTP ${resp.status}）`
 }
 
+/**
+ * 下载响应是否为业务错误信封（活引用方案 2026-11-20 §5.2 评审补充）：CLOUD
+ * workspace-download 的业务错误（如「文件不存在」）经 handleError 映射为
+ * HTTP 200 + code 信封，只查 resp.ok 会把信封 JSON 当文件保存 / 当文本渲染。
+ * 仅对 workspace-download 判定——`/uploads` 静态服务不产信封，且含数字 code
+ * 字段的 JSON 文件不应被误杀。
+ */
+async function downloadEnvelopeError(resp: Response, url: string): Promise<string | null> {
+  if (!url.includes('/files/workspace-download?')) return null
+  if (resp.headers.get('content-disposition')) return null
+  if (!(resp.headers.get('content-type') || '').includes('application/json')) return null
+  try {
+    const body = await resp.json() as { code?: number; message?: string } | null
+    if (body?.code !== undefined && body.code !== 0) return body.message || '下载失败'
+  } catch {
+    // 解析失败不阻塞正常 blob 路径
+  }
+  return null
+}
+
 /** 解析 Content-Disposition 中的文件名，优先 filename*=UTF-8'' 编码，失败返回 undefined。 */
 function parseDownloadFileName(disposition: string | null): string | undefined {
   if (!disposition) return undefined
@@ -747,12 +767,32 @@ function bytesToDataUri(bytes: Uint8Array, mime: string): string {
 }
 
 /**
+ * 安卓壳 / 微信内置浏览器外跳前的活引用信封预检（2026-11-20）：workspace-download 的业务
+ * 错误是 HTTP 200 + code 信封，直接外跳会让用户看到一段报错 JSON。只对 workspace-download
+ * 生效；读完响应头即取消 body（不落地整份文件）；预检本身失败（离线 / CORS）不阻断外跳。
+ */
+async function probeDeliveryEnvelopeError(url: string): Promise<string | null> {
+  if (!url.includes('/files/workspace-download?')) return null
+  try {
+    const resp = await fetch(url)
+    if (!resp.ok) return null
+    const error = await downloadEnvelopeError(resp, url)
+    void resp.body?.cancel().catch(() => {})
+    return error
+  } catch {
+    return null
+  }
+}
+
+/**
  * 下载 Agent 发送文件的会话副本 URL，并保留原始展示文件名（避免落成 `send-{uuid}.ext`）。
  * 安卓壳 / 微信内置浏览器受 WebView Blob 下载限制，走外链打开；跨域失败时回退外链。
  */
 export async function downloadDeliveryUrl(url: string, suggestedName: string): Promise<DownloadResult> {
   const targetName = suggestedName.trim() || url.split('/').pop() || 'download'
   if (isAndroidCapacitor() || isWechatBrowser()) {
+    const envelopeError = await probeDeliveryEnvelopeError(url)
+    if (envelopeError != null) return { ok: false, error: envelopeError, url }
     const opened = await openExternalUrl(url)
     return opened ? { ok: true, url } : { ok: false, error: '无法调起系统下载', url }
   }
@@ -761,6 +801,8 @@ export async function downloadDeliveryUrl(url: string, suggestedName: string): P
     if (!resp.ok) {
       return { ok: false, error: await extractDownloadError(resp), url }
     }
+    const envelopeError = await downloadEnvelopeError(resp, url)
+    if (envelopeError != null) return { ok: false, error: envelopeError, url }
     const blob = await resp.blob()
     triggerBrowserDownload(blob, targetName)
     return { ok: true, url }
@@ -794,6 +836,8 @@ export function createDeliveryFileProvider(delivery: {
         if (!resp.ok) {
           return { content: '', total_lines: 0, error: await extractDownloadError(resp) }
         }
+        const envelopeError = await downloadEnvelopeError(resp, delivery.url)
+        if (envelopeError != null) return { content: '', total_lines: 0, error: envelopeError }
         const headerMime = (resp.headers.get('content-type') || '').split(';')[0].trim().toLowerCase()
         const effectiveMime = (delivery.mime || headerMime || '').toLowerCase()
         const buffer = await resp.arrayBuffer()
@@ -829,6 +873,8 @@ export function createDeliveryFileProvider(delivery: {
         if (!resp.ok) {
           return { error: await extractDownloadError(resp) }
         }
+        const envelopeError = await downloadEnvelopeError(resp, delivery.url)
+        if (envelopeError != null) return { error: envelopeError }
         const buffer = await resp.arrayBuffer()
         if (!buffer || buffer.byteLength === 0) {
           return { error: 'PDF 内容为空' }
@@ -844,6 +890,8 @@ export function createDeliveryFileProvider(delivery: {
         if (!resp.ok) {
           return { error: await extractDownloadError(resp) }
         }
+        const envelopeError = await downloadEnvelopeError(resp, delivery.url)
+        if (envelopeError != null) return { error: envelopeError }
         const buffer = await resp.arrayBuffer()
         if (!buffer || buffer.byteLength === 0) {
           return { error: '文件内容为空' }

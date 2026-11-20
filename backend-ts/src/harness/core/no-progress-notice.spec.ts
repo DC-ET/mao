@@ -397,5 +397,18 @@ describe('no-progress-notice', () => {
       expect(sent).not.toBe(digestOf({ ...base, channel: 'wechat', channelStatus: 'sent' }));
       expect(sent).not.toBe(digestOf({ ...base, filename: 'b.png', channelStatus: 'sent' }));
     });
+
+    it('活引用（2026-11-20）：ref 形态 delivery 不参与签名，重复发送仍按四键判「无进展」', () => {
+      const first = digestOf({
+        success: true, channel: 'chat', channelStatus: 'skipped', filename: 'a.png',
+        delivery: { kind: 'image', mime: 'image/png', bytes: 12, ref: { type: 'workspace', sessionId: 11, path: 'reports/a.png' } },
+      });
+      // 同文件改路径后重发：四键相同仍无进展；delivery.ref 不进签名
+      const second = digestOf({
+        success: true, channel: 'chat', channelStatus: 'skipped', filename: 'a.png',
+        delivery: { kind: 'image', mime: 'image/png', bytes: 12, ref: { type: 'workspace', sessionId: 11, path: 'reports/a2.png' } },
+      });
+      expect(first).toBe(second);
+    });
   });
 });

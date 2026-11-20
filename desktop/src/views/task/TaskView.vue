@@ -130,6 +130,7 @@ import { useWorkspaceGitProvider } from '../../composables/workspace-git-provide
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
 import type { GitChangedFile } from '../../types/git'
 import type { FileChange, SendDelivery } from '../../types/chat'
+import { deliveryKey, resolveDeliveryUrlWithToken } from '../../utils/deliveryUrl'
 import type { FileRangeQuotePayload } from '../../utils/selection-quote'
 import type { SideTaskContextMode } from '../../types/file-browser'
 import type { SideTaskEntryOptions } from '../../composables/useCenterTabs'
@@ -391,7 +392,16 @@ const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
 const { tabs, activeTab, activeTabId, openFileTab, openDeliveryFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, reorderTab, closeRightTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, openFileManagerTab, openWorkspaceFileManagerTab, openGitTab, updateSideTaskTab, restoreSideTaskTabs, restoreSubagentTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
 
 provide('openDeliveryFile', (delivery: SendDelivery) => {
-  openDeliveryFileTab(delivery)
+  // 活引用（2026-11-20 §5.2）：先 resolve 成 workspace-download URL（含渲染期 token），
+  // 再交给 useCenterTabs / createDeliveryFileProvider——中心 Tab 全链路无需感知 ref。
+  // key 传稳定身份（形态 A 为 ref、形态 B/C 为 url）：页签 id 不能含 token，
+  // 否则 token 轮换会开出重复页签、并把 token 写进 localStorage 的激活态记录。
+  openDeliveryFileTab({
+    url: resolveDeliveryUrlWithToken(delivery),
+    filename: delivery.filename,
+    key: deliveryKey(delivery),
+    ...(delivery.mime != null ? { mime: delivery.mime } : {}),
+  })
 })
 
 /** 文件管理器 / 文件树拖文件到中心 Tab 栏：去重 / 激活 / version 递增由 openFileTab 内建；跨工作区来源按其所属根路由 */

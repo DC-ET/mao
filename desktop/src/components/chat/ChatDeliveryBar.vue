@@ -6,8 +6,8 @@
     <div v-if="imageDeliveries.length > 0" class="delivery-images">
       <el-image
         v-for="(d, idx) in imageDeliveries"
-        :key="d.url"
-        :src="d.url"
+        :key="keyOf(d)"
+        :src="srcOf(d)"
         :preview-src-list="imageUrls"
         :initial-index="idx"
         :alt="d.filename"
@@ -33,7 +33,7 @@
     <div v-if="fileDeliveries.length > 0" class="delivery-files">
       <div
         v-for="d in fileDeliveries"
-        :key="d.url"
+        :key="keyOf(d)"
         class="delivery-file"
         :class="`is-${fileMeta(d).category}`"
       >
@@ -124,13 +124,13 @@
         <button
           type="button"
           class="delivery-file-download"
-          :class="{ 'is-downloading': downloadingUrls.has(d.url) }"
-          :disabled="downloadingUrls.has(d.url)"
+          :class="{ 'is-downloading': downloadingKeys.has(keyOf(d)) }"
+          :disabled="downloadingKeys.has(keyOf(d))"
           :title="`下载 ${d.filename}`"
           :aria-label="`下载文件：${d.filename}`"
           @click.stop="handleFileDownload(d)"
         >
-          <span v-if="downloadingUrls.has(d.url)" class="delivery-download-spinner" aria-hidden="true"></span>
+          <span v-if="downloadingKeys.has(keyOf(d))" class="delivery-download-spinner" aria-hidden="true"></span>
           <svg v-else viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
             <polyline points="7 10 12 15 17 10" />
@@ -149,6 +149,7 @@ import type { SendDelivery } from '../../types/chat'
 import { downloadDeliveryUrl } from '../../composables/workspace-file-provider'
 import { formatSize } from '../../utils/file-manager'
 import { resolveDeliveryFileMeta, type DeliveryFileMeta } from '../../utils/deliveryFileMeta'
+import { deliveryKey, resolveDeliveryUrlWithToken } from '../../utils/deliveryUrl'
 
 const props = defineProps<{
   deliveries: SendDelivery[]
@@ -157,11 +158,22 @@ const props = defineProps<{
 /** TaskView 注入：存在时点击卡片主区在中心「文件预览」Tab 打开；只读分享页无此注入时回落为下载。 */
 const openDeliveryFile = inject<((delivery: SendDelivery) => void) | null>('openDeliveryFile', null)
 
-const downloadingUrls = reactive(new Set<string>())
+/** 下载中集合按 delivery 身份（稳定 key），不用含 token 的 resolved URL（token 轮换会误判）。 */
+const downloadingKeys = reactive(new Set<string>())
 
 const imageDeliveries = computed(() => props.deliveries.filter(d => d.kind === 'image'))
-const imageUrls = computed(() => imageDeliveries.value.map(d => d.url))
+const imageUrls = computed(() => imageDeliveries.value.map(d => resolveDeliveryUrlWithToken(d)))
 const fileDeliveries = computed(() => props.deliveries.filter(d => d.kind !== 'image'))
+
+/** 取数 URL：形态 A（ref）渲染期拼 workspace-download + token；形态 B/C 原样 url。 */
+function srcOf(d: SendDelivery): string {
+  return resolveDeliveryUrlWithToken(d)
+}
+
+/** 稳定 key：形态 A 用 ref，形态 B/C 用 url。 */
+function keyOf(d: SendDelivery): string {
+  return deliveryKey(d)
+}
 
 function fileMeta(d: SendDelivery): DeliveryFileMeta {
   return resolveDeliveryFileMeta(d)
@@ -189,15 +201,16 @@ function handleFileOpen(d: SendDelivery) {
 }
 
 async function handleFileDownload(d: SendDelivery) {
-  if (downloadingUrls.has(d.url)) return
-  downloadingUrls.add(d.url)
+  const key = keyOf(d)
+  if (downloadingKeys.has(key)) return
+  downloadingKeys.add(key)
   try {
-    const result = await downloadDeliveryUrl(d.url, d.filename)
+    const result = await downloadDeliveryUrl(srcOf(d), d.filename)
     if (!result.ok) {
       ElMessage.error(result.error || '下载失败')
     }
   } finally {
-    downloadingUrls.delete(d.url)
+    downloadingKeys.delete(key)
   }
 }
 </script>

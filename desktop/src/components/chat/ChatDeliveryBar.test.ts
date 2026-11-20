@@ -1,5 +1,6 @@
-// 投递卡片（统一发送媒体方案 2026-11-18 D6/§7.1）：图片进预览网格（src 与预览列表都取 url），
-// 文件渲染为「点击主区进中心文件预览 Tab + 右侧独立下载按钮」的结构化附件卡片。
+// 投递卡片（统一发送媒体方案 2026-11-18 D6/§7.1；活引用 2026-11-20 §5.2）：图片进预览网格
+// （src 与预览列表都经 resolveDeliveryUrlWithToken——形态 A ref 渲染期拼 workspace-download + token，
+// 形态 B/C 原样 url），文件渲染为「点击主区进中心文件预览 Tab + 右侧独立下载按钮」的结构化附件卡片。
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { parse } from '@vue/compiler-sfc'
@@ -50,12 +51,14 @@ const scriptContent = descriptor.scriptSetup?.content ?? ''
 const styleContent = descriptor.styles.map(s => s.content).join('\n')
 
 describe('ChatDeliveryBar 模板绑定与预览/下载双动作卡片', () => {
-  it('图片用 el-image，src 与预览列表都取 delivery.url', () => {
+  it('图片用 el-image，src 与预览列表都经 resolveDeliveryUrlWithToken', () => {
     const images = findElements(root, el => el.tag === 'el-image')
     expect(images).toHaveLength(1)
-    expect(propExp(images[0], 'src')).toBe('d.url')
+    expect(propExp(images[0], 'src')).toBe('srcOf(d)')
     expect(propExp(images[0], 'preview-src-list')).toBe('imageUrls')
     expect(propExp(images[0], 'preview-teleported')).toBe('true')
+    // 稳定 key：token 轮换不重挂载（评审补充 §5.2）
+    expect(propExp(images[0], 'key')).toBe('keyOf(d)')
   })
 
   it('文件卡片主区点击走文件预览（无嵌套交互元素），右侧并列提供独立下载按钮', () => {
@@ -94,7 +97,12 @@ describe('ChatDeliveryBar 模板绑定与预览/下载双动作卡片', () => {
 
     // 脚本层接线：优先注入 openDeliveryFile 进中心预览 Tab，只读分享页回落下载
     expect(scriptContent).toContain("inject<((delivery: SendDelivery) => void) | null>('openDeliveryFile', null)")
-    expect(scriptContent).toContain('downloadDeliveryUrl(d.url, d.filename)')
+    expect(scriptContent).toContain('downloadDeliveryUrl(srcOf(d), d.filename)')
+    // 稳定 key：形态 A 用 ref、形态 B/C 用 url，不用含 token 的 resolved URL（评审补充 §5.2）
+    expect(scriptContent).toContain("from '../../utils/deliveryUrl'")
+    expect(propExp(card, 'key')).toBe('keyOf(d)')
+    // 下载中集合按 delivery 身份键
+    expect(scriptContent).toContain('downloadingKeys')
   })
 
   it('文件容器采用横向折行卡片且约束最大宽度，避免单文件被纵向 flex 默认 stretch 拉满整行', () => {

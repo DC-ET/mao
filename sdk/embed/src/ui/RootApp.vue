@@ -81,6 +81,7 @@ const attention = computed(() => props.ui.unread > 0 || props.ui.pendingQuestion
     :history-has-more="ui.historyHasMore"
     :history-error="ui.historyError"
     :active-session-id="ui.activeSessionId"
+    :resolve-delivery-url="ui.resolveDeliveryUrl"
     @close="$emit('close')"
     @new-session="$emit('newSession')"
     @toggle-history="$emit('toggleHistory')"

@@ -3,7 +3,7 @@ import { createApp, h, nextTick, reactive, type App } from 'vue';
 import { ChatStore } from '../core/store';
 import type { WsServerEvent } from '@mao/contracts';
 import ChatPanel from './ChatPanel.vue';
-import type { ChatMessage } from '../types';
+import type { ChatMessage, SendDelivery } from '../types';
 
 /**
  * 执行过程轮次渲染（ChatPanel + useRounds + ThinkingRow/ToolCallGroup/ToolCallRow）：
@@ -15,7 +15,12 @@ let app: App | undefined;
 let el: HTMLDivElement;
 afterEach(() => { app?.unmount(); el?.remove(); });
 
-function mountPanel(store: ChatStore, phase: string | null = null) {
+function mountPanel(
+  store: ChatStore,
+  phase: string | null = null,
+  /** 取数 URL 解析：默认形态 B/C 直返 url；活引用用例传入带 token 的解析器 */
+  resolveDeliveryUrl: (d: SendDelivery) => string = (d) => d.url ?? '',
+) {
   const props = reactive({
     open: true,
     position: 'right' as const,
@@ -49,6 +54,7 @@ function mountPanel(store: ChatStore, phase: string | null = null) {
         historyHasMore: false,
         historyError: null,
         activeSessionId: null,
+        resolveDeliveryUrl,
         onClose: () => {},
         onNewSession: () => {},
         onToggleHistory: () => {},
@@ -354,5 +360,39 @@ describe('执行轮次：历史形态', () => {
     (el.querySelector('.mao-think__header') as HTMLButtonElement).click();
     await nextTick();
     expect(el.querySelector('.mao-think__content')?.textContent).toBe('问候');
+  });
+});
+
+describe('发送媒体投递条：活引用形态 A（2026-11-20 §5.2）', () => {
+  it('ref 形态经 resolveDeliveryUrl 拼 workspace-download + 渲染期 token，key 不用含 token 的 URL', async () => {
+    const { store, send } = setupStore();
+    store.appendLocalUserMessage('发工作区里的图');
+    send('session_status', { phase: 'RUNNING', executionId: 'e1' });
+    send('tool_call_start', { tool_call_id: 't1', tool_name: 'send_image', arguments: '{"image":"reports/图.png"}' });
+    send('tool_call_result', {
+      tool_call_id: 't1', status: 'success',
+      result: JSON.stringify({
+        success: true, filename: '图.png',
+        delivery: { kind: 'image', filename: '图.png', mime: 'image/png', bytes: 12, ref: { type: 'workspace', sessionId: 7, path: 'reports/图.png' } },
+      }),
+    });
+    send('message_end', {});
+    const seen: string[] = [];
+    mountPanel(store, 'COMPLETED', (d: SendDelivery) => {
+      seen.push(d.ref ? `ref:${d.ref.sessionId}:${d.ref.path}` : `url:${d.url}`);
+      return d.ref
+        ? `https://mao.example.com/api/v1/files/workspace-download?sessionId=${d.ref.sessionId}&path=${encodeURIComponent(d.ref.path)}&token=jwt-token`
+        : (d.url ?? '');
+    });
+    await nextTick();
+    const img = el.querySelector<HTMLImageElement>('.mao-delivery--image img');
+    expect(img).not.toBeNull();
+    expect(img!.getAttribute('src')).toBe(
+      'https://mao.example.com/api/v1/files/workspace-download?sessionId=7&path=reports%2F%E5%9B%BE.png&token=jwt-token',
+    );
+    // 卡片链接同样走解析后的 URL（新标签打开）
+    expect(el.querySelector<HTMLAnchorElement>('.mao-delivery--image')?.getAttribute('href')).toBe(img!.getAttribute('src'));
+    // img src 与卡片 href 各解析一次，两次都拿到同一个 ref（无 url 混入）
+    expect(seen).toEqual(['ref:7:reports/图.png', 'ref:7:reports/图.png']);
   });
 });

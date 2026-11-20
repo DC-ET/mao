@@ -892,6 +892,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     wechatBridges, feishuMessageService, feishuMessageRepository, getFeishuClient,
     sendBytesBridge, dingtalkMediaHolder, definitionRegistry, holder, subagentMapper,
     localToolSessions, localDeliveryFetch, visibility, backgroundSubagentManager,
+    // 发送媒体活引用（2026-11-20）：形态 A 取数走工作区下载的同一套严格路径解析，
+    // 「团队经验」挂载目录按 Agent 维度排除
+    workspaceRefOracle: workspaceBrowse,
+    experienceDirForAgent: (agentId: number) => experienceIndexService.dirFor(agentId),
     messageRepo, compactionSvc, embedPageToolRegistry, mcpToolsRegistry, routingMcpClient,
     httpToolService, httpApiExecutor, llmAdapter, promptEngine, contextManager,
     compactionService, compactionArchiveService, compactionConfig, historyLoader,

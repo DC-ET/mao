@@ -36,7 +36,8 @@ describe('RemoteImageCache', () => {
     expect(uriBytes(first)).toBeLessThanOrEqual(REMOTE_IMAGE_TARGET_BYTES);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(cache.count).toBe(1);
-  });
+    // sharp 真实压缩 1200x1200 噪声图：全量套件并行下常超过默认 5s 超时（非逻辑问题）
+  }, 30_000);
 
   it('revalidates with ETag after TTL and reuses cached bytes on 304', async () => {
     let now = 0;

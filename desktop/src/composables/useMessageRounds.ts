@@ -1,4 +1,5 @@
 import { ref, computed, type Ref } from 'vue'
+import type { DeliveryWorkspaceRef } from '@mao/contracts'
 import { normalizeMessageRole, type ChatMessage, type FileChange, type SendDelivery, type ToolCall } from '../types/chat'
 import { parseDateTime } from '../utils/datetime'
 import { formatRelativeTime } from './useRelativeTime'
@@ -105,8 +106,8 @@ function buildRound(user: ChatMessage, steps: ChatMessage[], reply: ChatMessage 
 const SEND_MEDIA_TOOL_NAMES = new Set(['send_image', 'send_file'])
 
 /**
- * 从一轮消息的工具调用里按调用顺序收 send_image / send_file 的会话副本（D6）。
- * 结果 JSON 能解析且含 delivery.url 才收（副本写失败无 delivery，不画）；
+ * 从一轮消息的工具调用里按调用顺序收 send_image / send_file 的会话副本 / 活引用（D6；2026-11-20 §5.2）。
+ * 结果 JSON 能解析且 delivery 含 url（形态 B/C）或 ref（形态 A 活引用）才收（副本写失败无 delivery，不画）；
  * toolCall.result 由实时 tool_call_result 与刷新回放两条路回填，收集逻辑共用。
  */
 export function collectRoundDeliveries(messages: ChatMessage[]): SendDelivery[] {
@@ -120,6 +121,16 @@ export function collectRoundDeliveries(messages: ChatMessage[]): SendDelivery[] 
   return result
 }
 
+/** 解析 delivery.ref（形态 A）：type/sessionId/path 三键齐备才认，否则视为存量 url 形态。 */
+function parseDeliveryRef(raw: unknown): DeliveryWorkspaceRef | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  if (r.type !== 'workspace' || typeof r.sessionId !== 'number' || typeof r.path !== 'string' || r.path === '') {
+    return null
+  }
+  return { type: 'workspace', sessionId: r.sessionId, path: r.path }
+}
+
 function extractDelivery(call: ToolCall): SendDelivery | null {
   if (!SEND_MEDIA_TOOL_NAMES.has(call.name)) return null
   if (typeof call.result !== 'string' || call.result === '') return null
@@ -127,15 +138,20 @@ function extractDelivery(call: ToolCall): SendDelivery | null {
     const parsed = JSON.parse(call.result) as Record<string, unknown>
     const delivery = parsed.delivery as Record<string, unknown> | undefined
     if (!delivery || typeof delivery !== 'object') return null
-    const url = delivery.url
-    if (typeof url !== 'string' || url === '') return null
+    const url = typeof delivery.url === 'string' && delivery.url !== '' ? delivery.url : null
+    const ref = parseDeliveryRef(delivery.ref)
+    if (url == null && ref == null) return null
     const kind = delivery.kind === 'file' ? 'file' : 'image'
     const filename = typeof parsed.filename === 'string' && parsed.filename.trim() !== ''
       ? parsed.filename
-      : (typeof delivery.url === 'string' ? delivery.url.split('/').pop() || 'attachment' : 'attachment')
+      : typeof delivery.filename === 'string' && delivery.filename.trim() !== ''
+        ? delivery.filename
+        // 形态 A 无 url：回落 ref.path basename（评审补充 §5.2）
+        : (ref ? ref.path.split('/').pop() : url?.split('/').pop()) || 'attachment'
     return {
       kind,
-      url,
+      ...(url != null ? { url } : {}),
+      ...(ref != null ? { ref } : {}),
       mime: typeof delivery.mime === 'string' ? delivery.mime : undefined,
       bytes: typeof delivery.bytes === 'number' ? delivery.bytes : undefined,
       filename,
