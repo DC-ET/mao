@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -150,5 +150,87 @@ describe('dispatchScriptProbe', () => {
       deps: null,
     });
     expect(missingName).toMatchObject({ failureClass: 'infrastructure', error: '探针参数不完整' });
+  });
+
+  // msys sh 的 env 变量跨边界翻译在 Windows 打印非原值：断言的是 Linux 部署语义
+  it.skipIf(process.platform === 'win32')('帧凭据并入子进程 env（GIT_TOKEN_*/token/lark/envVars + askpass），envVars 保留键丢弃', async () => {
+    const { projects } = layout();
+    const script = writeScript(projects, 'check.sh', [
+      'printf "MT=%s\\n" "${MAO_TOKEN-unset}"',
+      'printf "ET=%s\\n" "${ECP_TOKEN-unset}"',
+      'printf "BU=%s\\n" "${MAO_BASE_URL-unset}"',
+      'printf "LU=%s\\n" "${LARKSUITE_CLI_USER_ACCESS_TOKEN-unset}"',
+      'printf "LA=%s\\n" "${LARKSUITE_CLI_APP_ID-unset}"',
+      'printf "GH=%s\\n" "${GIT_TOKEN_github_com-unset}"',
+      'printf "CV=%s\\n" "${CUSTOM_VAR-unset}"',
+      'printf "TP=%s\\n" "${GIT_TERMINAL_PROMPT-unset}"',
+      'printf "AP=%s\\n" "${GIT_ASKPASS-unset}"',
+      'printf "PATH=%s\\n" "$PATH"',
+    ].join('\n'));
+    const result = await dispatchScriptProbe({
+      scriptPath: script,
+      timeoutSeconds: 10,
+      env: { MAO_WATCHER_ID: '9', MAO_WATCHER_NAME: '磁盘' },
+      deps: null,
+      credentials: {
+        gitTokens: { 'github.com': 'gh-tok' },
+        maoToken: 'mao-jwt',
+        ecpToken: 'ecp-tok',
+        maoBaseUrl: 'https://mao.example.com',
+        larkUat: { appId: 'cli_x', uat: 'uat-1' },
+        envVars: {
+          CUSTOM_VAR: 'v1',
+          PATH: '/evil',
+          MAO_TOKEN: 'hack',
+          'GIT_TOKEN_gitlab_com': 'hack',
+        },
+      },
+    });
+    try {
+      expect(result.failureClass).toBe('script');
+      expect(result.ok).toBe(true);
+      const stdout = Buffer.from(result.stdoutBase64 ?? '', 'base64').toString('utf8');
+      expect(stdout).toContain('MT=mao-jwt');
+      expect(stdout).toContain('ET=ecp-tok');
+      expect(stdout).toContain('BU=https://mao.example.com');
+      expect(stdout).toContain('LU=uat-1');
+      expect(stdout).toContain('LA=cli_x');
+      expect(stdout).toContain('GH=gh-tok');
+      expect(stdout).toContain('CV=v1');
+      expect(stdout).toContain('TP=0');
+      // askpass 写在容器私有 /tmp/askpass-{uid}/ 下，0700，内容含 GIT_TOKEN_ 反查逻辑
+      const askpassPath = stdout.split('\n').find((line) => line.startsWith('AP='))!.slice(3);
+      expect(askpassPath).toContain('/tmp/askpass-7/');
+      expect(statSync(askpassPath).mode & 0o777).toBe(0o700);
+      expect(readFileSync(askpassPath, 'utf8')).toContain('GIT_TOKEN_');
+      // envVars 的保留键双保险：覆盖不了 PATH 与凭据键
+      expect(stdout).not.toContain('PATH=/evil');
+      expect(stdout).not.toContain('GH=hack');
+      expect(stdout).not.toContain('MT=hack');
+    } finally {
+      rmSync('/tmp/askpass-7', { recursive: true, force: true });
+    }
+  });
+
+  it('credentials 缺省（旧宿主帧）时不注入任何凭据，探针照常执行', async () => {
+    const { projects } = layout();
+    const script = writeScript(projects, 'check.sh', [
+      'printf "MT=%s\\n" "${MAO_TOKEN-unset}"',
+      'printf "ET=%s\\n" "${ECP_TOKEN-unset}"',
+      'printf "AP=%s\\n" "${GIT_ASKPASS-unset}"',
+      'printf "ID=%s\\n" "$MAO_WATCHER_ID"',
+    ].join('\n'));
+    const result = await dispatchScriptProbe({
+      scriptPath: script,
+      timeoutSeconds: 10,
+      env: { MAO_WATCHER_ID: '9', MAO_WATCHER_NAME: '磁盘' },
+      deps: null,
+    });
+    expect(result.ok).toBe(true);
+    const stdout = Buffer.from(result.stdoutBase64 ?? '', 'base64').toString('utf8');
+    expect(stdout).toContain('MT=unset');
+    expect(stdout).toContain('ET=unset');
+    expect(stdout).toContain('AP=unset');
+    expect(stdout).toContain('ID=9');
   });
 });

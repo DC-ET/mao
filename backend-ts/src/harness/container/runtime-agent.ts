@@ -283,6 +283,7 @@ export class RuntimeAgent {
         timeoutSeconds: frame.timeoutSeconds,
         env: frame.env,
         deps: frame.deps,
+        credentials: frame.credentials,
       });
       this.send({ v: 1, type: 'script_probe_result', id: frame.id, ...result });
     } catch (e) {

@@ -30,6 +30,9 @@ import { SignalSecretCipher } from './signal/signal-cipher.js';
 import { MysqlSignalWatcherRepository, MysqlSignalCheckRepository } from './signal/signal.repository.js';
 import { WatcherService } from './signal/watcher.service.js';
 import { createWatcherCredentialResolver } from './signal/watcher-credential-resolver.js';
+import type { GitTokenResolver } from './session/types.js';
+import type { EnvVariableService } from './env/env-variable.service.js';
+import type { LarkUatInjector } from './auth/lark-uat-injector.js';
 import type { RuntimeDataResolver } from './harness/runtime/runtime-data-resolver.js';
 import type { ContainerScriptProbe } from './harness/container/container-script-probe.js';
 import { WatcherScheduler } from './signal/watcher-scheduler.js';
@@ -64,6 +67,12 @@ export interface OpenApiServicesDeps {
   jwt: JwtService;
   userRepo: MysqlUserRepository;
   ecpSessionRepo: MysqlEcpSessionRepository;
+  /** 脚本探针 GIT_TOKEN_* 解析（2026-11-20，与 agent shell 同语义：允许域交集 + 系统默认兜底）。 */
+  gitTokenResolver: GitTokenResolver;
+  /** 脚本探针三级环境变量（workspaceKey 绑定哨兵脚本项目根）。 */
+  envVariableService: EnvVariableService;
+  /** 脚本探针 Lark CLI 凭据。 */
+  larkUatInjector: LarkUatInjector;
   /** Docker 模式脚本探针桥。host 模式由桥内部短路，哨兵服务不再自行判断运行模式。 */
   containerScriptProbe: ContainerScriptProbe;
 }
@@ -82,7 +91,7 @@ export interface OpenApiServicesResult {
 }
 
 export function assembleOpenApiServices(deps: OpenApiServicesDeps): OpenApiServicesResult {
-  const { db, cfg, sessionService, messageQueueService, taskTerminal, agentRepo, wsHandler, budgetService, apiTokenService, inboxService, settingService, openApiRateLimiter, notifCipher, outboundSubscriptionService, holder, agentExecutor, openCallLogHolder, openTriggerSettle, openCallSettle, jwt, userRepo, ecpSessionRepo, runtimeDataResolver, containerScriptProbe } = deps;
+  const { db, cfg, sessionService, messageQueueService, taskTerminal, agentRepo, wsHandler, budgetService, apiTokenService, inboxService, settingService, openApiRateLimiter, notifCipher, outboundSubscriptionService, holder, agentExecutor, openCallLogHolder, openTriggerSettle, openCallSettle, jwt, userRepo, ecpSessionRepo, gitTokenResolver, envVariableService, larkUatInjector, runtimeDataResolver, containerScriptProbe } = deps;
 
   const openRunService = new OpenRunService({
     sessionService: sessionService as unknown as OpenRunDeps['sessionService'],
@@ -159,6 +168,13 @@ export function assembleOpenApiServices(deps: OpenApiServicesDeps): OpenApiServi
       },
     },
     credentialResolver: watcherCredentialResolver,
+    // 脚本探针凭据注入（2026-11-20，与 agent shell 工具同注入面，均每次探针现取）：
+    // GIT_TOKEN_* 走允许域交集解析（与 shell 的 gitTokenResolver 同一实例，fail-closed），
+    // 三级变量绑定哨兵脚本项目根，Lark/站点地址与 shell 注入同源。
+    gitTokenProvider: (userId, agentId) => gitTokenResolver.resolveForAgent(userId, agentId),
+    envVarsProvider: (userId, workspaceKey) => envVariableService.resolveForSession(userId, workspaceKey),
+    larkUatProvider: (userId) => larkUatInjector.injectForUser(userId),
+    baseUrlProvider: () => settingService.getSiteBaseUrl(),
   });
   const watcherScheduler = new WatcherScheduler({
     watcherRepo: signalWatcherRepo,

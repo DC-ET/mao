@@ -143,7 +143,7 @@ update 为部分更新：未传的字段保持原值；`--headers '{}'`、`--bod
 
 - **执行模型**：以 `bash <脚本绝对路径>` 执行（不要求可执行位）。哨兵属主的有效运行模式为 Docker 时，在该用户该 Agent 的 `mao-runtime` 容器内执行，可见范围与该容器里的 Shell 一致；为 host 时在后端宿主执行。执行帧下发的绝对路径是**配置视角**（`workspaceRoot` 原样、与容器内挂载点逐字节一致），不经 realpath 解析为宿主真实路径——存储根是挂载软链（如 `/opt/mao-data -> /data/mao-data`）时，也不会把容器内不存在的路径带进去（探针报「脚本文件不存在」的已知坑）。容器起不来、运行时版本未对齐或通道断开时本轮记失败并顺延到下个轮询间隔，不回退宿主，也不计入连续五次停用。cwd 为脚本所在目录；stdin 关闭（脚本读 stdin 得 EOF）；执行「当前内容生效」，改脚本即改哨兵行为，删除脚本 → 探针失败走退避。
 - **脚本契约**：stdout 是判定值（HASH=全文哈希，JSON_FIELD=按提取路径取值）；exit code 0=成功，非 0 记一次失败（error 取 stderr 尾部 200 字符）；超时按进程组 SIGKILL 判失败（含脚本派生的全部子进程）。后台常驻子进程会在脚本退出后被整组回收，脚本不要依赖子进程存活。
-- **环境变量**：白名单注入 `PATH` / `HOME`（属主运行时目录）/ `TZ` / `MAO_WATCHER_ID` / `MAO_WATCHER_NAME`，**不继承后端进程全量 env**（`APP_SIGNAL_SECRET` 等对脚本不可见）；凭据占位符机制对脚本不生效，需要凭据的脚本自行从工作区文件读取。
+- **环境变量**：基础白名单 `PATH` / `HOME`（属主运行时目录）/ `TZ` / `MAO_WATCHER_ID` / `MAO_WATCHER_NAME`，**不继承后端进程全量 env**（`APP_SIGNAL_SECRET` 等对脚本不可见）。凭据注入（2026-11-20 起与 Agent Shell 工具同注入面，每次执行现取）：`MAO_TOKEN`（现签短效 shell JWT）、`ECP_TOKEN`、`GIT_TOKEN_<域名>`（`.`/`-` 归一为 `_`，按哨兵绑定 Agent 的允许域交集 + 系统默认兜底，配了 git 凭据时另注入 `GIT_ASKPASS` / `GIT_TERMINAL_PROMPT=0`，git 对 https 远端免密）、`MAO_BASE_URL`、`LARKSUITE_CLI_USER_ACCESS_TOKEN` / `LARKSUITE_CLI_APP_ID`、以及设置页配置的三级环境变量（系统 < 用户 < 哨兵脚本项目层）。单项凭据不可用（如 ECP 票过期、Agent 未配允许域）时只跳过该项，探针照常执行。
 - **安全姿态**：脚本探针与同一运行模式下的云端 Agent Shell 同层级。Docker 模式的脚本只看见该容器的挂载和网络；host 模式仍在后端宿主执行，与云端 Agent Shell 一样可以访问服务器可达的网络。脚本是无人值守的定时执行。host 模式建议对 mao-backend 服务配置 ulimit 约束进程数。
 
 ## 常见排障

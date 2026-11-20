@@ -1010,6 +1010,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     openCallLogHolder, openTriggerSettle, openCallSettle,
     // 哨兵凭据占位符签发依赖（均构造于本调用点之前，时序无碍）
     jwt, userRepo, ecpSessionRepo,
+    // 脚本探针凭据注入依赖（2026-11-20，均构造于本调用点之前）
+    gitTokenResolver, envVariableService, larkUatInjector,
     // 脚本探针 HOME 解析（V189）：runtimeResolver 即 RuntimeDataResolver
     runtimeDataResolver: runtimeResolver,
     containerScriptProbe,

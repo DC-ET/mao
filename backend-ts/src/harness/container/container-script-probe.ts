@@ -1,4 +1,4 @@
-import { newFrameId, type RuntimeResponseFrame, type ScriptProbeFrameDeps, type ScriptProbeFrameEnv } from './runtime-channel-protocol.js';
+import { newFrameId, type RuntimeResponseFrame, type ScriptProbeFrameCredentials, type ScriptProbeFrameDeps, type ScriptProbeFrameEnv } from './runtime-channel-protocol.js';
 import { SCRIPT_PROBE_MAX_STDOUT_BYTES, type ScriptProbeResult } from '../../signal/script-probe.js';
 import type { ContainerEntry } from './container-registry.js';
 import type { ChannelConnection } from './runtime-channel-server.js';
@@ -41,8 +41,10 @@ export class ContainerScriptProbe {
     agentId: number;
     scriptPath: string;
     timeoutSeconds: number;
-    /** 宿主 scriptProbeEnv 的结果。本类丢掉 PATH，只转发白名单键。 */
+    /** 宿主 buildScriptProbeEnv 的完整 env。本类丢掉 PATH 与凭据键，只转发白名单身份键。 */
     env: Record<string, string>;
+    /** 宿主现取的用户凭据（2026-11-20 起）。可选；缺省/旧 agent 按无凭据降级。 */
+    credentials?: ScriptProbeFrameCredentials | null;
   }): Promise<ScriptProbeResult> {
     let entry: ContainerEntry;
     try {
@@ -67,6 +69,7 @@ export class ContainerScriptProbe {
         timeoutSeconds: input.timeoutSeconds,
         env: pickEnv(input.env),
         deps: toFrameDeps(this.deps.depsEnvOf(input.userId)),
+        credentials: input.credentials ?? null,
       }, input.timeoutSeconds * 1000 + FRAME_GRACE_MS);
     } catch (e) {
       throw new ScriptProbeInfrastructureError(`容器通道无响应：${errorMessage(e)}`);

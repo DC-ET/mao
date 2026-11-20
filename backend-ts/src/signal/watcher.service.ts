@@ -1,8 +1,10 @@
-import { accessSync, realpathSync, statSync } from 'node:fs';
+import { accessSync, mkdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, resolve, sep } from 'node:path';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { formatDateTime } from '../common/json.js';
+import { ASKPASS, gitTokenEnvKey } from '../common/git-askpass.js';
+import { isReservedEnvKey } from '../common/sensitive-env.js';
 import type { OpenRunService } from '../openapi/open-run.service.js';
 import type { SignalWatcher, SignalWatcherCheck, SignalCompareMode, SignalProbeType, SignalTriggerMode, SignalWatcherStatus } from './types.js';
 import { isScriptCompareMode, isSignalCompareMode, isSignalProbeType, isSignalTriggerMode, isSignalWatcherStatus, SIGNAL_PROBE_METHODS, WATCHER_WARNING_TRIGGER_RATE_LIMITED } from './types.js';
@@ -12,6 +14,7 @@ import { assertProbeHeaders, assertProbeUrl, isSensitiveProbeHeader, maskProbeHe
 import { executeProbe, type ProbeResult } from './probe-client.js';
 import { executeScriptProbe, type ScriptProbeResult } from './script-probe.js';
 import { ContainerScriptProbe, ScriptProbeInfrastructureError } from '../harness/container/container-script-probe.js';
+import type { ScriptProbeFrameCredentials } from '../harness/container/runtime-channel-protocol.js';
 import { resolveProbeHeaders, type WatcherCredentialResolver } from './watcher-credential-resolver.js';
 import { isUnder } from '../harness/safety/path-sandbox.js';
 import { harnessLog } from '../harness/log.js';
@@ -111,8 +114,23 @@ export interface WatcherServiceDeps {
    * 凭据占位符解析（2026-11-06 方案 D6，可选）：头值里的 {{MAO_TOKEN}} / {{ECP_TOKEN}}
    * 在 runCheck / test 执行探针前按属主身份现取有效 token。缺省（未装配）时占位符
    * 字面量直发——装配遗漏不能静默，resolveProbeHeaders 会在确有占位符时打告警。
+   * 脚本探针的 MAO_TOKEN / ECP_TOKEN 注入也复用本实例（buildScriptProbeEnv）。
    */
   credentialResolver?: WatcherCredentialResolver | null;
+  /**
+   * 脚本探针凭据注入（2026-11-20 起，与 agent shell 工具同注入面；全部可选，缺省时
+   * 脚本 env 只含基础白名单，行为与旧版一致）。与头占位符不同，脚本 env 注入是平台
+   * 行为而非用户显式配置，providers 未装配属正常缺省，不打告警。单项解析失败由
+   * buildScriptProbeEnv 告警跳过，探针照常执行（与 resolveProbeHeaders D2/D3 同口径）。
+   */
+  /** GIT_TOKEN_*：按哨兵绑定 Agent 的允许域交集解析（装配传 gitTokenResolver.resolveForAgent）。 */
+  gitTokenProvider?: (userId: number, agentId: number | null) => Promise<Record<string, string>>;
+  /** 三级环境变量（装配传 envVariableService.resolveForSession，workspaceKey=哨兵脚本项目根）。 */
+  envVarsProvider?: (userId: number, workspaceKey: string | null) => Promise<Record<string, string>>;
+  /** Lark CLI 凭据（装配传 larkUatInjector.injectForUser）。 */
+  larkUatProvider?: (userId: number) => Promise<{ appId: string; uat: string } | null>;
+  /** 站点地址（装配传 settingService.getSiteBaseUrl），注入 MAO_BASE_URL。 */
+  baseUrlProvider?: () => Promise<string | null>;
 }
 
 /** 新建 / 编辑的入参（请求头与 body 为明文，服务层负责加密）。 */
@@ -780,10 +798,11 @@ export class WatcherService {
    * 容器侧基础设施失败抛 ScriptProbeInfrastructureError，调用方不得改走宿主。
    */
   private async executeOwnedScript(watcher: SignalWatcher, absolute: string): Promise<ScriptProbeResult> {
+    const { env, credentials } = await this.buildScriptProbeEnv(watcher);
     const request = {
       scriptPath: absolute,
       timeoutSeconds: watcher.scriptTimeoutSeconds ?? SCRIPT_PROBE_DEFAULT_TIMEOUT_SECONDS,
-      env: this.scriptProbeEnv(watcher),
+      env,
     };
     const bridge = this.deps.containerScriptProbe;
     if (bridge != null) {
@@ -794,7 +813,7 @@ export class WatcherService {
         throw new ScriptProbeInfrastructureError(`运行模式判定失败：${errorMessage(e)}`);
       }
       if (docker) {
-        return bridge.execute({ userId: watcher.userId, agentId: watcher.agentId, ...request });
+        return bridge.execute({ userId: watcher.userId, agentId: watcher.agentId, ...request, credentials });
       }
     }
     return (this.deps.scriptProbe ?? { execute: executeScriptProbe }).execute(request);
@@ -959,12 +978,18 @@ export class WatcherService {
   }
 
   /**
-   * 脚本执行环境变量（V189）：白名单构造全新 env，绝不继承后端进程全量 env——
-   * 后端 env 含 APP_SIGNAL_SECRET / 数据库密码等，整包下发即泄露（技术方案 §6 R6）。
-   * HOME 指向属主运行时目录（shell-session-manager configureUserHome 同款）；凭据
-   * 占位符机制不扩展到脚本（非目标），只注入只读标识 MAO_WATCHER_ID / MAO_WATCHER_NAME。
+   * 脚本执行环境变量（V189 白名单 + 2026-11-20 凭据注入）。基础白名单绝不继承后端
+   * 进程全量 env——后端 env 含 APP_SIGNAL_SECRET / 数据库密码等，整包下发即泄露
+   * （技术方案 §6 R6）。HOME 指向属主运行时目录（shell-session-manager configureUserHome
+   * 同款）；只读标识 MAO_WATCHER_ID / MAO_WATCHER_NAME。
+   *
+   * 凭据注入（推翻 2026-11-10 方案「占位符机制不扩展到脚本」的非目标决策）：与 agent
+   * shell 工具（injectMaoToken / configureGitCredentials / 三级变量）同注入面，每次探针
+   * 现取——探针进程一次性，spawn 时构建即等价 shell 的每命令前刷新。单项失败告警跳过
+   * 不阻断探针（与 resolveProbeHeaders D2/D3 口径一致）。返回值拆 env（完整子进程环境，
+   * host 模式直接 spawn）与 credentials（容器帧专用凭据载荷，见 ScriptProbeFrameCredentials）。
    */
-  private scriptProbeEnv(watcher: SignalWatcher): Record<string, string> {
+  private async buildScriptProbeEnv(watcher: SignalWatcher): Promise<{ env: Record<string, string>; credentials: ScriptProbeFrameCredentials }> {
     const env: Record<string, string> = {
       PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
     };
@@ -973,7 +998,89 @@ export class WatcherService {
     if (home != null && home !== '') env.HOME = home;
     if (watcher.id != null) env.MAO_WATCHER_ID = String(watcher.id);
     env.MAO_WATCHER_NAME = watcher.name;
-    return env;
+
+    const userId = watcher.userId;
+    const [maoToken, ecpToken, gitTokens, larkUat, baseUrl, envVars] = await Promise.all([
+      this.safeScriptCredential('MAO_TOKEN', userId, async () => (await this.deps.credentialResolver?.resolve(userId, 'MAO_TOKEN')) ?? null),
+      this.safeScriptCredential('ECP_TOKEN', userId, async () => (await this.deps.credentialResolver?.resolve(userId, 'ECP_TOKEN')) ?? null),
+      this.safeScriptCredential('GIT_TOKEN', userId, async () => (await this.deps.gitTokenProvider?.(userId, watcher.agentId)) ?? {}),
+      this.safeScriptCredential('LARK_UAT', userId, async () => (await this.deps.larkUatProvider?.(userId)) ?? null),
+      this.safeScriptCredential('MAO_BASE_URL', userId, async () => (await this.deps.baseUrlProvider?.()) ?? null),
+      this.safeScriptCredential('ENV_VARS', userId, async () => (await this.deps.envVarsProvider?.(userId, this.scriptWorkspaceKey(watcher))) ?? {}),
+    ]);
+
+    const credentials: ScriptProbeFrameCredentials = {};
+    if (maoToken) {
+      env.MAO_TOKEN = maoToken;
+      credentials.maoToken = maoToken;
+    }
+    if (ecpToken) {
+      env.ECP_TOKEN = ecpToken;
+      credentials.ecpToken = ecpToken;
+    }
+    if (baseUrl) {
+      env.MAO_BASE_URL = baseUrl;
+      credentials.maoBaseUrl = baseUrl;
+    }
+    if (larkUat) {
+      env.LARKSUITE_CLI_USER_ACCESS_TOKEN = larkUat.uat;
+      env.LARKSUITE_CLI_APP_ID = larkUat.appId;
+      credentials.larkUat = larkUat;
+    }
+    const domainTokenMap = gitTokens ?? {};
+    if (Object.keys(domainTokenMap).length > 0) {
+      for (const [domain, token] of Object.entries(domainTokenMap)) {
+        env[gitTokenEnvKey(domain)] = token;
+      }
+      const askpass = this.writeScriptAskpass(userId, home);
+      if (askpass != null) {
+        env.GIT_ASKPASS = askpass;
+        env.GIT_TERMINAL_PROMPT = '0';
+      }
+      credentials.gitTokens = domainTokenMap;
+    }
+    // 三级环境变量最后并入：保留键（PATH/HOME/GIT_TOKEN_*/MAO_* 等）双保险过滤——
+    // 装配层传的 resolveForSession 已过滤，此处兜底防装配替换实现，用户自配变量
+    // 覆盖不了身份键与凭据键。
+    for (const [key, value] of Object.entries(envVars ?? {})) {
+      if (isReservedEnvKey(key)) continue;
+      env[key] = value;
+    }
+    if (envVars != null && Object.keys(envVars).length > 0) credentials.envVars = envVars;
+    return { env, credentials };
+  }
+
+  /** 哨兵三级变量的 workspace 绑定键：哨兵脚本项目根。 */
+  private scriptWorkspaceKey(watcher: SignalWatcher): string | null {
+    return this.deps.scriptProjectsRoot?.(watcher.userId) ?? null;
+  }
+
+  /** 单项凭据解析容错：失败告警跳过，不得冒泡到探针执行路径（与 resolveProbeHeaders 同口径）。 */
+  private async safeScriptCredential<T>(name: string, userId: number, fn: () => Promise<T | null>): Promise<T | null> {
+    try {
+      return await fn();
+    } catch (e) {
+      harnessLog('warn', `[signal] script probe credential ${name} resolve failed, skip and probe continues, userId=${userId}: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
+   * host 模式 askpass 落点：属主运行时 HOME 下固定路径，每次探针前重写（内容为静态
+   * 模板，写入只为保证存在与权限；与 shell 会话的会话级落点互不干扰）。写入失败只降级
+   * 为无 askpass（脚本内仍可用 GIT_TOKEN_* 自行取值），探针照常执行。
+   */
+  private writeScriptAskpass(userId: number, home: string | null | undefined): string | null {
+    if (home == null || home === '') return null;
+    try {
+      mkdirSync(home, { recursive: true });
+      const script = resolve(home, 'git-askpass.sh');
+      writeFileSync(script, ASKPASS, { mode: 0o700 });
+      return script;
+    } catch (e) {
+      harnessLog('warn', `[signal] write script probe askpass failed, git askpass disabled, userId=${userId}: ${(e as Error).message}`);
+      return null;
+    }
   }
 
   private normalizeInput(input: WatcherInput, legacyHeaderValues?: ReadonlySet<string>): {

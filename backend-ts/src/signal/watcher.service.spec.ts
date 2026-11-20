@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -102,10 +102,17 @@ function harness(options: {
   getSession?: (id: number) => Promise<WatcherSessionLookup | null>;
   /** 凭据占位符 resolver（缺省不传 = 未装配路径）。 */
   credentialResolver?: WatcherCredentialResolver | null;
+  /** 脚本执行 HOME（V189，缺省 null）。 */
+  scriptUserHome?: string | null;
+  /** 脚本探针凭据注入 providers（2026-11-20，缺省不装配 = 基础白名单路径）。 */
+  gitTokenProvider?: (userId: number, agentId: number | null) => Promise<Record<string, string>>;
+  envVarsProvider?: (userId: number, workspaceKey: string | null) => Promise<Record<string, string>>;
+  larkUatProvider?: (userId: number) => Promise<{ appId: string; uat: string } | null>;
+  baseUrlProvider?: () => Promise<string | null>;
   /** Docker 模式脚本探针桥。缺省不装配，脚本走宿主执行器。 */
   containerScriptProbe?: {
     enabledFor(userId: number): Promise<boolean>;
-    execute(input: { userId: number; agentId: number; scriptPath: string; timeoutSeconds: number; env: Record<string, string> }): Promise<ScriptProbeResult>;
+    execute(input: { userId: number; agentId: number; scriptPath: string; timeoutSeconds: number; env: Record<string, string>; credentials?: unknown }): Promise<ScriptProbeResult>;
   };
 } = {}): Harness {
   const watchers = new Map<number, SignalWatcher>();
@@ -249,10 +256,14 @@ function harness(options: {
     scriptProjectsRoot: options.scriptProjectsRoot != null
       ? (userId: number) => join(options.scriptProjectsRoot!, String(userId), 'projects')
       : undefined,
-    scriptUserHome: () => null,
+    scriptUserHome: options.scriptUserHome !== undefined ? () => options.scriptUserHome! : () => null,
     disableNotifier: { notifyWatcherDisabled: notify } satisfies WatcherDisableNotifier,
     getSession,
     credentialResolver: options.credentialResolver,
+    gitTokenProvider: options.gitTokenProvider,
+    envVarsProvider: options.envVarsProvider,
+    larkUatProvider: options.larkUatProvider,
+    baseUrlProvider: options.baseUrlProvider,
     containerScriptProbe: options.containerScriptProbe as never,
   });
 
@@ -1891,6 +1902,221 @@ describe('SCRIPT 哨兵（V189）', () => {
     expect(result.error).toContain('版本待升级');
     expect(h.checks).toHaveLength(0);
     expect(h.watchers.get(1)!.lastCheckedAt).toBeNull();
+  });
+});
+
+// ── SCRIPT 哨兵凭据 env 注入（2026-11-20，与 agent shell 工具同注入面）────────
+// 推翻 2026-11-10「占位符机制不扩展到脚本」的非目标决策：每次探针现取凭据（等价 shell
+// 每命令前刷新），GIT_TOKEN 按绑定 Agent 允许域解析，单项失败告警跳过不阻断探针。
+describe('SCRIPT 哨兵凭据 env 注入（2026-11-20）', () => {
+  let projectsRoot: string;
+  let homeRoot: string;
+  beforeEach(() => {
+    projectsRoot = mkdtempSync(join(tmpdir(), 'mao-script-cred-'));
+    homeRoot = mkdtempSync(join(tmpdir(), 'mao-script-home-'));
+  });
+  afterEach(() => {
+    rmSync(projectsRoot, { recursive: true, force: true });
+    rmSync(homeRoot, { recursive: true, force: true });
+  });
+
+  function scriptWatcher(): SignalWatcher {
+    return watcher({
+      name: '磁盘',
+      url: '',
+      method: 'GET',
+      intervalMinutes: 10,
+      compareMode: 'JSON_FIELD',
+      jsonPath: 'free',
+      probeType: 'SCRIPT',
+      scriptPath: 'ops/sentinels/disk.sh',
+      scriptTimeoutSeconds: 60,
+    });
+  }
+
+  function scriptProbeResult(): ScriptProbeResult {
+    return { ok: true, exitCode: 0, stdout: '100', stdoutBytes: Buffer.from('100', 'utf8'), error: null, durationMs: 30 };
+  }
+
+  function fullProviders(): {
+    credentialResolver: WatcherCredentialResolver;
+    gitTokenProvider: (userId: number, agentId: number | null) => Promise<Record<string, string>>;
+    envVarsProvider: (userId: number, workspaceKey: string | null) => Promise<Record<string, string>>;
+    larkUatProvider: (userId: number) => Promise<{ appId: string; uat: string } | null>;
+    baseUrlProvider: () => Promise<string | null>;
+  } {
+    return {
+      credentialResolver: {
+        resolve: vi.fn(async (_userId: number, kind: 'MAO_TOKEN' | 'ECP_TOKEN') => (kind === 'MAO_TOKEN' ? 'mao-jwt' : 'ecp-tok')),
+      },
+      gitTokenProvider: vi.fn(async () => ({ 'github.com': 'gh-tok', 'gitlab.example.com': 'gl-tok' })),
+      envVarsProvider: vi.fn(async () => ({ CUSTOM_VAR: 'v1' })),
+      larkUatProvider: vi.fn(async () => ({ appId: 'cli_x', uat: 'uat-1' })),
+      baseUrlProvider: vi.fn(async () => 'https://mao.example.com'),
+    };
+  }
+
+  function writeUserScript(userId: number, relative: string, content: string): string {
+    const full = join(projectsRoot, String(userId), 'projects', relative);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, content);
+    return full;
+  }
+
+  it('providers 装配时 env 含全部凭据，askpass 落属主 HOME 且 0700', async () => {
+    const home = join(homeRoot, '7');
+    const p = fullProviders();
+    const h = harness({
+      watcher: scriptWatcher(),
+      scriptProbe: scriptProbeResult,
+      scriptProjectsRoot: projectsRoot,
+      scriptUserHome: home,
+      ...p,
+    });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'echo 100\n');
+    await h.service.runCheck(1);
+    expect(h.scriptProbeExecute).toHaveBeenCalledTimes(1);
+    const call = h.scriptProbeExecute.mock.calls[0]![0]!;
+    expect(call.env.MAO_TOKEN).toBe('mao-jwt');
+    expect(call.env.ECP_TOKEN).toBe('ecp-tok');
+    expect(call.env.GIT_TOKEN_github_com).toBe('gh-tok');
+    expect(call.env.GIT_TOKEN_gitlab_example_com).toBe('gl-tok');
+    expect(call.env.MAO_BASE_URL).toBe('https://mao.example.com');
+    expect(call.env.LARKSUITE_CLI_USER_ACCESS_TOKEN).toBe('uat-1');
+    expect(call.env.LARKSUITE_CLI_APP_ID).toBe('cli_x');
+    expect(call.env.CUSTOM_VAR).toBe('v1');
+    // gitTokens 非空才注入 askpass；落在属主 HOME、权限 0700、内容含 GIT_TOKEN_ 反查逻辑
+    expect(call.env.GIT_ASKPASS).toBe(join(home, 'git-askpass.sh'));
+    expect(call.env.GIT_TERMINAL_PROMPT).toBe('0');
+    expect(statSync(call.env.GIT_ASKPASS).mode & 0o777).toBe(0o700);
+    expect(readFileSync(call.env.GIT_ASKPASS, 'utf8')).toContain('GIT_TOKEN_');
+    // 三级变量 workspaceKey = 哨兵脚本项目根
+    expect(p.envVarsProvider).toHaveBeenCalledWith(7, join(projectsRoot, '7', 'projects'));
+    // GIT_TOKEN 按绑定 Agent 的允许域解析（agentId 来自哨兵行）
+    expect(p.gitTokenProvider).toHaveBeenCalledWith(7, 3);
+  });
+
+  it('三级变量的保留键被过滤，不得覆盖凭据与身份键', async () => {
+    const p = fullProviders();
+    p.envVarsProvider = vi.fn(async () => ({
+      CUSTOM_VAR: 'v1',
+      MAO_TOKEN: 'hack',
+      ECP_TOKEN: 'hack',
+      'GIT_TOKEN_github_com': 'hack',
+      PATH: '/evil',
+      HOME: '/evil',
+      MAO_BASE_URL: 'https://evil.example.com',
+    }));
+    const h = harness({
+      watcher: scriptWatcher(),
+      scriptProbe: scriptProbeResult,
+      scriptProjectsRoot: projectsRoot,
+      scriptUserHome: join(homeRoot, '7'),
+      ...p,
+    });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'echo 100\n');
+    await h.service.runCheck(1);
+    const env = h.scriptProbeExecute.mock.calls[0]![0]!.env;
+    expect(env.MAO_TOKEN).toBe('mao-jwt');
+    expect(env.ECP_TOKEN).toBe('ecp-tok');
+    expect(env.GIT_TOKEN_github_com).toBe('gh-tok');
+    expect(env.MAO_BASE_URL).toBe('https://mao.example.com');
+    expect(env.CUSTOM_VAR).toBe('v1');
+    expect(env.PATH).not.toBe('/evil');
+    expect(env.HOME).not.toBe('/evil');
+  });
+
+  it('单项凭据解析失败只跳过该项，探针照常执行', async () => {
+    const h = harness({
+      watcher: scriptWatcher(),
+      scriptProbe: scriptProbeResult,
+      scriptProjectsRoot: projectsRoot,
+      scriptUserHome: join(homeRoot, '7'),
+      credentialResolver: {
+        resolve: vi.fn(async (_userId: number, kind: 'MAO_TOKEN' | 'ECP_TOKEN') => {
+          if (kind === 'MAO_TOKEN') return 'mao-jwt';
+          throw new Error('ecp expired');
+        }),
+      },
+      gitTokenProvider: vi.fn(async () => { throw new Error('db down'); }),
+      larkUatProvider: vi.fn(async () => null),
+      baseUrlProvider: vi.fn(async () => null),
+    });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'echo 100\n');
+    await h.service.runCheck(1);
+    expect(h.scriptProbeExecute).toHaveBeenCalledTimes(1);
+    const env = h.scriptProbeExecute.mock.calls[0]![0]!.env;
+    expect(env.MAO_TOKEN).toBe('mao-jwt');
+    expect(env.ECP_TOKEN).toBeUndefined();
+    expect(env.GIT_TOKEN_github_com).toBeUndefined();
+    expect(env.GIT_ASKPASS).toBeUndefined();
+    expect(env.GIT_TERMINAL_PROMPT).toBeUndefined();
+    // 探针照常出结果：首轮建基线，不算失败
+    expect(h.checks).toHaveLength(1);
+    expect(h.checks[0]).toMatchObject({ exitCode: 0, changed: 0 });
+  });
+
+  it('providers 未装配时 env 只有基础白名单（与旧版一致）', async () => {
+    const h = harness({
+      watcher: scriptWatcher(),
+      scriptProbe: scriptProbeResult,
+      scriptProjectsRoot: projectsRoot,
+      scriptUserHome: join(homeRoot, '7'),
+    });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'echo 100\n');
+    await h.service.runCheck(1);
+    const env = h.scriptProbeExecute.mock.calls[0]![0]!.env;
+    expect(env.MAO_TOKEN).toBeUndefined();
+    expect(env.ECP_TOKEN).toBeUndefined();
+    expect(env.MAO_BASE_URL).toBeUndefined();
+    expect(env.LARKSUITE_CLI_USER_ACCESS_TOKEN).toBeUndefined();
+    expect(env.GIT_ASKPASS).toBeUndefined();
+    expect(env.MAO_WATCHER_ID).toBe('1');
+    expect(env.MAO_WATCHER_NAME).toBe('磁盘');
+    expect(env.APP_SIGNAL_SECRET).toBeUndefined();
+  });
+
+  it('gitTokens 为空时不注入 GIT_TOKEN_* 与 askpass', async () => {
+    const h = harness({
+      watcher: scriptWatcher(),
+      scriptProbe: scriptProbeResult,
+      scriptProjectsRoot: projectsRoot,
+      scriptUserHome: join(homeRoot, '7'),
+      gitTokenProvider: vi.fn(async () => ({})),
+    });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'echo 100\n');
+    await h.service.runCheck(1);
+    const env = h.scriptProbeExecute.mock.calls[0]![0]!.env;
+    expect(env.GIT_TOKEN_github_com).toBeUndefined();
+    expect(env.GIT_ASKPASS).toBeUndefined();
+    expect(env.GIT_TERMINAL_PROMPT).toBeUndefined();
+  });
+
+  it('Docker 模式：凭据子集随 credentials 透传给容器桥，host spawn 不复用', async () => {
+    const home = join(homeRoot, '7');
+    const execute = vi.fn(async () => scriptProbeResult());
+    const p = fullProviders();
+    const h = harness({
+      watcher: scriptWatcher(),
+      scriptProjectsRoot: projectsRoot,
+      scriptUserHome: home,
+      ...p,
+      containerScriptProbe: { enabledFor: async () => true, execute },
+    });
+    writeUserScript(7, 'ops/sentinels/disk.sh', 'echo 100\n');
+    await h.service.runCheck(1);
+    expect(execute).toHaveBeenCalledTimes(1);
+    const input = execute.mock.calls[0]![0]!;
+    expect(input.credentials).toEqual({
+      gitTokens: { 'github.com': 'gh-tok', 'gitlab.example.com': 'gl-tok' },
+      maoToken: 'mao-jwt',
+      ecpToken: 'ecp-tok',
+      maoBaseUrl: 'https://mao.example.com',
+      larkUat: { appId: 'cli_x', uat: 'uat-1' },
+      envVars: { CUSTOM_VAR: 'v1' },
+    });
+    expect(input.env.MAO_TOKEN).toBe('mao-jwt');
+    expect(input.env.GIT_TOKEN_github_com).toBe('gh-tok');
   });
 });
 

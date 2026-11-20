@@ -78,11 +78,36 @@ describe('ContainerScriptProbe', () => {
       MAO_WATCHER_NAME: '磁盘',
     });
     expect(frame.deps).toEqual(DEPS);
+    expect(frame.credentials).toBeNull();
     expect(frame.scriptPath).toBe(input.scriptPath);
     expect(timeouts[0]).toBe(25_000);
     expect(result.ok).toBe(true);
     expect(result.stdoutBytes).toEqual(Buffer.from([0x61, 0xff]));
     expect(result.durationMs).toBe(12);
+  });
+
+  it('credentials 原样透传进帧（env 白名单不吸收凭据键）', async () => {
+    const { bridge, frames } = probe();
+    const credentials = {
+      gitTokens: { 'github.com': 'gh-tok' },
+      maoToken: 'mao-jwt',
+      ecpToken: 'ecp-tok',
+      maoBaseUrl: 'https://mao.example.com',
+      larkUat: { appId: 'cli_x', uat: 'uat-1' },
+      envVars: { CUSTOM_VAR: 'v1' },
+    };
+    await bridge.execute({ ...input, credentials });
+    expect(frames).toHaveLength(1);
+    const frame = frames[0]!;
+    if (frame.type !== 'script_probe') return;
+    expect(frame.credentials).toEqual(credentials);
+    // env 白名单仍然只透传身份四键：凭据只能走 credentials 字段
+    expect(frame.env).toEqual({
+      HOME: '/data/users/7',
+      TZ: 'Asia/Shanghai',
+      MAO_WATCHER_ID: '9',
+      MAO_WATCHER_NAME: '磁盘',
+    });
   });
 
   it('版本不一致、容器起不来、通道缺失或超时都不发到宿主执行', async () => {

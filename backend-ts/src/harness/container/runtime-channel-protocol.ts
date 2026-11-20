@@ -58,6 +58,23 @@ export interface ScriptProbeFrameEnv {
   MAO_WATCHER_NAME: string;
 }
 
+/**
+ * 脚本探针帧的用户凭据（2026-11-20 起，与 agent shell 工具同注入面）。宿主每次探针现取，
+ * 与 tool_call 帧的 RuntimeEnvelope 同安全模型：只在本请求内存活，容器不落盘、不写镜像。
+ * 全部字段可选：旧容器（不识别 credentials 字段）按无凭据降级运行；单项缺省由宿主侧
+ * 失败跳过语义决定，容器侧对值只做 string 白名单校验。
+ */
+export interface ScriptProbeFrameCredentials {
+  /** 域名 → token（容器侧经 GIT_TOKEN_* 变量名映射注入并自写 askpass）。 */
+  gitTokens?: Record<string, string>;
+  maoToken?: string;
+  ecpToken?: string;
+  maoBaseUrl?: string;
+  larkUat?: { appId: string; uat: string } | null;
+  /** 三级环境变量合并结果（保留键过滤已在宿主完成，容器直接并入）。 */
+  envVars?: Record<string, string>;
+}
+
 /** 与 Shell 工具同源的依赖前缀（buildDepsEnv）。路径由容器按本人 deps 根再验。 */
 export interface ScriptProbeFrameDeps {
   NPM_CONFIG_PREFIX: string;
@@ -87,6 +104,8 @@ export type RuntimeRequestFrame =
     timeoutSeconds: number;
     env: ScriptProbeFrameEnv;
     deps: ScriptProbeFrameDeps | null;
+    /** 用户凭据（可选；旧 agent 不识别此字段，按无凭据降级运行）。 */
+    credentials?: ScriptProbeFrameCredentials | null;
   };
 
 /** 容器 → 宿主机帧。result 类帧与请求帧按 id 配对。 */

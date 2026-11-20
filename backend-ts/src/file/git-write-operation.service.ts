@@ -37,27 +37,9 @@ function gitTimeoutMs(): number {
   return Number.isFinite(override) && override >= 1000 ? override : TIMEOUT_SECONDS * 1000;
 }
 
-export const ASKPASS = `#!/bin/bash
-PROMPT="$1"
-if echo "$PROMPT" | grep -qi 'username'; then
-  echo "oauth2"
-  exit 0
-fi
-URL=$(echo "$PROMPT" | sed -n "s/.*'https:\\/\\/\\([^']*\\)'.*/\\1/p")
-if [ -z "$URL" ]; then
-  URL=$(echo "$PROMPT" | sed -n "s/.*'http:\\/\\/\\([^']*\\)'.*/\\1/p")
-fi
-if [ -z "$URL" ]; then
-  exit 1
-fi
-HOST="\${URL##*@}"
-HOST="\${HOST%%/*}"
-VARNAME="GIT_TOKEN_$(echo "$HOST" | tr '.-' '__')"
-VALUE="\${!VARNAME}"
-if [ -n "$VALUE" ]; then
-  echo "$VALUE"
-fi
-`;
+// askpass 模板下沉到 common/git-askpass.ts（脚本探针容器侧共用）；此处 re-export 保持既有引用不变。
+import { ASKPASS } from '../common/git-askpass.js';
+export { ASKPASS };
 
 export interface GitOperationResult {
   success: boolean;
