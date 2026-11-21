@@ -531,6 +531,47 @@ describe('normalizeFeishuEvent', () => {
     expect(event).toBeNull();
   });
 
+  it('collects bot mention display names alongside isBotMentioned (group /new command detection)', () => {
+    const raw = {
+      schema: '2.0',
+      header: { event_id: 'evt1', event_type: 'im.message.receive_v1', app_id: 'cli_mybot', token: 't' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_user', union_id: 'on_user' }, sender_type: 'user' },
+        message: {
+          message_id: 'om_new', chat_id: 'oc_group', chat_type: 'group', message_type: 'text',
+          content: '{"text":"@_user_1 /new"}',
+          mentions: [
+            { key: '@_user_1', id: { open_id: 'ou_mybot', union_id: 'on_mybot' }, name: '我的助手', mentioned_type: 'app' },
+            { key: '@_user_2', id: { open_id: 'ou_other', union_id: 'on_other' }, name: '别的机器人', mentioned_type: 'app' },
+          ],
+        },
+      },
+    };
+    // botOpenId 已知：只命中本机器人的提及，别人机器人的名字不进名单。
+    const event = normalizeFeishuEvent(raw, 'ou_mybot');
+    expect(event).not.toBeNull();
+    expect(event!.isBotMentioned).toBe(true);
+    expect(event!.botMentionNames).toEqual(['我的助手']);
+    expect(event!.text).toBe('@我的助手 /new');
+    // 同一 mention 也不该把群里其他 bot 的名字剥掉。
+    const other = normalizeFeishuEvent(raw, 'ou_other');
+    expect(other!.botMentionNames).toEqual(['别的机器人']);
+    // is_at_me 兜底命中（身份无法确认）时名单为空——指令匹配失败当普通消息，安全默认。
+    const fallback = normalizeFeishuEvent({
+      header: {},
+      event: {
+        sender: { sender_id: { open_id: 'ou_user' }, sender_type: 'user' },
+        message: {
+          message_id: 'om_fallback', chat_id: 'oc_group', chat_type: 'group', message_type: 'text',
+          content: '{"text":"@某人 /new"}', is_at_me: true,
+          mentions: [{ key: '@_user_9', id: { open_id: 'ou_someone' }, name: '某人' }],
+        },
+      },
+    });
+    expect(fallback!.isBotMentioned).toBe(true);
+    expect(fallback!.botMentionNames).toEqual([]);
+  });
+
   it('treats Feishu card upgrade-fallback text as empty so placeholder generation runs', () => {
     const event = normalizeFeishuEvent({
       header: { app_id: 'cli_mybot' },

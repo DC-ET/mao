@@ -1250,3 +1250,143 @@ describe('FeishuInboundProcessor 合并窗口', () => {
     expect(onMessage.mock.calls[1][0].text).toBe('乙');
   });
 });
+
+describe('FeishuInboundProcessor 群 /new 新会话', () => {
+  const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const newCommandEvent = (overrides: Partial<FeishuNormalizedMessage> = {}): Partial<FeishuNormalizedMessage> => ({
+    messageId: 'om_new', text: '@助手 /new', botMentionNames: ['助手'], isBotMentioned: true, ...overrides,
+  });
+
+  it('指令路径不调用 buildGroupContext，切换结果写入 context 并只回复一次', async () => {
+    const buildGroupContext = vi.fn(async () => ({ conversation: {} as never, messages: [], prompt: 'old context' }));
+    const createGroupSession = vi.fn(async () => ({ sessionId: 10, created: true }));
+    const onMessage = vi.fn(async (ctx: FeishuInboundContext) => ({ text: ctx.groupSessionSwitch == null ? 'failed' : 'confirmed' }));
+    const sendReply = vi.fn(async () => undefined);
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService: { ...messageService, buildGroupContext, createGroupSession } as never,
+      authorizeSender: async () => true,
+      sendReply,
+    });
+    await processor.process('1', makeEvent(newCommandEvent()));
+    expect(createGroupSession).toHaveBeenCalledTimes(1);
+    // R2：指令路径不得推进水位线/写摘要缓存（buildGroupContext 一概不跑）。
+    expect(buildGroupContext).not.toHaveBeenCalled();
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+      groupSessionSwitch: { sessionId: 10, created: true },
+    }));
+    const commandContext = onMessage.mock.calls[0][0];
+    expect(commandContext.groupContext).toBeUndefined();
+    expect(sendReply).toHaveBeenCalledWith('1', expect.anything(), 'confirmed');
+  });
+
+  it('切换抛错时 context.groupSessionSwitch 置 null，handler 据此回失败文案且不再重试', async () => {
+    const createGroupSession = vi.fn(async () => { throw new Error('db down'); });
+    const onMessage = vi.fn(async (ctx: FeishuInboundContext) => ({ text: ctx.groupSessionSwitch === null ? 'failure text' : 'confirmed' }));
+    const sendReply = vi.fn(async () => undefined);
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService: { ...messageService, createGroupSession } as never,
+      authorizeSender: async () => true,
+      sendReply,
+    });
+    await processor.process('1', makeEvent(newCommandEvent()));
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ groupSessionSwitch: null }));
+    expect(sendReply).toHaveBeenCalledWith('1', expect.anything(), 'failure text');
+  });
+
+  it('窗口模式下 /new 豁免出窗：先冲刷前序文本，再单独触发指令', async () => {
+    const { svc } = makeLogService();
+    const createGroupSession = vi.fn(async () => ({ sessionId: 10, created: true }));
+    const onMessage = vi.fn(async (ctx: FeishuInboundContext) => ({ text: `r:${ctx.text}` }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      mergeWindowMs: 30, authorizeSender: async () => true,
+      messageService: { ...svc, createGroupSession } as never,
+    });
+    await processor.process('1', makeEvent({ messageId: 'om_a', text: '看看这个', isBotMentioned: true }));
+    await processor.process('1', makeEvent(newCommandEvent()));
+    await wait(120);
+    // 前序文本与指令各触发一次，互不合并（与私聊 `---` 同口径）。
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(onMessage.mock.calls[0][0].text).toBe('看看这个');
+    expect(onMessage.mock.calls[1][0].text).toBe('@助手 /new');
+    expect(createGroupSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('普通群触发把 buildGroupContext 当时的会话与工作区钉进 context（非话题）', async () => {
+    const buildGroupContext = vi.fn(async () => ({
+      conversation: { sessionId: 9, workspace: '/ws/group' } as never, messages: [], prompt: 'ctx',
+    }));
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService: { ...messageService, buildGroupContext } as never,
+      authorizeSender: async () => true,
+    });
+    await processor.process('1', makeEvent({ messageId: 'om_c', isBotMentioned: true }));
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+      pinnedSessionId: 9,
+      pinnedWorkspace: '/ws/group',
+    }));
+  });
+
+  it('话题消息不钉会话（话题映射确定性，handler 话题分支优先路由）', async () => {
+    const buildGroupContext = vi.fn(async () => ({
+      conversation: { sessionId: 9, workspace: '/ws/group' } as never, messages: [], prompt: 'ctx',
+    }));
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      messageService: { ...messageService, buildGroupContext } as never,
+      authorizeSender: async () => true,
+    });
+    await processor.process('1', makeEvent({ messageId: 'om_t', threadId: 'omt_1', isBotMentioned: true }));
+    const ctx = onMessage.mock.calls[0][0];
+    expect(ctx.pinnedSessionId).toBeUndefined();
+  });
+});
+
+describe('FeishuInboundProcessor 群 /new 占位时序', () => {
+  const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+  it('前批卡在引用解析时 /new 不得插队：上下文读取先于指针切换（R1 回归）', async () => {
+    // 前批消息带引用：resolveQuotedMessage 是真实网络往返，flush1 会卡在这里。
+    // 占位必须在 triggerMerged 入口（引用解析之前）：否则 /new 的占位会先于前批入队，
+    // createGroupSession 先执行、buildGroupContext 读到新指针，旧任务正文落进新会话。
+    let releaseQuote: () => void = () => undefined;
+    const quoteGate = new Promise<void>((resolve) => { releaseQuote = resolve; });
+    const order: string[] = [];
+    const buildGroupContext = vi.fn(async () => {
+      order.push('context');
+      return { conversation: { sessionId: 9, workspace: '/ws/group' } as never, messages: [], prompt: 'ctx' };
+    });
+    const createGroupSession = vi.fn(async () => {
+      order.push('switch');
+      return { sessionId: 10, created: true };
+    });
+    const resolveQuotedMessage = vi.fn(async () => {
+      await quoteGate;
+      return '[引用消息] 旧内容';
+    });
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      // 必须开窗：windowMs=0 时首条消息走豁免路径立即触发，process(om_q) 会直接卡在引用门闸上。
+      mergeWindowMs: 30,
+      messageService: { ...messageService, buildGroupContext, createGroupSession } as never,
+      authorizeSender: async () => true,
+      resolveQuotedMessage,
+    });
+    await processor.process('1', makeEvent({ messageId: 'om_q', text: '查告警', parentId: 'om_parent', isBotMentioned: true }));
+    // /new 豁免出窗：冲刷前批（flush1 启动、卡在引用解析），随后自身立即触发。
+    // /new 的 process 会等待切换完成，而切换要等前批引用解析放行——不能在这里 await。
+    const newSessionProcess = processor.process('1', makeEvent({ messageId: 'om_new', text: '@助手 /new', botMentionNames: ['助手'], isBotMentioned: true }));
+    await wait(60);
+    // /new 的切换必须等前批的上下文读取（同 chat-order 槽位 FIFO），此时 createGroupSession 不得已执行。
+    expect(order).not.toContain('switch');
+    releaseQuote();
+    await newSessionProcess;
+    await wait(60);
+    expect(order).toEqual(['context', 'switch']);
+    // 前批消息钉住旧会话 9：即便切换随后发生，正文也留在旧会话。
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(onMessage.mock.calls[0][0].pinnedSessionId).toBe(9);
+    expect(onMessage.mock.calls[1][0].groupSessionSwitch).toEqual({ sessionId: 10, created: true });
+  });
+});

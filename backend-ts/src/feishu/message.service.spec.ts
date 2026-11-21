@@ -35,6 +35,9 @@ describe('FeishuMessageService', () => {
       upsertSessionChannel: vi.fn(async () => undefined),
       findSessionChannel: vi.fn(async () => null),
       clearAwaitingFirstMessageTitle: vi.fn(async () => undefined),
+      hasSessionUserMessage: vi.fn(async () => false),
+      findGroupLogIdByMessageId: vi.fn(async () => 55),
+      switchGroupSession: vi.fn(async (_appId: string, _chatId: string, sessionId: number) => ({ id: 1, appId: '1', chatId: 'oc_group', sessionId, ownerUserId: 3, workspace: '/ws/group' })),
       setReplyAnchor: vi.fn(async () => undefined),
       clearReplyAnchor: vi.fn(async () => undefined),
       findReplyAnchorMessageId: vi.fn(async () => null),
@@ -254,6 +257,71 @@ describe('FeishuMessageService', () => {
     }));
     // 新会话标记「等待首条消息命名」（持久化，重启安全）。
     expect(repository.upsertSessionChannel).toHaveBeenCalledWith(20, '1', 'p2p:union:on_user', 'p2p', true);
+  });
+
+  it('createGroupSession creates a pending-title session and switches when the active session has user messages', async () => {
+    const repository = makeRepo({
+      findGroupConversation: vi.fn(async () => ({ id: 1, appId: '1', chatId: 'oc_group', sessionId: 9, ownerUserId: 3, workspace: '/ws/group' })),
+      hasSessionUserMessage: vi.fn(async () => true),
+    });
+    const sessionFactory = { create: vi.fn(async () => ({ sessionId: 10, ownerUserId: 5, workspace: '/ws/group' })) };
+    const service = new FeishuMessageService(repository as never, sessionFactory as never, 20, 120);
+    const result = await service.createGroupSession('1', makeContext({ messageId: 'om_new' }));
+    expect(result).toEqual({ sessionId: 10, created: true });
+    // 工厂以 pendingTitle 调用（标题「飞书Bot会话」+ 待命名，不取群名）。
+    expect(sessionFactory.create).toHaveBeenCalledWith('1', expect.anything(), { pendingTitle: true });
+    // 待命名标志为 1；水位线推进到 /new 日志 id（清摘要由 switchGroupSession 单条 UPDATE 完成）。
+    expect(repository.upsertSessionChannel).toHaveBeenCalledWith(10, '1', 'oc_group', 'group', true);
+    expect(repository.switchGroupSession).toHaveBeenCalledWith('1', 'oc_group', 10, 55, { ownerUserId: 5, workspace: '/ws/group' });
+  });
+
+  it('createGroupSession reuses the active session when it has no user messages', async () => {
+    const repository = makeRepo({
+      findGroupConversation: vi.fn(async () => ({ id: 1, appId: '1', chatId: 'oc_group', sessionId: 9, ownerUserId: 3, workspace: '/ws/group' })),
+      hasSessionUserMessage: vi.fn(async () => false),
+    });
+    const sessionFactory = { create: vi.fn(async () => ({ sessionId: 10, ownerUserId: 5 })) };
+    const service = new FeishuMessageService(repository as never, sessionFactory as never, 20, 120);
+    const result = await service.createGroupSession('1', makeContext());
+    expect(result).toEqual({ sessionId: 9, created: false });
+    // 复用路径：不建会话、不改指针、不推水位线、不清摘要。
+    expect(sessionFactory.create).not.toHaveBeenCalled();
+    expect(repository.switchGroupSession).not.toHaveBeenCalled();
+    expect(repository.upsertSessionChannel).not.toHaveBeenCalled();
+  });
+
+  it('createGroupSession inserts the first session when the group row is absent', async () => {
+    const repository = makeRepo({ findGroupConversation: vi.fn(async () => null) });
+    const sessionFactory = { create: vi.fn(async () => ({ sessionId: 10, ownerUserId: 5, workspace: '/ws/group' })) };
+    const service = new FeishuMessageService(repository as never, sessionFactory as never, 20, 120);
+    const result = await service.createGroupSession('1', makeContext({ messageId: 'om_new' }));
+    expect(result).toEqual({ sessionId: 10, created: true });
+    // 首条 /new 即第一会话：不再额外建一条再切走。
+    expect(sessionFactory.create).toHaveBeenCalledTimes(1);
+    expect(repository.switchGroupSession).toHaveBeenCalledWith('1', 'oc_group', 10, 55, { ownerUserId: 5, workspace: '/ws/group' });
+  });
+
+  it('createGroupSession still switches (with a warning) when the /new log row is missing', async () => {
+    const repository = makeRepo({
+      findGroupConversation: vi.fn(async () => null),
+      findGroupLogIdByMessageId: vi.fn(async () => null),
+    });
+    const sessionFactory = { create: vi.fn(async () => ({ sessionId: 10, ownerUserId: 5, workspace: '/ws/group' })) };
+    const service = new FeishuMessageService(repository as never, sessionFactory as never, 20, 120);
+    const result = await service.createGroupSession('1', makeContext({ messageId: 'om_new' }));
+    expect(result).toEqual({ sessionId: 10, created: true });
+    expect(repository.switchGroupSession).toHaveBeenCalledWith('1', 'oc_group', 10, null, expect.anything());
+  });
+
+  it('createGroupSession fails as a whole when the final switch UPDATE throws', async () => {
+    const repository = makeRepo({
+      findGroupConversation: vi.fn(async () => null),
+      switchGroupSession: vi.fn(async () => { throw new Error('db down'); }),
+    });
+    const sessionFactory = { create: vi.fn(async () => ({ sessionId: 10, ownerUserId: 5, workspace: '/ws/group' })) };
+    const service = new FeishuMessageService(repository as never, sessionFactory as never, 20, 120);
+    // 不吞错：调用方（processor/handler）回复失败文案，指针与水位线保持原值。
+    await expect(service.createGroupSession('1', makeContext({ messageId: 'om_new' }))).rejects.toThrow('db down');
   });
 
   it('records and clears the reply anchor tolerantly, no-op on empty message ids', async () => {

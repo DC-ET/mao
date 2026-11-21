@@ -3,7 +3,8 @@ import type { FeishuInboundContext, FeishuNormalizedMessage } from './types.js';
 import type { GroupContextSummarizer } from './group-context-summarizer.js';
 
 export interface FeishuSessionFactory {
-  create(accountId: string, context: FeishuInboundContext): Promise<{ sessionId: number; ownerUserId: number; workspace?: string | null }>;
+  /** pendingTitle=true：标题写「飞书Bot会话」并标记待命名，不取群名（群 `/new` 新会话，首条 @ 再生成短标题）。 */
+  create(accountId: string, context: FeishuInboundContext, options?: { pendingTitle?: boolean }): Promise<{ sessionId: number; ownerUserId: number; workspace?: string | null }>;
 }
 
 export interface FeishuGroupContext {
@@ -161,6 +162,39 @@ export class FeishuMessageService {
     const existing = await this.repository.findGroupConversation(accountId, context.chatId);
     if (existing != null) return existing;
     return this.createConversation(accountId, context.chatId, context);
+  }
+
+  /**
+   * 群 `/new` 新会话（chat 级锁内）：当前活跃会话已有 USER 消息（或还没有群行）时新建并切换；
+   * 还没有 USER 消息则复用（created=false，指针/水位线/摘要全部不动）。
+   * 步骤：复用检查 → 工厂建会话（pendingTitle，不取群名）→ upsertSessionChannel 待命名 →
+   * 最后单条 UPDATE feishu_chat 原子完成「切指针 + 推水位线（/new 日志 id）+ 清摘要」——
+   * 任一步失败向上抛（调用方回复失败文案），指针与水位线保持原值；工厂已成功时会留下一条空会话（可接受残留）。
+   */
+  async createGroupSession(accountId: string, context: FeishuInboundContext): Promise<{ sessionId: number; created: boolean }> {
+    if (context.chatId == null) throw new Error('Feishu group message requires chatId');
+    const chatId = context.chatId;
+    return this.withChatLock(`${accountId}:${chatId}`, async () => {
+      const existing = await this.repository.findGroupConversation(accountId, chatId);
+      if (existing != null && !(await this.repository.hasSessionUserMessage(existing.sessionId))) {
+        return { sessionId: existing.sessionId, created: false };
+      }
+      const session = await this.sessionFactory.create(accountId, context, { pendingTitle: true });
+      // 标记「等待首条消息命名」。失败仅告警：会话已建成，命名是体验增强，不应让创建整体报失败。
+      try {
+        await this.repository.upsertSessionChannel(session.sessionId, accountId, chatId, 'group', true);
+      } catch (error) {
+        console.warn(`飞书群新会话待命名标记失败, sessionId=${session.sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      const logId = await this.repository.findGroupLogIdByMessageId(accountId, chatId, context.messageId);
+      if (logId == null) {
+        console.warn(`飞书群新会话未找到 /new 群日志行, 水位线不动, accountId=${accountId}, chatId=${chatId}, messageId=${context.messageId}`);
+      }
+      const conversation = await this.repository.switchGroupSession(accountId, chatId, session.sessionId, logId, {
+        ownerUserId: session.ownerUserId, workspace: session.workspace,
+      });
+      return { sessionId: conversation.sessionId, created: true };
+    });
   }
 
   /** 查询话题→会话映射；未记录返回 null。 */

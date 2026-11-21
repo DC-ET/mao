@@ -141,3 +141,86 @@ describe('MysqlFeishuMessageRepository reply anchor', () => {
     );
   });
 });
+
+describe('MysqlFeishuMessageRepository group /new switch', () => {
+  it('checks for existing user messages with the soft-delete and source filters', async () => {
+    const { repo, query } = setup([{ id: 3 }]);
+    expect(await repo.hasSessionUserMessage(9)).toBe(true);
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("role = 'USER'"),
+      [9],
+    );
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('deleted = 0'),
+      [9],
+    );
+    // 复制来的消息（边路任务分叉）不算用户发言，口径与 session.repository.hasOwnEarlierUserMessage 一致。
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('source_session_id IS NULL'),
+      [9],
+    );
+    const { repo: emptyRepo } = setup([]);
+    expect(await emptyRepo.hasSessionUserMessage(9)).toBe(false);
+  });
+
+  it('looks up the group log row id by message id', async () => {
+    const { repo, query } = setup([{ id: 42 }]);
+    expect(await repo.findGroupLogIdByMessageId('1', 'oc_group', 'om_new')).toBe(42);
+    expect(query).toHaveBeenCalledWith(
+      'SELECT id FROM feishu_group_message_log WHERE app_id = ? AND chat_id = ? AND message_id = ? LIMIT 1',
+      ['1', 'oc_group', 'om_new'],
+    );
+    const { repo: emptyRepo, query: emptyQuery } = setup([]);
+    expect(await emptyRepo.findGroupLogIdByMessageId('1', 'oc_group', null)).toBeNull();
+    expect(emptyQuery).not.toHaveBeenCalled();
+  });
+
+  it('switches the session, advances the watermark and clears the summary in one UPDATE', async () => {
+    // 回读群行：Db 层 snake_case → camelCase 后 sessionId=10。
+    const conversationRow = { id: 1, app_id: '1', chat_id: 'oc_group', session_id: 10, owner_user_id: 3, workspace: '/ws/group' };
+    const { repo, execute, query } = setup([conversationRow]);
+    await repo.switchGroupSession('1', 'oc_group', 10, 42, { ownerUserId: 5, workspace: '/ws/group' });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('session_id = ?'),
+      [10, 42, '1', 'oc_group'],
+    );
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('GREATEST(last_context_log_id, ?)'),
+      [10, 42, '1', 'oc_group'],
+    );
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('context_summary = NULL'),
+      [10, 42, '1', 'oc_group'],
+    );
+    // owner / workspace 不在 SET 清单 → 原值保持（R10 / 目标 7）。
+    const sql = execute.mock.calls[0][0] as string;
+    expect(sql).not.toContain('owner_user_id');
+    expect(sql).not.toContain('workspace');
+    expect(query).toHaveBeenCalled(); // 回读群行
+  });
+
+  it('skips the GREATEST term when the /new log row id is missing (watermark untouched)', async () => {
+    const conversationRow = { id: 1, app_id: '1', chat_id: 'oc_group', session_id: 10, owner_user_id: 3 };
+    const { repo, execute } = setup([conversationRow]);
+    await repo.switchGroupSession('1', 'oc_group', 10, null, { ownerUserId: 5, workspace: null });
+    expect(execute).toHaveBeenCalledWith(
+      expect.not.stringContaining('GREATEST'),
+      [10, '1', 'oc_group'],
+    );
+  });
+
+  it('inserts the first session with the fallback owner and the /new watermark when no group row exists', async () => {
+    const conversationRow = { id: 1, app_id: '1', chat_id: 'oc_group', session_id: 10, owner_user_id: 5, workspace: '/ws/group' };
+    const { repo, execute, query } = setup([conversationRow]);
+    // 首次 UPDATE 命中 0 行（无群行）→ INSERT 落第一会话。
+    execute.mockResolvedValueOnce([{ affectedRows: 0 }, []]);
+    const conversation = await repo.switchGroupSession('1', 'oc_group', 10, 42, { ownerUserId: 5, workspace: '/ws/group' });
+    expect(execute).toHaveBeenNthCalledWith(2,
+      'INSERT INTO feishu_chat (app_id, chat_id, session_id, owner_user_id, workspace, last_context_log_id) VALUES (?, ?, ?, ?, ?, ?)',
+      ['1', 'oc_group', 10, 5, '/ws/group', 42],
+    );
+    expect(conversation.sessionId).toBe(10);
+    expect(query).toHaveBeenCalled();
+  });
+});

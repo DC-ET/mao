@@ -8,11 +8,12 @@ import type { AppContext } from './create-app.js';
 import type { MysqlFeishuMessageRepository } from './feishu/message.repository.js';
 import type { FeishuMessageService } from './feishu/message.service.js';
 import type { FeishuClientHelper } from './feishu-client.js';
+import type { FeishuInboundContext } from './feishu/types.js';
 import type { HarnessService } from './harness/core/harness-service.js';
 import type { AgentLoop } from './harness/core/agent-loop.js';
 import type { StreamingWsHandler } from './session/ws/streaming-ws-handler.js';
 
-import { createFeishuSessionHelper } from './feishu-session.js';
+import { createFeishuSessionHelper, createPinnedSessionAdapter } from './feishu-session.js';
 import { FEISHU_ECP_IDENTITY_MISMATCH_TEXT } from './feishu/ecp-inbound-gate.js';
 import { createFeishuQueueCardHelper } from './feishu-cards.js';
 import { createFeishuSessionUrlHelper } from './feishu-session.js';
@@ -103,6 +104,9 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
   const feishuSenderNames = new Map<string, Promise<string | null>>();
   const { applyFeishuBotConfig, ensureFeishuSessionTitle } = createFeishuSessionHelper({
     feishuBots: d.feishuBots, sessionService: d.sessionService, sessionRepo: d.sessionRepo, agentService: d.agentService, modelService: d.modelService, getFeishuChatTitle,
+    // 群 /new 新建的会话（待命名标志=1）：群名补标题让位给首条 @ 的 LLM 短标题。
+    isAwaitingFirstMessageTitle: async (sessionId: number) =>
+      (await feishuMessageService.findSessionChannel(sessionId))?.awaitingFirstMessageTitle === 1,
   });
   ctx.notifyFeishuPendingMismatch = async (pending: any) => {
     await sendFeishuText(pending.appId, pending.event, FEISHU_ECP_IDENTITY_MISMATCH_TEXT);
@@ -152,6 +156,9 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
         void ensureFeishuSessionTitle(conversation.sessionId, Number(accountId), context);
         return { id: conversation.sessionId, workspace: conversation.workspace ?? null, executionUserId: triggerUserId ?? null };
       },
+      // 钉会话入口（群 /new 指针竞态防护）：不读新指针、不创建，但适配器副作用照跑——
+      // executionUserId 解析、机器人 Agent/模型热切换、群名补标题（R9，实现抽为 createPinnedSessionAdapter 可测）。
+      pinnedSession: createPinnedSessionAdapter({ resolveFeishuUserId, applyFeishuBotConfig, ensureFeishuSessionTitle }),
       saveUserMessage: async (sessionId: number, content: any, metadata: any) => { await d.sessionService.saveMessage(sessionId, 'USER', content, null, null, null, 0, null, metadata ?? null); },
       updatePhase: async (sessionId: number, phase: any) => { await d.sessionService.updatePhase(sessionId, phase); },
       cleanupIncompleteTail: async (sessionId: number) => d.sessionService.cleanupIncompleteTail(sessionId),
@@ -172,6 +179,11 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
         return { text: channelAssistantReply(messages, '抱歉，暂时无法生成回复。'), messageId };
       },
       getMessages: async (sessionId: number) => d.sessionService.getMessages(sessionId),
+    },
+    // 群 `/new` 新会话控制：切换在 message.service 的 chat 级锁内完成（含原子 UPDATE）。
+    groupSessionControl: {
+      createGroupSession: (accountId: string, context: FeishuInboundContext) =>
+        feishuMessageService.createGroupSession(accountId, context),
     },
     p2pSessionControl: {
       findActiveSession: async (accountId: any, context: any) => {

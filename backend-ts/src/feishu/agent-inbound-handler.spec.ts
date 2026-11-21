@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AgentFeishuInboundHandler, isNewSessionCommand } from './agent-inbound-handler.js';
+import { AgentFeishuInboundHandler, isGroupNewSessionCommand, isNewSessionCommand } from './agent-inbound-handler.js';
 import type { CancelFlag, FeishuInboundContext, FeishuInboundQueueRow, FeishuTaskQueuePort } from './types.js';
 import type { AgentEventListener } from '../harness/core/agent-event-listener.js';
 
@@ -2078,5 +2078,199 @@ describe('AgentFeishuInboundHandler 平台队列接力（0.0.434）', () => {
     expect(onReply).toHaveBeenCalledWith(expect.anything(), 'assistant text', 7);
     expect(replyAnchor.begin).toHaveBeenCalled();
     expect(replyAnchor.end).toHaveBeenCalled();
+  });
+
+  it('group /new command switches the session without executing and replies confirmation via onReply', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const createGroupSession = vi.fn(async () => ({ sessionId: 10, created: true }));
+    const onReply = vi.fn(async (): Promise<string | null> => null);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      groupSessionControl: { createGroupSession },
+      onReply,
+    });
+    const reply = await handler.onMessage(makeContext({ text: '@助手 /new', botMentionNames: ['助手'] }));
+    expect(createGroupSession).toHaveBeenCalledTimes(1);
+    expect(createGroupSession).toHaveBeenCalledWith('1', expect.anything());
+    // 不进会话消息流、不触发 Agent。
+    expect(harness.execute).not.toHaveBeenCalled();
+    expect(sessionService.saveUserMessage).not.toHaveBeenCalled();
+    // 确认文案经 onReply 发出并携带新 sessionId（便于以后出站映射）；本消息不返回 reply。
+    expect(onReply).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('已开启新会话'), 10);
+    expect(reply).toBeNull();
+  });
+
+  it('replies the same confirmation for created=false without creating another session', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const createGroupSession = vi.fn(async () => ({ sessionId: 10, created: false }));
+    const onReply = vi.fn(async (): Promise<string | null> => null);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      groupSessionControl: { createGroupSession },
+      onReply,
+    });
+    const reply = await handler.onMessage(makeContext({ text: '@助手 /new', botMentionNames: ['助手'] }));
+    expect(onReply).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('已开启新会话'), 10);
+    expect(reply).toBeNull();
+    expect(harness.execute).not.toHaveBeenCalled();
+  });
+
+  it('uses the processor-completed switch result without calling createGroupSession again', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const createGroupSession = vi.fn(async () => ({ sessionId: 10, created: true }));
+    const onReply = vi.fn(async (): Promise<string | null> => null);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      groupSessionControl: { createGroupSession },
+      onReply,
+    });
+    const reply = await handler.onMessage(makeContext({
+      text: '@助手 /new', botMentionNames: ['助手'],
+      groupSessionSwitch: { sessionId: 10, created: true },
+    }));
+    expect(createGroupSession).not.toHaveBeenCalled();
+    expect(onReply).toHaveBeenCalledWith(expect.anything(), expect.stringContaining('已开启新会话'), 10);
+    expect(reply).toBeNull();
+  });
+
+  it('replies failure text without retrying when the processor attempt already failed', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    // 重试会落到 chat-order 之外，与上下文读取失去保序——必须不重试。
+    const createGroupSession = vi.fn(async () => ({ sessionId: 10, created: true }));
+    const onReply = vi.fn(async (): Promise<string | null> => null);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      groupSessionControl: { createGroupSession },
+      onReply,
+    });
+    const reply = await handler.onMessage(makeContext({
+      text: '@助手 /new', botMentionNames: ['助手'], groupSessionSwitch: null,
+    }));
+    expect(createGroupSession).not.toHaveBeenCalled();
+    expect(onReply).toHaveBeenCalledWith(expect.anything(), '开启新会话失败，请稍后再试。');
+    expect(reply).toBeNull();
+    expect(harness.execute).not.toHaveBeenCalled();
+  });
+
+  it('replies failure text when creating the group session throws', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const createGroupSession = vi.fn(async () => { throw new Error('db down'); });
+    const onReply = vi.fn(async (): Promise<string | null> => null);
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      groupSessionControl: { createGroupSession },
+      onReply,
+    });
+    const reply = await handler.onMessage(makeContext({ text: '@助手 /new', botMentionNames: ['助手'] }));
+    expect(onReply).toHaveBeenCalledWith(expect.anything(), '开启新会话失败，请稍后再试。');
+    expect(reply).toBeNull();
+    expect(harness.execute).not.toHaveBeenCalled();
+    expect(sessionService.saveUserMessage).not.toHaveBeenCalled();
+  });
+
+  it('treats /new as a normal message when groupSessionControl is not configured', async () => {
+    const sessionService = makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+    });
+    await handler.onMessage(makeContext({ text: '@助手 /new', botMentionNames: ['助手'] }));
+    expect(harness.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the pinned session via the adapter instead of getOrCreateSession', async () => {
+    const sessionService = makeSessionService({
+      pinnedSession: vi.fn(async (_accountId: string, _context: FeishuInboundContext, sessionId: number, workspace: string | null) => ({ id: sessionId, workspace, executionUserId: 42 })),
+    });
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+    });
+    await handler.onMessage(makeContext({ text: '普通任务', pinnedSessionId: 9, pinnedWorkspace: '/ws/group' }));
+    // 钉住值被使用，指针不被重新读取；工作区随钉会话传入。
+    expect(sessionService.pinnedSession).toHaveBeenCalledWith('1', expect.anything(), 9, '/ws/group');
+    expect(sessionService.getOrCreateSession).not.toHaveBeenCalled();
+    expect(harness.execute).toHaveBeenCalledTimes(1);
+    // 执行身份来自适配器返回（= 这条消息的发送者），不是群行 owner。
+    expect(harness.execute).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), expect.anything(), 42);
+  });
+
+  it('non-command group messages schedule the short title through the awaiting gate', async () => {
+    const sessionService = makeSessionService();
+    const isAwaitingFirstMessageTitle = vi.fn(async () => true);
+    const finalizeNewSessionTitle = vi.fn(async () => true);
+    const titleGenerator = { generate: vi.fn(async () => '告警排查') };
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      createCancelFlag: makeFlag,
+      listenerFactory: async () => listener,
+      p2pSessionControl: {
+        findActiveSession: vi.fn(async () => null),
+        createSession: vi.fn(async () => ({ id: 7 })),
+        switchSession: vi.fn(async () => null),
+        findSessionByMessageId: vi.fn(async () => null),
+        recordMessageMapping: vi.fn(async () => undefined),
+        isAwaitingFirstMessageTitle,
+        finalizeNewSessionTitle,
+      } as never,
+      titleGenerator,
+    });
+    await handler.onMessage(makeContext({ text: '看下告警' }));
+    expect(isAwaitingFirstMessageTitle).toHaveBeenCalledWith(7);
+    expect(titleGenerator.generate).toHaveBeenCalled();
+    expect(finalizeNewSessionTitle).toHaveBeenCalledWith(7, '告警排查');
+  });
+});
+
+describe('isGroupNewSessionCommand', () => {
+  const base = { chatType: 'group' as const, threadId: null as string | null, isBotMentioned: true, text: '@助手 /new', botMentionNames: ['助手'] };
+
+  it('matches /new after stripping the bot mention name, tolerating surrounding whitespace', () => {
+    expect(isGroupNewSessionCommand(base)).toBe(true);
+    expect(isGroupNewSessionCommand({ ...base, text: '@助手  /new ' })).toBe(true);
+    expect(isGroupNewSessionCommand({ ...base, text: '@助手\n/new' })).toBe(true);
+    // 多个 @ 同名（重复提及）全部剥掉后仍命中。
+    expect(isGroupNewSessionCommand({ ...base, text: '@助手 @助手 /new' })).toBe(true);
+  });
+
+  it('does not match when extra text follows, casing differs, or no name can be stripped', () => {
+    expect(isGroupNewSessionCommand({ ...base, text: '@助手 /new 帮我查' })).toBe(false);
+    expect(isGroupNewSessionCommand({ ...base, text: '@助手 /New' })).toBe(false);
+    // 名单为空（is_at_me 兜底命中）：不剥任何 @，整句当普通消息。
+    expect(isGroupNewSessionCommand({ ...base, text: '@助手 /new', botMentionNames: [] })).toBe(false);
+  });
+
+  it('does not match threads, p2p, or non-mentioned messages', () => {
+    expect(isGroupNewSessionCommand({ ...base, threadId: 'omt_1' })).toBe(false);
+    expect(isGroupNewSessionCommand({ ...base, chatType: 'p2p' as const, text: '/new' })).toBe(false);
+    expect(isGroupNewSessionCommand({ ...base, isBotMentioned: false })).toBe(false);
   });
 });

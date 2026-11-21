@@ -1,6 +1,6 @@
 import type { FeishuInboundHandler, FeishuNormalizedMessage, FeishuInboundContext, FeishuReply, FeishuPostFileItem } from './types.js';
 import { inboundFileItems, inboundImageKeys, isInboundAttachmentOnly } from './event-normalizer.js';
-import { isNewSessionCommand } from './agent-inbound-handler.js';
+import { isGroupNewSessionCommand, isNewSessionCommand } from './agent-inbound-handler.js';
 import type { FeishuMessageService } from './message.service.js';
 import { botSenderLabel, isBotSender } from './message.service.js';
 import { describeMessageText, FEISHU_CARD_UPGRADE_FALLBACK } from './message-detail.js';
@@ -106,16 +106,42 @@ export class FeishuInboundProcessor {
   }
 
   private runInChatOrder<T>(accountId: string, chatId: string | null, fn: () => Promise<T>): Promise<T> {
+    return this.reserveChatOrder(accountId, chatId).run(fn) as Promise<T>;
+  }
+
+  /**
+   * 同步占位 chat-order 队列位置，返回一次性运行器 + 兜底释放。
+   * 豁免消息（群 `/new`、图片等）的 flush 会冲刷并并发启动前一批 triggerMerged，而两条路径
+   * 到达 chat-order 队列的时刻受各自中途 await 影响（引用解析是真实网络往返、待富化补齐）——
+   * 若 /new 的指针切换插队到先到消息的上下文读取之前，旧任务正文会被读进新会话（R1）。
+   * 必须在 triggerMerged 入口（任何 await 之前）占位，保证「flush 到达序 = 上下文读取/切换序」，
+   * 与各路径自身的 await 数量无关。
+   * run() 完成后自动释放；占位后路径异常未 run 时由调用方 finally 调 release() 空跑释放，
+   * 否则该 chat 的队列永久卡死、整群消息停摆。
+   */
+  private reserveChatOrder(accountId: string, chatId: string | null): {
+    run: <T>(fn: () => Promise<T>) => Promise<T>;
+    release: () => void;
+  } {
     const key = `${accountId}:${chatId ?? ''}`;
     const previous = this.chatOrderQueues.get(key) ?? Promise.resolve();
-    let release!: () => void;
-    const current = new Promise<void>((resolve) => { release = resolve; });
+    let released = false;
+    let ran = false;
+    let releaseNow!: () => void;
+    const current = new Promise<void>((resolve) => { releaseNow = () => { released = true; resolve(); }; });
     const queued = previous.then(() => current);
     this.chatOrderQueues.set(key, queued);
-    return previous.then(fn).finally(() => {
-      release();
-      if (this.chatOrderQueues.get(key) === queued) this.chatOrderQueues.delete(key);
-    });
+    return {
+      run: <T,>(fn: () => Promise<T>): Promise<T> => {
+        ran = true;
+        return previous.then(fn).finally(() => {
+          if (!released) releaseNow();
+        }) as Promise<T>;
+      },
+      release: () => {
+        if (!ran) releaseNow();
+      },
+    };
   }
 
   /** 登记后台富化在飞行任务；完成（无论成败）后摘登记，供 flushPendingEnrichments 判断能否直接等待。 */
@@ -281,37 +307,76 @@ export class FeishuInboundProcessor {
     const first = entries[0];
     const last = entries[entries.length - 1];
     const accountId = first.accountId;
-    const text = entries.map((e) => e.event.text).filter((t) => t.trim() !== '').join('\n\n') || first.event.text;
-    const quotedParts = await Promise.all(entries.map((e) => this.resolveQuoted(accountId, e.event)));
-    const quoted = quotedParts.filter((q): q is string => q != null && q.trim() !== '').join('\n\n');
-    const quotedContext = quoted === '' ? undefined : quoted;
-    if (first.event.chatType === 'p2p') {
+    // 群消息：入口同步占位 chat-order 位置——必须在任何 await（引用解析是真实网络往返）之前，
+    // 否则豁免 flush（群 /new）仍可能插队到先到消息的上下文读取之前（R1）。p2p 不占位（不走 chat-order）。
+    // 占位后任何路径异常退出由 finally 兜底空跑释放，防整群队列卡死（见 reserveChatOrder）。
+    const inChatOrder = first.event.chatType === 'group'
+      ? this.reserveChatOrder(accountId, first.event.chatId)
+      : null;
+    try {
+      const text = entries.map((e) => e.event.text).filter((t) => t.trim() !== '').join('\n\n') || first.event.text;
+      const quotedParts = await Promise.all(entries.map((e) => this.resolveQuoted(accountId, e.event)));
+      const quoted = quotedParts.filter((q): q is string => q != null && q.trim() !== '').join('\n\n');
+      const quotedContext = quoted === '' ? undefined : quoted;
+      if (first.event.chatType === 'p2p') {
+        const context: FeishuInboundContext = {
+          ...first.event, accountId, maoUserId: first.maoUserId, text, quotedContext,
+        };
+        const reply = await this.handler.onMessage(context);
+        if (reply?.text) await this.sendReply(accountId, first.event, reply);
+        return;
+      }
+      const messageService = this.options.messageService!;
+      // 群 `/new` 指令路径：不调 buildGroupContext（会把水位线推过旧讨论、把旧讨论写进摘要缓存），
+      // 切换在占位槽位内完成（与同群上下文读取保序），随后 onMessage 只回复确认。
+      if (isGroupNewSessionCommand(first.event)) {
+        const context: FeishuInboundContext = {
+          ...first.event, accountId, messageId: first.messageId, maoUserId: first.maoUserId,
+          text, senderLabel: first.senderLabel, quotedContext,
+        };
+        await inChatOrder!.run(async () => {
+          try {
+            const result = await messageService.createGroupSession(accountId, context);
+            context.groupSessionSwitch = { sessionId: result.sessionId, created: result.created };
+          } catch (error) {
+            console.error(`飞书群新建会话失败, accountId=${accountId}, messageId=${first.messageId}`, error);
+            context.groupSessionSwitch = null;
+          }
+        });
+        const reply = await this.handler.onMessage(context);
+        if (reply?.text) await this.sendReply(accountId, first.event, reply);
+        return;
+      }
+      // 读上下文前先确保话题会话行存在：水位线落库依赖它，否则首个触发写入会被静默丢弃，
+      // 同一话题的下一次触发会重复注入本窗口（详见 ensureThreadSession 注释）。
+      await this.ensureThreadSessionBeforeContext(accountId, last);
+      // 同群内上下文读取排在更早消息的入库之后（chat-order 保序），保证图片等先到消息已可见。
+      // 读之前先同步补齐待富化行：后台富化与触发读取存在竞态——用户「先转发记录、马上 @ 机器人」时，
+      // buildGroupContext 会在 enrich_pending 行处截断，本轮 prompt 完全拿不到转发摘录，
+      // 而用户往往不会有下一轮触发来补（水位线未推进，内容只会原样留在日志行里）。
+      // 只补齐到本批末条消息为止：更晚的行属于后续触发，等它会让本批被后到的豁免消息反超。
+      const upToLogId = entries.reduce((max, e) => Math.max(max, e.logId ?? 0), 0);
+      await this.flushPendingEnrichments(accountId, last.event, upToLogId > 0 ? upToLogId : undefined);
+      const group = await inChatOrder!.run(() =>
+        messageService.buildGroupContext(accountId, { ...last.event, accountId, messageId: last.messageId, maoUserId: last.maoUserId }));
       const context: FeishuInboundContext = {
-        ...first.event, accountId, maoUserId: first.maoUserId, text, quotedContext,
+        ...first.event, accountId, messageId: first.messageId, maoUserId: first.maoUserId, text,
+        groupContext: group.prompt, senderLabel: first.senderLabel, quotedContext,
       };
+      // 钉会话：把上下文读取当时的活跃指针（与工作区同一次读出）钉进 context。
+      // onMessage 在 chat-order 之外执行，期间并发发送者的 /new 可能已拨走指针——
+      // 先到的消息必须留在它上下文所属的旧会话，不被后拨的指针吸走。
+      // 话题消息不钉：话题映射（feishu_thread_session）是确定性的，无指针竞态，handler 的话题分支也会优先路由。
+      if (first.event.threadId == null) {
+        context.pinnedSessionId = group.conversation.sessionId;
+        context.pinnedWorkspace = group.conversation.workspace ?? null;
+      }
       const reply = await this.handler.onMessage(context);
       if (reply?.text) await this.sendReply(accountId, first.event, reply);
-      return;
+    } finally {
+      // 兜底释放：指令/正常路径已在槽位内 run 时是 no-op；异常早退（含 p2p 之外的意外抛点）防泄漏。
+      inChatOrder?.release();
     }
-    const messageService = this.options.messageService!;
-    // 读上下文前先确保话题会话行存在：水位线落库依赖它，否则首个触发写入会被静默丢弃，
-    // 同一话题的下一次触发会重复注入本窗口（详见 ensureThreadSession 注释）。
-    await this.ensureThreadSessionBeforeContext(accountId, last);
-    // 同群内上下文读取排在更早消息的入库之后（runInChatOrder 保序），保证图片等先到消息已可见。
-    // 读之前先同步补齐待富化行：后台富化与触发读取存在竞态——用户「先转发记录、马上 @ 机器人」时，
-    // buildGroupContext 会在 enrich_pending 行处截断，本轮 prompt 完全拿不到转发摘录，
-    // 而用户往往不会有下一轮触发来补（水位线未推进，内容只会原样留在日志行里）。
-    // 只补齐到本批末条消息为止：更晚的行属于后续触发，等它会让本批被后到的豁免消息反超。
-    const upToLogId = entries.reduce((max, e) => Math.max(max, e.logId ?? 0), 0);
-    await this.flushPendingEnrichments(accountId, last.event, upToLogId > 0 ? upToLogId : undefined);
-    const group = await this.runInChatOrder(accountId, first.event.chatId,
-      () => messageService.buildGroupContext(accountId, { ...last.event, accountId, messageId: last.messageId, maoUserId: last.maoUserId }));
-    const context: FeishuInboundContext = {
-      ...first.event, accountId, messageId: first.messageId, maoUserId: first.maoUserId, text,
-      groupContext: group.prompt, senderLabel: first.senderLabel, quotedContext,
-    };
-    const reply = await this.handler.onMessage(context);
-    if (reply?.text) await this.sendReply(accountId, first.event, reply);
   }
 
   /**
@@ -364,6 +429,8 @@ export class FeishuInboundProcessor {
     if (inboundFileItems(event).length > 0) return false;
     // `---` 新建会话（p2p 专属）与 p2p 引用切换：混入批次会让指令/指针切换失效或错位。
     if (isNewSessionCommand(event.text)) return false;
+    // 群 `/new` 新会话指令：先冲刷该发送者窗口里的前序文本再单独触发，避免与上下文读取/指针切换错位。
+    if (isGroupNewSessionCommand(event)) return false;
     if (event.chatType === 'p2p' && event.parentId != null && event.parentId !== '') return false;
     return true;
   }

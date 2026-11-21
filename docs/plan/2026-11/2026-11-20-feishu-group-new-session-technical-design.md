@@ -1,11 +1,11 @@
 # 飞书群 `/new` 切换共享会话技术方案
 
-- 状态：待评审（本文只做方案，不含实现）
+- 状态：已评审可行（2026-11-21 评审，适配器副作用与切换原子性两处缺口已直接合入本文；本文只做方案，不含实现）
 - 日期：2026-11-20
 - 实施顺序：排在 [回复锚点方案](./2026-11-20-feishu-reply-anchor-technical-design.md) 落地之后。锚点未落地前不实施本方案。
 - 一句话：普通对话群里，任何人 @ 机器人并只发送 `/new`，就新建一条 Mao 会话并把它设为这个群的活跃会话；之后任何人再 @ 机器人，都进入这条新会话。当前活跃会话还没有用户消息时，再次 `/new` 只再回复一次，不另建空会话。
 - 关联代码（撰写时已核实的现状，全部为当前 `main`）：
-  - 群入站：`backend-ts/src/feishu/agent-inbound-handler.ts:523-544`（`onGroupMessage`，非话题走群级单会话）
+  - 群入站：`backend-ts/src/feishu/agent-inbound-handler.ts:530-550`（`onGroupMessage`，非话题走群级单会话）
   - 私聊 `---` 对照：`backend-ts/src/feishu/agent-inbound-handler.ts:81-84`、`:455-464`（`isNewSessionCommand` / 拦截确认）
   - 合并窗口豁免：`backend-ts/src/feishu/inbound-processor.ts:356-368`（`canJoinEntry`）
   - 群上下文在 `onMessage` 之前拼好：`backend-ts/src/feishu/inbound-processor.ts:277-314`（`triggerMerged`）
@@ -103,15 +103,15 @@
 在 chat 级锁内（已有 `withChatLock`，key `${accountId}:${chatId}`）完成，任一步失败则整段失败、不回复成功。返回 `{ sessionId, created }`：`created=false` 表示复用了还没有用户消息的会话。
 
 1. `findGroupConversation`。
-2. **复用空会话**：群行已在，且该 `session_id` 没有任何 `USER` 消息时，直接返回现有 `sessionId`，`created=false`。不建会话，不改指针，不推水位线，不清摘要。判定只看已落库的 `USER` 消息；`/new` 本身不入库，所以刚建出的会话在下一条真正的 @ 之前一直算空。已钉住但还没落库的在途消息不阻止复用，它随后写进这条会话。
+2. **复用空会话**：群行已在，且该 `session_id` 没有任何（未软删的）`USER` 消息时，直接返回现有 `sessionId`，`created=false`。不建会话，不改指针，不推水位线，不清摘要。判定走 `message` 表 `session_id + role='USER'` 的 EXISTS 查询（`idx_session` 命中，排除软删，与 `session.repository.ts:998` 既有 USER 查询口径一致）；`/new` 本身不入库，所以刚建出的会话在下一条真正的 @ 之前一直算空。已钉住但还没落库的在途消息不阻止复用，它随后写进这条会话。
 3. **需要新建**（没有群行，或当前会话已有 `USER` 消息）时，用会话工厂创建新 session。工厂增加可选参数 `pendingTitle: true`：标题写「飞书Bot会话」，不调群名。工作区叶子仍是 `chatId`（`app-feishu-messaging.ts:68-69`），与这个群同一目录。分组键仍是 `feishu-chat-{accountId}-{chatId}`。没有群行时这一条就是第一会话，不再额外建一条再切走。
-4. `saveConversation` 只更新指针：`session_id` 用新会话，`owner_user_id` 与 `workspace` 用群行上的原值（还没有群行时用新会话的 owner 与 workspace）。现有 UPDATE 不碰水位线和摘要。
-5. `upsertSessionChannel(..., 'group', true)` 打上待命名标志。UPDATE 列保持今天的清单（`app_id` / `chat_id` / `chat_type` / `awaiting_first_message_title`），不写入锚点方案的 `last_trigger_message_id`。
-6. 按 `messageId` 查 `feishu_group_message_log.id`（`prepareOne` 在触发前已经入库）。把 `last_context_log_id` 推进到该 id（`GREATEST`，只进不退），并把 `context_summary` 置 NULL、`context_summary_log_id` 置 0。查不到日志 id 时指针仍切换，水位线不动，并 `console.warn`（确认文案仍成功；极端情况下下一条可能看到未跳过的旧日志）。复用路径不做这一步。
+4. `upsertSessionChannel(..., 'group', true)` 打上待命名标志。UPDATE 列保持今天的清单（`app_id` / `chat_id` / `chat_type` / `awaiting_first_message_title`），不写入锚点方案的 `last_trigger_message_id`。
+5. **最后一步**：按 `messageId` 查 `feishu_group_message_log.id`（`prepareOne` 在触发前已经入库），然后**单条 UPDATE `feishu_chat` 原子完成「切指针 + 推水位线 + 清摘要」**——`session_id` 用新会话、`last_context_log_id = GREATEST(last_context_log_id, ?)`、`context_summary = NULL`、`context_summary_log_id = 0`。这四列同属群行，单语句天然原子，满足目标 7「任一步失败则指针和水位线都不动」，不需要跨服务事务（`db.transaction` 覆盖不到会话工厂的写入路径）。`owner_user_id` 与 `workspace` 不出现在 SET 清单，天然保持原值；还没有群行时改为单条 INSERT（用新会话的 owner 与 workspace，`last_context_log_id` 一并落到 `/new` 日志 id——否则此前未 @ 的群日志会在新会话首次 @ 时全部注入，违背 D5）。查不到日志 id 时省略 GREATEST 项（其余照写），指针仍切换并 `console.warn`（确认文案仍成功；极端情况下下一条可能看到未跳过的旧日志）。复用路径不做这一步。
+6. 全部成功后锁外回复确认；新建和复用都回复同一句，不说明是不是刚建出来的，也不提旧任务。确认回复走现有 `onReply` → `sendFeishuText`，锚定这条 `/new` 消息。不写 `feishu_p2p_message`。
 
-`/new` 的群日志行保持 `is_mention=1`。只有新建路径会把水位线推过它，之后的注入循环不会再把它带进【群内最近消息】。
+失败残留的口径：工厂创建成功、但第 4/5 步失败时，任务列表里会留下一条没人说话的「飞书Bot会话」（指针未动、不影响正确性，用户可手动删除），属可接受残留。
 
-锁外回复确认，新建和复用都回复同一句，不说明是不是刚建出来的，也不提旧任务。确认回复走现有 `onReply` → `sendFeishuText`，锚定这条 `/new` 消息。不写 `feishu_p2p_message`。
+`/new` 的群日志行保持 `is_mention=1`。只有新建路径会把水位线推过它；即便复用路径没推，`buildGroupContext` 的注入循环本来就跳过所有 `is_mention=1` 行（`message.service.ts:283`），溢出摘要同样只取 `is_mention=0`（`message.repository.ts:218`），`/new` 不会漏进任何会话的上下文。
 
 失败文案与私聊相同口径：「开启新会话失败，请稍后再试。」指针、水位线、摘要保持失败前的状态。
 
@@ -122,6 +122,7 @@
 ```
 runInChatOrder:
   createGroupSession(...)          ← 有 USER 消息才切指针、推水位线、清摘要；空会话则复用
+                                      结果写入 context.groupSessionSwitch
 onMessage(context)                 ← 无 groupContext；无论是否新建，都只回复确认
 ```
 
@@ -136,6 +137,10 @@ onMessage(context)                 ← 锁外执行
 ```
 
 `onGroupMessage`：`threadId` 非空仍走话题分支。否则若 `pinnedSessionId` 有值，用它取工作区（`feishu_chat.workspace`，与指针同一次读出，随 context 传 `pinnedWorkspace`），**不再** `getOrCreateGroup`。没有钉住的会话（文件豁免路径、旧调用方）才回退 `getOrCreateGroup`。
+
+**占位时机（实施补充）**：切换与上下文读取的 chat-order 槽位必须在 `triggerMerged` **入口、任何 await 之前**同步占位（引用解析 `resolveQuotedMessage` 是真实网络往返，前批可能长时间卡在那里）——否则 `/new` 豁免 flush 会插队到先到消息的占位之前，指针切换先于上下文读取，R1 复发。占位后路径异常由 `finally` 空跑释放（占位泄漏会让该群 chat 队列永久卡死）。
+
+话题分支的映射是确定性的（`feishu_thread_session` 行，一根话题一根会话），不存在指针竞态，给它钉会话只是冗余字段——实现时可以只在非话题路径钉，无害任选。
 
 文件豁免路径今天把整个 `onMessage` 放在 `runInChatOrder` 里，与 `/new` 的切换自然按到达顺序排队，不必再钉。
 
@@ -154,15 +159,17 @@ onMessage(context)                 ← 锁外执行
 
 `onGroupMessage` 在话题分支之前：
 
-- `isGroupNewSessionCommand` 命中：若处理器已经调过 `createGroupSession`，这里只负责确认回复（用返回的新 `sessionId` 调 `onReply`，便于以后出站映射；今天群回复不记映射）。处理器未切换时（单测直接调 `onMessage`）由 handler 自己调 `createGroupSession`，避免两条路径行为不一致。
+- `isGroupNewSessionCommand` 命中：处理器与 handler 之间的切换结果用 context 字段传递（新增 `groupSessionSwitch?: { sessionId: number; created: boolean }`，processor 在 `createGroupSession` 返回后写入）。字段有值时 handler 只负责确认回复（用返回的 `sessionId` 调 `onReply`，便于以后出站映射；今天群回复不记映射）；字段缺失时（单测直接调 `onMessage`）由 handler 自己调 `createGroupSession`，避免两条路径行为不一致。即使字段缺失导致重复调用，复用检查（无 USER 消息）会把第二次调用收敛为 `created=false`，不会建出第二条空会话。
 - 切换抛错：回复失败文案，`return null`。
 - 不调用 `executeWithSession`，不 `saveUserMessage`。
 
+**钉会话路径不得绕开适配器的既有副作用。** 今天 `sessionService.getOrCreateSession` 适配器（`app-feishu-handler.ts:146-152`）除了取会话，还依次做三件事：`resolveFeishuUserId`（executionUserId）、`applyFeishuBotConfig`（机器人 Agent/模型热切换）、`ensureFeishuSessionTitle`（群名补标题）。pinned 命中时这三件都必须保留——适配器新增 `pinnedSession(accountId, context, sessionId, workspace)` 入口（或等价形态），内部照跑这三步后返回 `{ id, workspace, executionUserId }`。直接在 handler 里拼 session 对象会静默丢掉机器人热切换，属回归。
+
 非指令的群消息在确定 session 之后调用 `scheduleNewSessionTitle`。该函数已有「待命名标志 + 标题仍为飞书Bot会话」门禁，旧会话多一次查询后直接返回。话题分支今天已经会调它，保持不动。
 
-`ensureFeishuSessionTitle` 增加同一门禁：`awaiting_first_message_title = 1` 时不把标题写成群名。否则它和短标题互相覆盖。
+`ensureFeishuSessionTitle` 增加同一门禁：`awaiting_first_message_title = 1` 时不把标题写成群名（`feishuMessageService.findSessionChannel(sessionId)` 读标志即可）。否则它和短标题互相覆盖。
 
-执行身份不变：每条消息的 `executionUserId` 仍是这条消息的发送者，不是 `/new` 的发送者，也不是群行 `owner_user_id`。
+执行身份不变：每条消息的 `executionUserId` 仍是这条消息的发送者（钉会话路径取 `context.maoUserId`，与适配器 `resolveFeishuUserId` 同源），不是 `/new` 的发送者，也不是群行 `owner_user_id`。
 
 ### 4.5 旧会话与新会话并行
 
@@ -233,6 +240,8 @@ onMessage(context)                 ← 锁外执行
 | R6 | 两人同时 `/new`，或同一人连发两次 | 空会话多一条 | chat 锁串行。后一次看到的会话还没有 USER 消息，复用并只回复确认 |
 | R7 | 旧会话 `send_image` 挂到新消息下 | 文件看起来回错了地方 | 不在本方案处理。等锚点方案落地后，按会话上的本轮触发消息引用 |
 | R8 | 共享工作区 | 新会话能读到旧任务留下的文件 | 产品口径就是整群共享工作区，不隔离 |
+| R9 | 钉会话路径绕开适配器，丢失机器人热切换 / 标题补写 / executionUserId 解析 | 所有非话题群消息静默回归（Agent/模型配置不生效） | §4.4：适配器新增 `pinnedSession` 入口，三步副作用照跑；handler spec 断言 |
+| R10 | 切换分多条 SQL，中途失败指针已动 | 违背目标 7「失败时指针和水位线都不动」 | §4.2 步骤 5：切指针 + 水位线 + 摘要合为 `feishu_chat` 单条 UPDATE，最后执行；单语句原子 |
 
 ## 8. 测试
 
@@ -240,8 +249,8 @@ onMessage(context)                 ← 锁外执行
 
 | 文件 | 用例 |
 |---|---|
-| `feishu/agent-inbound-handler.spec.ts` | ① `@名字 /new`、前后空白命中；`/new 帮我`、`/New`、无名字可剥、话题、私聊不命中；② 命中后 `createGroupSession` 一次、不 `execute`、回复确认且确认归属返回的 sessionId，文案不提旧任务；③ `created=false` 时同样回复确认、不执行；④ 创建抛错回复失败文案且不执行；⑤ 钉住的 `pinnedSessionId` 被使用，不再 `getOrCreate`；⑥ 非指令群消息会调 `scheduleNewSessionTitle` |
-| `feishu/message.service.spec.ts` | ① 当前会话已有 USER 消息：指针改为新 id，`owner_user_id` 与 workspace 保持原值；② 待命名标志为 1；③ 水位线推进到 `/new` 日志 id，摘要被清空；④ 工厂以 `pendingTitle` 调用；⑤ 无群行时只建一条；⑥ 当前会话没有 USER 消息：不调用工厂，不改指针，不推水位线，返回 `created=false`；⑦ 查不到日志 id 仍切指针（仅新建路径） |
+| `feishu/agent-inbound-handler.spec.ts` | ① `@名字 /new`、前后空白命中；`/new 帮我`、`/New`、无名字可剥、话题、私聊不命中；② 命中后 `createGroupSession` 一次、不 `execute`、回复确认且确认归属返回的 sessionId，文案不提旧任务；③ `created=false` 时同样回复确认、不执行；④ 创建抛错回复失败文案且不执行；⑤ 钉住的 `pinnedSessionId` 被使用，不再 `getOrCreate`；⑥ 非指令群消息会调 `scheduleNewSessionTitle`；⑦ 钉会话路径仍触发 `applyFeishuBotConfig` / `ensureFeishuSessionTitle`，`executionUserId` 来自发送者（R9 回归防护） |
+| `feishu/message.service.spec.ts` | ① 当前会话已有 USER 消息：指针改为新 id，`owner_user_id` 与 workspace 保持原值；② 待命名标志为 1；③ 水位线推进到 `/new` 日志 id，摘要被清空（断言为单条 UPDATE，R10）；④ 工厂以 `pendingTitle` 调用；⑤ 无群行时只建一条；⑥ 当前会话没有 USER 消息：不调用工厂，不改指针，不推水位线，返回 `created=false`（判定排除软删 USER 消息）；⑦ 查不到日志 id 仍切指针（仅新建路径）；⑧ 最终 UPDATE 抛错时整体失败、群行保持原值 |
 | `feishu/inbound-processor.spec.ts` | ① `@bot /new` 不入合并窗口，先冲刷前一条再单独触发；② 指令路径不调用 `buildGroupContext`；③ 普通 @ 把 `buildGroupContext` 返回的 sessionId 放进 context |
 | `app-feishu-messaging` 对应工厂测试，或 `message.service` 已覆盖的工厂调用 | `pendingTitle` 时标题为「飞书Bot会话」，workspace 叶子仍是 `chatId` |
 | `feishu-session` 标题补写 | 待命名标志为 1 时 `ensureFeishuSessionTitle` 不写群名 |
@@ -266,7 +275,7 @@ onMessage(context)                 ← 锁外执行
 | 3 | `feishu/message.service.ts`、`message.repository.ts` | `createGroupSession`、按 messageId 取日志 id、推进水位线并清空摘要 |
 | 4 | `app-feishu-messaging.ts` | 工厂 `pendingTitle` |
 | 5 | `feishu/inbound-processor.ts` | 窗口豁免；指令路径跳过 `buildGroupContext` 并在 `runInChatOrder` 内切换；普通路径钉会话 |
-| 6 | `app-feishu-handler.ts`、`feishu-session.ts` | 装配 `createGroupSession`；待命名时不补群名 |
+| 6 | `app-feishu-handler.ts`、`feishu-session.ts` | 装配 `createGroupSession` 与适配器 `pinnedSession` 入口（保留热切换 / 标题 / executionUserId 三步副作用）；待命名时不补群名 |
 | 7 | 上表 spec | 见 §8.1 |
 | 8 | `skills/mao-cli/reference/feishu-bot.md`、`changelog/unreleased/` | 群聊用法补 `/new`；用户可见变更记一条 |
 

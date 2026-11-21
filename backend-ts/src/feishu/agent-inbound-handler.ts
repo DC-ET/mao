@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { FeishuHarnessService, FeishuInboundContext, FeishuInboundHandler, FeishuReply, CancelFlag, FeishuTaskQueuePort, FeishuQueuePayload, FeishuQueueStoredContext, FeishuInboundQueueRow } from './types.js';
+import type { FeishuHarnessService, FeishuInboundContext, FeishuInboundHandler, FeishuNormalizedMessage, FeishuReply, CancelFlag, FeishuTaskQueuePort, FeishuQueuePayload, FeishuQueueStoredContext, FeishuInboundQueueRow } from './types.js';
 import type { StreamingWsRegistry } from '../session/ws/streaming-ws-registry.js';
 import { userMessagePayloadOf } from '../session/ws/streaming-ws-handler.js';
 import { wsEvent } from '../session/ws/ws-event.js';
@@ -14,6 +14,12 @@ import { INBOUND_IMAGE_COMPRESS_CONCURRENCY, PromptImageResizer } from '../harne
 
 export interface FeishuSessionAdapter {
   getOrCreateSession(accountId: string, context: FeishuInboundContext): Promise<{ id: number; workspace?: string | null; executionUserId?: number | null }>;
+  /**
+   * 钉会话入口（群 `/new` 指针竞态防护）：会话已由 buildGroupContext 当时的指针确定，不再读新指针；
+   * 但适配器的既有副作用必须保留——resolveFeishuUserId（executionUserId）、applyFeishuBotConfig（机器人热切换）、
+   * ensureFeishuSessionTitle（群名补标题）。未配置时钉会话路径回退 getOrCreateSession。
+   */
+  pinnedSession?(accountId: string, context: FeishuInboundContext, sessionId: number, workspace: string | null): Promise<{ id: number; workspace?: string | null; executionUserId?: number | null }>;
   /** 保存用户消息。metadata 用于标记该消息与某条队列行的关联（hydrate 判断消息是否已落库）。 */
   saveUserMessage(sessionId: number, content: unknown, metadata?: string | null): Promise<void>;
   /**
@@ -84,6 +90,28 @@ export function isNewSessionCommand(text: string | null | undefined): boolean {
 }
 
 /**
+ * 群聊 `/new` 新会话指令（普通对话群专属）：@ 本机器人、剥掉 @ 机器人名后正文 trim 恰为 `/new`。
+ * 大小写敏感；`/new 帮我查` 是普通任务；话题内（threadId 非空）不命中；没 @ 不命中（今天也不触发）。
+ * 名单为空（is_at_me 兜底命中、身份无法确认）时无法可靠剥名，一律不命中（整句当普通消息）——
+ * 方向是漏触发而非误触发，安全默认。
+ */
+export function isGroupNewSessionCommand(
+  event: Pick<FeishuNormalizedMessage, 'chatType' | 'threadId' | 'isBotMentioned' | 'text' | 'botMentionNames'>,
+): boolean {
+  if (event.chatType !== 'group') return false;
+  if (event.threadId != null && event.threadId !== '') return false;
+  if (event.isBotMentioned !== true) return false;
+  const names = event.botMentionNames ?? [];
+  if (names.length === 0) return false;
+  let text = event.text ?? '';
+  for (const name of names) {
+    if (name == null || name === '') continue;
+    text = text.replaceAll(`@${name}`, '');
+  }
+  return text.trim() === '/new';
+}
+
+/**
  * 组装入站消息的纯文本部分（不含媒体下载）：群上下文 + 引用 + 用户消息按段拼接。
  * Agent 执行（buildMessage）与新会话标题命名共用同一份「完整消息」——
  * 群聊触发常是裸 @提及（context.text 只有 @机器人），真正的任务在【群内最近消息】里，
@@ -108,6 +136,8 @@ function composePromptText(context: FeishuInboundContext): string {
 }
 
 const NEW_SESSION_CONFIRM_TEXT = '已开启新会话，后续消息将在新的上下文中处理。';
+/** 群 `/new` 确认文案：只说明之后的 @ 进新会话，不提旧任务是否还在跑（方案已确认项 #1）。 */
+const GROUP_NEW_SESSION_CONFIRM_TEXT = '已开启新会话，之后本群里 @ 机器人的消息都会进入这个新会话。';
 const SWITCH_SESSION_CONFIRM_TEXT = '已切换到该消息所在的会话，后续消息将以该会话上下文为准。';
 const NEW_SESSION_FAILED_TEXT = '开启新会话失败，请稍后再试。';
 
@@ -215,6 +245,11 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     resolveBotId?: (accountId: string) => number;
     /** 私聊多会话控制（未配置时 `---`/引用切换不生效，行为与旧版一致）。 */
     p2pSessionControl?: FeishuP2pSessionControl;
+    /** 群 `/new` 新会话控制（未配置时群里 `/new` 按普通消息走现有群逻辑，行为与旧版一致）。 */
+    groupSessionControl?: {
+      /** 创建（或复用空会话）并把群活跃指针切过去；失败抛错，由调用方回复失败文案。 */
+      createGroupSession(accountId: string, context: FeishuInboundContext): Promise<{ sessionId: number; created: boolean }>;
+    };
     /** 话题会话控制（未配置时话题消息走现有群逻辑）。 */
     threadSessionControl?: FeishuThreadSessionControl;
     /** 新会话标题生成（未配置时跳过 LLM 命名，保留默认标题）。 */
@@ -526,8 +561,13 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     })();
   }
 
-  /** 群聊入站：话题分支 + 现有逻辑。话题消息优先路由到话题会话；映射未命中降级走现有群逻辑。 */
+  /** 群聊入站：`/new` 指令分支 + 话题分支 + 现有逻辑。话题消息优先路由到话题会话；映射未命中降级走现有群逻辑。 */
   private async onGroupMessage(context: FeishuInboundContext): Promise<FeishuReply | null> {
+    // 群 `/new` 指令：不进入会话消息流、不触发 Agent，只切换指针并回复确认。
+    // 未装配 groupSessionControl（测试直调/旧调用方）时按普通消息走现有群逻辑。
+    if (isGroupNewSessionCommand(context) && this.options.groupSessionControl != null) {
+      return this.handleGroupNewSessionCommand(context);
+    }
     // 话题路径：threadId 存在且话题会话控制已配置。
     if (context.threadId != null && this.options.threadSessionControl != null) {
       try {
@@ -544,9 +584,45 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
         // 降级走现有群逻辑。
       }
     }
+    // 钉会话：buildGroupContext 当时的活跃指针（跨发送者窗口并发时，onMessage 执行前指针可能被并发的 /new 拨走）。
+    // 适配器副作用（机器人热切换/标题补写/executionUserId）由 pinnedSession 保留。
+    if (context.pinnedSessionId != null && this.options.sessionService.pinnedSession != null) {
+      const session = await this.options.sessionService.pinnedSession(context.accountId, context, context.pinnedSessionId, context.pinnedWorkspace ?? null);
+      this.scheduleNewSessionTitle(session.id, context);
+      return this.executeWithSession(session, context);
+    }
     // 现有逻辑：群级单会话。
     const session = await this.options.sessionService.getOrCreateSession(context.accountId, context);
+    // 非指令群消息也调度短标题：/new 新建的会话（待命名标志=1）的首条 @ 在这里拿到 LLM 短标题；
+    // 旧会话待命名标志为 0，门禁内直接返回。
+    this.scheduleNewSessionTitle(session.id, context);
     return this.executeWithSession(session, context);
+  }
+
+  /** 群 `/new` 指令处理：切换已由 processor 在 chat-order 内完成时只回复；未切换时在此完成。
+   *  确认/失败文案经 onReply 发出（带返回的 sessionId，便于以后出站映射），本消息不返回 reply。 */
+  private async handleGroupNewSessionCommand(context: FeishuInboundContext): Promise<FeishuReply | null> {
+    const control = this.options.groupSessionControl!;
+    try {
+      // groupSessionSwitch：{…}=processor 已切换；null=processor 已尝试但失败（回失败文案，不重试——
+      // 重试会落到 chat-order 之外，与上下文读取失去保序）；undefined=处理器未处理，由 handler 自己调。
+      let result: { sessionId: number; created: boolean } | null;
+      if (context.groupSessionSwitch === undefined) {
+        result = await control.createGroupSession(context.accountId, context);
+      } else {
+        result = context.groupSessionSwitch;
+      }
+      if (result == null) {
+        await this.options.onReply?.(context, NEW_SESSION_FAILED_TEXT);
+        return null;
+      }
+      await this.options.onReply?.(context, GROUP_NEW_SESSION_CONFIRM_TEXT, result.sessionId);
+      return null;
+    } catch (error) {
+      console.error(`飞书群新建会话失败, accountId=${context.accountId}, messageId=${context.messageId}`, error);
+      await this.options.onReply?.(context, NEW_SESSION_FAILED_TEXT);
+      return null;
+    }
   }
 
   /** 共享执行路径：buildMessage → busy 检查/入队/执行（按 sessionId 粒度互斥）。 */

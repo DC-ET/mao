@@ -28,7 +28,7 @@ export function normalizeFeishuEvent(input: unknown, botOpenId?: string): Feishu
   //    而未匹配，说明 @ 的是群里其他机器人，不得触发；仅当 botOpenId 未知（获取
   //    失败/连接初期竞态）无法判断时才兜底命中，避免回归 @机器人全部漏判；
   // 4. 仅当 app_id 缺失（极端格式）时，以 key 的 cli_ 前缀作为兜底。
-  const isBotMentioned = mentionItems.some((item) => {
+  const isBotMentionItem = (item: MentionItem): boolean => {
     if (appId != null && item.key === appId) return true;
     if (botOpenId != null && (item.id === botOpenId || item.unionId === botOpenId || item.key === botOpenId)) return true;
     if (item.mentionedType === 'bot' || item.mentionedType === 'app') {
@@ -37,7 +37,15 @@ export function normalizeFeishuEvent(input: unknown, botOpenId?: string): Feishu
     }
     if (appId == null) return item.key != null && item.key.startsWith('cli_');
     return false;
-  }) || (isStrictTrue(message.is_at_me ?? event.is_at_me) && mentions.length > 0);
+  };
+  const botMentionItems = mentionItems.filter(isBotMentionItem);
+  const isBotMentioned = botMentionItems.length > 0
+    || (isStrictTrue(message.is_at_me ?? event.is_at_me) && mentions.length > 0);
+  // 命中本机器人的提及展示名：群 `/new` 指令识别需要从正文剥掉 @机器人名。
+  // is_at_me 兜底命中（身份无法确认）时名单为空 → 指令匹配失败当普通消息，安全默认。
+  const botMentionNames = botMentionItems
+    .map((item) => item.name)
+    .filter((name): name is string => name != null && name !== '');
     const messageType = firstString(message.message_type, event.message_type) ?? 'text';
     const media = extractMedia(messageType, content);
     const messageId = firstString(message.message_id, event.message_id) ?? null;
@@ -66,6 +74,7 @@ export function normalizeFeishuEvent(input: unknown, botOpenId?: string): Feishu
       // 文本中的 @提及 是 @_user_N 占位符，需用 mentions 的姓名还原，否则 Agent 不知道 @ 的是谁。
       text,
       mentions,
+      botMentionNames,
       isBotMentioned,
       content,
       rawEvent: input,

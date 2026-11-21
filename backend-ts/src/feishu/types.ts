@@ -28,7 +28,7 @@ export interface FeishuEventHeader { eventId?: string; eventType?: string; creat
  */
 export interface FeishuPostFileItem { fileKey: string; fileName: string | null; }
 
-export interface FeishuNormalizedMessage { eventId: string | null; messageId: string | null; parentId?: string | null; rootId?: string | null; /** 话题 ID (omt_xxx)；非话题消息为 null。话题内回复的 parent_id 恒指向话题根，≠ 用户主动引用。 */ threadId?: string | null; chatId: string | null; chatType: FeishuChatType; senderId: string | null; senderUnionId: string | null; senderName?: string; maoUserId?: number; senderType: string | null; messageType: string; imageKey?: string | null; /** post 富文本内嵌图片 key（image 消息也含单元素数组）；imageKey 为首个，兼容群媒体单值落库。 */ imageKeys?: string[] | null; fileKey?: string | null; fileName?: string | null; /** post 多文件消息的内嵌文件（一次发多个文件）；单文件消息为 null/空。 */ postFiles?: FeishuPostFileItem[] | null; text: string; mentions: string[]; isBotMentioned: boolean; content: unknown; rawEvent: unknown; header?: FeishuEventHeader; progressCardMessageId?: string | null; }
+export interface FeishuNormalizedMessage { eventId: string | null; messageId: string | null; parentId?: string | null; rootId?: string | null; /** 话题 ID (omt_xxx)；非话题消息为 null。话题内回复的 parent_id 恒指向话题根，≠ 用户主动引用。 */ threadId?: string | null; chatId: string | null; chatType: FeishuChatType; senderId: string | null; senderUnionId: string | null; senderName?: string; maoUserId?: number; senderType: string | null; messageType: string; imageKey?: string | null; /** post 富文本内嵌图片 key（image 消息也含单元素数组）；imageKey 为首个，兼容群媒体单值落库。 */ imageKeys?: string[] | null; fileKey?: string | null; fileName?: string | null; /** post 多文件消息的内嵌文件（一次发多个文件）；单文件消息为 null/空。 */ postFiles?: FeishuPostFileItem[] | null; text: string; mentions: string[]; /** 命中本机器人的 @ 提及展示名（与 isBotMentioned 同源判定）；群 `/new` 指令识别用，is_at_me 兜底命中时为空。 */ botMentionNames?: string[]; isBotMentioned: boolean; content: unknown; rawEvent: unknown; header?: FeishuEventHeader; progressCardMessageId?: string | null; }
 export interface FeishuInboundContext extends FeishuNormalizedMessage {
   accountId: string;
   /** Group messages are annotated before reaching the agent handler. */
@@ -36,6 +36,12 @@ export interface FeishuInboundContext extends FeishuNormalizedMessage {
   senderLabel?: string;
   /** 被引用/回复消息的内容预取（引用是任务意图核心，直接注入而非懒加载）。 */
   quotedContext?: string;
+  /** 群 `/new` 指令路径：buildGroupContext 当时的活跃会话（跨发送者窗口并发时，onMessage 执行前指针可能被拨走，用钉住值不读新指针）。 */
+  pinnedSessionId?: number;
+  /** 与 pinnedSessionId 同一次读出的群行工作区。 */
+  pinnedWorkspace?: string | null;
+  /** 群 `/new` 指令路径：processor 已执行 createGroupSession 的结果。null=已尝试但失败（handler 回失败文案，不再重试）；undefined=处理器未处理（handler 自己调）。 */
+  groupSessionSwitch?: { sessionId: number; created: boolean } | null;
 }
 export interface FeishuReply { text?: string | null; }
 export interface FeishuInboundHandler { authorizeDirectMessage(accountId: string, senderId: string, text: string): boolean; onMessage(context: FeishuInboundContext): Promise<FeishuReply | null>; }

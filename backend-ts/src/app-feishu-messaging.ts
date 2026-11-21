@@ -28,6 +28,16 @@ export interface FeishuMessagingDeps {
   routeChatClient: (config: LlmModelConfig) => LlmChatClient;
 }
 
+/**
+ * 新会话标题（D6）：pendingTitle（群 `/new` 新建）或非话题群缺省外 → 固定「飞书Bot会话」+ 待命名标志，
+ * 首条真正的 @ 再生成 LLM 短标题；普通非话题群取群名（空回落默认）。
+ * pendingTitle 不取群名——否则每次 /new 都叫同一个群名，任务列表里分不开，且群名补写会覆盖短标题。
+ */
+export function feishuSessionTitleOf(options: { pendingTitle?: boolean; isGroup: boolean; isThread: boolean; groupTitle: string }): string {
+  if (options.pendingTitle || !options.isGroup || options.isThread) return '飞书Bot会话';
+  return options.groupTitle || '飞书Bot会话';
+}
+
 export interface FeishuMessagingResult {
   feishuMessageRepository: MysqlFeishuMessageRepository;
   feishuMessageService: FeishuMessageService;
@@ -56,7 +66,7 @@ export function assembleFeishuMessaging(deps: FeishuMessagingDeps): FeishuMessag
   const feishuMessageService = new FeishuMessageService(
     feishuMessageRepository,
     {
-      create: async (accountId: string, context: FeishuInboundContext) => {
+      create: async (accountId: string, context: FeishuInboundContext, options?: { pendingTitle?: boolean }) => {
         const bot = await feishuBots.findById(Number(accountId));
         if (bot == null) throw new Error(`飞书Bot不存在: ${accountId}`);
         const unionId = context.senderUnionId ?? context.senderId;
@@ -69,9 +79,14 @@ export function assembleFeishuMessaging(deps: FeishuMessagingDeps): FeishuMessag
         const workspace = resolveFeishuChatWorkspace(cfg.app.harness.workspaceRoot, accountId, workspaceLeaf);
         mkdirSync(workspace, { recursive: true });
         const isGroup = context.chatType === 'group' && context.chatId != null;
-        const title = isGroup && context.threadId == null
-          ? (await getFeishuChatTitle(Number(accountId), context.chatId!)) || '飞书Bot会话'
-          : '飞书Bot会话';
+        // pendingTitle（群 /new 新会话）：跳过群名，标题固定「飞书Bot会话」+ 待命名标志，首条真正的 @ 再生成短标题。
+        // 否则每次 /new 都叫同一个群名，任务列表里分不开，且群名补写会覆盖短标题。
+        const title = feishuSessionTitleOf({
+          pendingTitle: options?.pendingTitle === true,
+          isGroup,
+          isThread: context.threadId != null,
+          groupTitle: isGroup ? await getFeishuChatTitle(Number(accountId), context.chatId!) : '',
+        });
         const session = await sessionService.createSession(
           user.id, agent.id, title, 'CLOUD', workspace, 'FULL', false,
           'linux', '/bin/bash', 'Linux', model?.id ?? null,

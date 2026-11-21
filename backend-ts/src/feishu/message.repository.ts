@@ -1,3 +1,4 @@
+import { notDeleted } from '../db/db.js';
 import type { Db } from '../db/db.js';
 
 export interface FeishuConversation {
@@ -89,6 +90,13 @@ export interface FeishuMessageRepository {
   findSessionChannel(sessionId: number): Promise<{ sessionId: number; appId: string; chatId: string; chatType: 'p2p' | 'group'; awaitingFirstMessageTitle: number } | null>;
   /** 清除「等待首条消息命名」标志（命名完成后调用，幂等）。 */
   clearAwaitingFirstMessageTitle(sessionId: number): Promise<void>;
+  /** 会话是否已有（未软删）USER 消息（群 `/new` 空会话复用判定；`idx_session` 命中）。 */
+  hasSessionUserMessage(sessionId: number): Promise<boolean>;
+  /** 按消息 ID 查群日志行 id（`/new` 水位线推进用）；messageId 为空或未入库返回 null。 */
+  findGroupLogIdByMessageId(appId: string, chatId: string, messageId: string | null | undefined): Promise<number | null>;
+  /** 群 `/new` 切换：单条 UPDATE 原子完成「切指针 + 推水位线（logId null 时不动）+ 清摘要」。
+   *  owner_user_id 与 workspace 不在 SET 清单 → 保持原值。群行不存在时用 fallback 落 INSERT（首条 `/new` 即第一会话）。 */
+  switchGroupSession(appId: string, chatId: string, sessionId: number, logId: number | null, fallback: { ownerUserId: number; workspace?: string | null }): Promise<FeishuConversation>;
   /** 记录本轮触发消息作为 media reply 锚点（runExecution 开始时调用；UPDATE 0 行静默跳过）。 */
   setReplyAnchor(sessionId: number, messageId: string): Promise<void>;
   /** 清空 reply 锚点：主动推送回到「最新入站」口径（幂等）。 */
@@ -337,6 +345,52 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
       'UPDATE feishu_session_channel SET awaiting_first_message_title = 0 WHERE session_id = ?',
       [sessionId],
     );
+  }
+
+  async hasSessionUserMessage(sessionId: number): Promise<boolean> {
+    const row = await this.db.queryOne<{ id: number }>(
+      // 口径与 session.repository.hasOwnEarlierUserMessage 一致：排除软删与复制来的消息（边路任务分叉历史不算用户发言）。
+      `SELECT id FROM \`message\` WHERE session_id = ? AND role = 'USER' AND source_session_id IS NULL AND ${notDeleted()} LIMIT 1`,
+      [sessionId],
+    );
+    return row != null;
+  }
+
+  async findGroupLogIdByMessageId(appId: string, chatId: string, messageId: string | null | undefined): Promise<number | null> {
+    if (messageId == null || messageId === '') return null;
+    const row = await this.db.queryOne<{ id: number }>(
+      'SELECT id FROM feishu_group_message_log WHERE app_id = ? AND chat_id = ? AND message_id = ? LIMIT 1',
+      [appId, chatId, messageId],
+    );
+    return row?.id ?? null;
+  }
+
+  async switchGroupSession(
+    appId: string, chatId: string, sessionId: number, logId: number | null,
+    fallback: { ownerUserId: number; workspace?: string | null },
+  ): Promise<FeishuConversation> {
+    // 指针、水位线、摘要同属 feishu_chat 一行，单语句原子：任一失败指针与水位线保持原值。
+    const watermarkSql = logId != null ? ', last_context_log_id = GREATEST(last_context_log_id, ?)' : '';
+    const params = logId != null ? [sessionId, logId, appId, chatId] : [sessionId, appId, chatId];
+    const result = await this.db.execute(
+      `UPDATE feishu_chat SET session_id = ?${watermarkSql}, context_summary = NULL, context_summary_log_id = 0
+       WHERE app_id = ? AND chat_id = ?`,
+      params,
+    );
+    if (Number(result.affectedRows ?? 0) > 0) {
+      const updated = await this.findGroupConversation(appId, chatId);
+      if (updated == null) throw new Error('Failed to reload feishu group conversation after switch');
+      return updated;
+    }
+    // 群行不存在（群里第一条交互就是 /new）：直接落第一会话。水位线随 INSERT 一起落到 /new 日志 id，
+    // 否则此前未 @ 的普通聊天日志（is_mention=0 也落库）会在新会话首次 @ 时全部注入，违背 D5。
+    await this.db.execute(
+      'INSERT INTO feishu_chat (app_id, chat_id, session_id, owner_user_id, workspace, last_context_log_id) VALUES (?, ?, ?, ?, ?, ?)',
+      [appId, chatId, sessionId, fallback.ownerUserId, fallback.workspace ?? null, logId ?? 0],
+    );
+    const saved = await this.findGroupConversation(appId, chatId);
+    if (saved == null) throw new Error('Failed to save feishu group conversation');
+    return saved;
   }
 
   async setReplyAnchor(sessionId: number, messageId: string): Promise<void> {

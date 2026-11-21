@@ -29,11 +29,35 @@ export interface FeishuSessionDeps {
   agentService: AgentService;
   modelService: ModelService;
   getFeishuChatTitle: (botId: number, chatId: string) => Promise<string>;
+  /** 会话待命名标志查询（群 `/new` 新会话）：标志为 1 时不把标题写成群名，避免与首条 @ 的 LLM 短标题互相覆盖。 */
+  isAwaitingFirstMessageTitle?: (sessionId: number) => Promise<boolean>;
 }
 
 export interface FeishuSessionHelper {
   applyFeishuBotConfig(sessionId: number, botId: number): Promise<void>;
   ensureFeishuSessionTitle(sessionId: number, accountId: number, context: FeishuInboundContext): Promise<void>;
+}
+
+export interface FeishuPinnedSessionDeps {
+  resolveFeishuUserId: (accountId: string, context: FeishuInboundContext) => Promise<number | null | undefined>;
+  applyFeishuBotConfig: (sessionId: number, botId: number) => Promise<void>;
+  ensureFeishuSessionTitle: (sessionId: number, accountId: number, context: FeishuInboundContext) => Promise<void>;
+}
+
+/**
+ * 钉会话适配器（群 `/new` 指针竞态防护）：会话已由 buildGroupContext 当时的指针确定，
+ * 不读新指针、不创建，但适配器的既有副作用必须照跑——executionUserId 解析、机器人 Agent/模型
+ * 热切换、群名补标题。漏掉任何一步会让所有非话题群消息静默回归（R9）。
+ */
+export function createPinnedSessionAdapter(deps: FeishuPinnedSessionDeps) {
+  return async (
+    accountId: string, context: FeishuInboundContext, sessionId: number, workspace: string | null,
+  ): Promise<{ id: number; workspace: string | null; executionUserId: number | null }> => {
+    const executionUserId = await deps.resolveFeishuUserId(accountId, context);
+    await deps.applyFeishuBotConfig(sessionId, Number(accountId));
+    void deps.ensureFeishuSessionTitle(sessionId, Number(accountId), context);
+    return { id: sessionId, workspace: workspace ?? null, executionUserId: executionUserId ?? null };
+  };
 }
 
 export function createFeishuSessionHelper(deps: FeishuSessionDeps): FeishuSessionHelper {
@@ -62,6 +86,9 @@ export function createFeishuSessionHelper(deps: FeishuSessionDeps): FeishuSessio
       if (context.chatType !== 'group' || context.chatId == null) return;
       const session = await sessionService.getSession(sessionId);
       if (session?.title !== '飞书Bot会话') return;
+      // 待命名标志为 1（群 /new 新建的会话）：首条真正的 @ 会触发 LLM 短标题命名，
+      // 这里不得用群名抢先覆盖，否则短标题门禁（标题仍为飞书Bot会话）被破坏、互相覆盖。
+      if (deps.isAwaitingFirstMessageTitle != null && await deps.isAwaitingFirstMessageTitle(sessionId)) return;
       const title = await getFeishuChatTitle(accountId, context.chatId);
       if (title === '') return;
       await sessionRepo.updateFields(sessionId, { title });
