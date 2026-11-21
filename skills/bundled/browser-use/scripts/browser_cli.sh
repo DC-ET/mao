@@ -130,16 +130,35 @@ if [ "$live_ready" -eq 1 ]; then
     if [ -s "$PORT_FILE" ]; then
       ROOT_ARGS=""
       if [ "$(id -u)" -eq 0 ]; then ROOT_ARGS="--no-sandbox"; fi
+      # 浏览器内核探测：系统 Chrome 优先；缺失时用 playwright 下载的 chromium（免 root
+      # 按需安装的产物，~/.cache/ms-playwright/chromium-*/chrome-linux/chrome），config 去掉
+      # channel 让 CLI 走默认 chromium。两者皆无时输出可解释提示（CLI 原生报错照常出现）。
+      CHROME_OK=0
+      for c in google-chrome google-chrome-stable /opt/google/chrome/chrome /usr/bin/google-chrome; do
+        if command -v "$c" >/dev/null 2>&1 || [ -x "$c" ]; then CHROME_OK=1; break; fi
+      done
+      CHROMIUM_OK=0
+      for d in "$HOME"/.cache/ms-playwright/chromium-*/chrome-linux/chrome; do
+        if [ -x "$d" ]; then CHROMIUM_OK=1; break; fi
+      done
+      if [ "$CHROME_OK" -eq 0 ] && [ "$CHROMIUM_OK" -eq 0 ]; then
+        echo "[browser-use] 浏览器内核未安装：请管理员在 管理后台 → Skills 管理 对 browser-use 执行「安装依赖」（或在服务器预装系统 Chrome）。" >&2
+      fi
       node -e '
         const { readFileSync, writeFileSync } = require("fs");
-        const [template, out, port, rootArgs] = process.argv.slice(1);
+        const [template, out, port, rootArgs, chromeOk, chromiumOk] = process.argv.slice(1);
         const cfg = JSON.parse(readFileSync(template, "utf8"));
         const args = Array.isArray(cfg.browser?.launchOptions?.args) ? cfg.browser.launchOptions.args.slice() : [];
         args.push("--remote-debugging-port=" + port);
         for (const a of (rootArgs || "").split(" ")) if (a) args.push(a);
-        cfg.browser = { ...(cfg.browser ?? {}), launchOptions: { ...(cfg.browser?.launchOptions ?? {}), args } };
+        const launchOptions = { ...(cfg.browser?.launchOptions ?? {}), args };
+        if (chromeOk !== "1" && chromiumOk === "1") {
+          // 系统 Chrome 缺失、playwright chromium 就位：去掉 channel，走默认 chromium
+          delete launchOptions.channel;
+        }
+        cfg.browser = { ...(cfg.browser ?? {}), launchOptions };
         writeFileSync(out, JSON.stringify(cfg, null, 2));
-      ' "$TEMPLATE_CONFIG" "$CFG_FILE" "$(cat "$PORT_FILE")" "$ROOT_ARGS" || CFG_FILE=""
+      ' "$TEMPLATE_CONFIG" "$CFG_FILE" "$(cat "$PORT_FILE")" "$ROOT_ARGS" "$CHROME_OK" "$CHROMIUM_OK" || CFG_FILE=""
       if [ -n "$CFG_FILE" ] && [ -f "$CFG_FILE" ]; then
         set -- "$@" "--config=$CFG_FILE"
       fi

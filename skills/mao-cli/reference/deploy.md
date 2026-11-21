@@ -63,22 +63,26 @@ nginx -v
 git --version
 ```
 
-**浏览器自动化（browser-use 技能）**：内置技能 `browser-use` 经 `playwright-cli` 驱动系统 Chrome，CLOUD 服务器需预装：
+**浏览器自动化（browser-use 技能）**：内置技能 `browser-use` 经 `playwright-cli` 驱动浏览器，依赖（浏览器内核 + `@playwright/cli`）支持两种就位方式：
 
-```bash
-# 系统 Chrome（browser-use 技能的执行内核）
-sudo apt install -y wget
-wget -qO /tmp/google-chrome-stable_current_amd64.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-sudo apt install -y /tmp/google-chrome-stable_current_amd64.deb
+- **预装（推荐，可预期）**：管理员勾选技能之前直接在服务器装好，安装检测秒过：
 
-# playwright-cli 全局安装（wrapper 命中 PATH 即零 npx 拉取）
-sudo npm install -g @playwright/cli@latest
+  ```bash
+  # 系统 Chrome（browser-use 技能的执行内核）
+  sudo apt install -y wget
+  wget -qO /tmp/google-chrome-stable_current_amd64.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+  sudo apt install -y /tmp/google-chrome-stable_current_amd64.deb
 
-/opt/google/chrome/chrome --version
-playwright-cli --version
-```
+  # playwright-cli 全局安装（wrapper 命中 PATH 即零 npx 拉取）
+  sudo npm install -g @playwright/cli@latest
 
-未预装时技能会退化为每次经 `npx` 拉取 CLI、浏览器报 `Chromium distribution 'chrome' is not found`——自动化不可用，其余功能不受影响。docker 模式由 `mao-runtime` 镜像内置（见下节）。
+  /opt/google/chrome/chrome --version
+  playwright-cli --version
+  ```
+
+- **按需自动安装（不预装时）**：管理员在 Agent 上勾选 `browser-use` 保存、或在「管理后台 → Skills 管理」对 browser-use 点「安装依赖」时，后端自动在服务器执行安装（npm 全局 CLI → 系统 Chrome deb，失败降级为 npmmirror 镜像源的 chromium 免 root 下载；源可用 `MAO_BROWSER_CHROME_DEB_URL` / `MAO_PLAYWRIGHT_DOWNLOAD_HOST` 覆盖）。**没有任何 Agent 勾选该技能则不会安装任何东西**。就绪状态与安装进度见 Skills 管理页「浏览器依赖」列。安装要求后端进程具备服务器安装权限（默认部署以 root 运行）且能访问下载源。
+
+  未就绪时 Agent 的浏览器命令会得到可解释报错（含「管理员尚未启用浏览器依赖」指引），其余功能不受影响。docker 模式由 `mao-runtime` 镜像内置（见下节）；docker 模式下的「安装依赖」会触发镜像自动重建（首次构建可能需要十几分钟）。
 
 **Git 说明**：CLOUD 模式通过 HTTPS Git 初始化工作区需要 `git` 命令。仅支持 HTTPS 地址；私有仓库用户在桌面端配置 Git 凭证（完整主机名）。
 
