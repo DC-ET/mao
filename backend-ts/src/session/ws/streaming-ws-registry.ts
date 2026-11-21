@@ -74,13 +74,15 @@ interface ConnectionAuth {
   refreshes: Map<string, number>;
 }
 
-type SendTarget = 'ALL' | 'LOCAL_ONLY';
+type SendTarget = 'ALL' | 'LOCAL_ONLY' | 'CLIENT_TYPES';
 
 interface OutboundItem {
   userId: number;
   event: WsEvent | null;
   rawJson: string | null;
   target: SendTarget;
+  /** target=CLIENT_TYPES 时生效：只投这些 clientType 的连接（如浏览器直播帧排除安卓省带宽）。 */
+  clientTypes?: ReadonlySet<string>;
   resultFuture: { resolve: (r: WsDeliveryResult) => void } | null;
 }
 
@@ -115,6 +117,11 @@ const CRITICAL_EVENT_TYPES = new Set([
   // 「在 xxx 上执行」横幅 / 发送前拦截会停在陈旧在线态，直到下次刷新才纠正。
   // 设备连接变更低频，不挤占关键通道。
   'device_status',
+  // 浏览器直播窗态（方案 2026-11-20 v2）：started/stopped 丢失会让画中画窗卡在
+  // 弹出/收起态直到下一帧或刷新；事件低频（每会话至多一次），走关键队列。
+  // browser_frame 有意不在列：帧可丢，普通队列满时优先保会话流。
+  'browser_live_started',
+  'browser_live_stopped',
 ]);
 
 function isCriticalItem(item: OutboundItem): boolean {
@@ -440,6 +447,14 @@ export class StreamingWsRegistry {
 
   sendToLocalClients(userId: number, event: WsEvent): void {
     this.enqueue(userId, event, 'LOCAL_ONLY');
+  }
+
+  /**
+   * 定向投递到声明了指定 clientType 的连接（普通队列，可丢）。
+   * 浏览器直播帧用：只发给 electron / browser，安卓（带宽敏感、无观看 UI）不收。
+   */
+  sendToClientTypes(userId: number, event: WsEvent, clientTypes: ReadonlySet<string>): void {
+    this.enqueue(userId, event, 'CLIENT_TYPES', clientTypes);
   }
 
   /**
@@ -795,8 +810,8 @@ export class StreamingWsRegistry {
     this.flushNow();
   }
 
-  private enqueue(userId: number, event: WsEvent, target: SendTarget): void {
-    this.enqueueItem({ userId, event, rawJson: null, target, resultFuture: null });
+  private enqueue(userId: number, event: WsEvent, target: SendTarget, clientTypes?: ReadonlySet<string>): void {
+    this.enqueueItem({ userId, event, rawJson: null, target, clientTypes, resultFuture: null });
   }
 
   private scheduleDrain(): void {
@@ -826,7 +841,10 @@ export class StreamingWsRegistry {
     }
     const targets = item.target === 'ALL'
       ? [...sessions]
-      : [...sessions].filter((s) => LOCAL_CAPABLE_CLIENTS.has(this.sessionToClientType.get(s.id) ?? ''));
+      : [...sessions].filter((s) => {
+        if (item.target === 'LOCAL_ONLY') return LOCAL_CAPABLE_CLIENTS.has(this.sessionToClientType.get(s.id) ?? '');
+        return item.clientTypes?.has(this.sessionToClientType.get(s.id) ?? '') ?? false;
+      });
     if (targets.length === 0) {
       this.completeResult(item, 0, 0, 0);
       return;

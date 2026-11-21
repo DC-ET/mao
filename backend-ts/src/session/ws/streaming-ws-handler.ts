@@ -66,6 +66,7 @@ import type { JwtService } from '../../crypto/jwt.service.js';
 import { contentParts, WsStreamingEventListener, type AgentEventListener, type WsListenerDeps } from './ws-streaming-event-listener.js';
 import type { StreamingWsRegistry, WsDeliveryResult, WsDeviceInfo, WsSocket } from './streaming-ws-registry.js';
 import { wsEvent } from './ws-event.js';
+import { WsRateLimiter } from './ws-rate-limiter.js';
 import { isActivePhase } from '../session-vo.js';
 import type { AgentExecutionContext } from '../../harness/core/agent-execution-context.js';
 import type { EmbedPageToolRegistry } from '../../harness/embed-page-tool-registry.js';
@@ -291,6 +292,9 @@ function cancelFlag(): { get(): boolean; set(v: boolean): void } {
   return { get: () => v, set: (n) => { v = n; } };
 }
 
+/** 浏览器直播事件的接收端：electron（画中画 / Tab）+ browser（Web 端 Tab 观看）；安卓不收（带宽保护）。 */
+const BROWSER_LIVE_CLIENT_TYPES = new Set(['electron', 'browser']);
+
 /**
  * 队列消费侧的回写绑定：autoConsume / 插队消费到带来源的队列行时登记，
  * 执行终态后由 settleQueuedBinding 按绑定分发回写；同时承载收件箱来源透传。
@@ -365,6 +369,16 @@ export class StreamingWsHandler {
   private readonly runningExecutionIds = new Map<number, string>();
   private readonly executionClaims = new Set<number>();
   private readonly sessionLocks = new Map<number, Promise<void>>();
+  /**
+   * 浏览器直播 runner（browser-use 技能 sidecar，方案 2026-11-20 v2 D9）：
+   * 以 runner_auth 独立握手接入 /api/ws/stream，不注册进用户连接表（不参与 send() 广播、
+   * 设备快照与统计）。每会话至多一条，新连踢旧；断开时由 afterConnectionClosed 合成 stopped 兜底。
+   */
+  private readonly runnerSessions = new Map<number, WsSocket>();
+  private readonly runnerBindings = new Map<string, { sessionId: number; userId: number }>();
+  private readonly browserFrameRateLimiter = new WsRateLimiter(6, 12);
+  /** 最近一次转发的 sidecar stopped 时间：断连兜底合成 runner_exit 的去重窗口。 */
+  private readonly runnerStopForwarded = new Map<number, number>();
   private readonly pendingSkillSyncs = new Map<number, { syncId: string; resolve: () => void; reject: (e: Error) => void }>();
   private readonly pendingMcpSyncs = new Map<number, { syncId: string; resolve: () => void; reject: (e: Error) => void }>();
   private readonly autoConsumingSessionIds = new Set<number>();
@@ -469,6 +483,23 @@ export class StreamingWsHandler {
   }
 
   afterConnectionClosed(session: WsSocket): void {
+    // runner 连接不参与用户侧清理（未注册进 registry；停止/兜底在此收敛）
+    const runnerBinding = this.runnerBindings.get(session.id);
+    if (runnerBinding != null) {
+      this.runnerBindings.delete(session.id);
+      if (this.runnerSessions.get(runnerBinding.sessionId) === session) {
+        this.runnerSessions.delete(runnerBinding.sessionId);
+        this.browserFrameRateLimiter.clear(String(runnerBinding.sessionId));
+        const lastStopped = this.runnerStopForwarded.get(runnerBinding.sessionId);
+        this.runnerStopForwarded.delete(runnerBinding.sessionId);
+        // sidecar 非正常断开（没来得及发 stopped）：合成 runner_exit，客户端才收得了窗
+        if (lastStopped == null || Date.now() - lastStopped > 5_000) {
+          this.deps.registry.sendToClientTypes(runnerBinding.userId,
+            wsEvent('browser_live_stopped', runnerBinding.sessionId, { reason: 'runner_exit' }), BROWSER_LIVE_CLIENT_TYPES);
+        }
+      }
+      return;
+    }
     const userId = this.deps.registry.getUserId(session);
     // 设备身份必须在 unregister 前取：unregister 会清理 connectionDevice / deviceExecutors
     const deviceId = this.deps.registry.getDeviceId(session);
@@ -608,6 +639,15 @@ export class StreamingWsHandler {
     // 鉴权改为首帧 auth 消息：token 不再出现在握手 URL（避免进日志/代理记录）。
     // 未注册连接仅接受 auth 帧；其余消息 fail fast 关闭，防止无凭据占用连接。
     const userId = this.deps.registry.getUserId(session);
+    if (userId == null && type === 'runner_auth') {
+      this.handleRunnerAuth(session, root);
+      return;
+    }
+    if (userId == null && this.runnerBindings.has(session.id)) {
+      // runner 已握手：只接受直播事件帧（未知类型忽略，兼容 sidecar 先于后端升级）
+      this.handleRunnerEvent(session, type, root);
+      return;
+    }
     if (userId == null) {
       if (type !== 'auth') {
         this.deps.registry.closeConnection(session, 'Not authenticated');
@@ -693,9 +733,101 @@ export class StreamingWsHandler {
       case 'cancel_side_task': await this.handleCancelSideTask(userId, root); break;
       case 'retry_execution': await this.handleRetryExecution(session, userId, root); break;
       case 'compact_now': await this.handleCompactNow(userId, root); break;
+      case 'browser_live_stop': await this.handleBrowserLiveStop(userId, root); break;
       case 'ping': this.deps.registry.send(userId, wsEvent('pong', null, {})); break;
       default: break;
     }
+  }
+
+  // ---------- 浏览器直播 runner（方案 2026-11-20 v2 §4.2） ----------
+
+  /**
+   * runner_auth 握手：只接受 shell JWT（MAO_TOKEN，access token 不能伪装 runner），
+   * 校验会话属主与 CLOUD 模式。成功绑定后会话至多一条 runner 连接，新连踢旧。
+   */
+  private handleRunnerAuth(session: WsSocket, root: Record<string, unknown>): void {
+    const token = typeof root.token === 'string' ? root.token : '';
+    const rawSessionId = root.sessionId;
+    const sessionId = typeof rawSessionId === 'number' ? rawSessionId : Number(rawSessionId);
+    const reject = (reason: string) => {
+      this.deps.registry.closeConnection(session, reason);
+    };
+    if (!token || !Number.isInteger(sessionId) || sessionId <= 0) {
+      reject('Invalid runner auth');
+      return;
+    }
+    const metadata = this.deps.jwtService.getAccessTokenMetadata(token);
+    if (!metadata) {
+      reject('Invalid runner token');
+      return;
+    }
+    if (this.deps.jwtService.getTokenType(token) !== 'shell') {
+      reject('Runner token must be a shell token');
+      return;
+    }
+    void (async () => {
+      const owned = await this.deps.sessionService.getSession(sessionId);
+      if (!owned || owned.userId == null || owned.userId !== metadata.userId) {
+        reject('Runner session not owned');
+        return;
+      }
+      if (owned.executionMode !== 'CLOUD') {
+        reject('Runner only for CLOUD sessions');
+        return;
+      }
+      const previous = this.runnerSessions.get(sessionId);
+      if (previous != null && previous.id !== session.id) {
+        this.runnerBindings.delete(previous.id);
+        this.deps.registry.closeConnection(previous, 'Replaced by new runner');
+      }
+      this.runnerSessions.set(sessionId, session);
+      this.runnerBindings.set(session.id, { sessionId, userId: metadata.userId });
+      this.deps.registry.sendToConnection(session, wsEvent('connected', sessionId, { runner: true }));
+    })().catch((e) => {
+      console.error(`runner_auth failed for session ${sessionId}`, e);
+      reject('Runner auth error');
+    });
+  }
+
+  /** runner 入站直播事件：帧走 per-session 限速后转发属主（electron/browser，安卓不收）。 */
+  private handleRunnerEvent(session: WsSocket, type: string, root: Record<string, unknown>): void {
+    const binding = this.runnerBindings.get(session.id);
+    if (binding == null || this.runnerSessions.get(binding.sessionId) !== session) {
+      this.deps.registry.closeConnection(session, 'Runner not registered');
+      return;
+    }
+    const data = (root.data ?? {}) as Record<string, unknown>;
+    if (type === 'browser_frame') {
+      if (!this.browserFrameRateLimiter.allow(String(binding.sessionId))) return;
+      this.deps.registry.sendToClientTypes(binding.userId, wsEvent('browser_frame', binding.sessionId, data), BROWSER_LIVE_CLIENT_TYPES);
+      return;
+    }
+    if (type === 'browser_live_started' || type === 'browser_live_stopped') {
+      if (type === 'browser_live_stopped') this.runnerStopForwarded.set(binding.sessionId, Date.now());
+      this.deps.registry.sendToClientTypes(binding.userId, wsEvent(type, binding.sessionId, data), BROWSER_LIVE_CLIENT_TYPES);
+    }
+  }
+
+  /** 用户「停止浏览器」：校验属主后转发给该会话的 runner；无 runner 时直接回 stopped 收窗。 */
+  private async handleBrowserLiveStop(userId: number, root: Record<string, unknown>): Promise<void> {
+    const sessionId = this.getLong(root, 'sessionId');
+    if (sessionId == null) return;
+    const session = await this.requireOwnedSession(userId, sessionId);
+    if (!session) return;
+    const runner = this.runnerSessions.get(sessionId);
+    if (runner == null) {
+      this.deps.registry.sendToClientTypes(userId,
+        wsEvent('browser_live_stopped', sessionId, { reason: 'user_stop' }), BROWSER_LIVE_CLIENT_TYPES);
+      return;
+    }
+    this.deps.registry.sendToConnection(runner, { type: 'browser_live_stop', data: { reason: 'user_stop' } });
+  }
+
+  /** 会话终态（CLOUD）：通知 runner 停止直播并 Browser.close；映射等 stopped/断连收敛。 */
+  private notifyRunnerStop(sessionId: number): void {
+    const runner = this.runnerSessions.get(sessionId);
+    if (runner == null) return;
+    this.deps.registry.sendToConnection(runner, { type: 'browser_live_stop', data: { reason: 'session_end' } });
   }
 
   private async handleSubscribe(session: WsSocket, userId: number, root: Record<string, unknown>): Promise<void> {
@@ -2759,6 +2891,7 @@ export class StreamingWsHandler {
     } else {
       await this.deps.taskTerminalService.finishExecution(sessionId, userId, 'COMPLETED', executionId);
     }
+    this.notifyRunnerStop(sessionId);
     return 'COMPLETED';
   }
 
@@ -2776,6 +2909,7 @@ export class StreamingWsHandler {
     } else {
       await this.deps.taskTerminalService.finishExecution(sessionId, userId, 'FAILED', executionId, reason);
     }
+    this.notifyRunnerStop(sessionId);
     return 'FAILED';
   }
 
@@ -2788,6 +2922,7 @@ export class StreamingWsHandler {
     // CANCELLED 不写收件箱，notifySource 对本终态无意义：保持 5 参调用，
     // 不因签名扩展给这一路塞无意义的 SCHEDULED
     await this.deps.taskTerminalService.finishExecution(sessionId, userId, 'CANCELLED', executionId);
+    this.notifyRunnerStop(sessionId);
     return 'CANCELLED';
   }
 

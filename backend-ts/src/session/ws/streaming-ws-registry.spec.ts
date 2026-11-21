@@ -574,3 +574,49 @@ describe('sendToFileCapableDevice（文件代理分层投递，技术方案 2026
     expect(registry.hasCapability(socket, 'file_op')).toBe(false);
   });
 });
+
+describe('StreamingWsRegistry.sendToClientTypes', () => {
+  it('deliversOnlyToDeclaredClientTypes', () => {
+    const registry = new StreamingWsRegistry(10);
+    try {
+      const sends: Record<string, ReturnType<typeof vi.fn>> = {};
+      const register = (id: string, clientType: string) => {
+        const send = vi.fn();
+        sends[id] = send;
+        registry.register(mockSocket(id, send), 1, clientType);
+      };
+      register('ws-electron', 'electron');
+      register('ws-browser', 'browser');
+      register('ws-android', 'android');
+      register('ws-cli', 'cli');
+
+      registry.sendToClientTypes(1, wsEvent('browser_frame', 11, { seq: 1 }), new Set(['electron', 'browser']));
+
+      expect(sends['ws-electron']).toHaveBeenCalledTimes(1);
+      expect(sends['ws-browser']).toHaveBeenCalledTimes(1);
+      // 安卓不收直播帧（带宽保护）；cli 也不在声明集合内
+      expect(sends['ws-android']).not.toHaveBeenCalled();
+      expect(sends['ws-cli']).not.toHaveBeenCalled();
+    } finally {
+      registry.shutdown();
+    }
+  });
+
+  it('classifiesBrowserLiveWindowEventsAsCritical', () => {
+    // started/stopped 走关键队列（低频、丢失会卡窗态）；browser_frame 走普通队列可丢。
+    // 关键性不直接暴露：用容量 0 的普通队列验证——关键帧仍可达，普通帧被丢。
+    const registry = new StreamingWsRegistry(0);
+    try {
+      const send = vi.fn();
+      registry.register(mockSocket('ws-1', send), 1, 'electron');
+      registry.send(1, wsEvent('browser_frame', 11, { seq: 1, jpeg: 'x' }));
+      registry.send(1, wsEvent('browser_live_started', 11, { width: 1280, height: 720 }));
+      registry.send(1, wsEvent('browser_live_stopped', 11, { reason: 'browser_exit' }));
+      expect(send).toHaveBeenCalledTimes(2);
+      const types = [0, 1].map((i) => (send.mock.calls[i][0] as string).includes('"browser_live_'));
+      expect(types.every(Boolean)).toBe(true);
+    } finally {
+      registry.shutdown();
+    }
+  });
+});

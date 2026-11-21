@@ -82,6 +82,14 @@ export type {
   EmbedCreateSessionRequest,
   EmbedSessionPage,
   EmbedMessageVO,
+  BrowserLiveStopReason,
+  BrowserLiveStartedData,
+  BrowserFrameData,
+  BrowserLiveStoppedData,
+  WsRunnerAuthFrame,
+  WsRunnerEventFrame,
+  WsRunnerStopFrame,
+  WsBrowserLiveStopFrame,
 } from './ws';
 export type { TerminalHostAvailability } from './terminal';
 export { TERMINAL_HOST_AVAILABILITIES } from './terminal';

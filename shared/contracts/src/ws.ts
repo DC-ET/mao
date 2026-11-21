@@ -313,3 +313,62 @@ export interface EmbedMessageVO {
   thinkingContent?: string | null;
   createdAt?: string;
 }
+
+/** ─────────────────── 浏览器直播（browser-use 技能画中画，方案 2026-11-20 v2） ─────────────────── */
+
+/** 直播终止原因；string 兜底给旧 sidecar / 新原因前向兼容。 */
+export type BrowserLiveStopReason = 'browser_exit' | 'session_end' | 'user_stop' | 'timeout' | 'runner_exit';
+
+export interface BrowserLiveStartedData {
+  width: number;
+  height: number;
+  pageUrl?: string;
+  /** playwright-cli 的命名会话名（-s=xxx），缺省为 default */
+  cliSession?: string;
+}
+
+export interface BrowserFrameData {
+  seq: number;
+  /** epoch ms */
+  ts: number;
+  /** JPEG base64（≤512KB，后端超限丢弃） */
+  jpeg: string;
+  width: number;
+  height: number;
+  pageUrl?: string;
+  cliSession?: string;
+}
+
+export interface BrowserLiveStoppedData {
+  reason: BrowserLiveStopReason | string;
+  cliSession?: string;
+}
+
+/**
+ * sidecar（runner）→ 后端：/api/ws/stream 上的独立握手帧。
+ * 不占用用户 auth 帧、不进 WsClientType 词表、不注册进用户连接表——
+ * runner 是会话作用域的旁路连接（token 为 shell JWT）。
+ */
+export interface WsRunnerAuthFrame {
+  type: 'runner_auth';
+  token: string;
+  sessionId: number;
+}
+
+/** sidecar → 后端：直播事件（browser_frame 走限速后转发）。 */
+export interface WsRunnerEventFrame {
+  type: 'browser_live_started' | 'browser_frame' | 'browser_live_stopped';
+  data: BrowserLiveStartedData | BrowserFrameData | BrowserLiveStoppedData;
+}
+
+/** 后端 → runner：用户停止或会话终态。sidecar 收到后 Browser.close 并回 browser_live_stopped。 */
+export interface WsRunnerStopFrame {
+  type: 'browser_live_stop';
+  data: { reason: BrowserLiveStopReason | string };
+}
+
+/** 桌面客户端 → 后端：停止浏览器（后端校验属主后转发给该会话的 runner）。 */
+export interface WsBrowserLiveStopFrame {
+  type: 'browser_live_stop';
+  sessionId: number;
+}
