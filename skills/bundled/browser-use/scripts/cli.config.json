@@ -1,0 +1,8 @@
+{
+  "browser": {
+    "launchOptions": {
+      "channel": "chrome",
+      "args": ["--disable-dev-shm-usage", "--disable-gpu"]
+    }
+  }
+}
