@@ -62,7 +62,7 @@ v2 的核心思路：**浏览器所有权不动，旁路加一只「摄像头」
 - 不做 VNC / xvfb；CDP screencast 已覆盖。
 - 不改 shell 工具、deny-list、审批、path-sandbox 的任何口径（sidecar 启动就是 wrapper 内的一条普通 shell 动作，随命令过既有审批）。
 - 安卓端不做观看 UI（帧不下发安卓）。Web 端观看入口已补齐（2026-11-21 追加，M2 前置）：TopNav「浏览器直播」按钮（`hasAnyLive` 门控）+ store 注入式 Web 停止通道（`setStopRequester` → `browser_live_stop` WS 帧），数据链路零改动。
-- LOCAL Windows：shell 是 PowerShell，bash wrapper 不可用，本技能不支持（与原 playwright 技能同限，非本方案回归）。
+- LOCAL Windows：shell 是 PowerShell，bash wrapper 不可用，本技能暂不支持（与原 playwright 技能同限，非本方案回归）；支持方案已立项：`2026-11-21-browser-use-windows-local-technical-design.md`。
 
 ## 3. 技术选型与决策点
 
