@@ -113,7 +113,8 @@ describe('BrowserDepsService detect', () => {
 
   it('系统 Chrome 缺失时探测 playwright chromium 缓存', async () => {
     const { service, cacheRoot } = makeService({
-      exec: ({ cmd, args }) => (cmd.includes('/chrome-linux/chrome') && args[0] === '--version'
+      // 匹配走平台无关口径：Windows 宿主上 path.join 产出反斜杠路径，不能按 /chrome-linux/chrome 字面匹配
+      exec: ({ cmd, args }) => (cmd.includes('chrome-linux') && cmd.endsWith('chrome') && args[0] === '--version'
         ? { ok: true, output: 'Chromium 141.0' }
         : { ok: false, output: '' }),
     });
@@ -157,7 +158,7 @@ describe('BrowserDepsService host 安装链', () => {
         if (cmd === 'npm') return { ok: true, output: 'added 1 package' };
         if (cmd === 'playwright-cli' && args[0] === 'install-browser') { chromiumDownloaded = true; return { ok: true, output: 'chromium downloaded' }; }
         if (cmd === 'playwright-cli' && args[0] === '--version') return { ok: true, output: '0.1.25' };
-        if (cmd.includes('/chrome-linux/chrome') && args[0] === '--version') {
+        if (cmd.includes('chrome-linux') && cmd.endsWith('chrome') && args[0] === '--version') {
           return chromiumDownloaded ? { ok: true, output: 'Chromium 141.0' } : { ok: false, output: '' };
         }
         return { ok: false, output: '' };
@@ -338,8 +339,9 @@ describe('BrowserDepsService win32 分支', () => {
     expect(resolveChromiumCacheRoot('win32', { PLAYWRIGHT_BROWSERS_PATH: 'D:\\pw' })).toBe('D:\\pw');
     expect(resolveChromiumCacheRoot('win32', { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' })).toBe(path.join('C:\\Users\\u\\AppData\\Local', 'ms-playwright'));
     expect(resolveChromiumCacheRoot('win32', {}, '/home/u')).toBe(path.join('/home/u', 'AppData', 'Local', 'ms-playwright'));
-    expect(resolveChromiumCacheRoot('linux', {}, '/root')).toBe('/root/.cache/ms-playwright');
-    expect(resolveChromiumCacheRoot('darwin', {}, '/Users/u')).toBe('/Users/u/.cache/ms-playwright');
+    // 期望值同样经 path.join 归一化：Windows 宿主上实现与期望同用 path.win32，POSIX CI 上仍是 / 形态
+    expect(resolveChromiumCacheRoot('linux', {}, '/root')).toBe(path.join('/root', '.cache', 'ms-playwright'));
+    expect(resolveChromiumCacheRoot('darwin', {}, '/Users/u')).toBe(path.join('/Users/u', '.cache', 'ms-playwright'));
   });
 
   it('winget 失败静默降级 chromium（win32 安装链）', async () => {

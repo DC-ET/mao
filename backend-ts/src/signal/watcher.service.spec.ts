@@ -1988,7 +1988,10 @@ describe('SCRIPT 哨兵凭据 env 注入（2026-11-20）', () => {
     // gitTokens 非空才注入 askpass；落在属主 HOME、权限 0700、内容含 GIT_TOKEN_ 反查逻辑
     expect(call.env.GIT_ASKPASS).toBe(join(home, 'git-askpass.sh'));
     expect(call.env.GIT_TERMINAL_PROMPT).toBe('0');
-    expect(statSync(call.env.GIT_ASKPASS).mode & 0o777).toBe(0o700);
+    // 0700 是 POSIX 语义：Windows 宿主 chmod 只切换只读位，statSync 恒 0666，断言不可移植
+    if (process.platform !== 'win32') {
+      expect(statSync(call.env.GIT_ASKPASS).mode & 0o777).toBe(0o700);
+    }
     expect(readFileSync(call.env.GIT_ASKPASS, 'utf8')).toContain('GIT_TOKEN_');
     // 三级变量 workspaceKey = 哨兵脚本项目根
     expect(p.envVarsProvider).toHaveBeenCalledWith(7, join(projectsRoot, '7', 'projects'));
