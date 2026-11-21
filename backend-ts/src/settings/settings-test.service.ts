@@ -69,30 +69,63 @@ export async function testFeishuCredentials(appId: string, appSecret: string, ht
   }
 }
 
-/** 验证 OSS/STS 凭证：真实发起一次 AssumeRole 试签。 */
-export async function testOssCredentials(
-  cfg: OssSettings,
-  createClient: (sts: OssSettings['sts']) => Promise<OssTestClient>,
-): Promise<void> {
-  if (!hasText(cfg.region) || !hasText(cfg.bucket) || !hasText(cfg.sts.accessKeyId) || !hasText(cfg.sts.accessKeySecret)) {
-    fail('OSS Region、Bucket、STS AccessKey 不能为空');
-  }
-  try {
-    const client = await createClient(cfg.sts);
-    // 试签不携带 policy：空对象 '{}' 不合 RAM Policy 语法会触发
-    // InvalidParameter.PolicyGrammar；不传即沿用角色自身权限，仅校验凭证有效性。
-    await client.assumeRole({
-      roleArn: cfg.sts.roleArn,
-      roleSessionName: 'mao-test',
-      durationSeconds: Math.min(Math.max(cfg.sts.expire, 900), 3600),
-    });
-  } catch (e) {
-    fail(`OSS STS 试签失败: ${e instanceof Error ? e.message : String(e)}`);
-  }
+/**
+ * 对象存储连通性测试（多云预签名直传，技术方案 2026-11-21）：
+ * 对固定探针 key 真实发起预签名 PUT（写入 1 字节内容）后尽力 DELETE 清理。
+ * PUT 成功即证明 AccessKey 有效、bucket 存在且可写——比旧 STS 试签（只验凭证）
+ * 验证得更完整；DELETE 失败不影响结论。
+ */
+export type StorageProbeMethod = 'PUT' | 'DELETE';
+
+export interface StorageProbeHttp {
+  request(url: string, init: { method: StorageProbeMethod; headers?: Record<string, string>; body?: string }): Promise<{ ok: boolean; status: number; body: string }>;
 }
 
-export interface OssTestClient {
-  assumeRole(input: { roleArn: string; roleSessionName: string; durationSeconds: number; policy?: unknown }): Promise<unknown>;
+export interface ObjectStorageProbeDeps {
+  /** 对探针 key 签发预签名 URL；contentType 仅 OBS 参与签名，其余云忽略。 */
+  sign: (key: string, expiresSeconds: number, method: StorageProbeMethod, contentType: string) => string;
+}
+
+export const STORAGE_PROBE_KEY = 'uploads/.mao-probe';
+
+export function defaultStorageProbeHttp(timeoutMs = 10_000): StorageProbeHttp {
+  return {
+    async request(url, init) {
+      const res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+      return { ok: res.ok, status: res.status, body: await res.text().catch(() => '') };
+    },
+  };
+}
+
+export async function testObjectStorageProbe(
+  label: string,
+  requiredEntries: Array<[string, string]>,
+  deps: ObjectStorageProbeDeps,
+  http: StorageProbeHttp = defaultStorageProbeHttp(),
+): Promise<void> {
+  for (const [fieldName, value] of requiredEntries) {
+    if (!hasText(value)) {
+      fail(`${fieldName} 不能为空`);
+    }
+  }
+  let putRes: { ok: boolean; status: number; body: string };
+  try {
+    putRes = await http.request(deps.sign(STORAGE_PROBE_KEY, 60, 'PUT', 'text/plain'), {
+      method: 'PUT',
+      headers: { 'content-type': 'text/plain' },
+      body: 'mao-probe',
+    });
+  } catch (e) {
+    fail(`${label} 连接失败: ${e instanceof Error ? e.message : String(e)}（请检查 endpoint/region 与网络连通性，浏览器直传还需 bucket CORS 放行）`);
+  }
+  if (!putRes.ok) {
+    fail(`${label} 预签名直传被拒绝 (HTTP ${putRes.status})：请确认 AccessKey 对 bucket 有写入权限${putRes.body ? `；响应: ${putRes.body.slice(0, 200)}` : ''}`);
+  }
+  try {
+    await http.request(deps.sign(STORAGE_PROBE_KEY, 60, 'DELETE', ''), { method: 'DELETE' });
+  } catch {
+    // 探针清理失败不影响连通性结论
+  }
 }
 
 /** 邮箱格式：与 user.service.ts / settings.service.ts 保存校验口径一致。 */

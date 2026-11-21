@@ -12,8 +12,8 @@ import {
 } from '../common/container-auto-upgrade.js';
 import { decryptAesGcm, encryptAesGcmNonNull } from '../crypto/aes-gcm.js';
 import type {
-  AgentLookup, AgentRuntimeSettings, DingtalkOauthSettings, EmailSmtpSettings, FeishuOAuthSettings, HarnessTuningSettings, LdapSettings, ModelLookup,
-  NotificationTuningSettings, OssSettings, SettingsRuntimeConfig, SystemSetting, SystemSettingRepository,
+  AgentLookup, AgentRuntimeSettings, CosSettings, DingtalkOauthSettings, EmailSmtpSettings, FeishuOAuthSettings, HarnessTuningSettings, LdapSettings, ModelLookup,
+  NotificationTuningSettings, ObsSettings, OssSettings, SettingsRuntimeConfig, SystemSetting, SystemSettingRepository,
   TavilySettings, TerminalSettings, TinyFishSettings, UploadSettings, WebSearchConfig, WebSearchProvider,
 } from './types.js';
 
@@ -70,14 +70,16 @@ export const OSS_REGION_KEY = 'oss.region';
 export const OSS_ACCESS_KEY_ID_KEY = 'oss.accessKeyId';
 export const OSS_ACCESS_KEY_SECRET_KEY = 'oss.accessKeySecret';
 export const OSS_BUCKET_KEY = 'oss.bucket';
-export const OSS_STS_REGION_ID_KEY = 'oss.sts.regionId';
-export const OSS_STS_ENDPOINT_KEY = 'oss.sts.endpoint';
-export const OSS_STS_ACCESS_KEY_ID_KEY = 'oss.sts.accessKeyId';
-export const OSS_STS_ACCESS_KEY_SECRET_KEY = 'oss.sts.accessKeySecret';
-export const OSS_STS_ROLE_ARN_KEY = 'oss.sts.roleArn';
-export const OSS_STS_ROLE_SESSION_NAME_KEY = 'oss.sts.roleSessionName';
-export const OSS_STS_EXPIRE_KEY = 'oss.sts.expire';
-export const OSS_STS_MAX_SIZE_MB_KEY = 'oss.sts.maxSizeMb';
+/** 腾讯云 COS（V201 多云对象存储）：bucket 含 APPID 后缀。 */
+export const COS_REGION_KEY = 'cos.region';
+export const COS_SECRET_ID_KEY = 'cos.secretId';
+export const COS_SECRET_KEY_KEY = 'cos.secretKey';
+export const COS_BUCKET_KEY = 'cos.bucket';
+/** 华为云 OBS：endpoint 形如 obs.cn-north-4.myhuaweicloud.com。 */
+export const OBS_ENDPOINT_KEY = 'obs.endpoint';
+export const OBS_ACCESS_KEY_ID_KEY = 'obs.accessKeyId';
+export const OBS_ACCESS_KEY_SECRET_KEY = 'obs.accessKeySecret';
+export const OBS_BUCKET_KEY = 'obs.bucket';
 export const AGENT_THREAD_POOL_SIZE_KEY = 'agent.threadPoolSize';
 export const AGENT_THREAD_POOL_MAX_KEY = 'agent.threadPoolMax';
 export const AGENT_THREAD_POOL_QUEUE_KEY = 'agent.threadPoolQueue';
@@ -169,9 +171,6 @@ const DEFAULT_TINYFISH_BASE_URL = 'https://api.search.tinyfish.ai';
 const DEFAULT_TINYFISH_CONNECT_TIMEOUT = 10000;
 const DEFAULT_TINYFISH_READ_TIMEOUT = 30000;
 const DEFAULT_WEB_SEARCH_PROVIDER: WebSearchProvider = 'tavily';
-const DEFAULT_OSS_STS_ROLE_SESSION_NAME = 'mao-sts';
-const DEFAULT_OSS_STS_EXPIRE = 3600;
-const DEFAULT_OSS_STS_MAX_SIZE_MB = 50;
 const DEFAULT_AGENT_THREAD_POOL_SIZE = 20;
 const DEFAULT_AGENT_THREAD_POOL_MAX = 100;
 const DEFAULT_AGENT_THREAD_POOL_QUEUE = 200;
@@ -382,7 +381,10 @@ export class SystemSettingService {
       this.getText(FILE_MAX_SIZE_MB_KEY),
     ]);
     const maxSizeMb = parsePositiveInt(maxSizeRaw) ?? DEFAULT_FILE_MAX_SIZE_MB;
-    const storageMode = storageModeRaw === 'oss' ? 'oss' : 'local';
+    // 只认对象存储三值，其余（含 local/未设置/乱值）一律回落本地磁盘
+    const storageMode = storageModeRaw === 'oss' || storageModeRaw === 'cos' || storageModeRaw === 'obs'
+      ? storageModeRaw
+      : 'local';
     return { storageMode, baseUrl, maxSizeMb };
   }
 
@@ -588,7 +590,8 @@ export class SystemSettingService {
   }
 
   /** OSS 未配置（region/AK/SK/bucket 任一为空）时返回 null，消费方按"未配置"处理。 */
-  async getOssConfig(): Promise<OssSettings | null> {    const [region, accessKeyId, accessKeySecret, bucket] = await Promise.all([
+  async getOssConfig(): Promise<OssSettings | null> {
+    const [region, accessKeyId, accessKeySecret, bucket] = await Promise.all([
       this.getText(OSS_REGION_KEY),
       this.getText(OSS_ACCESS_KEY_ID_KEY),
       this.getSecret(OSS_ACCESS_KEY_SECRET_KEY),
@@ -597,34 +600,35 @@ export class SystemSettingService {
     if (!hasText(region) || !hasText(accessKeyId) || !hasText(accessKeySecret) || !hasText(bucket)) {
       return null;
     }
-    const [regionId, endpoint, stsAccessKeyId, stsAccessKeySecret, roleArn] = await Promise.all([
-      this.getText(OSS_STS_REGION_ID_KEY),
-      this.getText(OSS_STS_ENDPOINT_KEY),
-      this.getText(OSS_STS_ACCESS_KEY_ID_KEY),
-      this.getSecret(OSS_STS_ACCESS_KEY_SECRET_KEY),
-      this.getText(OSS_STS_ROLE_ARN_KEY),
+    return { region, accessKeyId, accessKeySecret, bucket };
+  }
+
+  /** 腾讯云 COS 未配置（region/SecretId/SecretKey/bucket 任一为空）时返回 null。 */
+  async getCosConfig(): Promise<CosSettings | null> {
+    const [region, secretId, secretKey, bucket] = await Promise.all([
+      this.getText(COS_REGION_KEY),
+      this.getText(COS_SECRET_ID_KEY),
+      this.getSecret(COS_SECRET_KEY_KEY),
+      this.getText(COS_BUCKET_KEY),
     ]);
-    const [roleSessionNameRaw, expireRaw, maxSizeRaw] = await Promise.all([
-      this.getText(OSS_STS_ROLE_SESSION_NAME_KEY),
-      this.getText(OSS_STS_EXPIRE_KEY),
-      this.getText(OSS_STS_MAX_SIZE_MB_KEY),
+    if (!hasText(region) || !hasText(secretId) || !hasText(secretKey) || !hasText(bucket)) {
+      return null;
+    }
+    return { region, secretId, secretKey, bucket };
+  }
+
+  /** 华为云 OBS 未配置（endpoint/AK/SK/bucket 任一为空）时返回 null。 */
+  async getObsConfig(): Promise<ObsSettings | null> {
+    const [endpoint, accessKeyId, accessKeySecret, bucket] = await Promise.all([
+      this.getText(OBS_ENDPOINT_KEY),
+      this.getText(OBS_ACCESS_KEY_ID_KEY),
+      this.getSecret(OBS_ACCESS_KEY_SECRET_KEY),
+      this.getText(OBS_BUCKET_KEY),
     ]);
-    return {
-      region,
-      accessKeyId,
-      accessKeySecret,
-      bucket,
-      sts: {
-        regionId,
-        endpoint,
-        accessKeyId: stsAccessKeyId,
-        accessKeySecret: stsAccessKeySecret,
-        roleArn,
-        roleSessionName: hasText(roleSessionNameRaw) ? roleSessionNameRaw : DEFAULT_OSS_STS_ROLE_SESSION_NAME,
-        expire: parsePositiveInt(expireRaw) ?? DEFAULT_OSS_STS_EXPIRE,
-        maxSizeMb: parsePositiveInt(maxSizeRaw) ?? DEFAULT_OSS_STS_MAX_SIZE_MB,
-      },
-    };
+    if (!hasText(endpoint) || !hasText(accessKeyId) || !hasText(accessKeySecret) || !hasText(bucket)) {
+      return null;
+    }
+    return { endpoint, accessKeyId, accessKeySecret, bucket };
   }
 
   /**
@@ -864,7 +868,7 @@ export class SystemSettingService {
       return;
     }
     if (key.endsWith('Days') || key.endsWith('Size') || key.endsWith('SizeMb')
-      || key === OSS_STS_EXPIRE_KEY || key.endsWith('TimeoutMs') || key.endsWith('DelayMs')
+      || key.endsWith('TimeoutMs') || key.endsWith('DelayMs')
       || key === NOTIFY_BATCH_SIZE_KEY || key === NOTIFY_MAX_ATTEMPTS_KEY
       || key === AGENT_THREAD_POOL_SIZE_KEY || key === AGENT_THREAD_POOL_MAX_KEY || key === AGENT_THREAD_POOL_QUEUE_KEY
       || key === 'openapi.tokenAutoDisableThreshold') {
@@ -897,8 +901,8 @@ export class SystemSettingService {
     if (key === HARNESS_LLM_ANTHROPIC_CACHE_TTL_KEY && value !== '5m' && value !== '1h') {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '缓存 TTL 仅支持 5m 或 1h');
     }
-    if (key === UPLOAD_STORAGE_MODE_KEY && value !== 'local' && value !== 'oss') {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, '上传存储模式仅支持 local 或 oss');
+    if (key === UPLOAD_STORAGE_MODE_KEY && value !== 'local' && value !== 'oss' && value !== 'cos' && value !== 'obs') {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '上传存储模式仅支持 local / oss / cos / obs');
     }
     if (key === HTTP_TOOL_PRIVATE_ALLOWLIST_KEY) {
       let parsed: unknown;

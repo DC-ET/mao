@@ -2,6 +2,8 @@
  * 集成配置各组的字段文案。表单（IntegrationConfigPanel）与系统设置搜索共用，
  * 避免搜索索引和页面上的标签各写一份。
  */
+import type { StorageMode } from '@mao/contracts'
+
 export interface IntegrationFieldSpec {
   key: string
   label: string
@@ -22,6 +24,17 @@ export interface IntegrationGroupSpec {
   keys: string[]
   fields: IntegrationFieldSpec[]
 }
+
+/** 存储模式下拉文案：Record 吃编译期穷尽，StorageMode（contracts）加值漏改此处即 tsc 报错。 */
+const STORAGE_MODE_LABELS: Record<StorageMode, string> = {
+  local: '本地存储',
+  oss: '阿里云 OSS 直传',
+  cos: '腾讯云 COS 直传',
+  obs: '华为云 OBS 直传',
+}
+
+export const STORAGE_MODE_OPTIONS = (Object.keys(STORAGE_MODE_LABELS) as StorageMode[])
+  .map((value) => ({ label: STORAGE_MODE_LABELS[value], value }))
 
 export const INTEGRATION_GROUP_CATALOG: IntegrationGroupSpec[] = [
   {
@@ -80,10 +93,8 @@ export const INTEGRATION_GROUP_CATALOG: IntegrationGroupSpec[] = [
         key: 'upload.storageMode',
         label: '存储模式',
         type: 'select',
-        options: [
-          { label: '本地存储', value: 'local' },
-          { label: '阿里云 OSS 直传', value: 'oss' },
-        ],
+        options: STORAGE_MODE_OPTIONS,
+        hint: '对象存储三家均为预签名直传，切换后即时生效；选非 local 模式须先填好对应云的配置组',
       },
       { key: 'upload.baseUrl', label: '访问基础地址', hint: '留空使用相对路径 /uploads/', pattern: /^https?:\/\//, patternMessage: '需以 http:// 或 https:// 开头' },
       { key: 'file.maxSizeMb', label: '单文件上限 (MB)', type: 'number', min: 1, max: 102400, hint: '默认 1024（1GB）' },
@@ -106,21 +117,35 @@ export const INTEGRATION_GROUP_CATALOG: IntegrationGroupSpec[] = [
   },
   {
     name: 'oss',
-    title: 'OSS 对象存储',
-    keys: ['oss.region', 'oss.accessKeyId', 'oss.accessKeySecret', 'oss.bucket', 'oss.sts.regionId', 'oss.sts.endpoint', 'oss.sts.accessKeyId', 'oss.sts.accessKeySecret', 'oss.sts.roleArn', 'oss.sts.roleSessionName', 'oss.sts.expire', 'oss.sts.maxSizeMb'],
+    title: '阿里云 OSS',
+    keys: ['oss.region', 'oss.accessKeyId', 'oss.accessKeySecret', 'oss.bucket'],
     fields: [
-      { key: 'oss.region', label: 'Region' },
+      { key: 'oss.region', label: 'Region', hint: '如 cn-hangzhou 或 oss-cn-hangzhou' },
       { key: 'oss.bucket', label: 'Bucket' },
       { key: 'oss.accessKeyId', label: 'AccessKey ID' },
-      { key: 'oss.accessKeySecret', label: 'AccessKey Secret', secret: true },
-      { key: 'oss.sts.regionId', label: 'STS Region ID' },
-      { key: 'oss.sts.endpoint', label: 'STS Endpoint', hint: '如 sts.cn-hangzhou.aliyuncs.com' },
-      { key: 'oss.sts.accessKeyId', label: 'STS AccessKey ID' },
-      { key: 'oss.sts.accessKeySecret', label: 'STS AccessKey Secret', secret: true },
-      { key: 'oss.sts.roleArn', label: 'STS Role ARN' },
-      { key: 'oss.sts.roleSessionName', label: 'STS 会话名', hint: '默认 mao-sts' },
-      { key: 'oss.sts.expire', label: '凭证有效期 (秒)', hint: '默认 3600', type: 'number', min: 60, max: 86400 },
-      { key: 'oss.sts.maxSizeMb', label: '直传上限 (MB)', hint: '默认 50', type: 'number', min: 1, max: 51200 },
+      { key: 'oss.accessKeySecret', label: 'AccessKey Secret', secret: true, hint: 'V4 预签名直传用长期 AK/SK，原 STS 子账号配置已废弃' },
+    ],
+  },
+  {
+    name: 'cos',
+    title: '腾讯云 COS',
+    keys: ['cos.region', 'cos.secretId', 'cos.secretKey', 'cos.bucket'],
+    fields: [
+      { key: 'cos.region', label: 'Region', hint: '如 ap-guangzhou' },
+      { key: 'cos.bucket', label: 'Bucket', hint: '存储桶名称含 APPID 后缀，如 name-1250000000' },
+      { key: 'cos.secretId', label: 'SecretId' },
+      { key: 'cos.secretKey', label: 'SecretKey', secret: true },
+    ],
+  },
+  {
+    name: 'obs',
+    title: '华为云 OBS',
+    keys: ['obs.endpoint', 'obs.accessKeyId', 'obs.accessKeySecret', 'obs.bucket'],
+    fields: [
+      { key: 'obs.endpoint', label: '终端节点', hint: '如 obs.cn-north-4.myhuaweicloud.com' },
+      { key: 'obs.bucket', label: 'Bucket' },
+      { key: 'obs.accessKeyId', label: 'AccessKey ID' },
+      { key: 'obs.accessKeySecret', label: 'AccessKey Secret', secret: true },
     ],
   },
   {

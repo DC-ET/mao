@@ -1,3 +1,7 @@
+import type { StorageMode } from '@mao/contracts';
+
+export type { StorageMode } from '@mao/contracts';
+
 export interface SystemSetting {
   id?: number;
   settingKey: string;
@@ -59,7 +63,7 @@ export interface DingtalkOauthSettings {
 }
 
 export interface UploadSettings {
-  storageMode: string;
+  storageMode: StorageMode;
   baseUrl: string;
   maxSizeMb: number;
 }
@@ -88,21 +92,28 @@ export interface WebSearchConfig {
   tinyfish: TinyFishSettings;
 }
 
+/** 阿里云 OSS（V4 预签名直传）：长期 AK/SK 即可，STS 子配置（oss.sts.*）已废弃不再读取。 */
 export interface OssSettings {
   region: string;
   accessKeyId: string;
   accessKeySecret: string;
   bucket: string;
-  sts: {
-    regionId: string;
-    endpoint: string;
-    accessKeyId: string;
-    accessKeySecret: string;
-    roleArn: string;
-    roleSessionName: string;
-    expire: number;
-    maxSizeMb: number;
-  };
+}
+
+/** 腾讯云 COS（预签名直传）：bucket 含 APPID 后缀（如 name-1250000000）。 */
+export interface CosSettings {
+  region: string;
+  secretId: string;
+  secretKey: string;
+  bucket: string;
+}
+
+/** 华为云 OBS（预签名直传）：endpoint 形如 obs.cn-north-4.myhuaweicloud.com。 */
+export interface ObsSettings {
+  endpoint: string;
+  accessKeyId: string;
+  accessKeySecret: string;
+  bucket: string;
 }
 
 /**

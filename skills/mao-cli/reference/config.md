@@ -136,11 +136,11 @@ TLS 终止代理属于服务器基础设施，不是 SSO 业务设置：`TRUSTED
 
 ### 集成配置（0.0.82 起迁移至管理后台，勿再改环境变量）
 
-LDAP 认证、飞书 OAuth 登录、上传方式（`UPLOAD_STORAGE_MODE` / `UPLOAD_BASE_URL`）、Tavily/TinyFish 搜索（`tools.tavilyApiKey` / `tools.tinyfishApiKey` / `tools.webSearchProvider`）、OSS 及 STS 凭证，已全部迁入管理后台「系统设置 → 集成配置」，保存后**即时生效、无需重启**，密钥 AES-GCM 加密入库。旧环境变量（`LDAP_*`、`FEISHU_ENABLED`、`FEISHU_APP_*`、`TAVILY_API_KEY`、`TINYFISH_API_KEY`、`WEB_SEARCH_PROVIDER`、`OSS_*` 等）仅在升级首次启动时由 SettingsBootstrap 自动导入 DB，之后一律以管理后台为准。
+LDAP 认证、飞书 OAuth 登录、上传方式（`UPLOAD_STORAGE_MODE` / `UPLOAD_BASE_URL`，存储模式支持 local / oss / cos / obs）、Tavily/TinyFish 搜索（`tools.tavilyApiKey` / `tools.tinyfishApiKey` / `tools.webSearchProvider`）、阿里云 OSS / 腾讯云 COS / 华为云 OBS 凭证，已全部迁入管理后台「系统设置 → 集成配置」，保存后**即时生效、无需重启**，密钥 AES-GCM 加密入库。旧环境变量（`LDAP_*`、`FEISHU_ENABLED`、`FEISHU_APP_*`、`TAVILY_API_KEY`、`TINYFISH_API_KEY`、`WEB_SEARCH_PROVIDER`、`OSS_*`、`COS_*`、`OBS_*` 等；`OSS_STS_*` 随 STS 直传废弃不再导入）仅在升级首次启动时由 SettingsBootstrap 自动导入 DB，之后一律以管理后台为准。
 
 | 变量 | 必需 | 说明 |
 |------|------|------|
-| `SETTINGS_SECRET` | 加密项建议 | 集成配置密钥（LDAP 密码、飞书 Secret、搜索 Key、OSS 凭证）的 AES 主密钥；未配置时加密项无法保存，可稍后在后台以明文项先行使用 |
+| `SETTINGS_SECRET` | 加密项建议 | 集成配置密钥（LDAP 密码、飞书 Secret、搜索 Key、OSS/COS/OBS 凭证）的 AES 主密钥；未配置时加密项无法保存，可稍后在后台以明文项先行使用 |
 
 ### 全网搜索实现（0.0.83 新增）
 

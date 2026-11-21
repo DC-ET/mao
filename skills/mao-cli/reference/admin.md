@@ -235,12 +235,12 @@ CLI：`mao http-tool list|enabled|stats|create|update|delete|set-enabled|test`�
 
 平台级配置，例如：
 
-- **登录认证**（密钥 AES 加密存储，LDAP/飞书登录/OSS 提供一键测试连接）：
+- **登录认证**（密钥 AES 加密存储，LDAP/飞书登录提供一键测试连接）：
   - 公司 SSO（0.0.111）：启用开关、校验域名白名单、宿主 Origin 白名单、Access 有效期、校验超时；白名单支持换行或逗号输入，宿主 Origin 可填精确 HTTP/HTTPS Origin（0.0.489 起支持 HTTP、localhost、IP 与非默认端口）、`https://*.example.com`（仅 HTTPS，任意层级子域、不含根域、端口严格匹配）或 `*`（所有来源）。以 `auth.companySso.config` 完整快照保存，新换票即时生效，取消 SSO 环境变量。业务系统仍用 `MaoChat.init` 的 `auth.checkUrl` 指定接口地址，详见 [SSO 配置](config.md#公司-ssoweb-embed-sdk)。
   - 账号密码登录（`auth.password.enabled`，默认开启；关闭后只影响桌面 / Web / 安卓和 `POST /auth/login`，含 LDAP。管理后台登录页始终保留用户名密码。关闭前须已启用飞书 OAuth 或 ECP，否则桌面端没有入口）
   - ECP 飞书登录、LDAP 认证、飞书 OAuth 登录（0.0.82 起由环境变量迁入）
   - 集成配置（0.0.298）：浮窗助手 Agent（`embed.agentId`，留空回落系统默认 Agent，见下文「浮窗助手」）
-- **文件与存储**：上传（存储方式 local/OSS、访问前缀、单文件大小上限）、阿里云 OSS 对象存储与 STS 临时凭证
+- **文件与存储**：上传（存储模式 local/oss/cos/obs、访问前缀、单文件大小上限）、阿里云 OSS / 腾讯云 COS / 华为云 OBS 对象存储（预签名直传，凭证 AES 加密、一键探针测试；详见 [settings.md](settings.md#图片附件存储模式uploadstoragemode)）
 - **Agent 引擎**：Agent 运行（0.0.88 迁入，线程池与 WS 超时重启生效）、LLM 超时与重试、上下文压缩（Harness 调参 0.0.89 迁入，保存后重启后端生效）
 - **模型任务**（各功能的默认模型，留空则跟随会话/系统默认）：会话（`session.titleModelId` 标题生成）、代码（`git.commitMessageModelId` Git 提交信息）、记忆（`memory.extractionModelId` 记忆自动抽取）
 - **工具与终端**：网络工具（Tavily / TinyFish 搜索实现切换与各自 API Key，0.0.83 新增双实现）、网页抓取、Shell 会话、云端终端、审批（审批模型与 Jev 前置决策；「测试连接」用当前表单探测 Jev 端点与 API Key，可未保存）、自定义 HTTP 工具（`tools.http.privateAllowlist` 内网放行 CIDR 清单，见 [http-tool.md](http-tool.md)）、Shell 环境变量（系统级变量与总开关 `shell.envVars.enabled`，变量 CRUD 见 [env.md](env.md)）

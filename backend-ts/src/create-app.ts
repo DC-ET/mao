@@ -94,7 +94,7 @@ import { WorkspaceBrowseService } from './file/workspace-browse.service.js';
 import { WorkspaceGitService } from './file/workspace-git.service.js';
 import { GitWriteOperationService } from './file/git-write-operation.service.js';
 import { GitCommitMessageService } from './file/git-commit-message.service.js';
-import { OssStsService, createAliyunAssumeRoleClient } from './oss/oss-sts.service.js';
+import { UploadTicketService } from './upload/upload-ticket.service.js';
 import { SkillBundleService } from './skill/skill-bundle.service.js';
 import { UserSkillService } from './skill/user-skill.service.js';
 import { SkillDocService } from './skill/skill-doc.service.js';
@@ -609,17 +609,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const workspaceBrowse = new WorkspaceBrowseService(pathSandbox);
   const workspaceGit = new WorkspaceGitService(pathSandbox);
 
-  const ossSts = new OssStsService(
-    () => settingService.getOssConfig(),
-    // 客户端创建失败时保留原始原因：静默替换会让「配置错误」和「网络抖动」都显示成同一条无信息量的错误
-    async (sts) => {
-      try {
-        return await createAliyunAssumeRoleClient(sts);
-      } catch (e) {
-        console.error('创建 OSS STS 客户端失败', e);
-        throw new Error(`创建 OSS STS 客户端失败: ${(e as Error).message}`);
-      }
-    },
+  const uploadTicketService = new UploadTicketService(
+    () => settingService.getUploadConfig(),
+    async () => ({
+      oss: await settingService.getOssConfig(),
+      cos: await settingService.getCosConfig(),
+      obs: await settingService.getObsConfig(),
+    }),
   );
 
   const userSkillsDir = cfg.app.harness.userSkillsDir || resolve(process.env.HOME ?? '/tmp', '.mao/data/userskills');
@@ -1113,7 +1109,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     workspaceBrowse, terminalManager, workspaceGit, gitCommitMsg, gitWrite, runtimeResolver,
     localFileFetch,
     remoteFileProxy,
-    ossSts,
+    uploadTicketService,
     skillBundleService, userSkillService, skillDocService,
     scheduledService,
     openRunService, apiTokenService, webhookTriggerService, outboundSubscriptionService,

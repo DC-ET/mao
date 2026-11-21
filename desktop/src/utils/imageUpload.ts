@@ -1,10 +1,10 @@
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
-import { normalizeImageForUpload, uploadToOss, type StsToken } from './ossUpload'
+import { normalizeImageForUpload, uploadViaTicket } from './objectStorageUpload'
 import { getUploadConfig, type UploadConfig } from './storageMode'
 
 /**
- * Upload chat image attachments (local API or OSS) and return accessible URLs.
+ * Upload chat image attachments (local API or object-storage direct upload) and return accessible URLs.
  * @param sessionId optional session for scoping upload credentials / local files
  */
 export async function uploadImages(files: File[], sessionId?: string | null): Promise<string[]> {
@@ -33,27 +33,18 @@ export async function uploadImages(files: File[], sessionId?: string | null): Pr
     return urls
   }
 
-  let stsToken: StsToken
-  try {
-    const { data } = await api.post('/oss/sts-token', {
-      sessionId: sessionId ? Number(sessionId) : null
-    })
-    stsToken = data
-  } catch (error) {
-    // 具体原因（连接超时 / OSS 未配置 / STS 鉴权失败）已由响应拦截器提示；
-    // 只有拦截器没有提示时才兜底，避免再弹一条通用文案把真实原因冲掉
-    if (!(error as Error & { toastShown?: boolean }).toastShown) {
-      ElMessage.error('获取上传凭证失败，请稍后重试')
-    }
-    return []
-  }
-
+  // 对象存储直传（oss / cos / obs 统一预签名票据链路，前端不感知具体云厂商）
   const urls: string[] = []
   for (const file of files) {
     try {
-      const url = await uploadToOss(file, stsToken)
-      urls.push(url)
-    } catch {
+      const normalized = await normalizeImageForUpload(file)
+      const { data } = await api.post('/upload/ticket', {
+        contentType: normalized.type || 'image/jpeg',
+        fileName: normalized.name,
+      })
+      urls.push(await uploadViaTicket(normalized, data))
+    } catch (error) {
+      if ((error as Error & { toastShown?: boolean }).toastShown) continue
       ElMessage.error(`图片 ${file.name} 上传失败`)
     }
   }

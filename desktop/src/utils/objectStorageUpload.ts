@@ -1,14 +1,4 @@
-import OSS from 'ali-oss'
-
-export interface StsToken {
-  accessKeyId: string
-  accessKeySecret: string
-  securityToken: string
-  bucket: string
-  region: string
-  uploadDir: string
-  expiration: string
-}
+import type { UploadTicketVO } from '@mao/contracts'
 
 const IMAGE_EXT_BY_MIME: Record<string, string> = {
   'image/png': '.png',
@@ -49,7 +39,7 @@ async function detectImageMime(file: File): Promise<string | null> {
   return null
 }
 
-/** Ensure image File has a usable MIME and filename extension before OSS upload. */
+/** Ensure image File has a usable MIME and filename extension before direct upload. */
 export async function normalizeImageForUpload(file: File): Promise<File> {
   let mime = file.type
   if (!mime || mime === 'application/octet-stream' || !mime.startsWith('image/')) {
@@ -67,19 +57,25 @@ export async function normalizeImageForUpload(file: File): Promise<File> {
   return new File([file], name, { type: mime })
 }
 
-export async function uploadToOss(file: File, stsToken: StsToken): Promise<string> {
-  const client = new OSS({
-    region: stsToken.region,
-    accessKeyId: stsToken.accessKeyId,
-    accessKeySecret: stsToken.accessKeySecret,
-    stsToken: stsToken.securityToken,
-    bucket: stsToken.bucket,
+/**
+ * 预签名 PUT 直传对象存储（oss/cos/obs 统一链路，前端不感知具体云厂商）。
+ * XHR 而非 fetch：保留上传进度能力（进度 UI 尚未接入，接口留好）。
+ * OBS 模式 Content-Type 参与签名，必须与签发票据时的值完全一致。
+ */
+export function uploadViaTicket(file: File, ticket: UploadTicketVO): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', ticket.uploadUrl, true)
+    xhr.setRequestHeader('Content-Type', file.type || 'image/jpeg')
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(ticket.publicUrl)
+      } else {
+        reject(new Error(`直传被拒绝 (HTTP ${xhr.status})`))
+      }
+    }
+    xhr.onerror = () => reject(new Error('直传网络错误（请检查 bucket CORS 配置）'))
+    xhr.ontimeout = () => reject(new Error('直传超时'))
+    xhr.send(file)
   })
-
-  const normalized = await normalizeImageForUpload(file)
-  const key = `${stsToken.uploadDir}${Date.now()}_${normalized.name}`
-  const result = await client.put(key, normalized, {
-    mime: normalized.type || 'image/jpeg',
-  })
-  return result.url
 }

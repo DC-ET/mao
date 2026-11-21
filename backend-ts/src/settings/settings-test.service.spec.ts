@@ -4,15 +4,17 @@ import {
   JEV_DEFAULT_ENDPOINT,
   JEV_DEFAULT_MODEL,
   mergeWithDefaults,
+  STORAGE_PROBE_KEY,
   testFeishuCredentials,
   testJevConnection,
   testLdapConnection,
-  testOssCredentials,
+  testObjectStorageProbe,
   testSmtpConnection,
   type JevTestHttp,
+  type StorageProbeHttp,
 } from './settings-test.service.js';
 import { BusinessException } from '../common/business-exception.js';
-import type { EmailSmtpSettings, LdapSettings, OssSettings } from './types.js';
+import type { EmailSmtpSettings, LdapSettings } from './types.js';
 
 const ldapCfg: LdapSettings = {
   enabled: true,
@@ -66,34 +68,42 @@ describe('testFeishuCredentials', () => {
   });
 });
 
-describe('testOssCredentials', () => {
-  const ossCfg: OssSettings = {
-    region: 'cn-hangzhou',
-    accessKeyId: 'ak',
-    accessKeySecret: 'sk',
-    bucket: 'bucket',
-    sts: {
-      regionId: 'cn-hangzhou',
-      endpoint: 'sts.cn-hangzhou.aliyuncs.com',
-      accessKeyId: 'sak',
-      accessKeySecret: 'ssk',
-      roleArn: 'acs:ram::1:role/x',
-      roleSessionName: 'mao-test',
-      expire: 3600,
-      maxSizeMb: 50,
-    },
-  };
+describe('testObjectStorageProbe（多云预签名直传探针）', () => {
+  const okDeps = { sign: vi.fn((key: string, _expires: number, method: string, _ct: string) => `https://signed/${method}/${key}`) };
+  const okHttp = (): StorageProbeHttp => ({ request: vi.fn(async (_url: string, init: { method: string }) => ({ ok: true, status: 200, body: '' })) });
 
-  it('callsAssumeRole', async () => {
-    const assumeRole = vi.fn(async () => ({}));
-    await testOssCredentials(ossCfg, async () => ({ assumeRole }));
-    expect(assumeRole).toHaveBeenCalledWith(expect.objectContaining({ roleSessionName: 'mao-test', durationSeconds: 3600 }));
+  it('putsProbeObjectThenDeletesCleanup', async () => {
+    const http = okHttp();
+    await testObjectStorageProbe('阿里云 OSS', [['Region', 'cn-hangzhou'], ['Bucket', 'bucket']], okDeps, http);
+    const calls = vi.mocked(http.request).mock.calls;
+    expect(calls[0][0]).toContain(`https://signed/PUT/${STORAGE_PROBE_KEY}`);
+    expect(calls[0][1].method).toBe('PUT');
+    expect(calls[0][1].headers).toEqual({ 'content-type': 'text/plain' });
+    expect(calls[1]?.[1].method).toBe('DELETE');
   });
 
-  it('wrapsAssumeRoleFailure', async () => {
-    await expect(testOssCredentials(ossCfg, async () => ({
-      assumeRole: async () => { throw new Error('denied'); },
-    }))).rejects.toThrow(/denied/);
+  it('rejectsMissingFields', async () => {
+    await expect(testObjectStorageProbe('腾讯云 COS', [['Region', ''], ['Bucket', 'b']], okDeps, okHttp()))
+      .rejects.toThrow(/Region 不能为空/);
+  });
+
+  it('wrapsNetworkFailureWithCorsHint', async () => {
+    const http: StorageProbeHttp = { request: vi.fn(async () => { throw new Error('fetch failed'); }) };
+    await expect(testObjectStorageProbe('华为云 OBS', [['Endpoint', 'e'], ['Bucket', 'b']], okDeps, http))
+      .rejects.toThrow(/连接失败: fetch failed/);
+  });
+
+  it('rejectsNonOkPutWithStatusAndBody', async () => {
+    const http: StorageProbeHttp = { request: vi.fn(async () => ({ ok: false, status: 403, body: 'SignatureDoesNotMatch' })) };
+    await expect(testObjectStorageProbe('阿里云 OSS', [['Region', 'r'], ['Bucket', 'b']], okDeps, http))
+      .rejects.toThrow(/HTTP 403.*SignatureDoesNotMatch/s);
+  });
+
+  it('ignoresDeleteCleanupFailure', async () => {
+    const http = okHttp();
+    vi.mocked(http.request).mockResolvedValueOnce({ ok: true, status: 200, body: '' })
+      .mockRejectedValueOnce(new Error('delete denied'));
+    await expect(testObjectStorageProbe('阿里云 OSS', [['Region', 'r'], ['Bucket', 'b']], okDeps, http)).resolves.toBeUndefined();
   });
 });
 

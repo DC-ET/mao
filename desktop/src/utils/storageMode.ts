@@ -1,7 +1,8 @@
+import type { StorageMode } from '@mao/contracts'
 import { api } from '../api'
 
 export interface UploadConfig {
-  storageMode: 'oss' | 'local'
+  storageMode: StorageMode
   baseUrl: string
   maxSizeMb: number
 }
@@ -25,6 +26,7 @@ export async function getUploadConfig(): Promise<UploadConfig> {
     cachedAt = Date.now()
     return cachedConfig!
   } catch {
-    return { storageMode: 'oss', baseUrl: '', maxSizeMb: 1024 }
+    // 取不到配置时回落本地磁盘：后端不可达时对象存储票据必然也拿不到
+    return { storageMode: 'local', baseUrl: '', maxSizeMb: 1024 }
   }
 }

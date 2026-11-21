@@ -57,7 +57,7 @@ const GLOBAL_HELP = `mao-cli — Mao 用户端与管理后台统一 CLI
   quick-command   快捷指令聚合列表
   command         个人指令 CRUD
   file            附件与工作区文件
-  oss             OSS STS
+  oss             对象存储上传票据
   upload-config   上传配置
   pref            偏好（任务面板/任务通知/微信语音回复）
   scheduled-task  定时任务列表、详情、更新、删除

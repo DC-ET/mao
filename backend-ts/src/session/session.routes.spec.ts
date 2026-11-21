@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { handleError } from '../common/http-error.js';
 import { registerSessionRoutes } from './session.routes.js';
 import { registerAdminSessionRoutes } from './admin-session.routes.js';
-import { registerOssRoutes } from '../oss/oss.routes.js';
+import { registerUploadTicketRoutes } from '../upload/upload-ticket.routes.js';
 import type { SessionService } from './session.service.js';
 import type { ActivityService } from './activity.service.js';
 import type { MessageQueueService } from './message-queue.service.js';
@@ -14,7 +14,7 @@ import type { RunTraceRecordService } from './run-trace-record.service.js';
 import type { SessionTodoRepository, SubagentExecutionRepository } from './activity.repository.js';
 import type { AgentLookup, LlmModelLookup, LocalWorkspaceSummaryRow, UserLookup } from './types.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
-import type { OssStsService } from '../oss/oss-sts.service.js';
+import type { UploadTicketService } from '../upload/upload-ticket.service.js';
 import { useTmpDir } from '../testing/tmp-dir.js';
 import { InFlightToolRegistry } from '../harness/core/in-flight-tool-registry.js';
 import { join } from 'node:path';
@@ -154,14 +154,16 @@ describe('session and admin routes', () => {
         getPendingForSession: vi.fn(() => []),
       },
     });
-    const ossStsService = {
-      generateStsToken: vi.fn(async () => ({
-        accessKeyId: 'a', accessKeySecret: 'b', securityToken: 'c', expiration: 'e',
-        bucket: 'bucket', region: 'cn-hangzhou', uploadDir: 'uploads/',
+    const uploadTicketService = {
+      generateTicket: vi.fn(async () => ({
+        uploadUrl: 'https://bucket.oss-cn-hangzhou.aliyuncs.com/uploads/1/1_a.png?x-oss-signature=sig',
+        key: 'uploads/1/1_a.png',
+        publicUrl: 'https://bucket.oss-cn-hangzhou.aliyuncs.com/uploads/1/1_a.png',
+        expiration: '2026-11-21T03:35:45.000Z',
       })),
-    } as unknown as OssStsService;
-    registerOssRoutes(fastify, { ossStsService });
-    return { fastify, sessionService, ossStsService, compactionEvents: compactionEventService, compactionRecordService, runTraceService, runTraceRecordService, root };
+    } as unknown as UploadTicketService;
+    registerUploadTicketRoutes(fastify, { uploadTicketService });
+    return { fastify, sessionService, uploadTicketService, compactionEvents: compactionEventService, compactionRecordService, runTraceService, runTraceRecordService, root };
   }
 
   it('covers session rest endpoints', async () => {
@@ -678,10 +680,10 @@ describe('session and admin routes', () => {
     await fastify.close();
   });
 
-  it('issuesOssStsToken', async () => {
+  it('issuesUploadTicket', async () => {
     const { fastify } = await app();
-    const res = await fastify.inject({ method: 'POST', url: '/v1/oss/sts-token', payload: { sessionId: 1 } });
-    expect(JSON.parse(res.body).data.uploadDir).toBe('uploads/');
+    const res = await fastify.inject({ method: 'POST', url: '/v1/upload/ticket', payload: { contentType: 'image/png', fileName: 'a.png' } });
+    expect(JSON.parse(res.body).data.key).toBe('uploads/1/1_a.png');
     await fastify.close();
   });
 

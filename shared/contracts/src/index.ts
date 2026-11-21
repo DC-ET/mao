@@ -25,6 +25,7 @@ export type { LlmCallScene } from './usage';
 export type { UsageRange, UsageDateRange, UsageWindow, TrendGranularity, LlmCallSummaryRow, LlmCallModelAggRow, LlmCallSceneAggRow, LlmCallAgentAggRow, LlmCallTrendRow, MyUsageSummary, MyUsageTrends } from './usage';
 export type { SignalCompareMode, SignalWatcherStatus, SignalTriggerMode, SignalWatcherWarning, SignalWhenChangeInput, SignalCheckDetailInput, SignalProbeType } from './signal';
 export { SIGNAL_SNIPPET_MAX_CHARS, truncateSignalSnippet, formatSignalChangeValue, formatSignalCheckDetail } from './signal';
+export type { StorageMode, UploadTicketVO } from './storage';
 export type { PageReadToolName, PageWriteToolName } from './page';
 export type { MemoryScope, MemoryStatus, MemorySource } from './memory';
 export type { ApprovalRuleType, ApprovalRuleScope, ApprovalHint } from './approval-rule';

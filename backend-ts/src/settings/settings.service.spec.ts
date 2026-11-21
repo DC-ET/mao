@@ -356,7 +356,9 @@ describe('SystemSettingService', () => {
 
   it('updateValidatesStorageModeEnum', async () => {
     vi.mocked(mapper.findByKey).mockResolvedValue(setting('upload.storageMode', '集成配置', 1));
-    await expect(service().update('upload.storageMode', 's3')).rejects.toThrow(/local 或 oss/);
+    await expect(service().update('upload.storageMode', 's3')).rejects.toThrow(/local \/ oss \/ cos \/ obs/);
+    await expect(service().update('upload.storageMode', 'cos')).resolves.toBeTruthy();
+    await expect(service().update('upload.storageMode', 'obs')).resolves.toBeTruthy();
   });
 
   it('updateValidatesWebSearchProviderEnum', async () => {
@@ -571,17 +573,53 @@ describe('SystemSettingService', () => {
       'oss.accessKeyId': 'ak',
       'oss.accessKeySecret': encryptAesGcmNonNull('sk', 'test-secret-key'),
       'oss.bucket': 'bucket',
-      'oss.sts.roleArn': 'acs:ram::1:role/x',
     };
     vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => {
       if (rows[key] != null) return { id: 1, settingKey: key, value: rows[key], category: '集成配置', editable: 1 };
       return null;
     });
-    const cfg = await new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, 'test-secret-key').getOssConfig();
+    const svc = new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, 'test-secret-key');
+    const cfg = await svc.getOssConfig();
     expect(cfg).not.toBeNull();
-    expect(cfg!.region).toBe('cn-hangzhou');
-    expect(cfg!.sts.roleSessionName).toBe('mao-sts');
-    expect(cfg!.sts.expire).toBe(3600);
+    expect(cfg).toEqual({ region: 'cn-hangzhou', accessKeyId: 'ak', accessKeySecret: 'sk', bucket: 'bucket' });
+    // 废弃的 oss.sts.* 行不再参与配置读取（多云预签名直传，V201）
+    expect(await svc.getCosConfig()).toBeNull();
+    expect(await svc.getObsConfig()).toBeNull();
+  });
+
+  it('getCosConfigAndGetObsConfigReadSecretsWhenSet', async () => {
+    const rows: Record<string, string> = {
+      'cos.region': 'ap-guangzhou',
+      'cos.secretId': 'sid',
+      'cos.secretKey': encryptAesGcmNonNull('skey', 'test-secret-key'),
+      'cos.bucket': 'b-1250000000',
+      'obs.endpoint': 'obs.cn-north-4.myhuaweicloud.com',
+      'obs.accessKeyId': 'oak',
+      'obs.accessKeySecret': encryptAesGcmNonNull('osk', 'test-secret-key'),
+      'obs.bucket': 'ob',
+    };
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => {
+      if (rows[key] != null) return { id: 1, settingKey: key, value: rows[key], category: '集成配置', editable: 1 };
+      return null;
+    });
+    const svc = new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime }, 'test-secret-key');
+    expect(await svc.getCosConfig()).toEqual({ region: 'ap-guangzhou', secretId: 'sid', secretKey: 'skey', bucket: 'b-1250000000' });
+    expect(await svc.getObsConfig()).toEqual({ endpoint: 'obs.cn-north-4.myhuaweicloud.com', accessKeyId: 'oak', accessKeySecret: 'osk', bucket: 'ob' });
+  });
+
+  it('getUploadConfigKeepsObjectStorageModesAndFallsBackToLocal', async () => {
+    vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => {
+      if (key !== 'upload.storageMode') return null;
+      return null;
+    });
+    for (const [raw, expected] of [['oss', 'oss'], ['cos', 'cos'], ['obs', 'obs'], ['local', 'local'], ['s3', 'local'], ['', 'local']] as Array<[string, string]>) {
+      vi.mocked(mapper.findByKey).mockImplementation(async (key: string) => {
+        if (key !== 'upload.storageMode') return null;
+        return { id: 1, settingKey: key, value: raw, category: '集成配置', editable: 1 };
+      });
+      const cfg = await service().getUploadConfig();
+      expect(cfg.storageMode, `raw=${raw}`).toBe(expected);
+    }
   });
 
   it('getLdapConfigReadsEnabledFlag', async () => {

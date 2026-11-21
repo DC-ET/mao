@@ -32,7 +32,7 @@ test('settings integration panel renders with masked secrets and feishu test pas
   await expect(feishuTitle).toBeVisible()
 
   // 2. 五张分组卡片
-  for (const title of ['LDAP 认证', '飞书 OAuth 登录', '上传配置', 'OSS 对象存储', '网络工具']) {
+  for (const title of ['LDAP 认证', '飞书 OAuth 登录', '上传配置', '阿里云 OSS', '腾讯云 COS', '华为云 OBS', '网络工具']) {
     await expect(page.locator('.group-title', { hasText: title })).toBeVisible()
   }
 
@@ -66,7 +66,7 @@ test('settings batch save round-trip persists and restores value', async ({ page
   await page.goto('/admin/settings')
   await page.waitForSelector('.integration-panel', { timeout: 10_000 })
 
-  const ossCard = page.locator('.group-card', { hasText: 'OSS 对象存储' })
+  const ossCard = page.locator('.group-card', { hasText: '阿里云 OSS' })
   const sessionInput = ossCard.locator('input').nth(0) // oss.region 第一个文本输入
   const original = await sessionInput.inputValue()
   expect(original).toContain('oss-cn-')

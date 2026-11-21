@@ -5,11 +5,12 @@ import { bodyOf, pathParam, queryOptStr } from '../common/request.js';
 import { JEV_API_KEY_KEY, JEV_ENDPOINT_KEY, JEV_MODEL_KEY, type SystemSettingService } from './settings.service.js';
 import { defaultFeishuHttp } from '../auth/feishu-auth.service.js';
 import {
-  defaultJevHttp, defaultLdapClientFactory, mergeWithDefaults, testFeishuCredentials, testJevConnection, testLdapConnection, testOssCredentials, testSmtpConnection,
+  defaultJevHttp, defaultLdapClientFactory, defaultStorageProbeHttp, mergeWithDefaults, testFeishuCredentials, testJevConnection, testLdapConnection, testObjectStorageProbe, testSmtpConnection,
   type EmailTestSender,
 } from './settings-test.service.js';
 import { EmailWebhookSender } from '../notification/task/email-sender.js';
 import type { EmailSmtpSettings } from './types.js';
+import { signCosRequest, signObsRequest, signOssRequest } from '../upload/storage-signer.js';
 
 export interface SystemSettingRouteDeps {
   systemSettingService: SystemSettingService;
@@ -114,38 +115,51 @@ export function registerSystemSettingRoutes(app: FastifyInstance, deps: SystemSe
     return sendOk(reply, { ok: true });
   });
 
+  // 三家对象存储连通性测试（多云预签名直传）：表单 overrides 与已存配置合并，可测未保存的修改。
+  // 探针 = 对 uploads/.mao-probe 真实预签名 PUT + DELETE 清理，验证凭证与 bucket 写权限。
   app.post('/v1/system-settings/test/oss', async (request, reply) => {
     const userId = requireUserId(request);
     await requirePermission(permissionService, userId, 'settings:write');
-    // 表单 overrides 与已存配置合并：留空（null/undefined）= 回落已存值，可测未保存的修改
-    const overrides = bodyOf<Partial<{
-      region: string; accessKeyId: string; accessKeySecret: string; bucket: string;
-      stsRegionId: string; stsEndpoint: string; stsAccessKeyId: string; stsAccessKeySecret: string; stsRoleArn: string;
-    }>>(request);
-    const stored = (await systemSettingService.getOssConfig()) ?? {
-      region: '', accessKeyId: '', accessKeySecret: '', bucket: '',
-      sts: { regionId: '', endpoint: '', accessKeyId: '', accessKeySecret: '', roleArn: '', roleSessionName: 'mao-sts', expire: 3600, maxSizeMb: 50 },
-    };
-    // mergeWithDefaults 是浅合并：sts 需在此处按字段回落已存值，仅覆盖表单非空项
-    const stsMerged = {
-      ...stored.sts,
-      ...(hasText(overrides.stsRegionId) ? { regionId: overrides.stsRegionId } : {}),
-      ...(hasText(overrides.stsEndpoint) ? { endpoint: overrides.stsEndpoint } : {}),
-      ...(hasText(overrides.stsAccessKeyId) ? { accessKeyId: overrides.stsAccessKeyId } : {}),
-      ...(hasText(overrides.stsAccessKeySecret) ? { accessKeySecret: overrides.stsAccessKeySecret } : {}),
-      ...(hasText(overrides.stsRoleArn) ? { roleArn: overrides.stsRoleArn } : {}),
-    };
-    const merged = mergeWithDefaults({
-      region: overrides.region,
-      accessKeyId: overrides.accessKeyId,
-      accessKeySecret: overrides.accessKeySecret,
-      bucket: overrides.bucket,
-      sts: stsMerged,
-    }, stored);
-    await testOssCredentials(merged, async (sts) => {
-      const { createAliyunAssumeRoleClient } = await import('../oss/oss-sts.service.js');
-      return createAliyunAssumeRoleClient(sts);
-    });
+    const overrides = bodyOf<Partial<{ region: string; accessKeyId: string; accessKeySecret: string; bucket: string }>>(request);
+    const stored = (await systemSettingService.getOssConfig()) ?? { region: '', accessKeyId: '', accessKeySecret: '', bucket: '' };
+    const merged = mergeWithDefaults(overrides, stored);
+    await testObjectStorageProbe('阿里云 OSS', [
+      ['Region', merged.region], ['AccessKey ID', merged.accessKeyId],
+      ['AccessKey Secret', merged.accessKeySecret], ['Bucket', merged.bucket],
+    ], {
+      sign: (key, expires, method) => signOssRequest(merged, method, key, expires, Date.now()).uploadUrl,
+    }, defaultStorageProbeHttp());
+    return sendOk(reply, { ok: true });
+  });
+
+  app.post('/v1/system-settings/test/cos', async (request, reply) => {
+    const userId = requireUserId(request);
+    await requirePermission(permissionService, userId, 'settings:write');
+    const overrides = bodyOf<Partial<{ region: string; secretId: string; secretKey: string; bucket: string }>>(request);
+    const stored = (await systemSettingService.getCosConfig()) ?? { region: '', secretId: '', secretKey: '', bucket: '' };
+    const merged = mergeWithDefaults(overrides, stored);
+    await testObjectStorageProbe('腾讯云 COS', [
+      ['Region', merged.region], ['SecretId', merged.secretId],
+      ['SecretKey', merged.secretKey], ['Bucket', merged.bucket],
+    ], {
+      sign: (key, expires, method) => signCosRequest(merged, method, key, expires, Date.now()).uploadUrl,
+    }, defaultStorageProbeHttp());
+    return sendOk(reply, { ok: true });
+  });
+
+  app.post('/v1/system-settings/test/obs', async (request, reply) => {
+    const userId = requireUserId(request);
+    await requirePermission(permissionService, userId, 'settings:write');
+    const overrides = bodyOf<Partial<{ endpoint: string; accessKeyId: string; accessKeySecret: string; bucket: string }>>(request);
+    const stored = (await systemSettingService.getObsConfig()) ?? { endpoint: '', accessKeyId: '', accessKeySecret: '', bucket: '' };
+    const merged = mergeWithDefaults(overrides, stored);
+    await testObjectStorageProbe('华为云 OBS', [
+      ['Endpoint', merged.endpoint], ['AccessKey ID', merged.accessKeyId],
+      ['AccessKey Secret', merged.accessKeySecret], ['Bucket', merged.bucket],
+    ], {
+      // OBS 的 Content-Type 参与签名：探针 PUT 带 text/plain 头，签名时必须带同一值
+      sign: (key, expires, method, contentType) => signObsRequest(merged, method, key, expires, Date.now(), contentType || 'text/plain').uploadUrl,
+    }, defaultStorageProbeHttp());
     return sendOk(reply, { ok: true });
   });
 

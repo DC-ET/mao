@@ -209,25 +209,15 @@ const GROUP_BEHAVIOR: Record<string, Pick<GroupDef, 'testApi' | 'testPayload'>> 
   },
   oss: {
     testApi: '/system-settings/test/oss',
-    testPayload: (m) => {
-      const map: Record<string, string> = {
-        'oss.region': 'region',
-        'oss.accessKeyId': 'accessKeyId',
-        'oss.accessKeySecret': 'accessKeySecret',
-        'oss.bucket': 'bucket',
-        'oss.sts.regionId': 'stsRegionId',
-        'oss.sts.endpoint': 'stsEndpoint',
-        'oss.sts.accessKeyId': 'stsAccessKeyId',
-        'oss.sts.accessKeySecret': 'stsAccessKeySecret',
-        'oss.sts.roleArn': 'stsRoleArn',
-      }
-      const out: Record<string, string> = {}
-      for (const [src, dst] of Object.entries(map)) {
-        const value = m[src]
-        if (value != null && value.trim() !== '') out[dst] = value
-      }
-      return out
-    },
+    testPayload: (m) => pickNonEmpty(m, ['oss.region', 'oss.accessKeyId', 'oss.accessKeySecret', 'oss.bucket'], ['oss.region:region', 'oss.accessKeyId:accessKeyId', 'oss.accessKeySecret:accessKeySecret', 'oss.bucket:bucket']),
+  },
+  cos: {
+    testApi: '/system-settings/test/cos',
+    testPayload: (m) => pickNonEmpty(m, ['cos.region', 'cos.secretId', 'cos.secretKey', 'cos.bucket'], ['cos.region:region', 'cos.secretId:secretId', 'cos.secretKey:secretKey', 'cos.bucket:bucket']),
+  },
+  obs: {
+    testApi: '/system-settings/test/obs',
+    testPayload: (m) => pickNonEmpty(m, ['obs.endpoint', 'obs.accessKeyId', 'obs.accessKeySecret', 'obs.bucket'], ['obs.endpoint:endpoint', 'obs.accessKeyId:accessKeyId', 'obs.accessKeySecret:accessKeySecret', 'obs.bucket:bucket']),
   },
 }
 

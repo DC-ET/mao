@@ -4,7 +4,7 @@
 
 列出系统配置项，并按 key 更新 value。需 `settings:read` / `settings:write` 权限（0.0.82 起）。
 
-集成配置类 key（`auth.ldap.*`、`auth.feishu.*`、`upload.*`、`tools.*`、`oss.*`、`agent.*`、`notify.*`、`harness.*` 等）已支持后台可视化编辑（`agent.*`/`ws.*`/`harness.*` 为启动时构建，保存后需重启后端生效，其余即时生效）；secret 类项（`is_secret`）写入后仅返回掩码，不可读回明文。
+集成配置类 key（`auth.ldap.*`、`auth.feishu.*`、`upload.*`、`tools.*`、`oss.*`、`cos.*`、`obs.*`、`agent.*`、`notify.*`、`harness.*` 等）已支持后台可视化编辑（`agent.*`/`ws.*`/`harness.*` 为启动时构建，保存后需重启后端生效，其余即时生效）；secret 类项（`is_secret`）写入后仅返回掩码，不可读回明文。
 
 Shell 环境变量的注入总开关是 `shell.envVars.enabled`（`true` / `false`，缺省视为开启）。三层变量本身不在本模块，用 `mao env`，见 [env.md](env.md)。
 
@@ -78,20 +78,45 @@ mao settings batch --items '[{"key":"weixin.agentId","value":"1"},{"key":"sessio
 |------|----------------|------|
 | `ldap` | `--url` `--base-dn` `--user-dn` `--password` `--user-search-base` | LDAP 连接测试 |
 | `feishu` | `--app-id` `--app-secret` | 飞书 OAuth 凭证测试 |
-| `oss` | `--region` `--access-key-id` `--access-key-secret` `--bucket` `--sts-region-id` `--sts-endpoint` `--sts-access-key-id` `--sts-access-key-secret` `--sts-role-arn` | OSS 凭证与 STS 试签 |
+| `oss` | `--region` `--access-key-id` `--access-key-secret` `--bucket` | 阿里云 OSS 连通性（预签名 PUT 探针对象后清理） |
+| `cos` | `--region` `--secret-id` `--secret-key` `--bucket` | 腾讯云 COS 连通性（同探针机制） |
+| `obs` | `--endpoint` `--access-key-id` `--access-key-secret` `--bucket` | 华为云 OBS 连通性（同探针机制） |
 | `jev` | `--endpoint` `--model` `--api-key` | Jev 前置决策端点与 API Key：发一次只读探测，校验 Key 与决策协议响应 |
 | `smtp` | `--smtp-host` `--smtp-port` `--smtp-secure` `--smtp-user` `--smtp-password` `--from-addr` | 邮件（SMTP）配置：发一封测试邮件到当前管理员个人资料邮箱 |
 
-`POST /system-settings/test/{ldap|feishu|oss|jev|smtp}`
+`POST /system-settings/test/{ldap|feishu|oss|cos|obs|jev|smtp}`
 
 ```bash
 mao settings test ldap
 mao settings test oss --region cn-hangzhou --access-key-id AK --access-key-secret SK
+mao settings test cos --region ap-guangzhou --secret-id AKID --secret-key SK
+mao settings test obs --endpoint obs.cn-north-4.myhuaweicloud.com --access-key-id AK --access-key-secret SK
 mao settings test jev --endpoint https://api.typesafe.ai/v1/systemone --model jev-latest --api-key sk-...
 mao settings test smtp --smtp-host smtp.example.com --smtp-port 465 --smtp-secure 1 --smtp-user sender@example.com --smtp-password '***' --from-addr noreply@example.com
 ```
 
 `smtp` 测试只发到**当前管理员本人**的 `user.email`：管理员未在个人资料填写邮箱时拒绝并提示；`--smtp-secure` 接受 `1/0` 或 `true/false`；留空项回落已存配置（可测未保存的修改），`enabled` 强制置 true（未启用也可先测通再开启）。
+
+## 图片附件存储模式（`upload.storageMode`）
+
+管理后台「系统设置 → 文件与存储 → 上传配置」，保存后即时生效（前端 60s 缓存内收敛）。四种模式：
+
+| 模式 | 配置组 | 说明 |
+|------|--------|------|
+| `local`（默认） | — | 服务端磁盘 `{uploadDir}/{uid}`，经 `/uploads/` 静态访问 |
+| `oss` | 阿里云 OSS（`oss.*`） | V4 预签名直传；原 STS 子配置（`oss.sts.*`）已废弃，改用长期 AK/SK 参与签名 |
+| `cos` | 腾讯云 COS（`cos.*`） | bucket 需含 APPID 后缀（如 `name-1250000000`） |
+| `obs` | 华为云 OBS（`obs.*`） | 填终端节点 endpoint（如 `obs.cn-north-4.myhuaweicloud.com`） |
+
+三种对象存储模式共用同一链路：前端 `POST /v1/upload/ticket` 领预签名 PUT 票据（一票一对象、10 分钟有效、key 由服务端生成 `uploads/{userId}/{ts}_{name}`）后直传 bucket，图片 URL（publicUrl）直接写入消息。管理员可用各配置组「测试连接」做真实探针校验（对 `uploads/.mao-probe` 签名 PUT 后清理）。
+
+**bucket 侧要求（三家一致，部署时配置）**：
+
+1. **公共读**：图片 URL 进消息供多模态模型与查看器直接访问，bucket 需允许匿名 GET `uploads/*`（延续既有 OSS 口径）；
+2. **CORS**：直传受 bucket CORS 约束——AllowedOrigin 放行桌面/Web 域名（开发加 `http://localhost:*`），AllowedMethod `PUT`，AllowedHeader `content-type`；
+3. **最小权限**：建议用仅含 `{bucket}/uploads/*` PutObject/DeleteObject 权限的子账号/密钥（预签名只签 `uploads/` 前缀，key 用户不可指定）。
+
+从旧版升级：已配 `oss` 的实例语义不变，但 STS 子账号凭证不再使用——请确认 `oss.accessKeyId/Secret` 主 AK/SK 对 bucket 有 PutObject 权限（「测试连接」即可验证）；`oss.sts.*` 行标记已废弃、无需配置。
 
 ## 邮件通知配置（`notify.email.*`，0.0.318 起）
 

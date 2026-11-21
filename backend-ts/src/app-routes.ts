@@ -52,7 +52,7 @@ import type { WorkspaceGitService } from './file/workspace-git.service.js';
 import type { GitCommitMessageService } from './file/git-commit-message.service.js';
 import type { GitWriteOperationService } from './file/git-write-operation.service.js';
 import type { RuntimeDataResolver } from './harness/runtime/runtime-data-resolver.js';
-import type { OssStsService } from './oss/oss-sts.service.js';
+import type { UploadTicketService } from './upload/upload-ticket.service.js';
 import type { SkillBundleService } from './skill/skill-bundle.service.js';
 import type { UserSkillService } from './skill/user-skill.service.js';
 import type { SkillDocService } from './skill/skill-doc.service.js';
@@ -147,7 +147,7 @@ import type { TerminalHostHandler } from './harness/terminal/terminal-host-handl
 import { WorkspaceWriteService } from './file/workspace-write.service.js';
 import { WorkspaceOverviewService } from './file/workspace-overview.service.js';
 import { registerFileRoutes } from './file/file.routes.js';
-import { registerOssRoutes } from './oss/oss.routes.js';
+import { registerUploadTicketRoutes } from './upload/upload-ticket.routes.js';
 import { registerSkillBundleRoutes } from './skill/skill-bundle.routes.js';
 import { registerSkillRoutes } from './skill/skill.routes.js';
 import { registerScheduledTaskRoutes } from './schedule/scheduled-task.routes.js';
@@ -281,8 +281,8 @@ export interface RouteDeps {
   gitWrite: GitWriteOperationService;
   runtimeResolver: RuntimeDataResolver;
 
-  // file
-  ossSts: OssStsService;
+  // upload
+  uploadTicketService: UploadTicketService;
 
   // skill
   skillBundleService: SkillBundleService;
@@ -385,7 +385,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     approvalRegistry, askUserQuestionsRegistry, inFlightToolRegistry, treeSignalPublisher,
     workspaceBrowse, terminalManager, workspaceGit, gitCommitMsg, gitWrite, runtimeResolver, localFileFetch,
     remoteFileProxy,
-    ossSts,
+    uploadTicketService,
     skillBundleService, userSkillService, skillDocService,
     scheduledService,
     openRunService, apiTokenService, webhookTriggerService, outboundSubscriptionService,
@@ -621,7 +621,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       getUploadBaseUrl: async () => (await settingService.getUploadConfig()).baseUrl,
       runtimeDataResolver: runtimeResolver,
     });
-    registerOssRoutes(api, { ossStsService: ossSts });
+    registerUploadTicketRoutes(api, { uploadTicketService });
     registerSkillBundleRoutes(api, { skillBundleService, permissionService });
     registerSkillRoutes(api, {
       userSkillService, skillDocService, skillSyncService: skillSync,
