@@ -28,15 +28,76 @@
 | 管理员 | 添加/编辑/启停/删除机器人，配置每个机器人的 Agent/模型 | 管理后台「能力 → 飞书机器人」（Skills 管理上方，见 [admin.md](admin.md)） |
 | 普通用户 | 绑定/解绑飞书账号、查看绑定状态 | 桌面端「设置 → 渠道绑定 → 飞书机器人」（[desktop.md](desktop.md)） |
 
+## 创建飞书机器人（开放平台配置）
+
+通道以**企业自建应用**接入，服务端与飞书走 WebSocket 长连接（消息事件与卡片按钮回调共用同一条连接），**无需配置请求网址回调，也用不到 Encrypt Key / Verification Token**。每个应用对应管理后台里的一个机器人，可创建多个应用并行接入。
+
+1. **创建应用**：飞书开放平台 → 开发者后台，两条入口任选其一、殊途同归——「创建企业自建应用」从零创建，或「创建飞书智能体应用」按模板一键生成；两者最终产出的都是同一个企业自建应用（App ID / App Secret、开放平台控制台与后续配置方式完全一致），智能体模板只是预置了机器人能力与部分默认权限，Mao 所需的完整权限与事件订阅仍需按第 3–4 步补齐。记下 App ID / App Secret。
+2. **开启机器人能力**：「应用功能 → 机器人」→ 启用机器人。不开则收不到任何消息事件。
+3. **开通权限**：「权限管理 → 批量开通」粘贴下方 JSON 一键导入（Mao 全量最小权限集合，无需逐项研究；清单中 Mao 当前未用到的权限为预留冗余，多开不影响运行）：
+
+   ```json
+   {
+     "scopes": {
+       "tenant": [
+         "application:app_slash_command:read",
+         "application:app_slash_command:write",
+         "application:application:self_manage",
+         "application:bot.basic_info:read",
+         "application:bot.menu:write",
+         "cardkit:card:read",
+         "cardkit:card:write",
+         "contact:contact.base:readonly",
+         "contact:user.basic_profile:readonly",
+         "docs:document.comment:create",
+         "docs:document.comment:delete",
+         "docs:document.comment:read",
+         "docs:document.comment:update",
+         "docs:document.comment:write_only",
+         "docx:document.block:convert",
+         "docx:document:readonly",
+         "docx:document:write_only",
+         "drive:drive.metadata:readonly",
+         "im:chat",
+         "im:chat.members:bot_access",
+         "im:chat:create",
+         "im:chat:read",
+         "im:chat:readonly",
+         "im:chat:update",
+         "im:message.group_at_msg.include_bot:readonly",
+         "im:message.group_at_msg:readonly",
+         "im:message.group_msg.include_bot:read",
+         "im:message.p2p_msg:readonly",
+         "im:message.pins:read",
+         "im:message.pins:write_only",
+         "im:message.reactions:read",
+         "im:message.reactions:write_only",
+         "im:message.urgent",
+         "im:message:readonly",
+         "im:message:send_as_bot",
+         "im:message:send_multi_users",
+         "im:message:send_sys_msg",
+         "im:message:update",
+         "im:resource",
+         "wiki:node:read"
+       ],
+       "user": [
+         "offline_access"
+       ]
+     }
+   }
+   ```
+
+   核心权限对应能力：消息收发与卡片更新（`im:message*`、`im:resource`，进度卡就地更新与图片 / 文件收发）；群信息（`im:chat*`，群会话标题与群上下文展示）；用户基本信息（`contact:user.basic_profile:readonly`，发送人姓名）；机器人信息（`application:bot.basic_info:read`，群聊 @ 精确命中本机器人）；获取用户 union_id（识别发送者身份，未开通则全员按未绑定处理）。
+4. **事件与回调**：「事件与回调」页：
+   - 订阅方式选择**使用长连接接收事件**；
+   - 「事件订阅」添加 **`im.message.receive_v1`**（长连接只是传输方式，事件仍须在此页订阅才收得到；私聊、群 @、话题触发全靠它，话题识别读事件自带的 `thread_id`，无需订阅群配置类事件）；
+   - 卡片回调方式同样选择**长连接**（`card.action.trigger`；进度卡上的「取消任务」「重试」「立即发送」「取消本次任务」「重新获取链接」「点踩」按钮都走它，未开启则按钮点击无响应）。
+5. **发布版本**：「版本管理与发布」设置可用范围（需使用的用户须在范围内），创建版本并申请发布，企业管理员审核通过后权限与事件订阅才生效。**每次权限 / 事件变更后都要再发一版**，否则改动不生效。
+
 ## 使用流程
 
-1. **飞书开放平台**：创建自建应用，获取 App ID / App Secret；开通机器人能力与所需权限（至少：消息与群组相关、**获取用户 union_id**——未开通则无法识别发送者，全员按未绑定处理）。
-   - **快速方式**：创建应用时选择飞书提供的「创建飞书智能体应用」，可一键创建自带机器人能力的基础应用；在此基础上仍需手动补齐下列额外权限与事件订阅，才能获得完整集成能力。
-   - 在智能体应用默认权限之外，额外开通以下权限：
-     - `im:message.group_msg.include_bot:read`：读取群里发给机器人的消息（含 @ 机器人群聊消息），群聊 @ 触发与【群内最近消息】上下文依赖此权限；
-     - `im:chat`：读取群信息（群名等），用于群会话标题与群上下文展示（缺权限时群会话标题降级为默认标题）；
-     - `contact:user.basic_profile:readonly`：只读获取用户基本信息，用于解析发送人姓名（合并转发摘录、群消息上下文中的 `发送人：内容`）。
-   - 在「事件与回调 → 事件订阅」中，除机器人消息事件外额外订阅：`im.chat.updated_v1`（群配置变更事件，含 `group_message_type` 字段，用于话题群 / 话题格式群的模式切换感知）。
+1. **飞书开放平台**：按「[创建飞书机器人（开放平台配置）](#创建飞书机器人开放平台配置)」创建自建应用、开通机器人能力、批量导入权限、配置事件与卡片回调并发布版本，拿到 App ID / App Secret。
 2. **管理后台**：「飞书机器人」→ 添加机器人（内部唯一键、名称、App ID、App Secret、Agent、模型）→ 启用。保存 App Secret 需后端已配置 `APP_FEISHU_BOT_SECRET`（AES-GCM 加密存储）。
 3. **用户绑定**：桌面端「设置 → 渠道绑定 → 飞书机器人」→ 绑定飞书账号（扫码/内嵌窗口授权）→ 状态变为已绑定。或在飞书内先给机器人发消息，按引导链接完成授权（未开通 ECP / 飞书 OAuth 的部署走「账号密码登录绑定」：点卡片按钮登录 Mao，核对身份后点「确认绑定」即完成绑定并重放原消息）。全站启用 ECP 飞书登录时，飞书内引导一律走 ECP 授权（按邮箱登录 Mao、写入 `sessionToken`，未绑则绑定 `union_id`）；设置页绑定仍通过 Mao 飞书应用 OAuth 单独获取 `union_id`，但仅绑定还不能触发任务，还需同一邮箱完成一次 ECP 飞书登录。
 4. **使用**：私聊机器人直接发消息；群聊把机器人拉进群后 @ 机器人。ECP 开启时，发送者必须同时满足「已绑定」且「有未过期的 ECP 票」，否则再次收到登录引导。私聊想开启新任务时发送 `---` 新建会话；想回到历史任务时回复/引用那个会话里的任意消息（含机器人回复与进度卡片）自动切换回去。
