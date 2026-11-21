@@ -47,11 +47,12 @@ LOCAL 运行时布局（跨平台一致，`~` 即 `%USERPROFILE%`）：
 1. Windows 桌面客户端 LOCAL 模式：Agent 经 browser-use 技能完成浏览器自动化（open/snapshot/click/type/close 全流程），体验与 macOS/CLOUD 一致。
 2. 观看链路在 Windows LOCAL 打通：PiP 出窗、双击放大 Tab、停止按钮、退出清理。
 3. 依赖按需安装链在 Windows 后端（LOCAL 后端跑在用户机上）可用：管理员启用技能 → 自动装 CLI + chromium（免管理员权限）。
-4. 不回归 POSIX：macOS/Linux/CLOUD 行为零变化（M1 期间 bash wrapper 原样保留）。
+4. 不回归 POSIX：macOS/Linux/CLOUD 行为零变化（M1 期间 bash wrapper 仅在文件头加一行注释，其余原样保留）。
 
 非目标：
 
 - 不支持 Windows 上的 docker 运行时分支（LOCAL 恒为 host 模式；docker 分支本就只服务 Linux 服务器）。
+- 后端与桌面**不同机**的拓扑（Windows 桌面连远程 Linux 后端，SaaS 形态）：deps 安装链在后端宿主执行，D2 不会在用户机生效，用户机浏览器内核前置 = 系统 Chrome（`channel: chrome`）或手动 `npx playwright-cli install-browser`，无自动安装路径（见 D2「适用拓扑」）。
 - 不覆盖 mao-agent（终端 CLI）作为 Windows 本地执行端的场景——其 shell 宿主是另一条链路；node 入口天然兼容（只要其宿主能跑 `node`），真要支持时另行确认。
 - 不做 Windows 安装包签名 / SmartScreen 白名单治理（属于桌面发版体系）。
 - 不统一改 CLOUD 端依赖预装口径（服务端仍按 DEPLOY.md 预装推荐）。
@@ -80,17 +81,18 @@ LOCAL 运行时布局（跨平台一致，`~` 即 `%USERPROFILE%`）：
 
 **Windows 专属实现注意（写进代码注释与测试点）**：
 
-- **shim spawn**：Windows 上 `playwright-cli`/`npx` 是 `.cmd` shim，Node ≥18 无 shell 直 spawn 报 EINVAL。策略：全局 CLI 存在时经 `npm prefix -g`（execSync 一次）定位 `<prefix>/node_modules/@playwright/cli` 的 JS bin 直接用 node 跑（绕开 shim，也绕开 shell:true 的引号坑）；CLI 未装时兜底 `spawnSync('npx', args, { shell: true })`（参数不含空格的场景安全；`type "文本"` 等含空格参数先显式加引号）。
+- **shim spawn**：Windows 上 `playwright-cli`/`npx` 是 `.cmd` shim，Node ≥18 无 shell 直 spawn 报 EINVAL。策略：全局 CLI 存在时经 `npm prefix -g`（execSync 默认走 shell，win32 可用；输出需 trim）定位 `<prefix>/node_modules/@playwright/cli`，bin 路径读该包 package.json 的 `bin` 字段解析（string / object 两种形态）后直接用 node 跑（绕开 shim，也绕开 shell:true 的引号坑）；win32 判定「CLI 已装」同样以 npm prefix 下包存在为准（`.cmd` shim 本身无法 execFile 直探，扫 PATH 属降级分支）。CLI 未装时兜底**先试直 spawn `npx-cli.js`**：官方 node 布局下 `<nodeDir>/node_modules/npm/bin/npx-cli.js` 可从 `process.execPath` 推导，`spawn(process.execPath, [npxCliJs, …args])` 无 shell、参数零转义（npx.cmd 内部本就是这条命令）；该文件不存在（非官方布局）才末位退 `spawnSync('npx', args, { shell: true })`——注意 cmd.exe 元字符使「无空格即安全」不成立：URL 常含 `&`（命令分隔符）与 `%`（`%xx%` 环境变量展开），都会破参，必须所有参数统一加引号并在排障文档记录 `%` 无法转义的残留风险。
 - **argv 解析**：照抄 bash 版语义（`-s=NAME` / `-s NAME` / `PLAYWRIGHT_CLI_SESSION` / `--config` 检测），node 里直接遍历 `process.argv.slice(2)`。
 - **chromium 探测**：win32 缓存根 `%LOCALAPPDATA%\ms-playwright`（尊重 `PLAYWRIGHT_BROWSERS_PATH`），glob `chromium-*/chrome-win*/chrome.exe`；darwin `~/.cache/ms-playwright` 不变（现 bash 行为）；Linux 不变。
 - 纯 POSIX 残留（`id -u`、`tr -c`、glob）全部换 node 等价实现。
 
 ### D2 依赖安装链 Windows 分支（browser-deps.service）
 
-- **detectChrome（`browser-deps.service.ts:152-172`）**：候选路径加 win32 分支——`%ProgramFiles%\Google\Chrome\Application\chrome.exe`、`%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe`、`%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe`（`--version` 探测同现逻辑）。chromium 缓存根平台化：win32 → `PLAYWRIGHT_BROWSERS_PATH ?? %LOCALAPPDATA%\ms-playwright`，二进制 glob `chrome-win*/chrome.exe`。既有测试注入 seam（`deps.platform` / `deps.chromiumCacheRoot` / `execImpl`）直接复用，单测零基建成本。
+- **适用拓扑前提**：安装链跑在后端宿主，本节只在「后端与桌面同机」（Windows 自托管单机 / 开发态，即目标 3 口径）时被执行。Windows 桌面连远程 Linux 后端（SaaS 形态）时本节不生效——用户机内核前置为系统 Chrome，无自动安装路径（已列入非目标）。
+- **detectChrome（`browser-deps.service.ts:152-172`）**：候选路径加 win32 分支——`%ProgramFiles%\Google\Chrome\Application\chrome.exe`、`%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe`、`%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe`（`--version` 探测同现逻辑；真机确认点：Windows 上 `chrome.exe --version` 历史上可能无 stdout 静默退出，`present` 判定不受影响——退出码 0，`version` 可能为空，可接受或改读文件版本信息）。chromium 缓存根平台化：win32 → `PLAYWRIGHT_BROWSERS_PATH ?? %LOCALAPPDATA%\ms-playwright`（`%LOCALAPPDATA%` 缺省时回退 `homedir()/AppData/Local`，服务上下文可能无该环境变量），二进制 glob `chrome-win*/chrome.exe`。既有测试注入 seam（`deps.platform` / `deps.chromiumCacheRoot` / `execImpl`）直接复用，单测零基建成本。
 - **installHost（`:280-331`）**：
   1. CLI 全局安装：`npm i -g` 在 Windows 是用户级（`%APPDATA%\npm`），无需管理员——保留，但 **exec 需 shim 适配**：win32 下对 npm/playwright-cli/npx 类命令走 shell 化执行（`spawnSync(cmd, args, { shell: true })` 或统一 `cmd.exe /c` 包装；命令表固定、无空格参数，安全）。chrome.exe 是真 `.exe`，维持 execFile。
-  2. 系统 Chrome：新增 winget 尝试（`winget install --id Google.Chrome -e --silent --accept-package-agreements --accept-source-agreements`，存在 winget 才试，失败静默降级），不引入 deb/apt 的 Windows 等价物。
+  2. 系统 Chrome：新增 winget 尝试（`winget install --id Google.Chrome -e --silent --accept-package-agreements --accept-source-agreements`，存在 winget 才试，失败静默降级），不引入 deb/apt 的 Windows 等价物。注：`Google.Chrome` 默认 machine scope，可能触发 UAC 提权弹窗——后端是用户态进程，弹窗被拒即非零退出走 chromium 降级（已有），无人值守场景须接受偶发提权框，后续可评估 `--scope user`。
   3. chromium 兜底：`playwright-cli install-browser` + `PLAYWRIGHT_DOWNLOAD_HOST`（npmmirror）**本来就跨平台**，当前链路在 Windows 已能下载成功——修好检测后此步即通。
 - **状态机/单飞/孤儿处理/ensureForSkills 钩子**：零改动（与平台无关）。
 
@@ -102,19 +104,19 @@ LOCAL 运行时布局（跨平台一致，`~` 即 `%USERPROFILE%`）：
 
 | 事件 | POSIX（现状） | Windows（预期） |
 |---|---|---|
-| shell 工具回收 | `kill(-pid, SIGKILL)` 整组；CLI 守护进程自成进程组逃逸 → 浏览器存活 | `taskkill /PID x /T /F` 树杀（`localShell.cjs:342-353`）；守护进程/chrome 在进程树上，**通常随会话击杀一并退出** |
-| sidecar | detached spawn 逃逸组杀 | detached spawn 本就脱离宿主树 → 存活 |
+| shell 工具回收（每条命令后 `keep_session=false` 回收宿主，`localShell.cjs:688-689`） | `kill(-pid, SIGKILL)` 整组；CLI 守护进程自成进程组逃逸 → 浏览器存活 | `taskkill /PID x /T /F` 树杀（`localShell.cjs:342-353`）。**回收时 wrapper / CLI 前端已退出**，daemon / chrome / sidecar 的 PPID 悬空（Windows 孤儿不重新挂父），树杀向下遍历不可达 → **与 POSIX 一样逃逸存活**；只有「命令执行中取消」的竞态窗口树杀可达（此时 daemon/chrome/sidecar 会被一并击杀） |
+| sidecar | detached spawn 逃逸组杀 | **Windows 无进程组逃逸**：`detached` 只解决控制台窗口与宿主退出不阻塞，不断开 PPID；存活机制与上一行同（回收时树杀不可达）。竞态窗口被杀也不阻塞——下条命令的 `host_alive` 检查自动重启 sidecar 续播 |
 | 浏览器被杀后 | sidecar CDP 探测 → `browser_exit` 收窗 | 同左（探测逻辑跨平台） |
 | 孤儿兜底 | 每条命令确保 sidecar 存活 + 端口探活重挑 + POST /stop + Electron before-quit shutdown | 同左 |
 
-语义差异本身**可接受且更干净**（Windows 会话结束浏览器即回收，无孤儿 Chrome）。验收时真机确认 `/T` 树杀覆盖深度与竞态（若守护进程逃过树杀，下条 `open` 的端口探活与 `/stop` 链路兜底，与 POSIX 行为一致）。
+即 **Windows 与 POSIX 的回收语义同构**：命令完成后的常规回收两端都杀不到逃逸进程，浏览器回收同样依赖 /stop 链路 + before-quit shutdown + sidecar 2h 硬上限；唯一差异是「命令执行中取消」窗口——Windows 树杀更彻底（连 sidecar 一起杀，直播中断由续播兜底），POSIX 组杀仍杀不到。此前「会话结束浏览器随 taskkill 一并退出、无孤儿 Chrome」的预期**不成立**，回收不靠树杀。真机重点确认：命令执行中取消的树杀覆盖深度（daemon/chrome 是否被及）与竞态窗口大小。
 
 ### D5 SKILL.md 平台适配
 
 - **入口分流**：`Skill path` 章节增加探测指引——`node -e "console.log(process.platform)"`（两壳通用）；`win32` → 所有示例用 `node "<技能目录>/scripts/browser_cli.mjs" …`；否则维持 `PWCLI=browser_cli.sh` 示例。M2 统一后删除分流段。
 - **shell 语法**：Windows 段示例遵守 PowerShell 5.1（`powershell.exe` 宿主）：不用 `&&`（用 `;` 或分行）、不写 `$(…)>/dev/null` 类 bash-ism；环境变量 `MAO_BASE_URL/MAO_TOKEN/PWCLI_PACKAGE` 的设置示例给 PowerShell 写法（`$env:X="…"`）。
 - **前置检查**：统一为 `node --version` + `npm --version`（两壳通用），替代 bash 的 `command -v npx`。
-- **环境适配章节**：补 LOCAL/Windows 口径——内核可能未预装，首次 `open` 报缺内核时引导「管理后台 → Skills 管理 → 安装依赖」（wrapper stderr 提示文案已有，两边共用）。
+- **环境适配章节**：补 LOCAL/Windows 口径——内核可能未预装，首次 `open` 报缺内核时引导「管理后台 → Skills 管理 → 安装依赖」（wrapper stderr 提示文案已有，两边共用）。注意拓扑差异：该引导只在「后端与桌面同机」时指向用户机；连远程 Linux 后端时「安装依赖」装到的是服务器而非用户机——workflows.md 排障表 Windows 段须写清此差异，远程后端形态的口径是「装系统 Chrome 或在用户机执行 `npx playwright-cli install-browser`」。
 
 ### D6 本地技能装载链路确认（无需改动的结论性事实）
 
@@ -139,13 +141,13 @@ LOCAL 技能经 `/v1/skills/sync-package` zip 下发、Electron `localSkills.cjs
 
 1. **单测**（进 CI）：
    - backend vitest：`browser-deps.service.spec.ts` win32 注入用例（D2 三条）；
-   - `browser_cli.mjs` 纯函数拆出 `browser_cli_lib.mjs`（argv 解析 / config 组装 / 平台判定），`node --test scripts/*.test.mjs`（与现 skills CI 口径一致：`bash -n` + `node --check` 继续跑，node --test 暂不进 CI，随 M2 一并评估）。
+   - `browser_cli.mjs` 纯函数拆出 `browser_cli_lib.mjs`（argv 解析 / config 组装 / 平台判定），`node --test scripts/*.test.mjs` 本地跑通。勘误：现状对 skills 无任何校验（ci.yml 仅 backend/admin/desktop/agent-cli 四 job，仓库亦无 `bash -n` / `node --check` 脚本）——这两项属本次**新增**的本地检查，是否进 CI 随 M2 一并评估。
 2. **构建**：`cd backend-ts && npm test` 全量；`cd desktop && npm run build`（vue-tsc -b 口径）确认桌面零改动无回归。
 3. **真机 smoke（Windows 10/11，验收主体）**：
    - ① 全新机器启用 browser-use 技能 → LOCAL 后端自动安装链：CLI 全局装 + chromium 落 `%LOCALAPPDATA%\ms-playwright` → 管理后台状态 ready（kind=chromium）；
    - ② Agent 会话：`node browser_cli.mjs open <url>` → snapshot/click/type/close 全流程 ref 正常；
    - ③ 观看：PiP 出窗、双击放大 Tab、Tab 内停止（主进程 POST /stop）、`browser_live_started/stopped` 事件时序正确；
-   - ④ 回收：会话取消 → chrome/守护进程树随 taskkill 退出 → sidecar `browser_exit` 收窗、live.json 清理；应用退出 → before-quit shutdown 无孤儿 sidecar；
+   - ④ 回收（按 D4 两分支验收）：空闲期会话取消 → chrome/守护进程/sidecar 因 PPID 悬空逃逸存活（树杀不可达），验下条命令端口探活重挑正常；命令执行中取消 → taskkill 树杀可达（真机确认覆盖深度），sidecar 被杀后下条命令自动续播；应用退出 → before-quit shutdown 无孤儿 sidecar；
    - ⑤ 降级：Node < 22 → 直播静默降级、CLI 照常（可选）；无 winget 机器 → chromium 直下；
    - ⑥ 首次运行 SmartScreen/杀毒拦截观察（风险项，见 §6）。
 4. **POSIX 回归**：macOS 上 bash wrapper 路径原样跑通（M1 验收项——SKILL.md 分流后 POSIX 流量仍走 bash）。
@@ -156,9 +158,10 @@ LOCAL 技能经 `/v1/skills/sync-package` zip 下发、Electron `localSkills.cjs
 
 | 风险 | 缓解 |
 |---|---|
-| taskkill /T 竞态下守护进程逃逸 → 孤儿 chrome | 端口探活重挑 + POST /stop + before-quit shutdown 三层兜底（与 POSIX 同构）；真机验证定级 |
+| 树杀回收口径（D4）：命令完成后的回收杀不到孤儿浏览器，仅「执行中取消」窗口可达 | 与 POSIX 同构的三层兜底：下条命令端口探活重挑 + POST /stop + before-quit shutdown；真机按 smoke ④ 两分支定级 |
 | 无 winget / winget 源不可达 | chromium 兜底本来就通，winget 只是「系统 Chrome 优先」的增益路径 |
-| `npm prefix -g` 非 Air/GVM 等非官方 node 布局下定位失败 | 兜底 npx shell:true 路径；smoke ③ 覆盖 |
+| winget 装 Chrome 触发 UAC 提权弹窗（machine scope） | 弹窗被拒 → 非零退出 → chromium 降级已覆盖；无人值守接受偶发提权框，后续评估 `--scope user` |
+| `npm prefix -g` 非官方 node 布局下定位失败 | 兜底链降级：npx-cli.js 直 spawn → npx shell:true（全参数加引号）；smoke ③ 覆盖 |
 | SmartScreen / 杀软拦 node 子进程或 CDP 端口 | 127.0.0.1 绑定通常无提示；真机观察，文档记录已知 AV 干扰 |
 | PowerShell 5.1 引号/编码边角（中文路径、长命令） | localShell 已有 UTF-8 init 与单引号转义协议；SKILL.md 示例规避 bash-ism |
 | 双实现窗口期漂移（M1→M2） | M1 期 bash 只加注释；M2 尽快收敛删除 |

@@ -199,6 +199,25 @@ config，因此不受 cwd 影响。
 
 会话异常中断后可能留下后台进程，用 `list` 查看、`close-all` 关闭、`kill-all` 强杀。
 
+### Windows LOCAL（PowerShell 宿主）
+
+入口是 `node "<技能目录>/scripts/browser_cli.mjs" …`，不是 `browser_cli.sh`（PowerShell 无 bash），
+用法与 bash wrapper 完全等价。本段只列 Windows 特有的排障项：
+
+- **`spawn EINVAL` / `.cmd` shim 相关报错**：Windows 上 `playwright-cli`/`npx` 是 `.cmd` shim，
+  Node ≥18 不允许无 shell 直调。入口已内置三级策略（npm prefix 定位包 bin 用 node 直跑 →
+  `npx-cli.js` 直 spawn → `npx` shell 兜底）；三级都失败时先 `npm --version` 确认 npm 可用，
+  再全局安装 `npm install -g @playwright/cli@latest` 走第一级。
+- **`Chromium distribution 'chrome' is not found`**：系统 Chrome 缺失且 playwright chromium 缓存
+  （`%LOCALAPPDATA%\ms-playwright\chromium-*\chrome-win*\chrome.exe`）为空。后端与本机**同机**时，
+  管理后台「Skills 管理 → 安装依赖」会自动装 chromium（npm 用户级 + npmmirror 镜像，免管理员权限）；
+  后端在**远程服务器**时该按钮装到的是服务器——本机改为装系统 Chrome，或手动（PowerShell 写法）：
+  `$env:PLAYWRIGHT_DOWNLOAD_HOST="https://cdn.npmmirror.com/binaries/playwright"; npx playwright-cli install-browser`。
+- **URL 含 `&` / `%` 的命令被截断或变形**：仅在末位 npx shell 兜底路径下会发生（cmd.exe 元字符）。
+  出现即说明前两级未命中——升级/修复 node 官方布局（`<nodeDir>\node_modules\npm\bin\npx-cli.js` 存在）
+  后消失；临时规避可给 URL 加双引号。
+- **node 子进程闪黑框**：入口与 sidecar 均以 `windowsHide` 拉起，若仍见闪窗多为杀软行为，不影响功能。
+
 ### npx 首次调用较慢
 
 首次要下载并解析 `@playwright/cli`，之后走本地缓存。需要稳定版本时显式固定：
@@ -220,3 +239,5 @@ PWCLI_PACKAGE=@playwright/cli@1.2.3 "$PWCLI" --version
 | 命令报找不到 ref | ref 过期（导航/DOM 变化） | 重新 `snapshot` |
 | 换了目录后启动失败 | config 按 cwd 解析 | 用 wrapper，或在新 cwd 补 config |
 | `open` 卡住或页面崩溃 | `/dev/shm` 太小 | config 加 `--disable-dev-shm-usage` |
+| Windows：`spawn EINVAL` / `.cmd` 相关报错 | `.cmd` shim 不能无 shell 直调（Node ≥18），三级兜底均未命中 | `npm install -g @playwright/cli@latest`，或确认 npm 可用（见 Windows LOCAL 段） |
+| Windows：缺内核 | 无系统 Chrome 且 `%LOCALAPPDATA%\ms-playwright` 无 chromium | 同机后端走「安装依赖」；远程后端装系统 Chrome 或本机 `install-browser` |

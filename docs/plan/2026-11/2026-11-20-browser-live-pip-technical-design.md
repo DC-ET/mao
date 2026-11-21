@@ -62,7 +62,7 @@ v2 的核心思路：**浏览器所有权不动，旁路加一只「摄像头」
 - 不做 VNC / xvfb；CDP screencast 已覆盖。
 - 不改 shell 工具、deny-list、审批、path-sandbox 的任何口径（sidecar 启动就是 wrapper 内的一条普通 shell 动作，随命令过既有审批）。
 - 观看端矩阵（2026-11-21 收口）：electron（画中画 / Tab）+ browser（Web Tab）+ android（Capacitor WebView 内与 Web 完全同构的 Tab 观看——后端仅把 `BROWSER_LIVE_CLIENT_TYPES` 加入 `'android'`，前端零改动；帧 6fps token bucket，展示端只画最新帧）。Web 入口同日补齐：TopNav「浏览器直播」按钮（`hasAnyLive` 门控）+ store 注入式停止通道（`setStopRequester` → `browser_live_stop` WS 帧）。安卓原生系统级画中画（`enterPictureInPictureMode` + Capacitor 插件桥）不做，另行立项。
-- LOCAL Windows：shell 是 PowerShell，bash wrapper 不可用，本技能暂不支持（与原 playwright 技能同限，非本方案回归）；支持方案已立项：`2026-11-21-browser-use-windows-local-technical-design.md`。
+- LOCAL Windows：已支持（shell 是 PowerShell，无 bash——技能入口为 `scripts/browser_cli.mjs`，观看链路本方案不动；方案与边界见 `2026-11-21-browser-use-windows-local-technical-design.md`）。
 
 ## 3. 技术选型与决策点
 

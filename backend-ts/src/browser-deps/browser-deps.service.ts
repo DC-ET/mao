@@ -15,8 +15,10 @@ const execFile = promisify(execFileCb);
  * 预装保留为推荐路径（检测秒过、直接 ready）。
  *
  * 状态机（system_setting `browser_deps.status`，JSON）：not_installed → installing → ready / failed。
- * host 模式安装链：npm i -g @playwright/cli → 系统 Chrome（deb 下载 + apt，源可配）
- *   → 失败免 root 降级：playwright-cli install-browser（npmmirror 镜像源）下载 chromium。
+ * host 模式安装链：npm i -g @playwright/cli → 系统 Chrome（Linux: deb 下载 + apt，源可配；
+ *   Windows: winget 尝试，失败静默降级）→ 失败免 root/免管理员降级：playwright-cli install-browser
+ *   （npmmirror 镜像源）下载 chromium。win32 的 npm/playwright-cli/npx 是 .cmd shim，exec 走 shell 化
+ *   （needsWin32Shell），chrome.exe / winget 维持 execFile。
  * docker 模式：chrome 烧在镜像里，运行中容器装了会丢 → 触发 build-runtime-image.sh
  *   重建镜像（仓库内首例代码调 build 脚本）+ docker run 验证。
  *
@@ -65,6 +67,45 @@ interface ExecResult {
 function truncate(text: string, max = DETAIL_MAX): string {
   const line = text.replace(/\s+/g, ' ').trim();
   return line.length > max ? `${line.slice(0, max)}…` : line;
+}
+
+// ---------- 平台口径（与 skills/bundled/browser-use/scripts/browser_cli_lib.mjs 保持一致，方案 2026-11-21 D2） ----------
+
+/**
+ * playwright chromium 缓存根：win32 → PLAYWRIGHT_BROWSERS_PATH ?? %LOCALAPPDATA%\ms-playwright
+ * （无该环境变量回退 homedir/AppData/Local，服务上下文可能缺失）；其余维持 ~/.cache/ms-playwright。
+ */
+export function resolveChromiumCacheRoot(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = homedir(),
+): string {
+  if (platform === 'win32') {
+    if (env.PLAYWRIGHT_BROWSERS_PATH) return env.PLAYWRIGHT_BROWSERS_PATH;
+    return path.join(env.LOCALAPPDATA ?? path.join(home, 'AppData', 'Local'), 'ms-playwright');
+  }
+  return path.join(home, '.cache', 'ms-playwright');
+}
+
+/** win32 系统 Chrome 候选（ProgramFiles / ProgramFiles(x86) / LOCALAPPDATA，缺省回退常规安装根）。 */
+export function win32ChromeCandidates(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string[] {
+  const programFiles = env.ProgramFiles ?? 'C:\\Program Files';
+  const programFilesX86 = env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)';
+  const localAppData = env.LOCALAPPDATA ?? path.join(home, 'AppData', 'Local');
+  return [
+    path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    path.join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+  ];
+}
+
+/**
+ * win32 下 npm / npx / playwright-cli 是 `.cmd` shim，Node ≥18 无 shell 直 spawn 报 EINVAL——
+ * 这类固定命令走 shell 化执行（命令表固定、无空格参数）；winget / chrome.exe 是真 `.exe`，维持 execFile。
+ */
+export function needsWin32Shell(platform: NodeJS.Platform, cmd: string): boolean {
+  if (platform !== 'win32') return false;
+  return ['npm', 'npx', 'playwright-cli'].includes(cmd.replace(/\.cmd$/i, ''));
 }
 
 export class BrowserDepsService {
@@ -139,6 +180,7 @@ export class BrowserDepsService {
         timeout: timeoutMs,
         maxBuffer: 4 * 1024 * 1024,
         encoding: 'utf8' as BufferEncoding,
+        ...(needsWin32Shell(this.deps.platform ?? process.platform, cmd) ? { shell: true } : {}),
         ...(env ? { env: { ...process.env, ...env } } : {}),
       });
       return { ok: true, output: `${stdout ?? ''}${stderr ?? ''}`.trim() };
@@ -149,21 +191,34 @@ export class BrowserDepsService {
     }
   }
 
+  /** win32 chromium 缓存条目内的二进制：chrome-win 前缀目录（chrome-win / chrome-win64）+ chrome.exe。 */
+  private win32ChromiumBin(entryDir: string): string | null {
+    try {
+      const dir = readdirSync(entryDir).find((n) => n.startsWith('chrome-win'));
+      if (!dir) return null;
+      return path.join(entryDir, dir, 'chrome.exe');
+    } catch { return null; }
+  }
+
   private async detectChrome(): Promise<BrowserDepsStatus['chrome']> {
     const platform = this.deps.platform ?? process.platform;
     const candidates = platform === 'darwin'
       ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']
-      : ['google-chrome', 'google-chrome-stable', '/opt/google/chrome/chrome', '/usr/bin/google-chrome'];
+      : platform === 'win32'
+        ? win32ChromeCandidates()
+        : ['google-chrome', 'google-chrome-stable', '/opt/google/chrome/chrome', '/usr/bin/google-chrome'];
     for (const bin of candidates) {
       const result = await this.exec(bin, ['--version'], 8_000);
       if (result.ok) return { present: true, kind: 'system', version: truncate(result.output, 120) };
     }
-    // playwright 下载的 chromium（免 root 降级产物）：~/.cache/ms-playwright/chromium-*/chrome-linux/chrome
-    const cacheRoot = this.deps.chromiumCacheRoot ?? path.join(homedir(), '.cache', 'ms-playwright');
+    // playwright 下载的 chromium（免 root 降级产物）：POSIX ~/.cache/ms-playwright/chromium-*/chrome-linux/chrome；
+    // win32 %LOCALAPPDATA%\ms-playwright\chromium-*\chrome-win*\chrome.exe
+    const cacheRoot = this.deps.chromiumCacheRoot ?? resolveChromiumCacheRoot(platform);
     try {
       const entries = readdirSync(cacheRoot).filter((n) => n.startsWith('chromium-')).sort().reverse();
       for (const entry of entries) {
-        const bin = path.join(cacheRoot, entry, 'chrome-linux', 'chrome');
+        const bin = platform === 'win32' ? this.win32ChromiumBin(path.join(cacheRoot, entry)) : path.join(cacheRoot, entry, 'chrome-linux', 'chrome');
+        if (!bin) continue;
         const result = await this.exec(bin, ['--version'], 8_000);
         if (result.ok) return { present: true, kind: 'chromium', version: truncate(result.output, 120) };
       }
@@ -278,7 +333,8 @@ export class BrowserDepsService {
   // ---------- host 安装链 ----------
 
   private async installHost(): Promise<void> {
-    // 1. CLI（chromium 降级路径也依赖它；幂等，已装时 npm 秒过）
+    const platform = this.deps.platform ?? process.platform;
+    // 1. CLI（chromium 降级路径也依赖它；幂等，已装时 npm 秒过；win32 下 exec 自动 shell 化适配 .cmd shim）
     await this.setDetail('安装 @playwright/cli（npm 全局）');
     const cliInstall = await this.exec('npm', ['i', '-g', '--no-audit', '--no-fund', '@playwright/cli@latest'], 5 * 60_000);
     if (!cliInstall.ok) {
@@ -286,29 +342,40 @@ export class BrowserDepsService {
       return;
     }
 
-    // 2. 系统 Chrome（x86_64 + apt 可用时走 deb；源可经 MAO_BROWSER_CHROME_DEB_URL 覆盖）
+    // 2. 系统 Chrome（Linux：x86_64 + apt 可用时走 deb，源可经 MAO_BROWSER_CHROME_DEB_URL 覆盖；
+    //    win32：winget 尝试，用户级 npm + chromium 兜底全程免管理员权限）
     let chrome = await this.detectChrome();
     if (!chrome.present) {
-      const [arch, aptPath] = await Promise.all([
-        this.exec('uname', ['-m'], 5_000),
-        this.exec('which', ['apt-get'], 5_000),
-      ]);
-      const debUrl = process.env.MAO_BROWSER_CHROME_DEB_URL
-        ?? 'https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb';
-      if (arch.ok && arch.output.trim() === 'x86_64' && aptPath.ok && aptPath.output.trim() !== '') {
-        await this.setDetail(`下载 Chrome deb（${debUrl}）`);
-        const debFile = path.join(tmpdir(), `google-chrome-stable-${Date.now()}.deb`);
-        const download = await this.exec('curl', ['-fsSL', '-o', debFile, debUrl], 10 * 60_000);
-        if (download.ok) {
-          await this.setDetail('apt 安装 Chrome');
-          await this.exec('apt-get', ['update'], 5 * 60_000); // 刷新依赖索引；失败不阻断（deb 依赖可能已满足）
-          const install = await this.exec('apt-get', ['install', '-y', '--no-install-recommends', debFile], 10 * 60_000);
-          if (install.ok) chrome = await this.detectChrome();
-        } else {
-          harnessLog('warn', `[browser-deps] chrome deb download failed: ${download.output}`);
+      if (platform === 'win32') {
+        await this.setDetail('尝试 winget 安装系统 Chrome');
+        // Google.Chrome 默认 machine scope，可能触发 UAC 提权弹窗：被拒即非零退出，静默降级 chromium
+        const winget = await this.exec('winget', ['install', '--id', 'Google.Chrome', '-e', '--silent', '--accept-package-agreements', '--accept-source-agreements'], 15 * 60_000);
+        if (winget.ok) chrome = await this.detectChrome();
+        if (!chrome.present) {
+          await this.setDetail(`winget ${winget.ok ? '安装后未检出 Chrome' : '不可用或被拒'}，改用 chromium`);
         }
       } else {
-        await this.setDetail(`跳过系统 Chrome 安装（${arch.ok ? `架构 ${arch.output.trim()}` : '架构未知'} / apt ${aptPath.ok ? '可用' : '不可用'}），改用 chromium`);
+        const [arch, aptPath] = await Promise.all([
+          this.exec('uname', ['-m'], 5_000),
+          this.exec('which', ['apt-get'], 5_000),
+        ]);
+        const debUrl = process.env.MAO_BROWSER_CHROME_DEB_URL
+          ?? 'https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb';
+        if (arch.ok && arch.output.trim() === 'x86_64' && aptPath.ok && aptPath.output.trim() !== '') {
+          await this.setDetail(`下载 Chrome deb（${debUrl}）`);
+          const debFile = path.join(tmpdir(), `google-chrome-stable-${Date.now()}.deb`);
+          const download = await this.exec('curl', ['-fsSL', '-o', debFile, debUrl], 10 * 60_000);
+          if (download.ok) {
+            await this.setDetail('apt 安装 Chrome');
+            await this.exec('apt-get', ['update'], 5 * 60_000); // 刷新依赖索引；失败不阻断（deb 依赖可能已满足）
+            const install = await this.exec('apt-get', ['install', '-y', '--no-install-recommends', debFile], 10 * 60_000);
+            if (install.ok) chrome = await this.detectChrome();
+          } else {
+            harnessLog('warn', `[browser-deps] chrome deb download failed: ${download.output}`);
+          }
+        } else {
+          await this.setDetail(`跳过系统 Chrome 安装（${arch.ok ? `架构 ${arch.output.trim()}` : '架构未知'} / apt ${aptPath.ok ? '可用' : '不可用'}），改用 chromium`);
+        }
       }
     }
 

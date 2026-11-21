@@ -11,13 +11,15 @@ Treat this skill as CLI-first automation. Do not pivot to `@playwright/test` unl
 
 ## Prerequisite check (required)
 
-Before proposing commands, check whether `npx` is available (the wrapper depends on it):
+Before proposing commands, check whether Node/npm are available (the wrapper depends on them).
+This check works in both bash and PowerShell:
 
 ```bash
-command -v npx >/dev/null 2>&1
+node --version
+npm --version
 ```
 
-If it is not available, pause and ask the user to install Node.js/npm (which provides `npx`). Provide these steps verbatim:
+If they are not available, pause and ask the user to install Node.js/npm. Provide these steps verbatim:
 
 ```bash
 # Verify Node/npm are installed
@@ -29,19 +31,28 @@ npm install -g @playwright/cli@latest
 playwright-cli --help
 ```
 
-Once `npx` is present, proceed with the wrapper script. A global install of `playwright-cli` is optional.
+Once Node/npm are present, proceed with the wrapper script. A global install of `playwright-cli` is optional.
 
 ## Skill path (set once)
 
 技能以**会话级副本**形式加载，路径见系统提示词给出的技能目录，形如
-`/opt/mao-data/runtime/<uid>/<sid>/skills/browser-use`。把 `PWCLI` 指向该副本里的 wrapper：
+`/opt/mao-data/runtime/<uid>/<sid>/skills/browser-use`。先探测 shell 平台（两壳通用，结果即本机入口）：
+
+```bash
+node -e "console.log(process.platform)"
+```
+
+- **输出 `win32`**（Windows PowerShell 宿主，无 bash）：所有示例把 `"$PWCLI"` 换成
+  `node "<技能目录>/scripts/browser_cli.mjs"`，例如
+  `node "<技能目录>/scripts/browser_cli.mjs" open https://example.com`。入口与 bash wrapper 语义等价。
+- **其它平台**：把 `PWCLI` 指向该副本里的 wrapper：
 
 ```bash
 export PWCLI="<技能目录>/scripts/browser_cli.sh"
 ```
 
-脚本通过 `BASH_SOURCE` 定位自带的配置模板，在任何路径下都能正常工作。后续所有示例中的
-`"$PWCLI"` 都指这个 wrapper。
+脚本通过 `BASH_SOURCE` / `import.meta.url` 定位自带的配置模板，在任何路径下都能正常工作。后续所有示例中的
+`"$PWCLI"` 都指这个 wrapper（Windows 下等价于上面的 node 命令）。
 
 ## 环境适配（本环境必读）
 
@@ -61,6 +72,13 @@ export PWCLI="<技能目录>/scripts/browser_cli.sh"
 3. **不要传自定义 `--config`**：wrapper 为 `open` 生成的 config 承载着画面直播所需的调试端口；
    传自定义 `--config` 会让本次浏览器实例无法直播（自动化本身不受影响）。默认参数已经调好，
    直接用即可。
+
+4. **Windows LOCAL（PowerShell 宿主）**：入口见「Skill path」分流（`node "<技能目录>/scripts/browser_cli.mjs" …`）。
+   PowerShell 5.1 语法注意：多条命令用 `;` 或分行，**不要用 `&&`**；设置环境变量用
+   `$env:PWCLI_PACKAGE="@playwright/cli@1.2.3"` 写法（MAO_BASE_URL / MAO_TOKEN 无需手动设置）。
+   内核可能未预装：首次 `open` 报缺内核时，「管理后台 → Skills 管理 → 安装依赖」只在后端与本机
+   同机时才会装到本机；后端在远程服务器时，改为安装系统 Chrome 或在本机执行
+   `npx playwright-cli install-browser`，对照表见 `references/workflows.md`。
 
 因此**优先使用 `"$PWCLI"`**，不要直接调用裸 `playwright-cli`。完整排障步骤与错误对照表见
 `references/workflows.md`。
@@ -155,6 +173,7 @@ Refs can go stale. When a command fails due to a missing ref, snapshot again.
 The wrapper makes the CLI runnable without a global install: when `playwright-cli` is not on
 `PATH`, it calls `npx --yes --package @playwright/cli@latest playwright-cli`; as root it injects
 `--no-sandbox` into the generated `open` config. Set `PWCLI_PACKAGE` to pin a version.
+Windows 上入口为 `scripts/browser_cli.mjs`（同策略，另经 npm prefix / npx-cli.js 直跑绕开 `.cmd` shim）。
 
 ```bash
 "$PWCLI" --help

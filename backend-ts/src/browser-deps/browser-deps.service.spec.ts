@@ -1,15 +1,42 @@
 import { mkdtempSync, mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
-import { BrowserDepsService, BROWSER_DEPS_SKILL_NAME, type BrowserDepsStatus } from './browser-deps.service.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  BrowserDepsService,
+  BROWSER_DEPS_SKILL_NAME,
+  needsWin32Shell,
+  resolveChromiumCacheRoot,
+  win32ChromeCandidates,
+  type BrowserDepsStatus,
+} from './browser-deps.service.js';
 import type { SystemSetting, SystemSettingRepository } from '../settings/types.js';
 
 /**
  * 浏览器依赖按需安装（方案 2026-11-20 v2 D7 按需化）：
  * 状态机流转、host 降级链（apt 失败 → chromium）、docker 镜像重建分支、
- * 单飞守卫、ensureForSkills 触发口径、installing 孤儿降级。
+ * 单飞守卫、ensureForSkills 触发口径、installing 孤儿降级、
+ * win32 分支（chrome.exe 候选 / chrome-win 缓存布局 / winget 降级 / .cmd shim shell 化，
+ * 方案 2026-11-21 D2）。
  */
+
+// 本文件所有用例都注入 execImpl（不走真实 execFile）；仅在 win32 shell 化用例中
+// 让 execFile 落到 mock，捕获 execFile 选项（shell 化与否）而不真正 spawn。
+const execFileMock = vi.hoisted(() => vi.fn());
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, execFile: execFileMock };
+});
+
+let execFileCalls: { cmd: string; args: string[]; opts: Record<string, unknown> }[] = [];
+beforeEach(() => {
+  execFileCalls = [];
+  execFileMock.mockReset();
+  execFileMock.mockImplementation((cmd: string, args: string[], opts: Record<string, unknown>, cb: (e: unknown, o?: string, s?: string) => void) => {
+    execFileCalls.push({ cmd, args, opts });
+    cb({ code: 'ENOENT', message: 'spawn ENOENT' });
+  });
+});
 
 interface StoreRow {
   settingKey: string;
@@ -40,6 +67,7 @@ type ExecCall = { cmd: string; args: string[]; env?: NodeJS.ProcessEnv };
 function makeService(options: {
   rows?: StoreRow[];
   mode?: 'host' | 'docker';
+  platform?: NodeJS.Platform;
   exec?: (call: ExecCall) => { ok: boolean; output: string };
 } = {}) {
   const repo = memoryRepo(options.rows ?? [
@@ -52,7 +80,7 @@ function makeService(options: {
     getRuntimeMode: async () => options.mode ?? 'host',
     repoRoot: '/opt/mao',
     image: 'mao-runtime:latest',
-    platform: 'linux' as NodeJS.Platform,
+    platform: (options.platform ?? 'linux') as NodeJS.Platform,
     chromiumCacheRoot: cacheRoot,
     execImpl: (cmd, args, _timeout, env) => {
       const call: ExecCall = { cmd, args, ...(env ? { env } : {}) };
@@ -262,5 +290,128 @@ describe('BrowserDepsService ensureForSkills', () => {
     service.ensureForSkills([BROWSER_DEPS_SKILL_NAME]);
     await new Promise((r) => setTimeout(r, 20));
     expect(calls.filter((c) => c.cmd === 'npm')).toHaveLength(npmCallsAfterInstall);
+  });
+});
+
+describe('BrowserDepsService win32 分支', () => {
+  it('detectChrome 命中系统 Chrome（win32 候选，chrome.exe）', async () => {
+    const { service, calls } = makeService({
+      platform: 'win32',
+      exec: ({ cmd, args }) => (cmd.endsWith('chrome.exe') && args[0] === '--version'
+        ? { ok: true, output: 'Google Chrome 158.0.8127.36' }
+        : { ok: false, output: '' }),
+    });
+    const status = await service.getStatus();
+    expect(status.chrome.present).toBe(true);
+    expect(status.chrome.kind).toBe('system');
+    expect(status.chrome.version).toContain('158');
+    // 首个候选即 %ProgramFiles% 根下的 chrome.exe（Linux/macOS CI 无该环境变量时走缺省根，路径形态确定）
+    expect(calls[0].cmd.endsWith(path.join('Google', 'Chrome', 'Application', 'chrome.exe'))).toBe(true);
+    // 候选口径：env 命中与缺省回退
+    expect(win32ChromeCandidates({ ProgramFiles: 'D:\\PF', 'ProgramFiles(x86)': 'D:\\PF86', LOCALAPPDATA: 'D:\\LAD' }, '')).toEqual([
+      path.join('D:\\PF', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      path.join('D:\\PF86', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      path.join('D:\\LAD', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    ]);
+    expect(win32ChromeCandidates({}, '/home/u')).toEqual([
+      path.join('C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      path.join('C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      path.join('/home/u', 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    ]);
+  });
+
+  it('win32 chromium 缓存检测命中 chrome-win 布局', async () => {
+    const { service, cacheRoot } = makeService({
+      platform: 'win32',
+      exec: ({ cmd, args }) => (cmd.includes('chromium-1200') && cmd.endsWith('chrome.exe') && args[0] === '--version'
+        ? { ok: true, output: 'Chromium 141.0' }
+        : { ok: false, output: '' }),
+    });
+    mkdirSync(path.join(cacheRoot, 'chromium-1200', 'chrome-win', 'chrome.exe'), { recursive: true });
+    const status = await service.getStatus();
+    expect(status.chrome.present).toBe(true);
+    expect(status.chrome.kind).toBe('chromium');
+    expect(status.chrome.version).toContain('Chromium');
+  });
+
+  it('resolveChromiumCacheRoot 平台口径', () => {
+    expect(resolveChromiumCacheRoot('win32', { PLAYWRIGHT_BROWSERS_PATH: 'D:\\pw' })).toBe('D:\\pw');
+    expect(resolveChromiumCacheRoot('win32', { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' })).toBe(path.join('C:\\Users\\u\\AppData\\Local', 'ms-playwright'));
+    expect(resolveChromiumCacheRoot('win32', {}, '/home/u')).toBe(path.join('/home/u', 'AppData', 'Local', 'ms-playwright'));
+    expect(resolveChromiumCacheRoot('linux', {}, '/root')).toBe('/root/.cache/ms-playwright');
+    expect(resolveChromiumCacheRoot('darwin', {}, '/Users/u')).toBe('/Users/u/.cache/ms-playwright');
+  });
+
+  it('winget 失败静默降级 chromium（win32 安装链）', async () => {
+    let chromiumDownloaded = false;
+    const { service, repo, calls, cacheRoot } = makeService({
+      platform: 'win32',
+      exec: ({ cmd, args }) => {
+        if (cmd === 'winget') return { ok: false, output: 'winget: not recognized' };
+        if (cmd.endsWith('chrome.exe') && args[0] === '--version' && !cmd.includes('chromium-')) return { ok: false, output: 'not found' };
+        if (cmd === 'npm') return { ok: true, output: 'added 1 package' };
+        if (cmd === 'playwright-cli' && args[0] === 'install-browser') { chromiumDownloaded = true; return { ok: true, output: 'chromium downloaded' }; }
+        if (cmd === 'playwright-cli' && args[0] === '--version') return { ok: true, output: '0.1.25' };
+        if (cmd.includes('chromium-1200') && cmd.endsWith('chrome.exe') && args[0] === '--version') {
+          return chromiumDownloaded ? { ok: true, output: 'Chromium 141.0' } : { ok: false, output: '' };
+        }
+        return { ok: false, output: '' };
+      },
+    });
+    mkdirSync(path.join(cacheRoot, 'chromium-1200', 'chrome-win', 'chrome.exe'), { recursive: true });
+    await service.install();
+    await vi.waitFor(() => expect(storedPhase(repo).phase).toBe('ready'));
+    expect(storedPhase(repo).chrome.kind).toBe('chromium');
+    expect(calls.some((c) => c.cmd === 'winget')).toBe(true);
+    const installBrowser = calls.find((c) => c.args.includes('install-browser'));
+    expect(installBrowser?.env?.PLAYWRIGHT_DOWNLOAD_HOST).toContain('npmmirror');
+  });
+
+  it('winget 成功 → 系统 Chrome ready，不触发 chromium 下载', async () => {
+    let wingetDone = false;
+    const { service, repo, calls } = makeService({
+      platform: 'win32',
+      exec: ({ cmd, args }) => {
+        if (cmd === 'winget') { wingetDone = true; return { ok: true, output: 'Successfully installed' }; }
+        if (cmd.endsWith('chrome.exe') && args[0] === '--version' && !cmd.includes('chromium-')) return wingetDone ? { ok: true, output: 'Google Chrome 158' } : { ok: false, output: '' };
+        if (cmd === 'npm') return { ok: true, output: 'added 1 package' };
+        if (cmd === 'playwright-cli' && args[0] === '--version') return { ok: true, output: '0.1.25' };
+        return { ok: false, output: '' };
+      },
+    });
+    await service.install();
+    await vi.waitFor(() => expect(storedPhase(repo).phase).toBe('ready'));
+    expect(storedPhase(repo).chrome.kind).toBe('system');
+    expect(calls.some((c) => c.args.includes('install-browser'))).toBe(false);
+  });
+
+  it('needsWin32Shell 口径：npm/npx/playwright-cli shell 化，winget/chrome.exe 与非 win32 不 shell 化', () => {
+    expect(needsWin32Shell('win32', 'npm')).toBe(true);
+    expect(needsWin32Shell('win32', 'npx')).toBe(true);
+    expect(needsWin32Shell('win32', 'playwright-cli')).toBe(true);
+    expect(needsWin32Shell('win32', 'npm.cmd')).toBe(true);
+    expect(needsWin32Shell('win32', 'winget')).toBe(false);
+    expect(needsWin32Shell('win32', 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe')).toBe(false);
+    expect(needsWin32Shell('linux', 'npm')).toBe(false);
+    expect(needsWin32Shell('darwin', 'npm')).toBe(false);
+  });
+
+  it('win32 无 execImpl 时 shim 命令走 shell 化 execFile，chrome.exe 维持直调', async () => {
+    const repo = memoryRepo([{ settingKey: 'browser_deps.status', value: '{"phase":"not_installed"}', editable: 0 }]);
+    const service = new BrowserDepsService({
+      settingRepo: repo,
+      getRuntimeMode: async () => 'host',
+      repoRoot: '/opt/mao',
+      image: 'mao-runtime:latest',
+      platform: 'win32' as NodeJS.Platform,
+      // 不注入 execImpl：走真实 exec() → 落到被 mock 的 execFile
+    });
+    const status = await service.detect();
+    expect(status.cli.present).toBe(false);
+    const cliCall = execFileCalls.find((c) => c.cmd === 'playwright-cli');
+    expect(cliCall?.opts.shell).toBe(true); // .cmd shim → shell 化
+    const chromeCall = execFileCalls.find((c) => c.cmd.endsWith('chrome.exe'));
+    expect(chromeCall).toBeTruthy();
+    expect(chromeCall?.opts.shell).toBeFalsy(); // 真 .exe 维持 execFile
   });
 });

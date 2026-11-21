@@ -2,6 +2,10 @@
 #
 # browser-use CLI wrapper（playwright-cli 包装）
 #
+# Windows 宿主（PowerShell，无 bash）不可执行本脚本——请改用同目录的 browser_cli.mjs：
+#   node "<技能目录>/scripts/browser_cli.mjs" open https://example.com
+# 分流指引见 SKILL.md「Skill path」（方案 docs/plan/2026-11/2026-11-21-browser-use-windows-local-technical-design.md D5）。
+#
 # 与原 playwright 技能 wrapper 一致的两件事：
 #   1. playwright-cli 未全局安装时，通过 npx 拉取 @playwright/cli 运行。
 #   2. 以 root 运行时 Chromium 会因 sandbox 拒绝启动，生成的 config 自动注入 --no-sandbox。
