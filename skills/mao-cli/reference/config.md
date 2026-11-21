@@ -25,8 +25,9 @@
 | 路径 | 用途 |
 |------|------|
 | `/opt/mao` | Git 仓库（源码 + dist + node_modules + `.env`） |
+| `/opt/mao/skills` | 内置技能根（只读，随仓库发版）：白名单 `skills/builtin.json` 点名的技能 + `skills/bundled/` 下的技能，随 `git pull` 更新出现在「系统 Skills」；后台不可写 |
 | `/opt/mao-data/workspace` | Agent 工作区（`WORKSPACE_ROOT`） |
-| `/opt/mao-data/skills` | 平台技能源（`SKILLS_DIR`）：**容器内不可见**，容器内的技能操作路径一律用会话技能目录（系统提示中每个技能的 `Folder:` 路径，如 `/opt/mao-data/runtime/<uid>/<sid>/skills/<name>`） |
+| `/opt/mao-data/skills` | 平台技能源（`SKILLS_DIR`）：只放后台上传的系统技能，不得指向 git 检出内的 `skills/`（与内置根重叠会拒绝启动）；**容器内不可见**，容器内的技能操作路径一律用会话技能目录（系统提示中每个技能的 `Folder:` 路径，如 `/opt/mao-data/runtime/<uid>/<sid>/skills/<name>`） |
 | `/opt/mao-data/skill-views` | 技能视图（`SKILL_VIEWS_DIR`）：平台技能按用户物化的只读副本，容器内按用户 ro 挂载；会话技能软链指向这里，源更新在下次会话执行时重建视图生效 |
 | `/opt/mao-data/userskills` | 用户技能（`USER_SKILLS_DIR`） |
 | `/opt/mao-data/uploads` | 上传与 APK OTA（`FILE_UPLOAD_DIR`） |
@@ -55,7 +56,7 @@
 | `APP_SIGNAL_SECRET` | 哨兵时建议 | 信号哨兵请求头 / 请求体加密。未配置时回退内置默认密钥，生产建议显式设置；轮换后已存哨兵需重新填写请求头与请求体。凭据占位符（`{{MAO_TOKEN}}` / `{{ECP_TOKEN}}`）本身不含明文、落库即密文，轮换密钥只影响已存明文凭据，不影响占位符配置 |
 | `APP_USER_TOOL_SECRET` | 自定义工具时建议 | 自定义 HTTP 工具请求头敏感值加密。未配置时回退内置默认密钥，生产建议显式设置；轮换后已存工具的敏感请求头需重新填写 |
 | `WORKSPACE_ROOT` | **是** | 工作区根 |
-| `SKILLS_DIR` / `USER_SKILLS_DIR` | **是** | 技能目录（平台技能源 / 用户技能） |
+| `SKILLS_DIR` / `USER_SKILLS_DIR` | **是** | 技能目录（平台技能源 / 用户技能）。`SKILLS_DIR` 只放后台上传的系统技能，不得指向 git 检出内的 `skills/`（内置技能根），重叠会拒绝启动 |
 | `SKILL_VIEWS_DIR` | 否（docker 模式生产须配，见 [deploy.md](deploy.md)） | 技能视图根（平台技能的用户级只读副本），默认 `./skill-views`；生产配 `/opt/mao-data/skill-views`（纳入备份/监控）；漏配功能可用，但视图落在后端 cwd 下 |
 | `FILE_UPLOAD_DIR` | **是** | 本地上传目录 |
 | `MAO_RUNTIME_DIR` | 否 | 运行时目录 |

@@ -414,4 +414,54 @@ describe('skill routes', () => {
     }
     await app.close();
   });
+
+  it('rejectsDeletingBuiltinSkillWithoutSideEffects', async () => {
+    const skillsDir = useTmpDir('mao-sdoc-');
+    const userDir = useTmpDir('mao-user-s-');
+    const builtinRoot = useTmpDir('mao-sdoc-builtin-');
+    mkdirSync(join(builtinRoot, 'mao-cli'), { recursive: true });
+    writeFileSync(join(builtinRoot, 'mao-cli', 'SKILL.md'), '---\nname: mao-cli\ndescription: Builtin\n---\nBody\n');
+    const loader = new SkillLoader(new PathSandbox(skillsDir), skillsDir, 1, [{
+      name: 'mao-cli',
+      description: 'Builtin',
+      body: 'Body',
+      filePath: join(builtinRoot, 'mao-cli', 'SKILL.md'),
+      folderPath: join(builtinRoot, 'mao-cli'),
+      builtin: true,
+    }]);
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    app.addHook('preHandler', (req, _r, done) => { req.userId = 1; done(); });
+    const removeSkillNameFromAll = vi.fn(async () => 0);
+    registerSkillRoutes(app, {
+      userSkillService: new UserSkillService(userDir, noSystemSkillNames),
+      skillDocService: new SkillDocService(loader),
+      skillSyncService: {
+        writeSyncZip: vi.fn(async (_a, _s, out) => { out.end(); }),
+      } as unknown as SkillSyncService,
+      sessionService: {
+        getSession: vi.fn(async () => ({ id: 1, userId: 1, agentId: 9 })),
+      } as unknown as SessionService,
+      agentService: { removeSkillNameFromAll } as never,
+      agentLookup: {
+        findById: vi.fn(async () => ({ id: 9, name: 'A' })),
+      } as unknown as AgentLookup,
+      permissionService: { hasPermission: vi.fn(async () => true) },
+      userLookup: {
+        findByIds: vi.fn(async () => []),
+        listOptions: vi.fn(async () => []),
+      },
+    });
+
+    const list = JSON.parse((await app.inject({ method: 'GET', url: '/v1/skill-docs' })).body);
+    expect(list.data[0]).toMatchObject({ name: 'mao-cli', builtin: true });
+
+    const deleted = JSON.parse((await app.inject({ method: 'DELETE', url: '/v1/skill-docs/mao-cli' })).body);
+    expect(deleted.code).toBe(409);
+    expect(deleted.message).toContain('内置技能');
+    // 源目录（git 检出侧）原封不动；级联摘除 Agent skillNames 的副作用不发生
+    expect(existsSync(join(builtinRoot, 'mao-cli', 'SKILL.md'))).toBe(true);
+    expect(removeSkillNameFromAll).not.toHaveBeenCalled();
+    await app.close();
+  });
 });

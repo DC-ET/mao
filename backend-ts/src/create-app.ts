@@ -101,6 +101,7 @@ import { SkillDocService } from './skill/skill-doc.service.js';
 import { SkillSyncService } from './harness/skill/skill-sync-service.js';
 import { SkillViewService } from './harness/skill/skill-view.service.js';
 import { SkillLoader } from './harness/skill/skill-loader.js';
+import { BuiltinSkillCatalog, assertMutableRootSeparate, locateBuiltinRoot } from './harness/skill/builtin-skill-catalog.js';
 import { ScheduledTaskDbStore } from './schedule/scheduled-task.store.js';
 import { FeedbackRepository } from './feedback/feedback.repository.js';
 import { FeedbackDbLookup, FeedbackService } from './feedback/feedback.service.js';
@@ -616,7 +617,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   );
 
   const userSkillsDir = cfg.app.harness.userSkillsDir || resolve(process.env.HOME ?? '/tmp', '.mao/data/userskills');
-  const skillLoader = new SkillLoader(pathSandbox, cfg.app.harness.skillsDir, cfg.app.harness.skillsCacheSeconds);
+  // 内置技能（技术方案 2026-11-20）：随仓库发版的只读系统技能。名单/bundled 不合法或找不到
+  // 仓库技能根时 load 抛错 → createMaoApp 失败 → 进程起不来（D7/D8），蓝绿窗口内旧进程继续接流量。
+  const builtinRoot = locateBuiltinRoot();
+  assertMutableRootSeparate(cfg.app.harness.skillsDir, builtinRoot);
+  const builtinSkills = new BuiltinSkillCatalog().load(builtinRoot);
+  const skillLoader = new SkillLoader(pathSandbox, cfg.app.harness.skillsDir, cfg.app.harness.skillsCacheSeconds, builtinSkills);
   const ecpInjector = createEcpCredentialsInjector(
     ecpSessionRepo,
     (userId) => runtimeResolver.resolveUserHomeDir(userId),

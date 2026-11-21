@@ -149,7 +149,12 @@
         <template #empty>
           <el-empty description="暂无数据" :image-size="60" />
         </template>
-        <el-table-column prop="name" label="名称" width="180" />
+        <el-table-column prop="name" label="名称" width="180">
+          <template #default="{ row }">
+            <span>{{ row.name }}</span>
+            <el-tag v-if="row.builtin" type="warning" size="small" class="builtin-tag">内置</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="description" label="描述" min-width="300" show-overflow-tooltip />
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
@@ -168,7 +173,9 @@
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="handleView(row)">查看内容</el-button>
+            <!-- 内置技能随版本发布、不可删：整块 popconfirm 不渲染（非置灰），避免误导可操作 -->
             <el-popconfirm
+              v-if="!row.builtin"
               :title="`确认删除 Skill「${row.name}」？`"
               confirm-button-text="删除"
               cancel-button-text="取消"
@@ -238,9 +245,12 @@
         <el-card v-for="row in mobileRows" :key="mobileKey(row)" shadow="hover">
           <div class="mobile-card-head">
             <span class="mobile-card-title">{{ row.name }}</span>
-            <el-tag :type="isSkillAvailable(row) ? 'success' : 'danger'" size="small">
-              {{ isSkillAvailable(row) ? '可用' : '不可用' }}
-            </el-tag>
+            <span class="mobile-card-tags">
+              <el-tag v-if="activeTab === 'system' && row.builtin" type="warning" size="small">内置</el-tag>
+              <el-tag :type="isSkillAvailable(row) ? 'success' : 'danger'" size="small">
+                {{ isSkillAvailable(row) ? '可用' : '不可用' }}
+              </el-tag>
+            </span>
           </div>
           <div v-if="activeTab === 'personal'" class="mobile-card-row">
             <span class="mobile-card-label">用户</span>
@@ -259,7 +269,9 @@
           </div>
           <div class="mobile-card-actions">
             <el-button type="primary" link @click="handleView(row)">查看</el-button>
+            <!-- 内置技能随版本发布、不可删：与桌面表格一致整块不渲染 -->
             <el-popconfirm
+              v-if="!(activeTab === 'system' && row.builtin)"
               :title="`确认删除 Skill「${row.name}」？`"
               confirm-button-text="删除"
               cancel-button-text="取消"
@@ -756,6 +768,16 @@ onActivated(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.builtin-tag {
+  margin-left: 6px;
+}
+
+.mobile-card-tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .skill-tabs {

@@ -251,6 +251,35 @@ describe('UserSkillService', () => {
     ]).code).toBe(0);
   });
 
+  it('个人技能上传与内置技能同名的技能：经合并后的 SkillLoader 仍 409', async () => {
+    const { SkillLoader } = await import('../harness/skill/skill-loader.js');
+    const { PathSandbox } = await import('../harness/safety/path-sandbox.js');
+    const { join: pathJoin } = await import('node:path');
+    const { mkdirSync, existsSync } = await import('node:fs');
+    const dir = useTmpDir('mao-uskill-builtin-conflict-');
+    const mutableDir = useTmpDir('mao-uskill-builtin-mutable-');
+    const builtinRoot = useTmpDir('mao-uskill-builtin-src-');
+    const loader = new SkillLoader(new PathSandbox(mutableDir), mutableDir, 0, [{
+      name: 'mao-cli',
+      description: '内置',
+      body: '正文',
+      filePath: pathJoin(builtinRoot, 'mao-cli', 'SKILL.md'),
+      folderPath: pathJoin(builtinRoot, 'mao-cli'),
+      builtin: true,
+    }]);
+    const service = new UserSkillService(dir, loader);
+    mkdirSync(pathJoin(builtinRoot, 'mao-cli'), { recursive: true });
+    const conflict = service.uploadUserSkill(7, [
+      { originalFilename: 'holder/SKILL.md', buffer: Buffer.from(skill('mao-cli', '冒名内置', 'Body')) },
+    ]);
+    expect(conflict.code).toBe(409);
+    expect(conflict.message).toContain('mao-cli');
+    expect(existsSync(pathJoin(dir, '7', 'holder'))).toBe(false);
+    // installUserSkillFiles 同口径：内置名拒绝补装
+    const install = service.installUserSkillFiles(7, 'mao-cli', { 'SKILL.md': skill('mao-cli', '冒名内置', 'Body') });
+    expect(install.code).toBe(409);
+  });
+
   // Windows chmod 目录不可写拦截同样不生效：posix 部署语义
   it.skipIf(process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0))(
     'keepsExistingSkillWhenReplaceCannotStart',

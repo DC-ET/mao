@@ -18,7 +18,7 @@
 
 无参数。`GET /skill-docs`
 
-返回数组，项含 `name`、`description`、`folderPath`、`filePath`。
+返回数组，项含 `name`、`description`、`folderPath`、`filePath`、`builtin`。`builtin=true` 表示内置技能（随仓库发版出现在系统 Skills，源目录在 git 检出内）；后台上传的系统技能 `builtin=false`。内置技能不能通过上传覆盖、不能删除、不能被 bundle 导入覆盖。
 
 ```bash
 mao skill-docs list
@@ -51,7 +51,7 @@ mao skill-docs get --name bigdata-cli
 1. 若 `--dir` 下直接有 `SKILL.md`：将该目录视为单个技能，技能名=目录名，上传路径形如 `目录名/SKILL.md` 及子文件。
 2. 若 `--dir` 为多技能根：递归子目录，相对路径须含 `技能名/...`。
 
-成功：`data` 为已导入技能名字符串数组。
+成功：`data` 为已导入技能名字符串数组。任一技能的 `SKILL.md` frontmatter `name` 与内置技能同名 → 整请求 409、一个文件都不写（内置技能随版本发布，不能通过上传覆盖）。
 
 ```bash
 mao skill-docs upload --dir ./my-skill
@@ -79,7 +79,7 @@ mao skill-docs assign --dir ./my-skill --user-ids 12,34
 |------|------|------|------|
 | `--name` | 是 | 字符串 | 技能名 |
 
-`DELETE /skill-docs/{name}`，需 `skill:write` 权限。
+`DELETE /skill-docs/{name}`，需 `skill:write` 权限。内置技能（`builtin=true`）不能删除 → 409；删除目标不在系统技能目录（`SKILLS_DIR`）内时服务端拒绝（500）且不删除。
 
 ```bash
 mao skill-docs delete --name my-skill
@@ -88,9 +88,10 @@ mao skill-docs delete --name my-skill
 ## 成功失败判断
 
 - 上传无文件 / 无合法相对路径 → CLI 或服务端报错
+- 系统技能上传与内置技能同名 → 409 整请求拒绝，不写入任何文件
 - `assign` 未指定用户、用户 ID 非法、用户不存在、上传中断或文件数超限 → 业务错误；中断和超限不会写入任何用户。多名用户中途失败时，message 会列出已经写成功的用户
 - `assign` 或用户技能上传与系统技能同名 → 409 整批拒绝，不写入任何用户
-- 删除不存在 → 业务错误 message（如 Skill not found）
+- 删除不存在 → 业务错误 message（如 Skill not found）；删除内置技能 → 409
 - 成功：`code===0`
 
 ## 注意事项

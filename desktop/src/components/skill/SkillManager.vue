@@ -31,7 +31,7 @@
     <el-tabs v-model="activeTab" class="skill-tabs">
       <el-tab-pane label="系统技能" name="system">
         <div class="system-skills-hint">
-          系统预置技能，对所有用户生效，仅可查看详情。
+          内置技能随版本更新，上传的系统技能仅可查看，增删在管理后台。
         </div>
 
         <div class="skill-list">
@@ -49,7 +49,8 @@
                 <div class="skill-card-header">
                   <div class="skill-name">
                     <span class="skill-name-text">{{ skill.name }}</span>
-                    <el-tag size="small" type="info" class="system-tag">系统</el-tag>
+                    <el-tag v-if="skill.builtin" size="small" type="warning" class="system-tag">内置</el-tag>
+                    <el-tag v-else size="small" type="info" class="system-tag">系统</el-tag>
                   </div>
                   <div class="skill-actions">
                     <el-tooltip content="查看内容" :show-after="300" placement="top">
@@ -239,6 +240,7 @@ interface SkillDoc {
   name: string
   description: string
   folderPath: string
+  builtin?: boolean
 }
 
 interface SkillDetail {

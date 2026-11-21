@@ -29,18 +29,21 @@
 │   ├── restart.sh
 │   ├── logs/
 │   └── db/migration/
+├── skills/                   # 内置技能根（只读）：builtin.json 白名单 + bundled/ 定制技能，随发版进「系统 Skills」
 └── scripts/
     ├── deploy-admin.sh
     └── deploy-desktop.sh
 
 /opt/mao-data/                # 运行时数据（仓库外）
 ├── workspace/
-├── skills/
+├── skills/                   # SKILLS_DIR：只放后台上传的系统技能，不要把内置技能 rsync 到这里（以 git 检出为准）
 ├── userskills/
 ├── uploads/                  # releases/ 放 APK OTA
 ├── users/
 └── runtime/
 ```
+
+**内置技能说明**：白名单 `skills/builtin.json` 点名的技能和 `skills/bundled/` 下的技能随 `git pull` 发版自动出现在管理后台「系统 Skills」（标记「内置」），无需拷贝或上传；它们不能在后台删除或覆盖。`SKILLS_DIR` 只放后台上传的系统技能——若现场部署脚本曾把仓库内技能 rsync 到 `/opt/mao-data/skills`，可以去掉这步；注意 `SKILLS_DIR` 不得指向 git 检出内的 `skills/`，重叠会拒绝启动。
 
 首次创建数据目录：
 

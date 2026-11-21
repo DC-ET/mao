@@ -110,6 +110,28 @@ describe('SkillBundleService（mao-skill-bundle v1）', () => {
     expect(service.importSkillBundle(base, true)).toMatchObject({ action: 'exists-skip' });
     expect(readFileSync(join(skillsDir, 'dup', 'SKILL.md'), 'utf8')).toContain('旧');
 
+    // 内置技能：保持 exists-skip，说明改为「随版本发布，不能用导入覆盖」，可变根没有这份目录
+    const builtinDir = join(root, 'builtin-root', 'mao-cli');
+    mkdirSync(builtinDir, { recursive: true });
+    writeFileSync(join(builtinDir, 'SKILL.md'), skillMd('mao-cli', '内置'));
+    skillLoader.invalidateCache();
+    const withBuiltin = new SkillLoader(new PathSandbox(join(root, 'ws')), skillsDir, 0, [{
+      name: 'mao-cli',
+      description: '内置',
+      body: '正文',
+      filePath: join(builtinDir, 'SKILL.md'),
+      folderPath: builtinDir,
+      builtin: true,
+    }]);
+    const builtinService = new SkillBundleService(withBuiltin, userSkillService);
+    const builtinImport = builtinService.importSkillBundle({
+      ...base,
+      skill: { name: 'mao-cli', description: '导入侧' },
+      files: { 'SKILL.md': skillMd('mao-cli', '导入侧') },
+    }, true);
+    expect(builtinImport).toMatchObject({ action: 'exists-skip', detail: expect.stringContaining('不能用导入覆盖') });
+    expect(existsSync(join(skillsDir, 'mao-cli'))).toBe(false);
+
     // 隐藏路径段丢弃后正常导入
     skillLoader.invalidateCache();
     const hidden = service.importSkillBundle({

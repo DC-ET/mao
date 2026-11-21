@@ -18,6 +18,8 @@ export interface SkillDocVO {
   description?: string | null;
   folderPath: string;
   filePath?: string;
+  /** 系统技能是否为内置（随仓库发版、只读）。个人技能与上传的系统技能不带该字段或为 false。 */
+  builtin?: boolean;
 }
 
 export interface AdminUserSkillVO extends SkillDocVO {

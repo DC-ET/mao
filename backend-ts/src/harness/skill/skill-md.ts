@@ -6,6 +6,8 @@ export interface SkillDocument {
   body?: string | null;
   filePath?: string | null;
   folderPath?: string | null;
+  /** 内置技能（随仓库发版，源目录在 git 检出内，后台不可写）。仅在 SkillLoader 合并内置目录时为 true。 */
+  builtin?: boolean;
 }
 
 /** 技能名必须是安全 slug：字母/数字开头，仅含字母/数字/-/_，最长 64。同时用作同步目标目录名，非法值会引发路径穿越。 */

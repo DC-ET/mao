@@ -91,7 +91,9 @@ export class SkillBundleService {
         name: parsed.name,
         description: parsed.description,
         action: 'exists-skip',
-        detail: '系统技能目录已存在同名技能，不覆盖（先删除同名技能才能导入替换）',
+        detail: this.skillLoader.isBuiltin(parsed.name)
+          ? '内置技能随版本发布，不能用导入覆盖'
+          : '系统技能目录已存在同名技能，不覆盖（先删除同名技能才能导入替换）',
         warnings: parsed.warnings,
       };
     }

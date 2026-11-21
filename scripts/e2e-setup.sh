@@ -254,6 +254,9 @@ MAO_USER_HOME_DIR=$ROOT_DIR/backend-ts/.e2e-data/users
 WORKSPACE_ROOT=$ROOT_DIR/backend-ts/.e2e-data/workspace
 FILE_UPLOAD_DIR=$ROOT_DIR/backend-ts/.e2e-data/uploads
 MAO_SHARE_DIR=$ROOT_DIR/backend-ts/.e2e-data/share
+# skills 默认 ./skills 会落在后端 cwd（backend-ts/）——检出内、.e2e-data 外；
+# e2e 里上传系统技能会写脏 git 检出，必须一并重定向
+SKILLS_DIR=$ROOT_DIR/backend-ts/.e2e-data/skills
 EOF
 else
   echo "  已存在，保留"
@@ -262,6 +265,12 @@ else
   if ! grep -q "MAO_SHARE_DIR" "$ROOT_DIR/backend-ts/.env.e2e"; then
     echo "MAO_SHARE_DIR=$ROOT_DIR/backend-ts/.e2e-data/share" >> "$ROOT_DIR/backend-ts/.env.e2e"
     echo "  已补 MAO_SHARE_DIR 重定向"
+  fi
+  # 老版本生成的 .env.e2e 缺 SKILLS_DIR（内置技能方案新增）：补一行重定向，
+  # 否则默认 ./skills 落在 backend-ts/ 检出内，e2e 上传系统技能会写脏 git 检出
+  if ! grep -q "SKILLS_DIR" "$ROOT_DIR/backend-ts/.env.e2e"; then
+    echo "SKILLS_DIR=$ROOT_DIR/backend-ts/.e2e-data/skills" >> "$ROOT_DIR/backend-ts/.env.e2e"
+    echo "  已补 SKILLS_DIR 重定向"
   fi
 fi
 
