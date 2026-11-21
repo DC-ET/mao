@@ -86,8 +86,11 @@ if [ "$live_ready" -eq 1 ]; then
   # ---- 确保采集 sidecar 在跑（每条命令都查；detached spawn 自成进程组；双宿竞争由 sidecar 自检收敛） ----
   if ! host_alive; then
     rm -f "$HOST_PID_FILE" "$HOST_READY_FILE"
+    # 模式判定：桌面 LOCAL shell 注入的 MAO_BASE_URL/MAO_TOKEN 会误触 cloud 启发式
+    # （access token 握手 runner 被后端拒），MAO_BROWSER_LIVE_MODE=local 显式钉死本地
+    # SSE（2026-11-21 Windows 真机 smoke；与 browser_cli.mjs 同口径）
     MODE=local
-    if [ -n "${MAO_BASE_URL:-}" ] && [ -n "${MAO_TOKEN:-}" ]; then
+    if [ "${MAO_BROWSER_LIVE_MODE:-}" != "local" ] && [ -n "${MAO_BASE_URL:-}" ] && [ -n "${MAO_TOKEN:-}" ]; then
       MODE=cloud
     fi
     MAO_SESSION="$(basename "$RUNTIME_DIR")"

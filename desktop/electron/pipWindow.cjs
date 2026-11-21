@@ -14,6 +14,7 @@ function createPipWindowManager({
   BrowserWindow,
   screen,
   pipUrl,
+  preloadPath,
   readBounds,
   writeBounds,
   shouldHideOnClose,
@@ -71,9 +72,18 @@ function createPipWindowManager({
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        // auth（electronAPI.getAuthTokens）与直播控制 IPC（双击放大/停止）都走 preload
+        ...(preloadPath ? { preload: preloadPath } : {}),
       },
     })
-    pipWindow.setAlwaysOnTop(true, 'floating')
+    // Windows：'floating'（含缺省 level）不映射为 HWND_TOPMOST——真机实测 topmost=False，
+    // 小窗被主窗口整体遮住；须用 'screen-saver' 级别才会置顶。macOS 'floating' 语义保持
+    // 不变（2026-11-21 Windows 真机 smoke）
+    if (process.platform === 'win32') {
+      pipWindow.setAlwaysOnTop(true, 'screen-saver')
+    } else {
+      pipWindow.setAlwaysOnTop(true, 'floating')
+    }
     pipWindow.loadURL(pipUrl())
     // 头部拖动（-webkit-app-region: drag）不产生 moved 事件的地方由这里兜底
     pipWindow.on('moved', scheduleBoundsSave)

@@ -153,7 +153,15 @@ function hostAlive() {
 if (liveReady && !hostAlive()) {
   try { rmSync(path.join(liveDir, 'host.pid'), { force: true }); } catch { /* ignore */ }
   try { rmSync(path.join(liveDir, 'host.ready'), { force: true }); } catch { /* ignore */ }
-  const mode = process.env.MAO_BASE_URL && process.env.MAO_TOKEN ? 'cloud' : 'local';
+  // 模式判定：桌面 LOCAL shell 会注入 MAO_BASE_URL/MAO_TOKEN（mao / mao-agent CLI 便利），
+  // 会误触 cloud 启发式——sidecar 以 access token 握手 runner 被后端拒（要求 shell token 且仅
+  // CLOUD 会话），直播全灭。桌面端经 MAO_BROWSER_LIVE_MODE=local 显式钉死本地 SSE 出口
+  // （browserLive.cjs 枢纽按 live.json 直连），CLOUD 服务端不设此 env，维持原启发式
+  // （2026-11-21 Windows 真机 smoke 发现，LOCAL / CLOUD 双模式方案 2026-11-20 v2 D10）。
+  const mode = process.env.MAO_BROWSER_LIVE_MODE === 'local'
+    || !(process.env.MAO_BASE_URL && process.env.MAO_TOKEN)
+    ? 'local'
+    : 'cloud';
   try {
     const child = spawn(process.execPath, [HOST_SCRIPT, '--live-dir', liveDir, '--mode', mode, '--session', path.basename(runtimeDir)],
       { detached: true, stdio: 'ignore', windowsHide: true });

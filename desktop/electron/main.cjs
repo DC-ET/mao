@@ -115,6 +115,10 @@ const pipManager = createPipWindowManager({
   BrowserWindow,
   screen: require('electron').screen,
   pipUrl: () => pipContentUrl(),
+  // 与主窗同款 preload：Electron 下 token 只存主进程（auth.json），renderer 经
+  // electronAPI.getAuthTokens() 取——pip 窗口无 preload 时 getToken 为空，路由守卫把
+  // /pip 重定向到登录页，画中画内容不可用（2026-11-21 Windows 真机 smoke）
+  preloadPath: join(__dirname, 'preload.cjs'),
   readBounds: () => desktopPrefsLib.readDesktopPrefs(app.getPath('userData')).pipWindow ?? null,
   writeBounds: (bounds) => desktopPrefsLib.writeDesktopPrefs(app.getPath('userData'), { pipWindow: bounds }),
   shouldHideOnClose: () => !quitting,
@@ -126,12 +130,17 @@ const browserLive = createBrowserLiveRuntime({
 })
 browserLive.registerIpc(ipcMain)
 
-/** 画中画窗口加载地址：与主窗同源（生产 = 服务器 SPA；dev = vite dev server），hash 路由 /#/pip。 */
+/**
+ * 画中画窗口加载地址：与主窗同源（生产 = 服务器 SPA；dev = vite dev server）。
+ * 两者都是 createWebHistory（HTML5 路由），必须用 path 形式 /pip——hash 形式 /#/pip
+ * 的 path 是 /，路由永远不匹配，画中画窗口会渲染主界面（2026-11-21 Windows 真机
+ * smoke；生产 nginx 对 / 有 SPA 回退，/pip 可直达）。
+ */
 function pipContentUrl() {
   if (process.env.NODE_ENV === 'development' && !app.isPackaged) {
-    return 'http://localhost:5201/#/pip'
+    return 'http://localhost:5201/pip'
   }
-  return `${getEffectiveServerBaseUrl()}/#/pip`
+  return `${getEffectiveServerBaseUrl()}/pip`
 }
 
 let updaterInitialized = false
@@ -148,6 +157,11 @@ let updaterProgressPercent = null
 let cachedUserPath = null
 async function resolveUserPath() {
   if (cachedUserPath) return cachedUserPath
+  // Windows：GUI 启动的进程本就携带完整 PATH，登录壳解析是 macOS 专属逻辑；
+  // 若 SHELL 残留 bash.exe（如从 Git Bash 启动 dev 实例），登录壳会输出 POSIX 形态
+  // PATH（/usr/bin:/bin:...），塞进 spawn env 后 Windows 解析不到 powershell.exe，
+  // 报 spawn ENOENT（2026-11-21 Windows 真机 smoke）。
+  if (process.platform === 'win32') return process.env.PATH
 
   const shell = process.env.SHELL || '/bin/zsh'
   console.log('[env] Resolving user PATH, SHELL:', process.env.SHELL, 'Using shell:', shell)
@@ -192,7 +206,11 @@ async function buildShellEnv() {
     ...process.env,
     PATH: userPath,
     TERM: 'dumb',
-    PS1: ''
+    PS1: '',
+    // browser-use sidecar 钉死本地 SSE 出口：这里的 MAO_TOKEN 是用户 access token，
+    // wrapper 的 cloud 启发式若被误触发，runner 握手会被后端拒（要求 shell token 且
+    // 仅 CLOUD 会话）（2026-11-21 Windows 真机 smoke）
+    MAO_BROWSER_LIVE_MODE: 'local'
   }
   if (token) {
     env.MAO_TOKEN = token
@@ -1613,7 +1631,16 @@ async function handleShellFromWebSocket(args, sessionId, workspace, needApproval
     conversationId: sessionId,
     workspace,
     needApproval,
-    approve: (description) => ensureShellApproval(needApproval, description, sessionId, dangerReason, requestId, approvalHint),
+    approve: async (description) => {
+      const approved = await ensureShellApproval(needApproval, description, sessionId, dangerReason, requestId, approvalHint)
+      // 直播发现再挂一次：attach 的轮询窗口对准真实执行期——工具帧到达即 attach 会把
+      // 窗口烧在审批等待里（2026-11-21 Windows 真机 smoke）。轮询在途时重挂会重置计数
+      // 延长窗口（真机实测：批准后 wrapper 再过数秒才落盘 live.json，早退会两头落空）。
+      if (approved) {
+        try { browserLive.attachLocalSession(Number(sessionId)) } catch { /* 直播尽力而为 */ }
+      }
+      return approved
+    },
   })
 }
 

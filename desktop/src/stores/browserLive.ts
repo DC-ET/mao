@@ -97,6 +97,20 @@ export const useBrowserLiveStore = defineStore('browserLive', {
       api.onActiveSession((payload: { sessionId: number | null }) => {
         this.activeSessionId = payload?.sessionId ?? null
       })
+      // 初始快照：画中画窗晚于 started 事件创建（showInactive + renderer 加载有延迟），
+      // 只吃增量会永远停在等待态（静态页无新帧）；主进程枢纽持有全量状态与最新帧，
+      // 挂载即灌入（2026-11-21 Windows 真机 smoke）
+      void api.getState?.().then((snapshot: { activeSessionId: number | null; sessions: Record<string, BrowserLiveSessionState> } | null) => {
+        if (!snapshot?.sessions) return
+        for (const [sessionId, s] of Object.entries(snapshot.sessions)) {
+          const state = this.ensure(Number(sessionId))
+          Object.assign(state, s, { frame: s.frame ?? state.frame })
+          if (s.isLive) this.activeSessionId = Number(sessionId)
+        }
+        if (snapshot.activeSessionId != null) {
+          this.activeSessionId = snapshot.activeSessionId
+        }
+      })
     },
     /** Web 端注入停止通道（幂等，useStreamWS 调用一次）。 */
     setStopRequester(cb: (sessionId: number) => void) {

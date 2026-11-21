@@ -17,11 +17,12 @@
 const http = require('http')
 const fs = require('fs')
 const path = require('path')
+const { spawnSync } = require('child_process')
 
 const RECONNECT_MAX_TRIES = 30
 const RECONNECT_INTERVAL_MS = 2000
 const LIVE_FILE_POLL_INTERVAL_MS = 1500
-const LIVE_FILE_POLL_MAX_TRIES = 8
+const LIVE_FILE_POLL_MAX_TRIES = 12
 const PIP_HIDE_AFTER_STOP_MS = 2000
 const TERMINAL_PHASES = new Set(['COMPLETED', 'FAILED', 'CANCELLED'])
 
@@ -61,7 +62,7 @@ function createBrowserLiveRuntime({
       result.sessions[sessionId] = {
         isLive: s.isLive, pageUrl: s.pageUrl, width: s.width, height: s.height,
         cliSession: s.cliSession, stoppedReason: s.stoppedReason, lastSeq: s.lastSeq,
-        source: s.source,
+        source: s.source, frame: s.isLive ? lastFrames.get(String(sessionId)) ?? null : null,
       }
     }
     return result
@@ -72,7 +73,13 @@ function createBrowserLiveRuntime({
     if (main) main.webContents.send(channel, data)
   }
 
+  /** sessionId -> 最新帧 JPEG base64：画中画窗等迟到消费者在 getState 快照里取画面 */
+  const lastFrames = new Map()
+
   function broadcast(sessionId, evt) {
+    if (evt.type === 'browser_frame' && typeof evt.data?.jpeg === 'string') {
+      lastFrames.set(String(sessionId), evt.data.jpeg)
+    }
     const payload = { sessionId, ...evt }
     sendToMainWindow('browser-live-event', payload)
     pip?.send('browser-live-event', payload)
@@ -89,6 +96,7 @@ function createBrowserLiveRuntime({
   function dispatchEvent(sessionId, evt) {
     const state = stateOf(sessionId)
     if (evt.type === 'browser_live_started') {
+      console.log(`[browser-live] session ${sessionId}: live started (${evt.data?.pageUrl ?? ''})`)
       state.isLive = true
       state.stoppedReason = null
       state.width = evt.data?.width ?? 0
@@ -107,6 +115,7 @@ function createBrowserLiveRuntime({
     } else if (evt.type === 'browser_live_stopped') {
       state.isLive = false
       state.stoppedReason = evt.data?.reason ?? 'unknown'
+      lastFrames.delete(String(sessionId))
       // 全部会话都已停：画中画稍后自动收起（让「已结束」状态可见片刻）
       const anyLive = [...sessions.values()].some((s) => s.isLive)
       if (!anyLive) {
@@ -210,20 +219,28 @@ function createBrowserLiveRuntime({
    */
   function attachLocalSession(sessionId) {
     const state = stateOf(sessionId)
-    if (state.source === 'local' && (state.live || state.liveFileTimer)) return
+    if (state.source === 'local' && state.live) { startSse(sessionId); return }
+    if (state.source === 'local' && state.liveFileTimer) {
+      // 轮询在途时被再次挂载（审批通过路径）：重置计数延长窗口而非空操作早退。
+      // 真机时序：eager attach 的窗口可能烧在审批等待里，批准后 wrapper 再过数秒才落盘
+      // live.json，在途早退会两头落空（2026-11-21 Windows 真机 smoke）
+      state.pollTries = 0
+      return
+    }
     state.source = 'local'
     if (state.live) { startSse(sessionId); return }
-    let tries = 0
+    state.pollTries = 0
     const poll = () => {
       state.liveFileTimer = null
       const fresh = readLiveFile(sessionId)
       if (fresh) {
+        console.log(`[browser-live] session ${sessionId}: live.json found (port ${fresh.httpPort}), connecting SSE`)
         state.live = fresh
         startSse(sessionId)
         return
       }
-      tries += 1
-      if (tries <= LIVE_FILE_POLL_MAX_TRIES && !state.stoppedReason) {
+      state.pollTries += 1
+      if (state.pollTries <= LIVE_FILE_POLL_MAX_TRIES && !state.stoppedReason) {
         state.liveFileTimer = setTimeout(poll, LIVE_FILE_POLL_INTERVAL_MS)
         state.liveFileTimer.unref?.()
       }
@@ -296,9 +313,27 @@ function createBrowserLiveRuntime({
   }
 
   function shutdown() {
-    for (const [, state] of sessions) {
+    const liveLocal = [...sessions.entries()]
+      .filter(([, s]) => s.source === 'local' && s.live && s.isLive)
+      .map(([id]) => id)
+    console.log(`[browser-live] shutdown: ${sessions.size} session(s), live local: [${liveLocal.join(',')}]`)
+    for (const [sessionId, state] of sessions) {
       stopSse(state)
       if (state.liveFileTimer) { clearTimeout(state.liveFileTimer); state.liveFileTimer = null }
+      // 退出前对仍在直播的 LOCAL 会话补发 /stop：sidecar 与浏览器是 detached 孤儿，不补发
+      // 则应用退出后存活到 2h 硬上限（方案 D4 兜底链缺口；2026-11-21 Windows 真机 smoke：
+      // 优雅退出后 sidecar/chrome 均存活实证）。同步 spawn curl：退出流里异步 http 可能
+      // 来不及 flush，同步执行保证请求在进程退出前确实发出。
+      if (state.source === 'local' && state.live && state.isLive) {
+        try {
+          spawnSync('curl', [
+            '-s', '-m', '2', '-X', 'POST',
+            `http://127.0.0.1:${state.live.httpPort}/stop?token=${encodeURIComponent(state.live.token)}`,
+            '-H', 'Content-Type: application/json',
+            '-d', JSON.stringify({ sessionId }),
+          ], { windowsHide: true, timeout: 3000 })
+        } catch { /* 尽力而为：sidecar 有 2h 硬上限兜底 */ }
+      }
     }
     sessions.clear()
   }

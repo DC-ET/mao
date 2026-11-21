@@ -62,7 +62,7 @@
  * 与主窗直播 Tab（variant=tab，可还原回画中画）共用同一组件。帧数据一律来自
  * browserLiveStore（Electron 下由主进程枢纽扇出；Web 下由 useStreamWS 直喂）。
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElIcon } from 'element-plus'
 import { CircleCloseFilled, CopyDocument } from '@element-plus/icons-vue'
 import { useBrowserLiveStore } from '../../stores/browserLive'
@@ -114,7 +114,7 @@ const stopReasonText = computed(() => {
 // 只画最新帧：图像异步加载完成即覆盖画布，乱序/旧帧由 store 侧丢弃
 let lastDrawnFrame: string | null = null
 let pendingImage: HTMLImageElement | null = null
-watch(() => state.value?.frame, (frame) => {
+function drawFrame(frame: string | null | undefined) {
   if (!frame || frame === lastDrawnFrame || !canvasRef.value) return
   lastDrawnFrame = frame
   const img = new Image()
@@ -128,7 +128,12 @@ watch(() => state.value?.frame, (frame) => {
     ctx?.drawImage(img, 0, 0, canvas.width, canvas.height)
   }
   img.src = `data:image/jpeg;base64,${frame}`
-})
+}
+// 帧变化即画；另在挂载后补画一次——画中画窗挂载时快照帧可能已就位（store 灌入早于
+// 懒加载组件的 watch 注册，immediate 触发时 canvasRef 尚为 null），不补画会黑屏
+// 停在等待态（2026-11-21 Windows 真机 smoke）
+watch(() => state.value?.frame, (frame) => { drawFrame(frame) })
+onMounted(() => { drawFrame(state.value?.frame) })
 
 function onDblClick() {
   if (props.variant === 'pip' && isElectron) {
