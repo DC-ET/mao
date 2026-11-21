@@ -164,15 +164,37 @@
             <el-tag v-else type="success" size="small">可用</el-tag>
           </template>
         </el-table-column>
+        <!-- 浏览器依赖（browser-use 技能，方案 2026-11-20 v2 D7 按需化）：状态与安装入口 -->
+        <el-table-column label="浏览器依赖" width="130">
+          <template #default="{ row }">
+            <template v-if="row.name === 'browser-use' && browserDepsTag">
+              <el-tooltip :content="browserDeps?.detail || ''" placement="top" :disabled="!browserDeps?.detail">
+                <el-tag :type="browserDepsTag.type" size="small">{{ browserDepsTag.text }}</el-tag>
+              </el-tooltip>
+            </template>
+          </template>
+        </el-table-column>
         <el-table-column label="关联 Agent" width="120" align="right" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
           <template #default="{ row }">
             <RelatedAgentsPopover :agents="agentsBySkill(row.name)" />
           </template>
         </el-table-column>
         <el-table-column prop="folderPath" label="路径" min-width="250" show-overflow-tooltip class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="handleView(row)">查看内容</el-button>
+            <el-popconfirm
+              v-if="row.name === 'browser-use' && browserDepsTag && browserDepsTag.type !== 'success' && browserDeps?.phase !== 'installing'"
+              title="将在服务器上自动安装浏览器依赖（Chrome/chromium + playwright-cli，可能需要数分钟），确认开始？"
+              confirm-button-text="安装"
+              cancel-button-text="取消"
+              width="280"
+              @confirm="handleInstallBrowserDeps"
+            >
+              <template #reference>
+                <el-button type="primary" link size="small" :disabled="!canWrite">安装依赖</el-button>
+              </template>
+            </el-popconfirm>
             <!-- 内置技能随版本发布、不可删：整块 popconfirm 不渲染（非置灰），避免误导可操作 -->
             <el-popconfirm
               v-if="!row.builtin"
@@ -267,8 +289,26 @@
             </el-tooltip>
             <el-tag v-else type="success" size="small">可用</el-tag>
           </div>
+          <div v-if="activeTab === 'system' && row.name === 'browser-use' && browserDepsTag" class="mobile-card-row">
+            <span class="mobile-card-label">浏览器依赖</span>
+            <el-tooltip :content="browserDeps?.detail || ''" placement="top" :disabled="!browserDeps?.detail">
+              <el-tag :type="browserDepsTag.type" size="small">{{ browserDepsTag.text }}</el-tag>
+            </el-tooltip>
+          </div>
           <div class="mobile-card-actions">
             <el-button type="primary" link @click="handleView(row)">查看</el-button>
+            <el-popconfirm
+              v-if="activeTab === 'system' && row.name === 'browser-use' && browserDepsTag && browserDepsTag.type !== 'success' && browserDeps?.phase !== 'installing'"
+              title="将在服务器上自动安装浏览器依赖（Chrome/chromium + playwright-cli，可能需要数分钟），确认开始？"
+              confirm-button-text="安装"
+              cancel-button-text="取消"
+              width="280"
+              @confirm="handleInstallBrowserDeps"
+            >
+              <template #reference>
+                <el-button type="primary" link :disabled="!canWrite">安装依赖</el-button>
+              </template>
+            </el-popconfirm>
             <!-- 内置技能随版本发布、不可删：与桌面表格一致整块不渲染 -->
             <el-popconfirm
               v-if="!(activeTab === 'system' && row.builtin)"
@@ -320,7 +360,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onActivated, onMounted, watch } from 'vue'
+import { computed, ref, onActivated, onDeactivated, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { api } from '../../api'
@@ -335,6 +375,61 @@ const { isMobile } = useBreakpoint()
 const authStore = useAuthStore()
 const canWrite = computed(() => authStore.hasPermission('skill:write'))
 const { agentsBySkill, load: loadAgentRelations } = useAgentRelations()
+
+// ========== 浏览器依赖（browser-use 技能）按需安装 ==========
+// 状态来自 /admin/browser-deps/status（skill:read）；安装（skill:write）触发后轮询直至终态。
+// 管理后台没有 WS 通道，只能轮询（同 SessionDetailView 口径）；请求全部 skipErrorToast，
+// 避免旧后端 / 瞬时失败在轮询里刷屏报错。
+const BROWSER_DEPS_POLL_MS = 2500
+const browserDeps = ref<{
+  phase: 'not_installed' | 'installing' | 'ready' | 'failed'
+  mode: 'host' | 'docker'
+  detail: string | null
+  chrome: { present: boolean; kind: 'system' | 'chromium' | null; version: string | null }
+  cli: { present: boolean; version: string | null }
+} | null>(null)
+let browserDepsPollTimer: ReturnType<typeof setInterval> | null = null
+
+const browserDepsTag = computed(() => {
+  const s = browserDeps.value
+  if (!s) return null
+  if (s.phase === 'ready') {
+    return { type: 'success' as const, text: s.chrome.kind === 'chromium' ? '依赖就绪（chromium）' : '依赖就绪' }
+  }
+  if (s.phase === 'installing') return { type: 'warning' as const, text: '依赖安装中' }
+  if (s.phase === 'failed') return { type: 'danger' as const, text: '依赖安装失败' }
+  return { type: 'info' as const, text: '依赖未安装' }
+})
+
+function stopBrowserDepsPoll() {
+  if (browserDepsPollTimer != null) {
+    clearInterval(browserDepsPollTimer)
+    browserDepsPollTimer = null
+  }
+}
+
+async function fetchBrowserDeps() {
+  try {
+    const { data } = await api.get('/admin/browser-deps/status', { skipErrorToast: true })
+    browserDeps.value = data || null
+    // 安装中 → 维持轮询；终态 → 停轮并刷新列表（就绪态变化影响安装按钮渲染）
+    if (browserDeps.value?.phase === 'installing') {
+      if (browserDepsPollTimer == null) {
+        browserDepsPollTimer = setInterval(() => { void fetchBrowserDeps() }, BROWSER_DEPS_POLL_MS)
+      }
+    } else {
+      stopBrowserDepsPoll()
+    }
+  } catch { /* 静默：旧后端无此端点或瞬时失败 */ }
+}
+
+async function handleInstallBrowserDeps() {
+  try {
+    await api.post('/admin/browser-deps/install')
+    ElMessage.success('浏览器依赖安装已启动，完成后状态会自动刷新')
+  } catch { /* 拦截器已提示 */ }
+  await fetchBrowserDeps()
+}
 
 const activeTab = ref<'system' | 'personal'>('system')
 const loading = ref(false)
@@ -385,6 +480,7 @@ async function fetchActiveTab() {
 }
 
 function handleTabChange(tab: string | number) {
+  if (tab === 'system') void fetchBrowserDeps()
   void (tab === 'personal' ? fetchPersonalSkills() : fetchSkillDocs())
 }
 
@@ -750,6 +846,7 @@ async function handleDelete(row: any) {
 onMounted(() => {
   void fetchActiveTab()
   void loadAgentRelations()
+  void fetchBrowserDeps()
 })
 
 let firstActivation = true
@@ -760,6 +857,16 @@ onActivated(() => {
   }
   void fetchActiveTab()
   void loadAgentRelations()
+  void fetchBrowserDeps()
+})
+
+onDeactivated(() => {
+  // keepAlive 页面失活：停轮询（回到页面 onActivated 会重新拉取并按需续启）
+  stopBrowserDepsPoll()
+})
+
+onUnmounted(() => {
+  stopBrowserDepsPoll()
 })
 </script>
 
