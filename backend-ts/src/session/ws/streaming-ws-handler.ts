@@ -292,8 +292,12 @@ function cancelFlag(): { get(): boolean; set(v: boolean): void } {
   return { get: () => v, set: (n) => { v = n; } };
 }
 
-/** 浏览器直播事件的接收端：electron（画中画 / Tab）+ browser（Web 端 Tab 观看）；安卓不收（带宽保护）。 */
-const BROWSER_LIVE_CLIENT_TYPES = new Set(['electron', 'browser']);
+/**
+ * 浏览器直播事件的接收端：electron（画中画 / Tab）+ browser（Web 端 Tab 观看）+ android
+ *（Capacitor WebView 内复用 Web Tab 观看链路，clientKind 上报 'android'）。帧后端限速
+ * 6fps token bucket，展示端只画最新帧，安卓带宽可承受。
+ */
+const BROWSER_LIVE_CLIENT_TYPES = new Set(['electron', 'browser', 'android']);
 
 /**
  * 队列消费侧的回写绑定：autoConsume / 插队消费到带来源的队列行时登记，

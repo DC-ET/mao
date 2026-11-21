@@ -119,7 +119,7 @@ describe('StreamingWsHandler runner (browser live)', () => {
     expect(registry.sendToConnection).toHaveBeenLastCalledWith(second, expect.objectContaining({ type: 'connected' }));
   });
 
-  it('forwardsFramesToElectronAndBrowserOnly', async () => {
+  it('forwardsFramesToElectronBrowserAndAndroid', async () => {
     const { handler, registry } = buildHandler();
     const socket = runnerSocket('r1');
     await handler.processTextMessage(socket, JSON.stringify({
@@ -136,9 +136,10 @@ describe('StreamingWsHandler runner (browser live)', () => {
       expect.objectContaining({ has: expect.any(Function) }),
     );
     const clientTypes = registry.sendToClientTypes.mock.calls[0][2] as Set<string>;
+    // 三端观看矩阵：electron（画中画/Tab）+ browser（Web Tab）+ android（WebView 内同构 Web 链路）
     expect(clientTypes.has('electron')).toBe(true);
     expect(clientTypes.has('browser')).toBe(true);
-    expect(clientTypes.has('android')).toBe(false);
+    expect(clientTypes.has('android')).toBe(true);
   });
 
   it('rateLimitsBrowserFramesPerSession', async () => {

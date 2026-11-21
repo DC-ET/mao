@@ -61,7 +61,7 @@ v2 的核心思路：**浏览器所有权不动，旁路加一只「摄像头」
 - 不做整机屏幕采集（`desktopCapturer` / TCC 权限一律不碰）；仅采集 CLI 拉起的浏览器页面。
 - 不做 VNC / xvfb；CDP screencast 已覆盖。
 - 不改 shell 工具、deny-list、审批、path-sandbox 的任何口径（sidecar 启动就是 wrapper 内的一条普通 shell 动作，随命令过既有审批）。
-- 安卓端不做观看 UI（帧不下发安卓）。Web 端观看入口已补齐（2026-11-21 追加，M2 前置）：TopNav「浏览器直播」按钮（`hasAnyLive` 门控）+ store 注入式 Web 停止通道（`setStopRequester` → `browser_live_stop` WS 帧），数据链路零改动。
+- 观看端矩阵（2026-11-21 收口）：electron（画中画 / Tab）+ browser（Web Tab）+ android（Capacitor WebView 内与 Web 完全同构的 Tab 观看——后端仅把 `BROWSER_LIVE_CLIENT_TYPES` 加入 `'android'`，前端零改动；帧 6fps token bucket，展示端只画最新帧）。Web 入口同日补齐：TopNav「浏览器直播」按钮（`hasAnyLive` 门控）+ store 注入式停止通道（`setStopRequester` → `browser_live_stop` WS 帧）。安卓原生系统级画中画（`enterPictureInPictureMode` + Capacitor 插件桥）不做，另行立项。
 - LOCAL Windows：shell 是 PowerShell，bash wrapper 不可用，本技能暂不支持（与原 playwright 技能同限，非本方案回归）；支持方案已立项：`2026-11-21-browser-use-windows-local-technical-design.md`。
 
 ## 3. 技术选型与决策点
@@ -130,7 +130,7 @@ v1「agent 经 shell 后台启动 runner」与「平台自动拉起」两个选�
 ### D10（v2 新增）渲染面与状态枢纽
 
 - Electron 主进程 `browserLive.cjs` 是帧枢纽：LOCAL 从 sidecar SSE 收帧；CLOUD 由 renderer 的 useStreamWS 收到帧后经 IPC 回灌主进程。主进程统一扇出给 PiP 窗口与主窗 renderer（各 renderer 内 Pinia `browserLiveStore` 只吃 IPC 一路，CLOUD 在 electron 下 useStreamWS 仅回灌不自吃，避免双份）。
-- 非 Electron（Web）下 useStreamWS 直吃 WS 帧喂 store——Tab 观看在 Web 端自然可用（入口已于 2026-11-21 补齐，见 §2 / §7 M1.5）。
+- 非 Electron（Web / 安卓 WebView）下 useStreamWS 直吃 WS 帧喂 store——Tab 观看在三端自然同构（入口与安卓帧下发已于 2026-11-21 补齐，见 §2 / §7 M1.5）。
 - 双击 PiP → IPC → 主进程 hide PiP → 通知主窗 `openBrowserLiveTab()`；Tab 内「还原画中画」→ 反向。
 
 ## 4. 协议设计
@@ -199,7 +199,7 @@ v1「agent 经 shell 后台启动 runner」与「平台自动拉起」两个选�
 ## 7. 分期
 
 - **M1（本方案一次性落地）**：技能 + sidecar + 后端 runner 通道 + PiP 窗口 + Tab 放大 + 生命周期。LOCAL / CLOUD 同批（生产桌面用户以 CLOUD 为主，只做 LOCAL 等于不可见）。
-- **M1.5（2026-11-21 追加，随 M1 分支落地）**：Web 端观看入口——TopNav「浏览器直播」按钮 + Web 停止通道（§2 边界已更新），提前消化 M2 中的「Web 端观看验收」。
+- **M1.5（2026-11-21 追加，随 M1 分支落地）**：Web 端观看入口——TopNav「浏览器直播」按钮 + Web 停止通道；同日安卓 Tab 观看——后端 `BROWSER_LIVE_CLIENT_TYPES` 加入 `'android'`，前端零改动（§2 边界已更新），提前消化 M2 中的「Web 端观看验收」。
 - **M2（打磨，另行立项）**：多 CLI 会话切换、帧率/分辨率自适应、PiP「跳转会话」、页面切换动画优化。
 
 ## 8. 与内置 page_* 工具链路的关系
