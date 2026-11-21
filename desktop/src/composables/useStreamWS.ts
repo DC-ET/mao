@@ -177,6 +177,8 @@ const messageSavedCallbacks = new Map<string, MessageSavedCallback>()
 let skillSyncListenerRegistered = false
 /** 浏览器直播停止下行（主进程 → renderer WS）监听只注册一次 */
 let browserLiveStopRelayRegistered = false
+/** Web 端停止通道（store.stopBrowser → WS 帧）注入只注册一次 */
+let browserLiveWebStopRegistered = false
 
 /** skill_sync_done payloads waiting for WS to become OPEN (reconnect during sync). */
 const pendingSkillSyncDones = new Map<number, {
@@ -253,6 +255,15 @@ export function useStreamWS() {
       if (payload?.sessionId != null) {
         void sendReliable({ type: 'browser_live_stop', sessionId: payload.sessionId })
       }
+    })
+  }
+
+  // Web 端观看（M2）：无主进程枢纽，注入停止通道让 store.stopBrowser 直接发 WS 帧
+  //（后端 handleBrowserLiveStop 校验会话归属，任意本用户连接均可）。
+  if (!browserLiveWebStopRegistered && !isElectronClient()) {
+    browserLiveWebStopRegistered = true
+    useBrowserLiveStore().setStopRequester((sessionId: number) => {
+      void sendReliable({ type: 'browser_live_stop', sessionId })
     })
   }
 

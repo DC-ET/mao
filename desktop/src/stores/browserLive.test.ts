@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useBrowserLiveStore } from './browserLive'
 
@@ -42,7 +42,7 @@ describe('browserLive store', () => {
   })
 
   it('stopBrowser 仅在 Electron 下走 IPC，且缺省用最近活跃会话', () => {
-    // 非 Electron（node 测试环境无 electronAPI）：不抛错、不动作
+    // 非 Electron（node 测试环境无 electronAPI）：未注入停止通道时不抛错、不动作
     const store = useBrowserLiveStore()
     store.ingest({ sessionId: 9, type: 'browser_live_started', data: { width: 1, height: 1 } })
     expect(() => store.stopBrowser()).not.toThrow()
@@ -59,6 +59,34 @@ describe('browserLive store', () => {
     } finally {
       delete (globalThis as any).window
     }
+  })
+
+  it('Web 端（M2）：注入停止通道后 stopBrowser 走请求器，Electron 优先级更高', () => {
+    const store = useBrowserLiveStore()
+    store.ingest({ sessionId: 7, type: 'browser_live_started', data: { width: 1, height: 1 } })
+    const requested: number[] = []
+    store.setStopRequester((sid) => requested.push(sid))
+
+    // 非 Electron：走注入的请求器（缺省最近活跃会话 / 显式 sessionId 均可）
+    store.stopBrowser()
+    expect(requested).toEqual([7])
+    store.stopBrowser(4)
+    expect(requested).toEqual([7, 4])
+
+    // Electron 存在时：仍走 IPC，不走请求器
+    const ipcCalls: number[] = []
+    ;(globalThis as any).window = { electronAPI: { browserLive: { stop: (sid: number) => ipcCalls.push(sid) } } }
+    try {
+      store.stopBrowser(2)
+      expect(ipcCalls).toEqual([2])
+      expect(requested).toEqual([7, 4])
+    } finally {
+      delete (globalThis as any).window
+    }
+
+    // null 同 undefined：?? 语义回退到最近活跃会话
+    store.stopBrowser(null)
+    expect(requested).toEqual([7, 4, 7])
   })
 
   it('bindMainProcess 在非 Electron 下是空操作且可重复调用', () => {

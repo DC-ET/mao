@@ -80,6 +80,14 @@
           </svg>
         </div>
       </el-tooltip>
+      <!-- 浏览器直播入口（方案 2026-11-20 v2，Web 端观看 M2）：有活跃直播时出现。
+           Electron 走画中画放大语义（收起小窗开 Tab）；Web 直接开 Tab（帧已直喂 store）。 -->
+      <el-tooltip v-if="browserLiveStore.hasAnyLive" content="浏览器直播" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
+        <div class="theme-toggle browser-live-toggle" role="button" aria-label="浏览器直播" @click="openBrowserLive">
+          <el-icon :size="16"><Monitor /></el-icon>
+          <span class="live-dot" />
+        </div>
+      </el-tooltip>
       <el-tooltip :content="updateTooltip" :show-after="100" placement="bottom" :disabled="isMobileDevice()">
         <div
           class="theme-toggle refresh-btn"
@@ -155,7 +163,7 @@
     <ShortcutHelpDialog ref="shortcutHelpRef" />
   </nav>
 </template><script setup lang="ts">
-import { ArrowLeft, ChatLineSquare, Moon, Reading, Refresh, Setting, Sunrise, Sunny, SwitchButton, User } from '@element-plus/icons-vue'
+import { ArrowLeft, ChatLineSquare, Monitor, Moon, Reading, Refresh, Setting, Sunrise, Sunny, SwitchButton, User } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -167,6 +175,7 @@ import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useVersionCheck } from '../../composables/useVersionCheck'
 import { readScreenFillingWindow, reserveMacTrafficLightInset as shouldReserveMacTrafficLightInset } from '../../utils/macTrafficLightInset'
 import { isElectronClient } from '../../utils/platform'
+import { useBrowserLiveStore } from '../../stores/browserLive'
 import { terminalAvailability as computeTerminalAvailability } from '../../utils/terminal-availability'
 import { getLocalDeviceId } from '../../utils/device-info'
 import { goBackToWorkbench } from '../../utils/workbench-nav'
@@ -237,6 +246,15 @@ const themeTooltip = computed(() => {
 // 命令面板上下文动作的既有入口（批次 29 提案 3）：useCenterTabs 工厂内 watch 在组件作用域外
 // 创建会泄漏（永不自停），必须 setup 顶层建一次实例——TopNav 常驻不卸载，无回收问题
 const paletteCenterTabs = useCenterTabs(computed(() => sessionStore.activeSessionId))
+const browserLiveStore = useBrowserLiveStore()
+/** 打开浏览器直播视图：Electron 收起画中画开 Tab（复用放大链路）；Web 直接开 Tab。 */
+function openBrowserLive() {
+  if (isElectronClient()) {
+    ;(window as any).electronAPI?.browserLive?.expand()
+  } else {
+    paletteCenterTabs.openBrowserLiveTab()
+  }
+}
 const { isOpen: terminalOpen, togglePanel } = useTerminal()
 const { toggleLeft, toggleRight } = usePanelLayout()
 
@@ -672,6 +690,15 @@ async function handleCommand(command: string) {
   animation: pulse-update 2s ease-in-out infinite;
 }
 
+.browser-live-toggle .live-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--el-color-success, #67c23a);
+}
 .update-dot {
   position: absolute;
   top: 4px;

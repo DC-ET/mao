@@ -35,6 +35,9 @@ function emptySession(): BrowserLiveSessionState {
   }
 }
 
+/** Web 端停止通道注入点：useStreamWS 注册后，stopBrowser 走 WS 帧（Electron 仍走主进程 IPC）。 */
+let stopRequester: ((sessionId: number) => void) | null = null
+
 export const useBrowserLiveStore = defineStore('browserLive', {
   state: () => ({
     activeSessionId: null as number | null,
@@ -95,11 +98,18 @@ export const useBrowserLiveStore = defineStore('browserLive', {
         this.activeSessionId = payload?.sessionId ?? null
       })
     },
-    /** 停止浏览器（停止观看不受影响）：LOCAL 走主进程直停 sidecar，CLOUD 由主进程转请 WS。 */
+    /** Web 端注入停止通道（幂等，useStreamWS 调用一次）。 */
+    setStopRequester(cb: (sessionId: number) => void) {
+      stopRequester = cb
+    },
+    /** 停止浏览器（停止观看不受影响）：Electron LOCAL 走主进程直停 sidecar，CLOUD 由主进程转请 WS；Web 直接发 WS 帧。 */
     stopBrowser(sessionId?: number | null) {
       const sid = sessionId ?? this.activeSessionId
-      if (sid != null && isElectronClient()) {
+      if (sid == null) return
+      if (isElectronClient()) {
         ;(window as any).electronAPI?.browserLive?.stop(sid)
+      } else {
+        stopRequester?.(sid)
       }
     },
     /** Tab 内「还原画中画」。 */
