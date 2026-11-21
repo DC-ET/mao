@@ -67,6 +67,13 @@
         @add-file-to-chat="emit('add-file-to-chat', $event)"
         @add-commit-to-chat="emit('add-commit-to-chat', $event)"
       />
+      <!-- 浏览器直播 Tab（方案 2026-11-20 v2 D10）：画中画双击放大而来，Tab 内可还原 -->
+      <BrowserLiveView
+        v-else-if="activeTab?.type === 'browser_live'"
+        :key="`browser-live-${props.sessionId}`"
+        variant="tab"
+        :session-id="props.sessionId"
+      />
       <!-- 我的工作区：全局资产视图，不随会话切换（key 固定） -->
       <WorkspaceOverviewPanel
         v-else-if="activeTab?.type === 'workspace_overview'"
@@ -86,6 +93,7 @@ import FileDiffViewer from './FileDiffViewer.vue'
 import SideChatPanel from '../chat/SideChatPanel.vue'
 import SubagentChatPanel from '../chat/SubagentChatPanel.vue'
 import RunTracePanel from './RunTracePanel.vue'
+import BrowserLiveView from '../browser/BrowserLiveView.vue'
 import FileManagerPanel from '../file-browser/FileManagerPanel.vue'
 import GitManagerPanel from '../git/GitManagerPanel.vue'
 import WorkspaceOverviewPanel from '../workspace/WorkspaceOverviewPanel.vue'

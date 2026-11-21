@@ -20,6 +20,8 @@ const { createMcpRuntime, registerMcpIpc } = require('./mcpClient.cjs')
 const { registerLocalSkillsIpc } = require('./localSkills.cjs')
 const { registerGitIpc } = require('./gitIpc.cjs')
 const { registerLocalFileIpc } = require('./localFileIpc.cjs')
+const { createBrowserLiveRuntime } = require('./browserLive.cjs')
+const { createPipWindowManager } = require('./pipWindow.cjs')
 
 
 app.setName('Mao')
@@ -105,6 +107,32 @@ const localSearch = createLocalSearch({
 // MCP 运行时（§5.4）：连接与状态在 mcpClient.cjs，入口只调导出方法，不碰内部 Map（D8）。
 const mcpRuntime = createMcpRuntime()
 registerMcpIpc(ipcMain, mcpRuntime)
+
+// ========== 浏览器直播（方案 2026-11-20 v2 D10）==========
+// 帧枢纽在 browserLive.cjs（LOCAL SSE 直连 sidecar / CLOUD 渲染层回灌），画中画窗口在
+// pipWindow.cjs。入口只注入回调（主窗 getter / 偏好读写 / pip 页地址），不持帧状态。
+const pipManager = createPipWindowManager({
+  BrowserWindow,
+  screen: require('electron').screen,
+  pipUrl: () => pipContentUrl(),
+  readBounds: () => desktopPrefsLib.readDesktopPrefs(app.getPath('userData')).pipWindow ?? null,
+  writeBounds: (bounds) => desktopPrefsLib.writeDesktopPrefs(app.getPath('userData'), { pipWindow: bounds }),
+  shouldHideOnClose: () => !quitting,
+})
+const browserLive = createBrowserLiveRuntime({
+  resolveSessionRuntimeDir: localRuntimePaths.resolveLocalRuntimeDir,
+  getMainWindow: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null),
+  pip: pipManager,
+})
+browserLive.registerIpc(ipcMain)
+
+/** 画中画窗口加载地址：与主窗同源（生产 = 服务器 SPA；dev = vite dev server），hash 路由 /#/pip。 */
+function pipContentUrl() {
+  if (process.env.NODE_ENV === 'development' && !app.isPackaged) {
+    return 'http://localhost:5201/#/pip'
+  }
+  return `${getEffectiveServerBaseUrl()}/#/pip`
+}
 
 let updaterInitialized = false
 let updateDownloaded = false
@@ -1191,6 +1219,9 @@ app.on('before-quit', () => {
   localShell.stopCleanup()
   // 关闭全部 MCP 连接（stdio 子进程 / HTTP 会话）
   mcpRuntime.closeAll()
+  // 断开直播 SSE、销毁画中画窗口
+  browserLive.shutdown()
+  pipManager.shutdown()
 })
 
 // ========== Auth token persistence (file:// localStorage is not reliable) ==========
@@ -1554,6 +1585,11 @@ ipcMain.handle('tool-execute', async (event, { toolName, args, requestId, worksp
   if (workspace) {
     console.log('[tool-execute] setting currentWorkspace:', workspace, '(was:', currentWorkspace, ')')
     currentWorkspace = workspace
+  }
+  // 浏览器直播发现（方案 2026-11-20 v2 D3/D10）：shell 工具执行意味着 wrapper 可能拉起
+  // sidecar，轮询该会话运行时的 live.json 并直连 SSE。非 shell / 无会话不触发。
+  if (toolName === 'shell' && sessionId != null) {
+    try { browserLive.attachLocalSession(Number(sessionId)) } catch { /* 直播尽力而为 */ }
   }
 
   let parsedArgs

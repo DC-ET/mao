@@ -430,6 +430,39 @@ interface ElectronAPI {
   onDesktopShortcutFailed(callback: (data: DesktopShortcutFailedPayload) => void): RemoveListener
   onTrayNewTask(callback: () => void): RemoveListener
   onTrayFirstCloseHint(callback: () => void): RemoveListener
+  /** 浏览器直播（方案 2026-11-20 v2 D10）：画中画窗口与直播 Tab 的桥 */
+  browserLive: {
+    getState(): Promise<BrowserLiveStateSnapshot>
+    /** CLOUD 帧：useStreamWS 收到 browser_live_* 事件后回灌主进程枢纽 */
+    relayEvent(msg: { sessionId: number | null; type: string; data?: Record<string, unknown> }): void
+    /** 停止浏览器：LOCAL 主进程直停 sidecar；CLOUD 主进程转请 renderer 发 WS 帧 */
+    stop(sessionId: number): void
+    /** LOCAL 会话终态：主进程向 sidecar 发停止（杀浏览器 + 收窗） */
+    sessionEnded(sessionId: number, phase: string): void
+    /** 画中画双击放大 → 主进程 hide 小窗并通知主窗开 Tab */
+    expand(): void
+    /** Tab 内还原画中画 */
+    restore(): void
+    onEvent(callback: (payload: { sessionId: number; type: string; data?: Record<string, unknown> }) => void): RemoveListener
+    onActiveSession(callback: (payload: { sessionId: number | null }) => void): RemoveListener
+    onExpand(callback: (payload: { sessionId: number | null }) => void): RemoveListener
+    /** CLOUD 停止下行：主进程 → 主窗 renderer，由 useStreamWS 发 browser_live_stop 帧 */
+    onStopRelay(callback: (payload: { sessionId: number }) => void): RemoveListener
+  }
+}
+
+declare interface BrowserLiveStateSnapshot {
+  activeSessionId: number | null
+  sessions: Record<string, {
+    isLive: boolean
+    pageUrl: string
+    width: number
+    height: number
+    cliSession: string
+    stoppedReason: string | null
+    lastSeq: number
+    source: 'local' | 'cloud'
+  }>
 }
 
 declare interface Window {

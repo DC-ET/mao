@@ -196,4 +196,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onDesktopShortcutFailed: (callback) => onIpc('desktop-shortcut-failed', callback),
   onTrayNewTask: (callback) => onIpc('tray-new-task', callback),
   onTrayFirstCloseHint: (callback) => onIpc('tray-first-close-hint', callback),
+
+  // 浏览器直播（方案 2026-11-20 v2 D10）— 画中画窗口 / 直播 Tab 的桥。
+  // 帧枢纽在主进程 browserLive.cjs：CLOUD 由 useStreamWS 收帧后 relayEvent 回灌，
+  // LOCAL 由主进程直连 sidecar；两侧 renderer（主窗 + 画中画）统一经 onEvent 消费。
+  browserLive: {
+    getState: () => ipcRenderer.invoke('browser-live-get-state'),
+    relayEvent: (msg) => ipcRenderer.send('browser-live-relay', msg),
+    stop: (sessionId) => ipcRenderer.send('browser-live-stop', { sessionId }),
+    sessionEnded: (sessionId, phase) => ipcRenderer.send('browser-live-session-ended', { sessionId, phase }),
+    expand: () => ipcRenderer.send('browser-live-expand'),
+    restore: () => ipcRenderer.send('browser-live-restore'),
+    onEvent: (callback) => onIpc('browser-live-event', callback),
+    onActiveSession: (callback) => onIpc('browser-live-active-session', callback),
+    onExpand: (callback) => onIpc('browser-live-expand', callback),
+    // CLOUD 停止下行：主进程 → 主窗 renderer，由 useStreamWS 发 browser_live_stop WS 帧
+    onStopRelay: (callback) => onIpc('browser-live-stop-relay', callback),
+  },
 })

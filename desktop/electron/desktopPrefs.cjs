@@ -84,7 +84,19 @@ function normalizeDesktopPrefs(raw) {
     deviceId: typeof data.deviceId === 'string' && DEVICE_ID_PATTERN.test(data.deviceId.trim())
       ? data.deviceId.trim()
       : null,
+    // 画中画窗口位置/尺寸记忆（方案 2026-11-20 v2 D4）：非法/缺失回落 null（默认位）
+    pipWindow: normalizeWindowBounds(data.pipWindow),
   }
+}
+
+/** 画中画窗口 bounds 归一化：非有限整数坐标或过小尺寸 → null（用默认位）。 */
+function normalizeWindowBounds(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const { x, y, width, height } = raw
+  const isInt = (v) => typeof v === 'number' && Number.isFinite(v)
+  if (!isInt(x) || !isInt(y) || !isInt(width) || !isInt(height)) return null
+  if (width < 280 || height < 180) return null
+  return { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) }
 }
 
 /** @type {ReturnType<typeof defaultDesktopPrefs> | null} */

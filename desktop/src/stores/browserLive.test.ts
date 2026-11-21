@@ -1,0 +1,72 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
+import { useBrowserLiveStore } from './browserLive'
+
+// 浏览器直播 store（方案 2026-11-20 v2 D10）：事件 ingest 序列、乱序帧丢弃、
+// stopped 收窗态、停止动作只在 Electron 下走 IPC。
+describe('browserLive store', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('ingest 开始/帧/停止 完整序列', () => {
+    const store = useBrowserLiveStore()
+    store.ingest({ sessionId: 11, type: 'browser_live_started', data: { width: 1280, height: 720, pageUrl: 'https://example.com', cliSession: 'default' } })
+    expect(store.sessions['11'].isLive).toBe(true)
+    expect(store.activeSessionId).toBe(11)
+
+    store.ingest({ sessionId: 11, type: 'browser_frame', data: { seq: 1, jpeg: 'A', pageUrl: 'https://example.com/a' } })
+    expect(store.sessions['11'].frame).toBe('A')
+    expect(store.sessions['11'].pageUrl).toBe('https://example.com/a')
+
+    store.ingest({ sessionId: 11, type: 'browser_live_stopped', data: { reason: 'browser_exit' } })
+    expect(store.sessions['11'].isLive).toBe(false)
+    expect(store.sessions['11'].stoppedReason).toBe('browser_exit')
+    expect(store.hasAnyLive).toBe(false)
+  })
+
+  it('乱序帧直接丢弃，不覆盖最新画面', () => {
+    const store = useBrowserLiveStore()
+    store.ingest({ sessionId: 5, type: 'browser_frame', data: { seq: 10, jpeg: 'new' } })
+    store.ingest({ sessionId: 5, type: 'browser_frame', data: { seq: 7, jpeg: 'stale' } })
+    expect(store.sessions['5'].frame).toBe('new')
+    expect(store.sessions['5'].lastSeq).toBe(10)
+  })
+
+  it('最近活跃会话跟随帧事件', () => {
+    const store = useBrowserLiveStore()
+    store.ingest({ sessionId: 1, type: 'browser_frame', data: { seq: 1, jpeg: 'a' } })
+    store.ingest({ sessionId: 2, type: 'browser_frame', data: { seq: 1, jpeg: 'b' } })
+    expect(store.activeSessionId).toBe(2)
+    expect(store.activeSession?.frame).toBe('b')
+  })
+
+  it('stopBrowser 仅在 Electron 下走 IPC，且缺省用最近活跃会话', () => {
+    // 非 Electron（node 测试环境无 electronAPI）：不抛错、不动作
+    const store = useBrowserLiveStore()
+    store.ingest({ sessionId: 9, type: 'browser_live_started', data: { width: 1, height: 1 } })
+    expect(() => store.stopBrowser()).not.toThrow()
+
+    // Electron 存在时：透传 sessionId（node 测试环境无 window，以 globalThis stub）
+    const stopCalls: Array<number | undefined> = []
+    const stubWindow = { electronAPI: { browserLive: { stop: (sid: number | undefined) => stopCalls.push(sid) } } }
+    ;(globalThis as any).window = stubWindow
+    try {
+      store.stopBrowser()
+      expect(stopCalls).toEqual([9])
+      store.stopBrowser(3)
+      expect(stopCalls).toEqual([9, 3])
+    } finally {
+      delete (globalThis as any).window
+    }
+  })
+
+  it('bindMainProcess 在非 Electron 下是空操作且可重复调用', () => {
+    const store = useBrowserLiveStore()
+    expect(() => {
+      store.bindMainProcess()
+      store.bindMainProcess()
+    }).not.toThrow()
+    expect(store.ipcBound).toBe(false)
+  })
+})

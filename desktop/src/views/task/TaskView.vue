@@ -389,7 +389,7 @@ provide('quoteFileRangeToChat', quoteFileRangeToChat)
 
 // Center tabs
 const activeSessionIdRef = computed(() => sessionStore.activeSessionId ?? '')
-const { tabs, activeTab, activeTabId, openFileTab, openDeliveryFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, reorderTab, closeRightTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, openFileManagerTab, openWorkspaceFileManagerTab, openGitTab, updateSideTaskTab, restoreSideTaskTabs, restoreSubagentTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
+const { tabs, activeTab, activeTabId, openFileTab, openDeliveryFileTab, openDiffTab, closeTab, closeAllFileTabs, closeOtherTabs, reorderTab, closeRightTabs, activateTab, openSideTaskTab, setSideTaskFork, openSubagentTab, openTraceTab, openFileManagerTab, openBrowserLiveTab, openWorkspaceFileManagerTab, openGitTab, updateSideTaskTab, restoreSideTaskTabs, restoreSubagentTabs, restoreTraceTab, restoreActiveTab, applyWorkspacePathChange } = useCenterTabs(activeSessionIdRef)
 
 provide('openDeliveryFile', (delivery: SendDelivery) => {
   // 活引用（2026-11-20 §5.2）：先 resolve 成 workspace-download URL（含渲染期 token），
@@ -777,7 +777,13 @@ function handleSideSessionCreated(e: Event) {
 onMounted(() => {
   window.addEventListener('side_session_created', handleSideSessionCreated)
   window.addEventListener('subagent_session_created', handleSubagentSessionCreated)
+  // 浏览器直播 Tab（方案 2026-11-20 v2 D10）：画中画双击放大（App 层转发）→ 打开 Tab
+  window.addEventListener('browser-live-expand', handleBrowserLiveExpand)
 })
+
+function handleBrowserLiveExpand() {
+  openBrowserLiveTab()
+}
 
 function handleSubagentSessionCreated(e: Event) {
   const detail = (e as CustomEvent).detail
@@ -1731,6 +1737,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   disposed = true
+  window.removeEventListener('browser-live-expand', handleBrowserLiveExpand)
   document.removeEventListener('keydown', handleTabCycleKeydown)
   window.removeEventListener('side_session_created', handleSideSessionCreated)
   window.removeEventListener('subagent_session_created', handleSubagentSessionCreated)

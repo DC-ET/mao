@@ -35,6 +35,13 @@ const routes: RouteRecordRaw[] = [
     meta: { public: true }
   },
   {
+    // 浏览器直播画中画窗口（方案 2026-11-20 v2 D4）：独立 frameless BrowserWindow 加载，
+    // 不带 Layout。与主窗同源同 partition，auth store 直接可用，guard 正常校验登录态。
+    path: '/pip',
+    name: 'PipBrowserLive',
+    component: () => import('../views/PipBrowserLiveView.vue')
+  },
+  {
     path: '/auth/ecp/feishu-callback',
     name: 'EcpFeishuCallback',
     component: () => import('../views/auth/EcpFeishuCallbackView.vue'),

@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useSessionStore, type TaskPhase } from '../stores/session'
 import { useInboxStore } from '../stores/inbox'
+import { useBrowserLiveStore } from '../stores/browserLive'
 import { api } from '../api'
 import { getToken } from '../utils/auth-storage'
 import { nowDateTime } from '../utils/datetime'
@@ -174,6 +175,8 @@ const messageSavedCallbacks = new Map<string, MessageSavedCallback>()
 
 // Module-level flags to ensure IPC listeners are registered only once
 let skillSyncListenerRegistered = false
+/** 浏览器直播停止下行（主进程 → renderer WS）监听只注册一次 */
+let browserLiveStopRelayRegistered = false
 
 /** skill_sync_done payloads waiting for WS to become OPEN (reconnect during sync). */
 const pendingSkillSyncDones = new Map<number, {
@@ -239,6 +242,17 @@ export function useStreamWS() {
     skillSyncListenerRegistered = true
     ;(window as any).electronAPI.onSkillSyncComplete?.((data: { sessionId: number; success: boolean; error?: string }) => {
       sendOrQueueSkillSyncDone(data)
+    })
+  }
+
+  // 浏览器直播停止下行（方案 2026-11-20 v2）：主进程把 CLOUD 模式的「停止浏览器」转请
+  // renderer 发 WS 帧（WS 连接在本 renderer）。幂等注册，一次即可。
+  if (!browserLiveStopRelayRegistered && isElectronClient()) {
+    browserLiveStopRelayRegistered = true
+    ;(window as any).electronAPI?.browserLive?.onStopRelay?.((payload: { sessionId: number }) => {
+      if (payload?.sessionId != null) {
+        void sendReliable({ type: 'browser_live_stop', sessionId: payload.sessionId })
+      }
     })
   }
 
@@ -943,6 +957,11 @@ export function useStreamWS() {
             if (phase === 'CANCELLED' || phase === 'COMPLETED' || phase === 'FAILED') {
               clearActiveExecution(sessionId)
             }
+            // 浏览器直播收窗（方案 2026-11-20 v2 D5）：LOCAL 会话终态 → 主进程向 sidecar
+            // 发停止（Browser.close 杀浏览器 + 收窗）。CLOUD 终态由后端 runner 通道收敛。
+            if (isElectronClient()) {
+              ;(window as any).electronAPI?.browserLive?.sessionEnded?.(Number(sessionId), phase)
+            }
             const cb = pendingCallbacks.get(sessionId)
             if (cb) {
               pendingCallbacks.delete(sessionId)
@@ -1549,6 +1568,20 @@ export function useStreamWS() {
           })
           sessionStore.ensureStreamingAssistantMessage(sessionId)
           refreshQueue(sessionId)
+        }
+        break
+      }
+
+      // 浏览器直播（方案 2026-11-20 v2 D10）：Electron 下帧回灌主进程枢纽（画中画 + Tab
+      // 统一消费，renderer 不自吃避免双份）；Web 下直喂 store（Tab 观看自然可用）。
+      case 'browser_live_started':
+      case 'browser_frame':
+      case 'browser_live_stopped': {
+        const payload = { sessionId: sessionId != null ? Number(sessionId) : null, type: msg.type, data }
+        if (isElectronClient()) {
+          ;(window as any).electronAPI?.browserLive?.relayEvent(payload)
+        } else {
+          useBrowserLiveStore().ingest(payload)
         }
         break
       }

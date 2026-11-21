@@ -468,6 +468,23 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     notifyTabsChanged()
   }
 
+  /**
+   * 打开浏览器直播 Tab（方案 2026-11-20 v2 D10，单例 id 'browser-live'，每会话一个）。
+   * 入口：画中画窗口双击放大（App 层 CustomEvent 转发到这里）。已存在则直接激活。
+   */
+  function openBrowserLiveTab() {
+    const state = getSessionState()
+    const existing = state.tabs.find(t => t.type === 'browser_live' && t.id === 'browser-live')
+    if (existing) {
+      state.activeTabId = existing.id
+      notifyTabsChanged()
+      return
+    }
+    state.tabs.push({ id: 'browser-live', type: 'browser_live', title: '浏览器直播' })
+    state.activeTabId = 'browser-live'
+    notifyTabsChanged()
+  }
+
   /** 打开某个工作区目录自己的文件管理页签（每个目录一个，与当前会话的文件管理并存）。 */
   function openWorkspaceFileManagerTab(entry: { path: string; name: string }) {
     if (!entry.path) return
@@ -857,6 +874,7 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     openSubagentTab,
     openTraceTab,
     openFileManagerTab,
+    openBrowserLiveTab,
     openWorkspaceFileManagerTab,
     openGitTab,
     openWorkspaceOverviewTab,
