@@ -22,7 +22,7 @@ MINIMATCH_VERSION="$(node -e "console.log(require('${ROOT_DIR}/backend-ts/packag
 YAML_VERSION="$(node -e "console.log(require('${ROOT_DIR}/backend-ts/package.json').dependencies.yaml || 'latest')")"
 # Debian 源：默认官方源；访问不了 deb.debian.org 的构建机可传 APT_MIRROR=mirrors.aliyun.com
 APT_MIRROR="${APT_MIRROR:-deb.debian.org}"
-echo "构建 ${IMAGE}:${TAG}（sharp=${SHARP_VERSION}, node-pty=${NODE_PTY_VERSION}, mcp-sdk=${MCP_SDK_VERSION}, minimatch=${MINIMATCH_VERSION}, yaml=${YAML_VERSION}, apt=${APT_MIRROR}）"
+echo "构建 ${IMAGE}:${TAG}（sharp=${SHARP_VERSION}, node-pty=${NODE_PTY_VERSION}, mcp-sdk=${MCP_SDK_VERSION}, minimatch=${MINIMATCH_VERSION}, yaml=${YAML_VERSION}, apt=${APT_MIRROR}, chrome=${INSTALL_CHROME:-1}）"
 
 docker build \
   --build-arg SHARP_VERSION="${SHARP_VERSION}" \
@@ -31,6 +31,7 @@ docker build \
   --build-arg MINIMATCH_VERSION="${MINIMATCH_VERSION}" \
   --build-arg YAML_VERSION="${YAML_VERSION}" \
   --build-arg APT_MIRROR="${APT_MIRROR}" \
+  --build-arg INSTALL_CHROME="${INSTALL_CHROME:-1}" \
   -f "${ROOT_DIR}/Dockerfile.runtime" \
   -t "${IMAGE}:${TAG}" \
   "${ROOT_DIR}"

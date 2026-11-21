@@ -63,6 +63,23 @@ nginx -v
 git --version
 ```
 
+**浏览器自动化（browser-use 技能）**：内置技能 `browser-use` 经 `playwright-cli` 驱动系统 Chrome，CLOUD 服务器需预装：
+
+```bash
+# 系统 Chrome（browser-use 技能的执行内核）
+sudo apt install -y wget
+wget -qO /tmp/google-chrome-stable_current_amd64.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo apt install -y /tmp/google-chrome-stable_current_amd64.deb
+
+# playwright-cli 全局安装（wrapper 命中 PATH 即零 npx 拉取）
+sudo npm install -g @playwright/cli@latest
+
+/opt/google/chrome/chrome --version
+playwright-cli --version
+```
+
+未预装时技能会退化为每次经 `npx` 拉取 CLI、浏览器报 `Chromium distribution 'chrome' is not found`——自动化不可用，其余功能不受影响。docker 模式由 `mao-runtime` 镜像内置（见下节）。
+
 **Git 说明**：CLOUD 模式通过 HTTPS Git 初始化工作区需要 `git` 命令。仅支持 HTTPS 地址；私有仓库用户在桌面端配置 Git 凭证（完整主机名）。
 
 **构建工具链说明**：`python3 make g++` 用于后端安装 `node-pty`（云端终端的 PTY 支持）时编译原生模块，缺失会导致 `npm ci` 失败。
@@ -401,7 +418,7 @@ FROM message WHERE deleted = 0;
 ### 前置条件
 
 1. **Docker**：生产机安装 Docker（`docker version` 可用）。容器使用默认 bridge 网络，可出网（npm/pip 安装、curl 外部 API），不对外暴露任何端口，进出只走 Unix socket。容器内 pip 源由依赖环境注入 `PIP_INDEX_URL`（腾讯云 PyPI 镜像，覆盖镜像内 aliyun 配置：aliyun 对本环境 HTTP/1.1 限速约 200KB/s，pip 装大包十分钟级；2026-11-16 起）。
-2. **运行时镜像**：构建 `mao-runtime` 镜像（Node + bash + git + coreutils + 与镜像 Node ABI 匹配的 `sharp`/`node-pty`）：
+2. **运行时镜像**：构建 `mao-runtime` 镜像（Node + bash + git + coreutils + 与镜像 Node ABI 匹配的 `sharp`/`node-pty`，外加 browser-use 技能所需的系统 Chrome 与全局 `@playwright/cli`）：
 
    ```bash
    bash scripts/build-runtime-image.sh        # 产出 mao-runtime:latest

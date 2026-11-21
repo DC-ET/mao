@@ -28,13 +28,30 @@ RUN sed -i "s|deb.debian.org|${APT_MIRROR}|g; s|security.debian.org|${APT_MIRROR
     python3 python3-pip build-essential \
   && rm -rf /var/lib/apt/lists/*
 
+# 浏览器自动化（browser-use 技能 + 画中画直播，方案 2026-11-20 v2 D7）：容器内置系统 Chrome。
+# 直连 dl.google.com 拉官方 deb；构建机访问不了 Google 时可传 INSTALL_CHROME=0 跳过
+# （browser-use 技能将不可用，其余功能不受影响）。root 运行需 --no-sandbox，
+# 技能 wrapper 生成的 launch config 已注入。
+RUN if [ "${INSTALL_CHROME}" = "1" ]; then \
+    curl -fsSL -o /tmp/google-chrome-stable_current_amd64.deb \
+      https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends /tmp/google-chrome-stable_current_amd64.deb \
+    && rm -f /tmp/google-chrome-stable_current_amd64.deb \
+    && rm -rf /var/lib/apt/lists/*; \
+  fi
+
+ARG INSTALL_CHROME=1
+
 # 原生模块安装到 /opt/mao/backend-ts/node_modules：运行时宿主机 dist 挂载到
 # /opt/mao/backend-ts/dist（ro），ESM 解析从 dist 向上即命中镜像内的 node_modules。
+# @playwright/cli 全局安装：browser-use 技能 wrapper 命中 PATH 即零 npx 拉取（D7）。
 RUN mkdir -p /opt/mao/backend-ts \
   && cd /opt/mao/backend-ts \
   && npm init -y >/dev/null \
   && npm pkg set type=module \
   && npm install --no-audit --no-fund "sharp@${SHARP_VERSION}" "node-pty@${NODE_PTY_VERSION}" "@modelcontextprotocol/sdk@${MCP_SDK_VERSION}" "minimatch@${MINIMATCH_VERSION}" "yaml@${YAML_VERSION}" \
+  && npm install -g --no-audit --no-fund @playwright/cli@latest \
   && npm cache clean --force
 
 # 默认以 root 运行（决策 2：容器内 root，隔离靠挂载清单）
