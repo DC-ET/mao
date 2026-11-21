@@ -32,6 +32,8 @@ RUN sed -i "s|deb.debian.org|${APT_MIRROR}|g; s|security.debian.org|${APT_MIRROR
 # 直连 dl.google.com 拉官方 deb；构建机访问不了 Google 时可传 INSTALL_CHROME=0 跳过
 # （browser-use 技能将不可用，其余功能不受影响）。root 运行需 --no-sandbox，
 # 技能 wrapper 生成的 launch config 已注入。
+# 注意：ARG 必须声明在使用它的 RUN 之前（ARG 自声明行起生效，声明在后则 RUN 读到空值）。
+ARG INSTALL_CHROME=1
 RUN if [ "${INSTALL_CHROME}" = "1" ]; then \
     curl -fsSL -o /tmp/google-chrome-stable_current_amd64.deb \
       https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
@@ -40,8 +42,6 @@ RUN if [ "${INSTALL_CHROME}" = "1" ]; then \
     && rm -f /tmp/google-chrome-stable_current_amd64.deb \
     && rm -rf /var/lib/apt/lists/*; \
   fi
-
-ARG INSTALL_CHROME=1
 
 # 原生模块安装到 /opt/mao/backend-ts/node_modules：运行时宿主机 dist 挂载到
 # /opt/mao/backend-ts/dist（ro），ESM 解析从 dist 向上即命中镜像内的 node_modules。
