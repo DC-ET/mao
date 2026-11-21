@@ -4,7 +4,7 @@ import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import { mkdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fastifyLoggerOptions } from './common/structured-logger.js';
 import { loadConfig, type AppConfig } from './config/app-config.js';
 import { corsForRequest } from './config/cors-policy.js';
@@ -183,6 +183,7 @@ import { expandHome, resolveShareDir, runtimeSessionCleanup } from './app-utils.
 import { registerAllRoutes } from './app-routes.js';
 import { registerAppHooks } from './app-hooks.js';
 import { assembleContainerRuntime } from './app-container-runtime.js';
+import { BrowserDepsService } from './browser-deps/browser-deps.service.js';
 import { assembleLlmEngine } from './app-llm-engine.js';
 import { assembleNotificationServices } from './app-notification-services.js';
 import { PENDING_ESCALATION_DELAY_MS } from './notification/task/delivery.service.js';
@@ -413,7 +414,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   });
   const llmAuthResolver = createLlmAuthResolver(ecpTokenProvider);
   const modelRepo = new MysqlLlmModelRepository(db);
-  const agentService = new AgentService(agentRepo, experienceService, suggestedQuestionService, modelRepo);
+  // 浏览器依赖服务在容器运行时装配（runtimeModeResolver）之后才能构造；agent 保存钩子经
+  // 此转发器晚绑定——保存路径不等待装配，装配前保存只丢一次 ensure（下次保存或手动安装兜底）。
+  const browserDepsForward: { target: BrowserDepsService | null } = { target: null };
+  const agentService = new AgentService(agentRepo, experienceService, suggestedQuestionService, modelRepo, {
+    ensureForSkills: (names) => browserDepsForward.target?.ensureForSkills(names),
+  });
   const llmCallService = new LlmCallService(
     new LlmCallRepository(db),
     {
@@ -684,6 +690,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     ecpInjector, larkUatInjector,
   });
   const { cloudRuntimeCfg, containerChannelHolder, channelServer, containerRegistry, containerHostsResolver, runtimeModeResolver, containerAutoUpgradeResolver, activateContainerRuntime, envelopeBuilder, dockerRouter, sendBytesBridge, mcpRuntimeProbe, routingMcpClient, ptyChannelHubs, ptyHubGeneration, containerPtyFactory, bootRuntimeMode, notifyAgentSwitched } = containerRuntime;
+  const browserDepsService = new BrowserDepsService({
+    settingRepo,
+    getRuntimeMode: () => runtimeModeResolver.resolve(),
+    repoRoot: dirname(builtinRoot),
+    image: cloudRuntimeCfg.container.image,
+  });
+  browserDepsForward.target = browserDepsService;
   // 会话内切换 Agent → 预热新 (userId, agentId) 容器（2026-11-07 复合容器方案 §5.8）
   sessionService.onAgentSwitched = notifyAgentSwitched;
 
@@ -1086,6 +1099,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     mcpValidator, httpToolValidator,
     modelService,
     settingService, activateContainerRuntime, runtimeModeResolver, containerHostsResolver, containerAutoUpgradeResolver, containerOps: containerRegistry,
+    browserDeps: browserDepsService,
     commandService, commandRepo, skillLoader, skillSync,
     weixinPref, taskPanelPref, onboardingPrefRepo,
     restToolService,

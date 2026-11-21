@@ -166,6 +166,8 @@ import { registerInboxRoutes } from './inbox/inbox.routes.js';
 import { registerDigestRoutes } from './digest/routes.js';
 import { registerBudgetRoutes } from './budget/budget.routes.js';
 import { registerAdminAnalyticsRoutes, registerAdminRuntimeRoutes } from './admin/admin.routes.js';
+import { registerBrowserDepsRoutes } from './browser-deps/browser-deps.routes.js';
+import type { BrowserDepsService } from './browser-deps/browser-deps.service.js';
 import { registerAdminSystemCommandRoutes } from './command/admin-system-command.routes.js';
 import { registerMcpServerRoutes } from './harness/mcp/controller/mcp-server.routes.js';
 import { registerWeixinBotRoutes } from './weixin/weixin.routes.js';
@@ -221,6 +223,8 @@ export interface RouteDeps {
   containerAutoUpgradeResolver?: ContainerAutoUpgradeResolver;
   /** 容器运维（列表 / 单用户重建）；未注入时不注册容器管理接口。 */
   containerOps?: ContainerOps;
+  /** 浏览器依赖（browser-use 技能）按需安装；未注入时不注册对应管理端点。 */
+  browserDeps?: BrowserDepsService;
 
   // command
   commandService: UserCommandService;
@@ -369,6 +373,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     mcpValidator,
     modelService,
     settingService, activateContainerRuntime, runtimeModeResolver, containerHostsResolver, containerAutoUpgradeResolver, containerOps,
+    browserDeps,
     commandService, commandRepo, skillLoader, skillSync,
     weixinPref, taskPanelPref,
     restToolService,
@@ -714,6 +719,9 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     };
     registerAdminAnalyticsRoutes(api, adminDeps);
     registerAdminRuntimeRoutes(api, adminDeps);
+    if (browserDeps != null) {
+      registerBrowserDepsRoutes(api, { service: browserDeps, permissionService });
+    }
     registerAdminSystemCommandRoutes(api, {
       commandRepo,
       permissionService,

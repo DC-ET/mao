@@ -342,3 +342,47 @@ describe('AgentService', () => {
     });
   });
 });
+
+describe('AgentService 浏览器依赖触发（V200）', () => {
+  const ensurer = { ensureForSkills: vi.fn() };
+  const agentRepo: AgentRepository = {
+    selectList: vi.fn(),
+    findById: vi.fn(async (id: number) => ({ id, name: 'a', systemPrompt: 'p', isDefault: 0 })),
+    findDefault: vi.fn(),
+    selectGitAllowedDomainsById: vi.fn(),
+    insert: vi.fn(async (a) => { a.id = a.id ?? 1; return a.id; }),
+    updateById: vi.fn(async () => undefined),
+    listPromptVersions: vi.fn(),
+    rollbackPrompt: vi.fn(),
+    deleteById: vi.fn(),
+    updateEnabled: vi.fn(),
+    clearDefaultFlag: vi.fn(),
+    removeSkillName: vi.fn(),
+  };
+  const noop = { syncExperiences: vi.fn(), deleteByAgentId: vi.fn(), listByAgentId: vi.fn(), syncSuggestedQuestions: vi.fn() } as never;
+  const service = new AgentService(agentRepo, noop as never, noop, undefined, ensurer);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('createAgent 勾选 browser-use 时触发 ensureForSkills', async () => {
+    await service.createAgent(7, 'a', null, 'p', ['browser-use'], null, null, null, null);
+    expect(ensurer.ensureForSkills).toHaveBeenCalledWith(['browser-use']);
+  });
+
+  it('createAgent 未勾选 browser-use 也透传名单（过滤职责在 ensurer 侧）', async () => {
+    await service.createAgent(7, 'a', null, 'p', ['mao-cli'], null, null, null, null);
+    expect(ensurer.ensureForSkills).toHaveBeenCalledWith(['mao-cli']);
+  });
+
+  it('updateAgent skillNames 含 browser-use 时触发；清空为 null 也触发一次（不带 browser-use）', async () => {
+    await service.updateAgent(7, 1, null, null, null, ['browser-use'], null, null, null, null, null, undefined);
+    expect(ensurer.ensureForSkills).toHaveBeenCalledWith(['browser-use']);
+
+    ensurer.ensureForSkills.mockClear();
+    await service.updateAgent(7, 1, null, null, null, [], null, null, null, null, null, undefined);
+    // skillNames=[] 折叠为 null，但 ensure 仍以本次传入名单（空数组）调用，实现方按名单判定不动作
+    expect(ensurer.ensureForSkills).toHaveBeenCalledWith([]);
+  });
+});

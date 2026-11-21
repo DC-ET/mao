@@ -1,0 +1,379 @@
+import { execFile as execFileCb } from 'node:child_process';
+import { readdirSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import path from 'node:path';
+import { promisify } from 'node:util';
+import type { SystemSettingRepository } from '../settings/types.js';
+import { harnessLog } from '../harness/log.js';
+
+const execFile = promisify(execFileCb);
+
+/**
+ * 浏览器依赖按需安装（browser-use 技能，方案 2026-11-20 v2 D7 的按需化）：
+ * CLOUD 服务器的 Chrome + @playwright/cli 不再强制预装——管理员明确启用
+ * （Agent 勾选保存 / 系统技能页「安装依赖」）时自动安装；无人使用零安装；
+ * 预装保留为推荐路径（检测秒过、直接 ready）。
+ *
+ * 状态机（system_setting `browser_deps.status`，JSON）：not_installed → installing → ready / failed。
+ * host 模式安装链：npm i -g @playwright/cli → 系统 Chrome（deb 下载 + apt，源可配）
+ *   → 失败免 root 降级：playwright-cli install-browser（npmmirror 镜像源）下载 chromium。
+ * docker 模式：chrome 烧在镜像里，运行中容器装了会丢 → 触发 build-runtime-image.sh
+ *   重建镜像（仓库内首例代码调 build 脚本）+ docker run 验证。
+ *
+ * 单飞守卫在进程内存内（蓝绿重叠窗口的并发重复安装可接受：apt/npm 幂等）。
+ */
+
+export const BROWSER_DEPS_SKILL_NAME = 'browser-use';
+const BROWSER_DEPS_SETTING_KEY = 'browser_deps.status';
+const STATUS_VALUE_MAX = 1000;
+const DETAIL_MAX = 600;
+/** installing 状态超过该时长视为中断（进程重启 / 迟到写入），读取时降级为 failed。 */
+const INSTALL_STALE_MS = 30 * 60_000;
+
+export type BrowserDepsPhase = 'not_installed' | 'installing' | 'ready' | 'failed';
+
+export interface BrowserDepsStatus {
+  phase: BrowserDepsPhase;
+  mode: 'host' | 'docker';
+  detail: string | null;
+  chrome: { present: boolean; kind: 'system' | 'chromium' | null; version: string | null };
+  cli: { present: boolean; version: string | null };
+  updatedAt: string;
+}
+
+export interface BrowserDepsServiceDeps {
+  settingRepo: SystemSettingRepository;
+  /** 全局运行时模式（runtime.mode resolver）：docker 模式走镜像重建分支。 */
+  getRuntimeMode: () => Promise<'host' | 'docker'>;
+  /** 仓库根（build-runtime-image.sh 定位）：来自内置技能根的上一级。 */
+  repoRoot: string;
+  /** 运行时镜像名（docker 分支构建产物与验证目标）。 */
+  image: string;
+  /** 命令执行缝（测试注入）；缺省真实 execFile。 */
+  execImpl?: (cmd: string, args: string[], timeoutMs: number, env?: NodeJS.ProcessEnv) => Promise<{ ok: boolean; output: string }>;
+  /** 平台覆盖（测试注入，固定 chrome 候选路径清单）；缺省 process.platform。 */
+  platform?: NodeJS.Platform;
+  /** chromium 缓存根覆盖（测试注入）；缺省 ~/.cache/ms-playwright。 */
+  chromiumCacheRoot?: string;
+}
+
+interface ExecResult {
+  ok: boolean;
+  output: string;
+}
+
+function truncate(text: string, max = DETAIL_MAX): string {
+  const line = text.replace(/\s+/g, ' ').trim();
+  return line.length > max ? `${line.slice(0, max)}…` : line;
+}
+
+export class BrowserDepsService {
+  private readonly deps: BrowserDepsServiceDeps;
+  /** 进程内单飞：同一时刻至多一个安装任务（getStatus 据此判定 installing 是否孤儿）。 */
+  private inFlight: Promise<void> | null = null;
+
+  constructor(deps: BrowserDepsServiceDeps) {
+    this.deps = deps;
+  }
+
+  // ---------- 状态读写 ----------
+
+  private normalizeStatus(raw: unknown): BrowserDepsStatus | null {
+    if (raw == null) return null;
+    let parsed: unknown;
+    try {
+      parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch {
+      return null;
+    }
+    const phase = (parsed as { phase?: unknown }).phase;
+    const known: BrowserDepsPhase[] = ['not_installed', 'installing', 'ready', 'failed'];
+    if (typeof phase !== 'string' || !known.includes(phase as BrowserDepsPhase)) return null;
+    const data = parsed as Partial<BrowserDepsStatus>;
+    return {
+      phase: phase as BrowserDepsPhase,
+      mode: data.mode === 'docker' ? 'docker' : 'host',
+      detail: typeof data.detail === 'string' ? data.detail : null,
+      chrome: {
+        present: data.chrome?.present === true,
+        kind: data.chrome?.kind === 'system' || data.chrome?.kind === 'chromium' ? data.chrome.kind : null,
+        version: typeof data.chrome?.version === 'string' ? data.chrome.version : null,
+      },
+      cli: { present: data.cli?.present === true, version: typeof data.cli?.version === 'string' ? data.cli.version : null },
+      updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : new Date().toISOString(),
+    };
+  }
+
+  private async writeStatus(status: BrowserDepsStatus): Promise<void> {
+    const compact: BrowserDepsStatus = {
+      ...status,
+      detail: status.detail != null ? truncate(status.detail) : null,
+      updatedAt: new Date().toISOString(),
+    };
+    let json = JSON.stringify(compact);
+    if (json.length > STATUS_VALUE_MAX) {
+      json = JSON.stringify({ ...compact, detail: truncate(compact.detail ?? '', 200) });
+    }
+    const setting = await this.deps.settingRepo.findByKey(BROWSER_DEPS_SETTING_KEY);
+    if (setting == null) {
+      harnessLog('warn', `[browser-deps] status row missing (${BROWSER_DEPS_SETTING_KEY})，跳过状态写入`);
+      return;
+    }
+    setting.value = json;
+    await this.deps.settingRepo.updateById(setting);
+  }
+
+  /** 依赖检测（只读、快）：chrome/chromium 二进制 + playwright-cli。每次调用现查，不做缓存。 */
+  async detect(): Promise<Pick<BrowserDepsStatus, 'chrome' | 'cli'>> {
+    const chrome = await this.detectChrome();
+    const cli = await this.detectCli();
+    return { chrome, cli };
+  }
+
+  private async exec(cmd: string, args: string[], timeoutMs: number, env?: NodeJS.ProcessEnv): Promise<ExecResult> {
+    if (this.deps.execImpl != null) {
+      return this.deps.execImpl(cmd, args, timeoutMs, env);
+    }
+    try {
+      const { stdout, stderr } = await execFile(cmd, args, {
+        timeout: timeoutMs,
+        maxBuffer: 4 * 1024 * 1024,
+        encoding: 'utf8' as BufferEncoding,
+        ...(env ? { env: { ...process.env, ...env } } : {}),
+      });
+      return { ok: true, output: `${stdout ?? ''}${stderr ?? ''}`.trim() };
+    } catch (e) {
+      const err = e as { stdout?: string; stderr?: string; message?: string; code?: string };
+      if (err.code === 'ENOENT') return { ok: false, output: `${cmd} not found` };
+      return { ok: false, output: truncate(`${err.stderr ?? ''} ${err.stdout ?? ''} ${err.message ?? ''}`) };
+    }
+  }
+
+  private async detectChrome(): Promise<BrowserDepsStatus['chrome']> {
+    const platform = this.deps.platform ?? process.platform;
+    const candidates = platform === 'darwin'
+      ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']
+      : ['google-chrome', 'google-chrome-stable', '/opt/google/chrome/chrome', '/usr/bin/google-chrome'];
+    for (const bin of candidates) {
+      const result = await this.exec(bin, ['--version'], 8_000);
+      if (result.ok) return { present: true, kind: 'system', version: truncate(result.output, 120) };
+    }
+    // playwright 下载的 chromium（免 root 降级产物）：~/.cache/ms-playwright/chromium-*/chrome-linux/chrome
+    const cacheRoot = this.deps.chromiumCacheRoot ?? path.join(homedir(), '.cache', 'ms-playwright');
+    try {
+      const entries = readdirSync(cacheRoot).filter((n) => n.startsWith('chromium-')).sort().reverse();
+      for (const entry of entries) {
+        const bin = path.join(cacheRoot, entry, 'chrome-linux', 'chrome');
+        const result = await this.exec(bin, ['--version'], 8_000);
+        if (result.ok) return { present: true, kind: 'chromium', version: truncate(result.output, 120) };
+      }
+    } catch { /* 缓存目录不存在 */ }
+    return { present: false, kind: null, version: null };
+  }
+
+  private async detectCli(): Promise<BrowserDepsStatus['cli']> {
+    const result = await this.exec('playwright-cli', ['--version'], 8_000);
+    if (result.ok) return { present: true, version: truncate(result.output, 120) };
+    return { present: false, version: null };
+  }
+
+  /** 读取状态：合并实时检测；installing 孤儿（超时无归主）降级 failed 并落库。 */
+  async getStatus(): Promise<BrowserDepsStatus> {
+    const stored = this.normalizeStatus(await this.deps.settingRepo.findByKey(BROWSER_DEPS_SETTING_KEY).then((s) => s?.value ?? null));
+    const detected = await this.detect();
+    const mode = await this.safeRuntimeMode();
+    let phase: BrowserDepsPhase = stored?.phase ?? 'not_installed';
+    let detail = stored?.detail ?? null;
+    if (phase === 'installing' && this.inFlight == null) {
+      const updatedAtMs = stored ? Date.parse(stored.updatedAt) : NaN;
+      const stale = !Number.isFinite(updatedAtMs) || Date.now() - updatedAtMs > INSTALL_STALE_MS;
+      if (stale) {
+        phase = 'failed';
+        detail = '安装中断（后端进程重启或超时），请重新安装';
+      }
+    }
+    if (phase === 'ready' && !detected.chrome.present && !detected.cli.present) {
+      // 状态说 ready 但实况全没了（被卸载）：以实况为准
+      phase = 'not_installed';
+      detail = '检测到依赖已不存在（可能被卸载）';
+    }
+    return {
+      phase, mode, detail,
+      chrome: detected.chrome,
+      cli: detected.cli,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  private async safeRuntimeMode(): Promise<'host' | 'docker'> {
+    try {
+      return await this.deps.getRuntimeMode();
+    } catch {
+      return 'host';
+    }
+  }
+
+  // ---------- 安装 ----------
+
+  /** 管理端显式安装；返回是否真正启动（installing/ready 时拒绝重复启动）。 */
+  async install(): Promise<{ started: boolean; status: BrowserDepsStatus }> {
+    if (this.inFlight != null) {
+      return { started: false, status: await this.getStatus() };
+    }
+    const current = await this.getStatus();
+    if (current.phase === 'installing') {
+      return { started: false, status: current };
+    }
+    const mode = await this.safeRuntimeMode();
+    this.inFlight = this.runInstall(mode)
+      .catch((e) => {
+        harnessLog('error', `[browser-deps] install failed: ${(e as Error).message}`);
+        return this.writeStatus({
+          phase: 'failed', mode, detail: `安装异常：${truncate((e as Error).message)}`,
+          chrome: current.chrome, cli: current.cli, updatedAt: new Date().toISOString(),
+        });
+      })
+      .finally(() => {
+        this.inFlight = null;
+      });
+    return { started: true, status: { ...current, phase: 'installing', mode, detail: '安装任务已启动' } };
+  }
+
+  /**
+   * Agent 勾选 browser-use 保存时的 ensure 入口（fire-and-forget，绝不阻塞保存）：
+   * ready / installing 时 no-op；未安装 / 失败时自动补装。
+   */
+  ensureForSkills(skillNames: readonly string[] | null | undefined): void {
+    if (!skillNames?.includes(BROWSER_DEPS_SKILL_NAME)) return;
+    void (async () => {
+      try {
+        const status = await this.getStatus();
+        if (status.phase === 'ready' || status.phase === 'installing') return;
+        harnessLog('info', `[browser-deps] agent 启用 ${BROWSER_DEPS_SKILL_NAME}，依赖未就绪（${status.phase}），自动安装`);
+        await this.install();
+      } catch (e) {
+        harnessLog('warn', `[browser-deps] ensureForSkills failed: ${(e as Error).message}`);
+      }
+    })();
+  }
+
+  private async runInstall(mode: 'host' | 'docker'): Promise<void> {
+    await this.writeStatus({
+      phase: 'installing', mode, detail: mode === 'docker' ? '重建运行时镜像（含 Chrome）' : '开始安装',
+      chrome: { present: false, kind: null, version: null }, cli: { present: false, version: null },
+      updatedAt: new Date().toISOString(),
+    });
+    if (mode === 'docker') {
+      await this.installDocker();
+      return;
+    }
+    await this.installHost();
+  }
+
+  private async setDetail(detail: string): Promise<void> {
+    const status = await this.getStatus();
+    await this.writeStatus({ ...status, phase: 'installing', detail });
+  }
+
+  // ---------- host 安装链 ----------
+
+  private async installHost(): Promise<void> {
+    // 1. CLI（chromium 降级路径也依赖它；幂等，已装时 npm 秒过）
+    await this.setDetail('安装 @playwright/cli（npm 全局）');
+    const cliInstall = await this.exec('npm', ['i', '-g', '--no-audit', '--no-fund', '@playwright/cli@latest'], 5 * 60_000);
+    if (!cliInstall.ok) {
+      await this.finishFailed(`@playwright/cli 安装失败：${cliInstall.output}`);
+      return;
+    }
+
+    // 2. 系统 Chrome（x86_64 + apt 可用时走 deb；源可经 MAO_BROWSER_CHROME_DEB_URL 覆盖）
+    let chrome = await this.detectChrome();
+    if (!chrome.present) {
+      const [arch, aptPath] = await Promise.all([
+        this.exec('uname', ['-m'], 5_000),
+        this.exec('which', ['apt-get'], 5_000),
+      ]);
+      const debUrl = process.env.MAO_BROWSER_CHROME_DEB_URL
+        ?? 'https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb';
+      if (arch.ok && arch.output.trim() === 'x86_64' && aptPath.ok && aptPath.output.trim() !== '') {
+        await this.setDetail(`下载 Chrome deb（${debUrl}）`);
+        const debFile = path.join(tmpdir(), `google-chrome-stable-${Date.now()}.deb`);
+        const download = await this.exec('curl', ['-fsSL', '-o', debFile, debUrl], 10 * 60_000);
+        if (download.ok) {
+          await this.setDetail('apt 安装 Chrome');
+          await this.exec('apt-get', ['update'], 5 * 60_000); // 刷新依赖索引；失败不阻断（deb 依赖可能已满足）
+          const install = await this.exec('apt-get', ['install', '-y', '--no-install-recommends', debFile], 10 * 60_000);
+          if (install.ok) chrome = await this.detectChrome();
+        } else {
+          harnessLog('warn', `[browser-deps] chrome deb download failed: ${download.output}`);
+        }
+      } else {
+        await this.setDetail(`跳过系统 Chrome 安装（${arch.ok ? `架构 ${arch.output.trim()}` : '架构未知'} / apt ${aptPath.ok ? '可用' : '不可用'}），改用 chromium`);
+      }
+    }
+
+    // 3. 免 root 降级：playwright chromium（npmmirror 镜像源，国内可达）
+    if (!chrome.present) {
+      await this.setDetail('下载 chromium（npmmirror 镜像）');
+      const downloadHost = process.env.MAO_PLAYWRIGHT_DOWNLOAD_HOST ?? 'https://cdn.npmmirror.com/binaries/playwright';
+      const chromium = await this.exec('playwright-cli', ['install-browser'], 15 * 60_000, {
+        PLAYWRIGHT_DOWNLOAD_HOST: downloadHost,
+      });
+      if (!chromium.ok) {
+        await this.finishFailed(`浏览器内核下载失败（系统 Chrome 与 chromium 均未就绪）：${chromium.output}`);
+        return;
+      }
+      chrome = await this.detectChrome();
+      if (!chrome.present) {
+        await this.finishFailed('chromium 下载完成但未检测到可用二进制');
+        return;
+      }
+    }
+
+    // 4. 终验
+    const cli = await this.detectCli();
+    if (!cli.present) {
+      await this.finishFailed('playwright-cli 安装后不可用');
+      return;
+    }
+    await this.writeStatus({
+      phase: 'ready', mode: 'host', detail: `就绪：${chrome.kind === 'system' ? '系统 Chrome' : 'chromium（playwright 缓存）'} + playwright-cli`,
+      chrome, cli, updatedAt: new Date().toISOString(),
+    });
+    harnessLog('info', '[browser-deps] host install finished: ready');
+  }
+
+  // ---------- docker 安装链（镜像重建） ----------
+
+  private async installDocker(): Promise<void> {
+    const script = path.join(this.deps.repoRoot, 'scripts', 'build-runtime-image.sh');
+    await this.setDetail(`重建运行时镜像 ${this.deps.image}（含 Chrome，可能需要数分钟）`);
+    const build = await this.exec('bash', [script], 20 * 60_000, { INSTALL_CHROME: '1' });
+    if (!build.ok) {
+      await this.finishFailed(`镜像构建失败（可手动执行 bash scripts/build-runtime-image.sh）：${build.output}`);
+      return;
+    }
+    await this.setDetail('验证镜像内浏览器依赖');
+    const verify = await this.exec('docker', ['run', '--rm', this.deps.image, 'bash', '-c', 'google-chrome --version && playwright-cli --version'], 90_000);
+    if (!verify.ok) {
+      await this.finishFailed(`镜像内验证失败：${verify.output}`);
+      return;
+    }
+    await this.writeStatus({
+      phase: 'ready', mode: 'docker', detail: `镜像 ${this.deps.image} 已含浏览器依赖`,
+      chrome: { present: true, kind: 'system', version: null },
+      cli: { present: true, version: null },
+      updatedAt: new Date().toISOString(),
+    });
+    harnessLog('info', '[browser-deps] docker image rebuild finished: ready');
+  }
+
+  private async finishFailed(detail: string): Promise<void> {
+    const detected = await this.detect();
+    await this.writeStatus({
+      phase: 'failed', mode: await this.safeRuntimeMode(), detail,
+      chrome: detected.chrome, cli: detected.cli, updatedAt: new Date().toISOString(),
+    });
+    harnessLog('warn', `[browser-deps] install failed: ${detail}`);
+  }
+}

@@ -17,12 +17,22 @@ export interface AgentModelLookup {
   findById(id: number): Promise<{ id?: number; status?: number | null } | null>;
 }
 
+/**
+ * 浏览器依赖按需安装的触发口（方案 2026-11-20 v2 D7 按需化）：Agent 勾选 browser-use
+ * 保存时自动 ensure 服务器浏览器依赖。optional 注入保持既有构造兼容；实现方必须
+ * 自吞异常（fire-and-forget），不得影响 Agent 保存。
+ */
+export interface AgentBrowserDepsEnsurer {
+  ensureForSkills(skillNames: readonly string[] | null | undefined): void;
+}
+
 export class AgentService {
   constructor(
     private readonly agentRepo: AgentRepository,
     private readonly experienceService: AgentExperienceService,
     private readonly suggestedQuestionService: AgentSuggestedQuestionService,
     private readonly modelLookup?: AgentModelLookup,
+    private readonly browserDepsEnsurer?: AgentBrowserDepsEnsurer,
   ) {}
 
   listAgents(
@@ -108,6 +118,7 @@ export class AgentService {
       agent.gitAllowedDomains = JSON.stringify(gitAllowedDomains);
     }
     await this.agentRepo.insert(agent);
+    if (skillNames != null) this.browserDepsEnsurer?.ensureForSkills(skillNames);
 
     if (experiences != null) {
       await this.experienceService.syncExperiences(agent.id!, experiences);
@@ -153,6 +164,7 @@ export class AgentService {
     if (systemPrompt != null) agent.systemPrompt = systemPrompt;
     if (skillNames != null) {
       agent.skillNames = skillNames.length === 0 ? null : JSON.stringify(skillNames);
+      this.browserDepsEnsurer?.ensureForSkills(skillNames);
     }
     if (mcpServerIds != null) {
       agent.mcpServerIds = mcpServerIds.length === 0 ? null : JSON.stringify(mcpServerIds);
