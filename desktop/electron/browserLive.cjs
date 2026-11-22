@@ -115,6 +115,11 @@ function createBrowserLiveRuntime({
     } else if (evt.type === 'browser_live_stopped') {
       state.isLive = false
       state.stoppedReason = evt.data?.reason ?? 'unknown'
+      // 断开残留 SSE/重连定时器并清 live（旧端口/token 已死）：不清的话下一场
+      // attachLocalSession 会早退去连死端口，scheduleReconnect 又被 stoppedReason
+      // 拦截，同会话第二场直播永远连不上（「已结束」卡死）
+      stopSse(state)
+      state.live = null
       lastFrames.delete(String(sessionId))
       // 全部会话都已停：画中画稍后自动收起（让「已结束」状态可见片刻）
       const anyLive = [...sessions.values()].some((s) => s.isLive)
@@ -228,6 +233,9 @@ function createBrowserLiveRuntime({
       return
     }
     state.source = 'local'
+    // 新一轮浏览器尝试（shell 工具触发）：上一场的停止状态不再拦截本轮
+    // poll（L243 守卫）与 scheduleReconnect（L196 守卫），第二场直播才能连上
+    state.stoppedReason = null
     if (state.live) { startSse(sessionId); return }
     state.pollTries = 0
     const poll = () => {

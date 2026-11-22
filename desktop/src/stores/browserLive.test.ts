@@ -33,6 +33,28 @@ describe('browserLive store', () => {
     expect(store.sessions['5'].lastSeq).toBe(10)
   })
 
+  it('同一会话二次直播：started 重置 lastSeq/frame/stoppedReason（2026-11-22 回归）', () => {
+    const store = useBrowserLiveStore()
+    // 第一场：started → 帧 → 停止
+    store.ingest({ sessionId: 21, type: 'browser_live_started', data: { width: 1280, height: 720, pageUrl: 'https://a.com', cliSession: 'default' } })
+    store.ingest({ sessionId: 21, type: 'browser_frame', data: { seq: 5, jpeg: 'first', pageUrl: 'https://a.com/x' } })
+    store.ingest({ sessionId: 21, type: 'browser_live_stopped', data: { reason: 'browser_exit' } })
+    expect(store.sessions['21'].isLive).toBe(false)
+    expect(store.sessions['21'].stoppedReason).toBe('browser_exit')
+
+    // 第二场：host 进程重启后 seq 从 1 重新计数——不清 lastSeq 整场帧都会被丢
+    store.ingest({ sessionId: 21, type: 'browser_live_started', data: { width: 800, height: 600, pageUrl: 'https://b.com', cliSession: 'default' } })
+    expect(store.sessions['21'].isLive).toBe(true)
+    expect(store.sessions['21'].stoppedReason).toBeNull()
+    expect(store.sessions['21'].frame).toBeNull()
+    expect(store.sessions['21'].lastSeq).toBe(0)
+
+    store.ingest({ sessionId: 21, type: 'browser_frame', data: { seq: 1, jpeg: 'second', pageUrl: 'https://b.com/y' } })
+    expect(store.sessions['21'].frame).toBe('second')
+    expect(store.sessions['21'].lastSeq).toBe(1)
+    expect(store.hasAnyLive).toBe(true)
+  })
+
   it('最近活跃会话跟随帧事件', () => {
     const store = useBrowserLiveStore()
     store.ingest({ sessionId: 1, type: 'browser_frame', data: { seq: 1, jpeg: 'a' } })

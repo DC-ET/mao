@@ -304,6 +304,9 @@ function emitFrame(cliSession, pageUrl, jpeg, width, height) {
   emit({ type: 'browser_frame', data });
 }
 function emitStopped(reason, cliSession) {
+  // host 进程会被 wrapper 复用（cancelExit 撤销自毁窗），不复位闩锁的话
+  // 下一场直播只发帧不发 started，前端 isLive 无法重新置真（永远显示已结束）
+  startedEmitted = false;
   emit({ type: 'browser_live_stopped', data: { reason, ...(cliSession ? { cliSession } : {}) } });
 }
 function emit(evt) {
@@ -385,6 +388,9 @@ function startCloudClient() {
       try { msg = JSON.parse(ev.data); } catch { return; }
       if (msg.type === 'connected' && msg.data?.runner === true) {
         attempts = 0;
+        // 瞬断重连：后端断开超 5s 会合成 runner_exit、前端已置「已结束」，
+        // 复位闩锁让下一帧补发 started，直播状态才能恢复
+        startedEmitted = false;
         sinks.add((evt) => { try { ws.send(JSON.stringify(evt)); } catch { /* ignore */ } });
         addConsumer();
         log('runner connected to backend');

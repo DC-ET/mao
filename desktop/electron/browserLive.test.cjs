@@ -186,3 +186,56 @@ test('browserLive hub: LOCAL 会话终态 → 停 sidecar', async () => {
     fs.rmSync(runtimeDir, { recursive: true, force: true })
   }
 })
+
+test('browserLive hub: LOCAL 第二场直播——停止后换新 sidecar 端口可重连（2026-11-22 回归）', async () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-bl-second-'))
+  const sidecarA = await startFakeSidecar()
+  try {
+    fs.mkdirSync(path.join(runtimeDir, '44', '.mao-browser'), { recursive: true })
+    fs.writeFileSync(
+      path.join(runtimeDir, '44', '.mao-browser', 'live.json'),
+      JSON.stringify({ httpPort: sidecarA.port, token: 'tok-a', pid: 4242 }),
+    )
+    const { runtime, ipc, mainWindowSends } = setupRuntime(runtimeDir)
+
+    // 第一场：attach → started → stopped（不触发 POST /stop，模拟自然 browser_exit）
+    runtime.attachLocalSession(44)
+    await sleep(300)
+    sidecarA.emit('browser_live_started', { width: 1280, height: 720, pageUrl: 'https://a.com', cliSession: 'default' })
+    await sleep(100)
+    sidecarA.emit('browser_live_stopped', { reason: 'browser_exit' })
+    await sleep(100)
+
+    // 第一场收场：sidecar A 退出，sidecar B 换新端口重写 live.json（host 重启场景）
+    await sidecarA.close()
+    const sidecarB = await startFakeSidecar()
+    try {
+      fs.writeFileSync(
+        path.join(runtimeDir, '44', '.mao-browser', 'live.json'),
+        JSON.stringify({ httpPort: sidecarB.port, token: 'tok-b', pid: 4243 }),
+      )
+
+      // 第二场：shell 工具再次触发 attach（旧实现会早退连死端口，永远收不到第二场）
+      runtime.attachLocalSession(44)
+      await sleep(300)
+      sidecarB.emit('browser_live_started', { width: 800, height: 600, pageUrl: 'https://b.com', cliSession: 'default' })
+      sidecarB.emit('browser_frame', { seq: 1, ts: 1, jpeg: 'Qg==', width: 800, height: 600, pageUrl: 'https://b.com' })
+      await sleep(100)
+
+      const startedSends = mainWindowSends.filter((s) => s.channel === 'browser-live-event' && s.data.type === 'browser_live_started')
+      assert.ok(startedSends.length >= 2, 'second live started should fan out to main window')
+      const frameSends = mainWindowSends.filter((s) => s.channel === 'browser-live-event' && s.data.type === 'browser_frame')
+      assert.ok(frameSends.length >= 1, 'second live frame should fan out to main window')
+      const snapshot = ipc.handlers['browser-live-get-state']()
+      assert.strictEqual(snapshot.sessions['44'].isLive, true)
+      assert.strictEqual(snapshot.sessions['44'].stoppedReason, null)
+
+      runtime.shutdown()
+    } finally {
+      await sidecarB.close()
+    }
+  } finally {
+    await sidecarA.close()
+    fs.rmSync(runtimeDir, { recursive: true, force: true })
+  }
+})

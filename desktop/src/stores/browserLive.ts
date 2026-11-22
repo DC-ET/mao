@@ -68,6 +68,10 @@ export const useBrowserLiveStore = defineStore('browserLive', {
         const data = msg.data as BrowserLiveStartedData | undefined
         state.isLive = true
         state.stoppedReason = null
+        // 新一场直播：host 进程重启后 seq 从 1 重新计数（不清则整场帧被乱序丢弃），
+        // 上一场的冻结帧也要清掉，让「等待 Agent 打开浏览器…」占位正常出现
+        state.lastSeq = 0
+        state.frame = null
         state.width = data?.width ?? 0
         state.height = data?.height ?? 0
         state.pageUrl = data?.pageUrl ?? ''
