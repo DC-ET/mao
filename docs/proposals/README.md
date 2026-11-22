@@ -32,6 +32,7 @@ _当前无待评审提案。_
 
 | 提案 | 批次 | 说明 |
 |---|---|---|
+| [IM 渠道控制命令补完](2026-11/2026-11-22-im-channel-control-commands.md) | 31 | 技术方案：[docs/plan/2026-11/2026-11-22-im-channel-control-commands-technical-design.md](../plan/2026-11/2026-11-22-im-channel-control-commands-technical-design.md) |
 | [中心 Tab 效率补完](2026-11/2026-11-08-center-tab-efficiency.md) | 25 | 技术方案：[docs/plan/2026-11/2026-11-08-center-tab-efficiency-technical-design.md](../plan/2026-11/2026-11-08-center-tab-efficiency-technical-design.md) |
 | [消息代码块折叠与换行](2026-11/2026-11-08-message-code-block-polish.md) | 26 | 技术方案：[docs/plan/2026-11/2026-11-08-message-code-block-polish-technical-design.md](../plan/2026-11/2026-11-08-message-code-block-polish-technical-design.md) |
 | [外观个性化与视觉令牌收编](2026-11/2026-11-08-appearance-personalization.md) | 27 | 技术方案：[docs/plan/2026-11/2026-11-08-appearance-personalization-technical-design.md](../plan/2026-11/2026-11-08-appearance-personalization-technical-design.md)（密度档与暗色收编随方案取消，见其 §3.2 勘误） |
@@ -148,6 +149,8 @@ _当前无待评审提案。_
 | [登录会话与设备治理](2026-11/2026-11-20-login-session-device-management.md) | 30 | 评审否决（2026-11-20）：范围过大；其中登录失败锁定拆出单独实施，其余不做 |
 | [IM 渠道审批闭环](2026-11/2026-11-20-im-approval-closure.md) | 30 | 云端模式目前无需审批 |
 | [工作区文件内容搜索](2026-11/2026-11-20-workspace-content-search.md) | 30 | 需求不高，性能影响大 |
+| [任务产出总览](2026-11/2026-11-22-session-output-overview.md) | 31 | 评审否决（2026-11-22） |
+| [Agent 能力详情卡](2026-11/2026-11-22-agent-capability-card.md) | 31 | 评审否决（2026-11-22） |
 
 ## 产品边界
 
@@ -193,3 +196,4 @@ _当前无待评审提案。_
 | 28 | 2026-11-10 | 阅读视图、输入效率包、工具结果表格化 |
 | 29 | 2026-11-11 | 文件联动、渲染补完、命令面板动态组、审批键盘流、并行状态可见性 |
 | 30 | 2026-11-20 | 登录会话与设备治理、IM 审批闭环、工作区内容搜索 |
+| 31 | 2026-11-22 | IM 渠道控制命令、任务产出总览、Agent 能力详情卡 |
