@@ -109,6 +109,16 @@
     <!-- 输入区 -->
     <div class="input-area">
       <div class="side-task-entry">
+        <!-- 浏览器直播状态条（方案 2026-11-22）：仅本边路会话直播中显示（与主会话 chip 的全局 hasAnyLive 不同），点击打开直播 Tab。 -->
+        <button
+          v-if="hasRealSession && browserLiveStore.sessions[String(realSessionId)]?.isLive"
+          type="button"
+          class="browser-live-chip"
+          title="点击查看浏览器直播"
+          @click="openBrowserLive"
+        >
+          <span class="live-dot" aria-hidden="true"></span>浏览器
+        </button>
         <button type="button" class="side-task-btn" @click="openSideTask?.()">
           + 边路任务
         </button>
@@ -166,6 +176,8 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted, onActivated, on
 import { Opportunity, Loading, Connection } from '@element-plus/icons-vue'
 import { useSessionStore } from '../../stores/session'
 import { useDraftStore } from '../../stores/draft'
+import { useBrowserLiveStore } from '../../stores/browserLive'
+import { isElectronClient } from '../../utils/platform'
 import { useStreamWS } from '../../composables/useStreamWS'
 import { api } from '../../api'
 import { cloudProjectKeyForNewTask } from '../../utils/cloud-project'
@@ -222,6 +234,15 @@ const sessionStore = useSessionStore()
 const draftStore = useDraftStore()
 const { connect, createSideSession, sendMessage, cancel, retryExecution, subscribe, unsubscribe, sendAskUserQuestionsResult, enqueueMessage } = useStreamWS()
 const { pendingApprovals, confirmApproval } = useToolApprovals()
+const browserLiveStore = useBrowserLiveStore()
+/** 打开浏览器直播视图：Electron 收起画中画开 Tab（复用放大链路）；Web 派发事件由 TaskView 开 Tab。 */
+function openBrowserLive() {
+  if (isElectronClient()) {
+    ;(window as any).electronAPI?.browserLive?.expand()
+  } else {
+    window.dispatchEvent(new CustomEvent('browser-live-expand'))
+  }
+}
 
 const commandEditDialogRef = ref<InstanceType<typeof CommandEditDialog>>()
 
@@ -1250,6 +1271,43 @@ function rollbackOptimisticMessages(cacheKey: string, optimisticUserId: string) 
   display: flex;
   justify-content: flex-end;
   margin-bottom: 8px;
+}
+
+/* 浏览器直播状态条：与 ChatPanel 的 browser-live-chip 同款（该文件本就重复维护
+   .side-task-entry / .side-task-btn 样式，沿用既有模式不抽公共组件，方案 2026-11-22 §3.1） */
+.browser-live-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  height: var(--aw-btn-height);
+  border: 1px solid var(--aw-divider-soft);
+  background: var(--aw-canvas-parchment);
+  color: var(--aw-ink-muted-48);
+  font-size: var(--aw-text-fine);
+  padding: var(--aw-btn-padding);
+  border-radius: var(--aw-radius-xs);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.browser-live-chip:hover {
+  background: var(--aw-divider-soft);
+  color: var(--aw-ink);
+  border-color: var(--aw-hairline);
+}
+
+.browser-live-chip .live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--el-color-success, #67c23a);
+  animation: browser-live-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes browser-live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 
 .side-task-btn {

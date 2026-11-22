@@ -67,12 +67,13 @@
         @add-file-to-chat="emit('add-file-to-chat', $event)"
         @add-commit-to-chat="emit('add-commit-to-chat', $event)"
       />
-      <!-- 浏览器直播 Tab（方案 2026-11-20 v2 D10）：画中画双击放大而来，Tab 内可还原 -->
+      <!-- 浏览器直播 Tab（方案 2026-11-20 v2 D10）：画中画双击放大而来，Tab 内可还原。
+           不传 sessionId：跟随最近活跃直播（与画中画同机制），边路 / 子代理发起的直播也能看到；
+           视图全响应式读 store、无会话本地状态，无需按会话重挂（方案 2026-11-22 §3.2） -->
       <BrowserLiveView
         v-else-if="activeTab?.type === 'browser_live'"
-        :key="`browser-live-${props.sessionId}`"
+        key="browser-live"
         variant="tab"
-        :session-id="props.sessionId"
       />
       <!-- 我的工作区：全局资产视图，不随会话切换（key 固定） -->
       <WorkspaceOverviewPanel
