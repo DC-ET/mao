@@ -207,6 +207,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     sessionEnded: (sessionId, phase) => ipcRenderer.send('browser-live-session-ended', { sessionId, phase }),
     expand: () => ipcRenderer.send('browser-live-expand'),
     restore: () => ipcRenderer.send('browser-live-restore'),
+    // 回放读取（V202）：主进程 fs 直读本机 runtime 目录，liveId/seq 由主进程白名单校验
+    replayList: (sessionId) => ipcRenderer.invoke('browser-live-replay-list', { sessionId }),
+    replayTimeline: (sessionId, liveId) => ipcRenderer.invoke('browser-live-replay-timeline', { sessionId, liveId }),
+    replayFrame: (sessionId, liveId, seq) => ipcRenderer.invoke('browser-live-replay-frame', { sessionId, liveId, seq }),
     onEvent: (callback) => onIpc('browser-live-event', callback),
     onActiveSession: (callback) => onIpc('browser-live-active-session', callback),
     onExpand: (callback) => onIpc('browser-live-expand', callback),

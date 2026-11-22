@@ -16,6 +16,7 @@ import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { createRecorder } from './browser-live-recorder.mjs';
 
 // ---------- 参数 ----------
 function parseArgs(argv) {
@@ -294,18 +295,42 @@ function removeConsumer() {
   onConsumerCountChanged();
 }
 
+// ---------- 回放录制（技术方案 2026-11-22 §3）：开关经 env 注入，未注入 = 不录 ----------
+// 录制 tee 在 emitFrame/emitStopped 处同步调用；开启时自持一个 consumer 槽，
+// 零观众时画面照采（§3.3）。单场上限 env 可调，超限截断停录本场、直播不受影响。
+const RECORDER_ENABLED = process.env.MAO_BROWSER_LIVE_RECORD === '1';
+const RECORD_MAX_MB_RAW = Number(process.env.MAO_BROWSER_LIVE_RECORD_MAX_MB ?? 300);
+const recorder = RECORDER_ENABLED
+  ? createRecorder({
+      liveDir: LIVE_DIR,
+      sessionId: MAO_SESSION_ID,
+      enabled: true,
+      // env 非法（非数字/<=0）回退默认 300，避免 NaN 让单场上限闸门静默失效
+      maxBytes: (Number.isFinite(RECORD_MAX_MB_RAW) && RECORD_MAX_MB_RAW > 0 ? RECORD_MAX_MB_RAW : 300) * 1024 * 1024,
+      log,
+    })
+  : null;
+if (recorder) {
+  addConsumer();
+  log('browser-live recorder enabled');
+}
+
 // ---------- 事件出口 ----------
 function emitFrame(cliSession, pageUrl, jpeg, width, height) {
   const data = { seq: ++seq, ts: Date.now(), jpeg, width, height, pageUrl, cliSession };
   if (!startedEmitted) {
     startedEmitted = true;
+    recorder?.onStarted({ ts: data.ts });
     emit({ type: 'browser_live_started', data: { width, height, pageUrl, cliSession } });
   }
+  // 录制 tee 在直播出口之前：录制节流/超限只影响落盘，不影响 emit（§3.4）
+  recorder?.onFrame(data);
   emit({ type: 'browser_frame', data });
 }
 function emitStopped(reason, cliSession) {
   // host 进程会被 wrapper 复用（cancelExit 撤销自毁窗），不复位闩锁的话
   // 下一场直播只发帧不发 started，前端 isLive 无法重新置真（永远显示已结束）
+  recorder?.onStopped(reason);
   startedEmitted = false;
   emit({ type: 'browser_live_stopped', data: { reason, ...(cliSession ? { cliSession } : {}) } });
 }

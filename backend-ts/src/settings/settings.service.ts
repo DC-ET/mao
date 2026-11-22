@@ -37,6 +37,12 @@ export const APPROVAL_MODEL_ID_KEY = 'approval.modelId';
 export const MEMORY_EXTRACTION_MODEL_ID_KEY = 'memory.extractionModelId';
 /** 哨兵轮询记录保留天数（V148，默认 90）。 */
 export const SIGNAL_CHECK_RETENTION_DAYS_KEY = 'signal.checkRetentionDays';
+/** 浏览器直播录制开关（V202，默认关）：开=sidecar 采集侧把每场直播帧序列落盘为回放。 */
+export const BROWSER_LIVE_RECORD_ENABLED_KEY = 'browserLive.recordEnabled';
+/** 浏览器直播回放保留天数（V202，默认 7；0=关闭按天清理，仍随会话删除清理）。 */
+export const BROWSER_REPLAY_TTL_DAYS_KEY = 'harness.cleanup.browserReplayTtlDays';
+/** shell 输出与网页全文缓存保留天数（V202 后台化存量 env 口径，默认 7；0=不清理）。 */
+export const SHELL_OUTPUT_MAX_AGE_DAYS_KEY = 'harness.cleanup.shellOutputMaxAgeDays';
 export const COMPACTION_MODEL_ID_KEY = 'compaction.modelId';
 export const JEV_ENDPOINT_KEY = 'approval.jev.endpoint';
 export const JEV_MODEL_KEY = 'approval.jev.model';
@@ -773,6 +779,21 @@ export class SystemSettingService {
     return Number.isInteger(n) && n > 0 ? n : 90;
   }
 
+  /** 浏览器直播录制开关（browserLive.recordEnabled，V202；默认关）。 */
+  async getBrowserLiveRecordEnabled(): Promise<boolean> {
+    return this.getBool(BROWSER_LIVE_RECORD_ENABLED_KEY);
+  }
+
+  /** 浏览器直播回放保留天数（V202；0=关闭 TTL 清理；非法回落 7，上限 365）。每轮清理现读。 */
+  async getBrowserReplayTtlDays(): Promise<number> {
+    return clampCleanupDays(await this.getOpt(BROWSER_REPLAY_TTL_DAYS_KEY));
+  }
+
+  /** shell 输出 / 网页全文保留天数（V202 后台化存量 env 口径；0=不清理；非法回落 7，上限 365）。每轮清理现读。 */
+  async getShellOutputMaxAgeDays(): Promise<number> {
+    return clampCleanupDays(await this.getOpt(SHELL_OUTPUT_MAX_AGE_DAYS_KEY));
+  }
+
   /**
    * 自定义 HTTP 工具内网放行清单（V163）：CIDR JSON 数组 → 合法 CIDR 列表。
    * 非法/缺失按空数组处理（=一律按私网拒绝，失败即拒绝不放开）。
@@ -1112,6 +1133,11 @@ function optNonNegativeInt(raw: string | null, fallback: number): number {
   if (!hasText(raw)) return fallback;
   const parsed = Number(raw);
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+/** 清理时效类配置（V202）：允许 0=关闭该类清理；非法回落 7；上限 365 天防误设超大留存。 */
+function clampCleanupDays(raw: string | null): number {
+  return Math.min(optNonNegativeInt(raw, 7), 365);
 }
 
 function optRatio(raw: string | null, fallback: number): number {

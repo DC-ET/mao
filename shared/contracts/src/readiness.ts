@@ -16,6 +16,12 @@ export interface ReadinessVO {
   agentsEnabled: number;
   /** 当前登录者的首启向导状态。 */
   onboarding: OnboardingState;
+  /**
+   * 浏览器直播录制开关（system_setting browserLive.recordEnabled，V202）。
+   * 仅登录即可见（不经 settings:read）：桌面 Electron 主进程据此向 LOCAL shell env
+   * 注入 MAO_BROWSER_LIVE_RECORD（技术方案 2026-11-22 §3.1）。省略时视为关闭。
+   */
+  browserLiveRecordEnabled?: boolean;
 }
 
 /** PUT /v1/readiness/onboarding 入参：向导完成或跳过时提交；服务端幂等（已有记录不覆盖）。 */

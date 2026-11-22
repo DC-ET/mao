@@ -5,6 +5,41 @@ interface TerminalCreateOptions {
   shell?: string
 }
 
+/** 浏览器直播回放（V202）：与 @mao/contracts browser-replay 同构（electron.d.ts 自包含，不引入包依赖） */
+interface BrowserReplayFrameMeta {
+  seq: number
+  ts: number
+  pageUrl: string
+  width: number
+  height: number
+  bytes: number
+  file: string
+}
+
+interface BrowserReplayManifest {
+  version: number
+  liveId: string
+  sessionId: number
+  startedAt: number
+  endedAt: number | null
+  frameCount: number
+  durationMs: number | null
+  approxBytes: number
+  cliSessions: string[]
+  urls: string[]
+  truncated: boolean
+}
+
+interface BrowserReplaySummary {
+  liveId: string
+  startedAt: number
+  endedAt: number | null
+  frameCount: number
+  durationMs: number | null
+  approxBytes: number
+  truncated: boolean
+}
+
 interface TerminalCreateResult {
   id: string
   shell: string
@@ -443,6 +478,12 @@ interface ElectronAPI {
     expand(): void
     /** Tab 内还原画中画 */
     restore(): void
+    /** 回放场次列表（V202）：fs 直读本机 runtime 目录，含未结算场；与 CLOUD API 同结构 */
+    replayList(sessionId: number): Promise<BrowserReplaySummary[]>
+    /** 回放 manifest + 全量帧索引 */
+    replayTimeline(sessionId: number, liveId: string): Promise<{ manifest: BrowserReplayManifest; frames: BrowserReplayFrameMeta[] } | null>
+    /** 单帧 JPEG 字节（invoke 结构化克隆直达，非法/缺失返回 null） */
+    replayFrame(sessionId: number, liveId: string, seq: number): Promise<Uint8Array | null>
     onEvent(callback: (payload: { sessionId: number; type: string; data?: Record<string, unknown> }) => void): RemoveListener
     onActiveSession(callback: (payload: { sessionId: number | null }) => void): RemoveListener
     onExpand(callback: (payload: { sessionId: number | null }) => void): RemoveListener

@@ -193,13 +193,23 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 
 ### 运维清理调度器（0.0.76 新增）
 
-系统级定时清理 `MAO_RUNTIME_DIR` 下的临时数据（不跑 LLM、不产生消息）：
+系统级定时清理 `MAO_RUNTIME_DIR` 下的临时数据（不跑 LLM、不产生消息）。清理时效已后台化（V202）：管理后台「系统设置 → 浏览器直播」可调回放与 shell 输出的保留天数（保存后下一轮清理即生效，无需重启）；环境变量仅在 DB 行从未设置时由启动引导一次性导入，此后以后台配置为准。
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
 | `MAO_CLEANUP_INTERVAL_MS` | 86400000（1 天） | 清理调度间隔 |
-| `MAO_CLEANUP_SHELL_MAX_AGE_DAYS` | 7 | 会话 runtime 下 `shellOutput/sh-*.out` 与 `webPages/*.md`（网页全文落盘）的保留天数 |
+| `MAO_CLEANUP_SHELL_MAX_AGE_DAYS` | 7 | 会话 runtime 下 `shellOutput/sh-*.out` 与 `webPages/*.md`（网页全文落盘）的保留天数。引导导入 `harness.cleanup.shellOutputMaxAgeDays` 后 env 不再生效 |
+| `MAO_CLEANUP_BROWSER_REPLAY_DAYS` | 7 | 浏览器直播回放场目录保留天数（0=关闭按天清理，仍随会话删除清理）。引导导入 `harness.cleanup.browserReplayTtlDays` 后 env 不再生效 |
 | `MAO_CLEANUP_SKILLS` | true | 是否清理会话 runtime 下的 skills 链接目录（活跃会话跳过）。技能以符号链接指向源目录，清理只删链接，不影响源与已全局安装的 CLI |
+
+### 浏览器直播录制（V202 新增）
+
+管理员在管理后台「系统设置 → 浏览器直播」开启「启用操作录制」后，浏览器直播画面在采集侧落盘为回放，直播 Tab 可回看（含时间轴 / 倍速 / 逐帧）。录屏含登录态页面敏感信息，默认关闭；按回放保留天数自动清理，会话删除时随 runtime 目录级联删除。
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `MAO_BROWSER_LIVE_RECORD` | 未注入 | sidecar 采集侧录制开关（=1 开启）。由后端按 `browserLive.recordEnabled` 自动注入（CLOUD 走容器 envelope、桌面 LOCAL 走主进程 shell env），无需手工配置 |
+| `MAO_BROWSER_LIVE_RECORD_MAX_MB` | 300 | 单场回放体积上限（MB），超限截断停录本场，直播不受影响 |
 
 ### 密钥轮换注意
 

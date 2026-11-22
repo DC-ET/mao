@@ -1,6 +1,6 @@
 import axios, { type InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
-import type { InboxItem, InboxKind, InboxListResult, InboxPreference, InboxSource, NotificationChannel, Result, TaskNotificationPreference } from '@mao/contracts'
+import type { InboxItem, InboxKind, InboxListResult, InboxPreference, InboxSource, NotificationChannel, ReplaySummary, ReplayTimeline, Result, TaskNotificationPreference } from '@mao/contracts'
 import { redirectToLogin } from '../utils/login-redirect'
 import { useAuthStore } from '../stores/auth'
 import { getRefreshToken, getToken, setTokens } from '../utils/auth-storage'
@@ -63,6 +63,10 @@ api.interceptors.request.use(
 // Response interceptor - handle errors with token refresh
 api.interceptors.response.use(
   (response) => {
+    // 二进制响应（浏览器回放帧 image/jpeg 等）不是 Result JSON 信封，直接放行由调用方处理
+    if (response.config.responseType === 'arraybuffer' || response.data instanceof ArrayBuffer) {
+      return response
+    }
     const { data } = response
     if (data.code !== 0) {
       const skipCodes = (response.config as InternalAxiosRequestConfig & { skipBusinessCodes?: number[] }).skipBusinessCodes
@@ -131,7 +135,7 @@ api.interceptors.response.use(
         if (error && typeof error === 'object') {
           (error as Error & { toastShown?: boolean }).toastShown = true
         }
-      } else if (status !== 401) {
+      } else if (status !== 401 && !originalRequest.skipErrorToast) {
         ElMessage.error(data?.message || '请求失败')
         if (error && typeof error === 'object') {
           (error as Error & { toastShown?: boolean }).toastShown = true
@@ -1183,3 +1187,53 @@ export async function getEffectiveEnv(sessionId: number): Promise<EffectiveEnvVi
   return data
 }
 
+
+// ========== 浏览器直播回放（V202，技术方案 2026-11-22 §4.1）==========
+
+/** 大缓冲分块转 base64（String.fromCharCode 一次展开超 64KB 会栈溢出）。 */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+  }
+  return btoa(binary)
+}
+
+/** 场次列表（含 endedAt=null 的未结算场），按开始时间倒序。 */
+export async function listBrowserReplays(sessionId: number | string): Promise<ReplaySummary[]> {
+  const { data } = await api.get(`/sessions/${sessionId}/browser-live/replays`)
+  return (data ?? []) as ReplaySummary[]
+}
+
+/** 单场 manifest + 全量帧索引；场次不存在（已被清理 / 未录制）返回 null。 */
+export async function fetchBrowserReplayTimeline(sessionId: number | string, liveId: string): Promise<ReplayTimeline | null> {
+  try {
+    const { data } = await api.get(`/sessions/${sessionId}/browser-live/replays/${encodeURIComponent(liveId)}/timeline`, {
+      skipErrorToast: true, // 404（场次已清理）是正常分支，不弹错误条
+    } as unknown as InternalAxiosRequestConfig)
+    return (data ?? null) as ReplayTimeline | null
+  } catch (e) {
+    const status = (e as { response?: { status?: number } }).response?.status
+    if (status === 404) return null
+    throw e
+  }
+}
+
+/** 单帧 JPEG 的 base64（复用直播 drawFrame 的 data URL 通道）；缺失/过期返回 null。 */
+export async function fetchBrowserReplayFrame(sessionId: number | string, liveId: string, seq: number): Promise<string | null> {
+  try {
+    const response = await api.get(`/sessions/${sessionId}/browser-live/replays/${encodeURIComponent(liveId)}/frames/${seq}`, {
+      responseType: 'arraybuffer',
+      skipErrorToast: true,
+    } as unknown as InternalAxiosRequestConfig)
+    const buffer = (response as { data?: ArrayBuffer }).data
+    if (!buffer || buffer.byteLength === 0) return null
+    return arrayBufferToBase64(buffer)
+  } catch (e) {
+    const status = (e as { response?: { status?: number } }).response?.status
+    if (status === 404) return null
+    throw e
+  }
+}

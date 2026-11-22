@@ -39,6 +39,8 @@ export class SessionEnvelopeBuilder {
       envVariableService?: EnvVarsLookup | null;
       /** 站点地址（注入 envelope.maoBaseUrl）：容器内 mao / mao-agent 不再有内置默认。 */
       siteBaseUrlProvider?: SiteBaseUrlLookup | null;
+      /** 浏览器直播录制开关（V202）：开启时 envVars 追加 MAO_BROWSER_LIVE_RECORD=1（sidecar 采集侧录制）。 */
+      browserLiveRecordEnabled?: (() => Promise<boolean>) | null;
     },
     private readonly depsRoot: string,
   ) {}
@@ -102,6 +104,16 @@ export class SessionEnvelopeBuilder {
         envVars = await this.deps.envVariableService.resolveForSession(userId, workspace ?? null);
       } catch (e) {
         harnessLog('warn', `[envelope] env vars resolve failed for user=${userId}: ${(e as Error).message}`);
+      }
+    }
+
+    if (this.deps.browserLiveRecordEnabled) {
+      try {
+        if (await this.deps.browserLiveRecordEnabled()) {
+          envVars = { ...envVars, MAO_BROWSER_LIVE_RECORD: '1' };
+        }
+      } catch (e) {
+        harnessLog('warn', `[envelope] browser live record flag lookup failed: ${(e as Error).message}`);
       }
     }
 

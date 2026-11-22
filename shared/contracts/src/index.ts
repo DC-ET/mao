@@ -37,6 +37,7 @@ export type { ModelVO, ModelPageResult, ModelListFilter, ClientImpersonation, Ap
 export type { ExperienceVO, SuggestedQuestionVO, AgentVO, AgentAvatarUploadVO } from './agent';
 export type { WeixinPreferenceVO, TaskPanelPreferenceState } from './preference';
 export type { OnboardingState, ReadinessVO, OnboardingCompleteInput } from './readiness';
+export type { ReplayFrameMeta, ReplayManifest, ReplaySummary, ReplayTimeline } from './browser-replay';
 export type { BudgetScope, BudgetLimitType, BudgetAction, BudgetStatus, MyBudgetItemVO, MyBudgetsVO } from './budget';
 export type { AuditLog, AuditListFilter } from './audit';
 export type { MessageSearchGroup, MessageSearchHit, MessageSearchResult, SessionSource } from './session';

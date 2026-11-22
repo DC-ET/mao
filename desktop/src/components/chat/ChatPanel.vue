@@ -176,12 +176,13 @@
       />
 
       <div v-if="sessionId && !isNewTaskMode" class="side-task-entry">
-        <!-- 浏览器直播状态条（原顶栏图标迁此）：任一会话直播中即显示，点击打开直播视图。 -->
+        <!-- 浏览器直播状态条（原顶栏图标迁此）：任一会话直播中，或当前会话已有历史回放时显示。
+             无直播时点击落在回放列表（V202 回放入口刷新/关 Tab 后仍可达，技术方案 §5.1）。 -->
         <button
-          v-if="browserLiveStore.hasAnyLive"
+          v-if="showBrowserLiveChip"
           type="button"
           class="browser-live-chip"
-          title="点击查看浏览器直播"
+          title="点击查看浏览器直播 / 历史回放"
           @click="openBrowserLive"
         >
           <span class="live-dot" aria-hidden="true"></span>浏览器
@@ -321,14 +322,6 @@ const openSideTask = inject<
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 const browserLiveStore = useBrowserLiveStore()
-/** 打开浏览器直播视图：Electron 收起画中画开 Tab（复用放大链路）；Web 派发事件由 TaskView 开 Tab。 */
-function openBrowserLive() {
-  if (isElectronClient()) {
-    ;(window as any).electronAPI?.browserLive?.expand()
-  } else {
-    window.dispatchEvent(new CustomEvent('browser-live-expand'))
-  }
-}
 const draftStore = useDraftStore()
 const router = useRouter()
 const commandEditDialogRef = ref<InstanceType<typeof CommandEditDialog>>()
@@ -371,6 +364,30 @@ const {
   deleteQueueMessage,
   reorderQueueMessage
 } = useChat(agentId, executionMode, newTaskModelId, permissionLevel)
+
+/** 浏览器 chip 显示条件：任一会话直播中，或当前会话已有历史回放（V202，30s 惰性探测）。
+ *  必须排在 useChat() 解构之后：sessionId 由解构产出，之前的 watch({ immediate: true }) 会 TDZ 崩掉整页。 */
+const showBrowserLiveChip = computed(() => {
+  const replayAvailable = browserLiveStore.replayAvailability[String(sessionId.value ?? '')]?.available === true
+  return browserLiveStore.hasAnyLive || replayAvailable
+})
+// 会话切换或直播状态翻转（直播结束 → 回放列表出现该场）都要重探可用性；
+// 翻转时 store 已把缓存置过期（checkedAt=0），重探必发真实查询
+watch([() => sessionId.value, () => browserLiveStore.sessions[String(sessionId.value ?? '')]?.isLive], ([sid]) => {
+  if (sid != null && sid !== '') void browserLiveStore.ensureReplayAvailability(Number(sid), executionMode.value)
+}, { immediate: true })
+/** 打开浏览器直播视图：Electron 收起画中画开 Tab（复用放大链路）；Web 派发事件由 TaskView 开 Tab。
+ *  无直播时点击 → Tab 打开后落在回放列表模式（replayBrowse 记账由 BrowserLiveView 消费）。 */
+function openBrowserLive() {
+  if (!browserLiveStore.hasAnyLive && sessionId.value) {
+    browserLiveStore.requestReplayBrowse(Number(sessionId.value))
+  }
+  if (isElectronClient()) {
+    ;(window as any).electronAPI?.browserLive?.expand()
+  } else {
+    window.dispatchEvent(new CustomEvent('browser-live-expand'))
+  }
+}
 
 /** 分享会话弹窗（与任务列表右键「分享…」共用 ShareDialog）：只分享当前会话 */
 const shareVisible = ref(false)

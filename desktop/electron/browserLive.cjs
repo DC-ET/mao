@@ -271,6 +271,95 @@ function createBrowserLiveRuntime({
     return true
   }
 
+  // ---------- 回放读取（V202，技术方案 2026-11-22 §4.2）：主进程 fs 直读本机 runtime 目录 ----------
+
+  const LIVE_ID_PATTERN = /^L\d+$/
+
+  /** liveId 白名单 + containment 断言：resolve 后必须仍在该会话的 replay 目录内（renderer 传入必须防穿越）。 */
+  function resolveLiveDir(root, liveId) {
+    if (!LIVE_ID_PATTERN.test(liveId)) return null
+    const resolved = path.resolve(root, liveId)
+    if (resolved !== root && !resolved.startsWith(root + path.sep)) return null
+    return resolved
+  }
+
+  function readManifestSafe(liveDir, liveId) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(liveDir, 'manifest.json'), 'utf8'))
+      if (parsed?.liveId !== liveId || typeof parsed?.startedAt !== 'number') return null
+      return parsed
+    } catch { return null }
+  }
+
+  function readTimelineSafe(liveDir) {
+    let raw = ''
+    try { raw = fs.readFileSync(path.join(liveDir, 'timeline.ndjson'), 'utf8') } catch { return [] }
+    const frames = []
+    for (const line of raw.split('\n')) {
+      const trimmed = line.trim()
+      if (!trimmed) continue
+      try {
+        const row = JSON.parse(trimmed)
+        if (typeof row?.seq !== 'number' || typeof row?.ts !== 'number' || typeof row?.file !== 'string') continue
+        frames.push(row)
+      } catch { /* 崩溃留下的尾部半行：跳过 */ }
+    }
+    return frames
+  }
+
+  /** 场次列表（含 endedAt=null 的未结算场），按 startedAt 倒序；与 CLOUD API 同结构。 */
+  function replayList(sessionId) {
+    const sid = Number(sessionId)
+    if (!Number.isSafeInteger(sid) || sid <= 0) return []
+    const replayRoot = path.join(resolveSessionRuntimeDir(sid), '.mao-browser', 'replay')
+    let names = []
+    try {
+      names = fs.readdirSync(replayRoot)
+    } catch { return [] } // 目录不存在 = 从未录制
+    const summaries = []
+    for (const name of names) {
+      if (!LIVE_ID_PATTERN.test(name)) continue
+      const manifest = readManifestSafe(path.join(replayRoot, name), name)
+      if (!manifest) continue
+      summaries.push({
+        liveId: manifest.liveId,
+        startedAt: manifest.startedAt,
+        endedAt: manifest.endedAt ?? null,
+        frameCount: manifest.frameCount ?? 0,
+        durationMs: manifest.durationMs ?? null,
+        approxBytes: manifest.approxBytes ?? 0,
+        truncated: manifest.truncated === true,
+      })
+    }
+    summaries.sort((a, b) => b.startedAt - a.startedAt)
+    return summaries
+  }
+
+  function replayTimeline(sessionId, liveId) {
+    const sid = Number(sessionId)
+    if (!Number.isSafeInteger(sid) || sid <= 0) return null
+    const liveDir = resolveLiveDir(path.join(resolveSessionRuntimeDir(sid), '.mao-browser', 'replay'), String(liveId ?? ''))
+    if (!liveDir) return null
+    const manifest = readManifestSafe(liveDir, String(liveId))
+    if (!manifest) return null
+    return { manifest, frames: readTimelineSafe(liveDir) }
+  }
+
+  /** 单帧 JPEG 字节（Buffer，structured clone 直达 renderer）；非法/缺失返回 null。 */
+  function replayFrame(sessionId, liveId, seq) {
+    const sid = Number(sessionId)
+    if (!Number.isSafeInteger(sid) || sid <= 0) return null
+    const liveDir = resolveLiveDir(path.join(resolveSessionRuntimeDir(sid), '.mao-browser', 'replay'), String(liveId ?? ''))
+    if (!liveDir) return null
+    if (!Number.isSafeInteger(seq) || seq < 0) return null
+    const file = path.resolve(liveDir, `f${seq}.jpg`)
+    if (!file.startsWith(liveDir + path.sep)) return null
+    try {
+      if (!fs.statSync(file).isFile()) return null
+      return fs.readFileSync(file)
+    } catch { return null }
+  }
+
   // ---------- 公共控制入口 ----------
 
   /** renderer → 主进程：CLOUD 帧回灌 / 一切来源的事件注入 */
@@ -318,6 +407,10 @@ function createBrowserLiveRuntime({
     })
     ipcMain.on('browser-live-expand', () => expandToTab())
     ipcMain.on('browser-live-restore', () => { pip?.show() })
+    // 回放读取（V202）：renderer 传入的 liveId/seq 经白名单 + containment 断言后 fs 直读
+    ipcMain.handle('browser-live-replay-list', (_e, payload) => replayList(payload?.sessionId))
+    ipcMain.handle('browser-live-replay-timeline', (_e, payload) => replayTimeline(payload?.sessionId, payload?.liveId))
+    ipcMain.handle('browser-live-replay-frame', (_e, payload) => replayFrame(payload?.sessionId, payload?.liveId, payload?.seq))
   }
 
   function shutdown() {
@@ -346,7 +439,10 @@ function createBrowserLiveRuntime({
     sessions.clear()
   }
 
-  return { attachLocalSession, relayRendererEvent, stopBrowser, sessionEnded, registerIpc, shutdown, snapshot }
+  return {
+    attachLocalSession, relayRendererEvent, stopBrowser, sessionEnded, registerIpc, shutdown, snapshot,
+    replayList, replayTimeline, replayFrame,
+  }
 }
 
 module.exports = { createBrowserLiveRuntime }

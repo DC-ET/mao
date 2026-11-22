@@ -40,7 +40,7 @@ function fakeService(overrides?: {
   return { service, onboardingRepo };
 }
 
-async function application(service: ReadinessService, opts?: { userId?: number; isAdmin?: boolean }) {
+async function application(service: ReadinessService, opts?: { userId?: number; isAdmin?: boolean; recordEnabled?: () => Promise<boolean> }) {
   const app = Fastify();
   app.setErrorHandler(handleError);
   await app.register(async (api) => {
@@ -50,6 +50,7 @@ async function application(service: ReadinessService, opts?: { userId?: number; 
     registerReadinessRoutes(api, {
       readinessService: service,
       permissionService: { isAdmin: async () => opts?.isAdmin ?? false },
+      browserLiveRecordEnabled: opts?.recordEnabled,
     });
   }, { prefix: '/api' });
   return app;
@@ -65,6 +66,19 @@ describe('readiness routes', () => {
     expect(res.json().data).toEqual({
       defaultPasswordChanged: false, modelsConfigured: 3, agentsEnabled: 2, onboarding: 'PENDING',
     });
+  });
+
+  it('录制开关（V202）：接线时随 readiness 下发；读取失败视为关闭', async () => {
+    const passwordHash = await hashPassword(DEFAULT_ADMIN_PASSWORD);
+    const { service } = fakeService({ passwordHash });
+    const app = await application(service, { isAdmin: true, recordEnabled: async () => true });
+    const res = await app.inject({ method: 'GET', url: '/api/v1/readiness' });
+    expect(res.json().data.browserLiveRecordEnabled).toBe(true);
+
+    const failing = await application(service, { isAdmin: true, recordEnabled: async () => { throw new Error('db down'); } });
+    const res2 = await failing.inject({ method: 'GET', url: '/api/v1/readiness' });
+    expect(res2.json().data.browserLiveRecordEnabled).toBe(false);
+    await failing.close();
   });
 
   it('管理员已改密：defaultPasswordChanged=true', async () => {

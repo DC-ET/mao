@@ -154,6 +154,8 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
     larkUatInjector,
     envVariableService,
     siteBaseUrlProvider: settingService,
+    // 浏览器直播录制开关（V202）：envelope envVars 注入 MAO_BROWSER_LIVE_RECORD（CLOUD 侧下发链）
+    browserLiveRecordEnabled: () => settingService.getBrowserLiveRecordEnabled(),
   }, cloudRuntimeCfg.container.depsDir);
   const dockerRouter = new DockerToolRouter({
     containerRegistry,

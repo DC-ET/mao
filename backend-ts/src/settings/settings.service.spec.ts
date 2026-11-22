@@ -973,3 +973,57 @@ describe('SystemSettingService 菜单可见性（V182）', () => {
     await expect(service().update(ADMIN_MENU_HIDDEN_KEY, duplicate65)).resolves.toBeDefined();
   });
 });
+
+describe('SystemSettingService 清理时效与录制开关（V202）', () => {
+  const mapper: SystemSettingRepository = {
+    list: vi.fn(),
+    findByKey: vi.fn(),
+    updateById: vi.fn(),
+    transaction: vi.fn(async (fn: (repo: SystemSettingRepository) => Promise<unknown>) => fn(mapper)),
+  };
+  const agentLookup: AgentLookup = { findById: vi.fn() };
+  const modelLookup: ModelLookup = { findById: vi.fn() };
+  const runtime = { workspaceRoot: '/workspace', skillsDir: '/skills' };
+  function service(): SystemSettingService {
+    return new SystemSettingService(mapper, agentLookup, modelLookup, { ...runtime });
+  }
+  const row = (value: string | null) => ({ ...setting('harness.cleanup.browserReplayTtlDays', '运行环境', 1), value });
+  const shellRow = (value: string | null) => ({ ...setting('harness.cleanup.shellOutputMaxAgeDays', '运行环境', 1), value });
+
+  beforeEach(() => {
+    vi.mocked(mapper.findByKey).mockReset();
+  });
+
+  it('录制开关：仅 true/1 为开启，缺省关闭', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(null);
+    expect(await service().getBrowserLiveRecordEnabled()).toBe(false);
+    vi.mocked(mapper.findByKey).mockResolvedValue({ ...setting('browserLive.recordEnabled', '运行环境', 1), value: '1' });
+    expect(await service().getBrowserLiveRecordEnabled()).toBe(true);
+    vi.mocked(mapper.findByKey).mockResolvedValue({ ...setting('browserLive.recordEnabled', '运行环境', 1), value: '0' });
+    expect(await service().getBrowserLiveRecordEnabled()).toBe(false);
+  });
+
+  it('回放 TTL：未设置回落 7；0=关闭透传；非法回落 7；>365 钳到 365', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(null);
+    expect(await service().getBrowserReplayTtlDays()).toBe(7);
+    vi.mocked(mapper.findByKey).mockResolvedValue(row('0'));
+    expect(await service().getBrowserReplayTtlDays()).toBe(0);
+    vi.mocked(mapper.findByKey).mockResolvedValue(row('30'));
+    expect(await service().getBrowserReplayTtlDays()).toBe(30);
+    vi.mocked(mapper.findByKey).mockResolvedValue(row('-3'));
+    expect(await service().getBrowserReplayTtlDays()).toBe(7);
+    vi.mocked(mapper.findByKey).mockResolvedValue(row('abc'));
+    expect(await service().getBrowserReplayTtlDays()).toBe(7);
+    vi.mocked(mapper.findByKey).mockResolvedValue(row('10000'));
+    expect(await service().getBrowserReplayTtlDays()).toBe(365);
+  });
+
+  it('shell 输出 TTL：与回放 TTL 同钳制口径', async () => {
+    vi.mocked(mapper.findByKey).mockResolvedValue(shellRow(null));
+    expect(await service().getShellOutputMaxAgeDays()).toBe(7);
+    vi.mocked(mapper.findByKey).mockResolvedValue(shellRow('0'));
+    expect(await service().getShellOutputMaxAgeDays()).toBe(0);
+    vi.mocked(mapper.findByKey).mockResolvedValue(shellRow('999'));
+    expect(await service().getShellOutputMaxAgeDays()).toBe(365);
+  });
+});

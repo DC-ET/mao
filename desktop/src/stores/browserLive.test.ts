@@ -1,6 +1,9 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useBrowserLiveStore } from './browserLive'
+import { createBrowserReplayProvider } from '../composables/browserReplayProvider'
+
+vi.mock('../composables/browserReplayProvider', () => ({ createBrowserReplayProvider: vi.fn() }))
 
 // 浏览器直播 store（方案 2026-11-20 v2 D10）：事件 ingest 序列、乱序帧丢弃、
 // stopped 收窗态、停止动作只在 Electron 下走 IPC。
@@ -118,5 +121,56 @@ describe('browserLive store', () => {
       store.bindMainProcess()
     }).not.toThrow()
     expect(store.ipcBound).toBe(false)
+  })
+})
+
+describe('browserLive store 回放入口（V202）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(createBrowserReplayProvider).mockReset()
+  })
+
+  it('requestReplayBrowse 记账递增；consumeReplayBrowse 只消费一次（记账在 store，Tab 新挂载不吞请求）', () => {
+    const store = useBrowserLiveStore()
+    expect(store.replayBrowse.seq).toBe(0)
+    store.requestReplayBrowse(31)
+    expect(store.replayBrowse).toEqual({ sessionId: 31, seq: 1, consumedSeq: 0 })
+    expect(store.consumeReplayBrowse()).toEqual({ sessionId: 31 })
+    expect(store.consumeReplayBrowse()).toBeNull() // 消费后回写 consumedSeq，重复调用返回 null
+    store.requestReplayBrowse(null)
+    expect(store.consumeReplayBrowse()).toEqual({ sessionId: null })
+  })
+
+  it('started/stopped 使回放可用性缓存置过期（保留上次结果、checkedAt=0 触发重探）', () => {
+    const store = useBrowserLiveStore()
+    store.replayAvailability['11'] = { available: true, checkedAt: Date.now() }
+    store.ingest({ sessionId: 11, type: 'browser_live_started', data: {} })
+    expect(store.replayAvailability['11']).toEqual({ available: true, checkedAt: 0 })
+    store.ingest({ sessionId: 11, type: 'browser_live_stopped', data: { reason: 'user_stop' } })
+    expect(store.replayAvailability['11']).toEqual({ available: true, checkedAt: 0 })
+  })
+
+  it('ensureReplayAvailability：无 provider（Web 看 LOCAL）标记不可用；有 provider 回填列表结果', async () => {
+    const store = useBrowserLiveStore()
+    vi.mocked(createBrowserReplayProvider).mockReturnValue(null)
+    await store.ensureReplayAvailability(41, 'LOCAL')
+    expect(store.replayAvailability['41'].available).toBe(false)
+
+    vi.mocked(createBrowserReplayProvider).mockReturnValue({ list: async () => [{ liveId: 'L1', startedAt: 1, endedAt: 2, frameCount: 3, durationMs: 1, approxBytes: 0, truncated: false }], timeline: async () => null, frame: async () => null })
+    await store.ensureReplayAvailability(42, 'CLOUD')
+    expect(store.replayAvailability['42'].available).toBe(true)
+  })
+
+  it('过期缓存（checkedAt=0）在 30s 内也会重探：直播结束后 chip 才能恢复显示', async () => {
+    const store = useBrowserLiveStore()
+    const listFn = vi.fn(async () => [{ liveId: 'L1', startedAt: 1, endedAt: 2, frameCount: 1, durationMs: 1, approxBytes: 0, truncated: false }])
+    vi.mocked(createBrowserReplayProvider).mockReturnValue({ list: listFn, timeline: async () => null, frame: async () => null })
+    await store.ensureReplayAvailability(51, 'CLOUD')
+    expect(listFn).toHaveBeenCalledTimes(1)
+    // 直播结束 → 置过期；即便 30s 缓存窗口未过也立即重探
+    store.ingest({ sessionId: 51, type: 'browser_live_stopped', data: { reason: 'user_stop' } })
+    await store.ensureReplayAvailability(51, 'CLOUD')
+    expect(listFn).toHaveBeenCalledTimes(2)
+    expect(store.replayAvailability['51'].available).toBe(true)
   })
 })

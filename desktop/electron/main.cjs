@@ -21,6 +21,7 @@ const { registerLocalSkillsIpc } = require('./localSkills.cjs')
 const { registerGitIpc } = require('./gitIpc.cjs')
 const { registerLocalFileIpc } = require('./localFileIpc.cjs')
 const { createBrowserLiveRuntime } = require('./browserLive.cjs')
+const { createBrowserLiveRecordFlag } = require('./browserLiveRecordFlag.cjs')
 const { createPipWindowManager } = require('./pipWindow.cjs')
 
 
@@ -130,6 +131,13 @@ const browserLive = createBrowserLiveRuntime({
 })
 browserLive.registerIpc(ipcMain)
 
+// 浏览器直播录制开关取值（V202，技术方案 §3.1）：经 readiness 下发（仅登录即可读），
+// 主进程缓存后向 LOCAL shell env 注入 MAO_BROWSER_LIVE_RECORD；登录态变化即失效
+const browserLiveRecordFlag = createBrowserLiveRecordFlag({
+  getApiBaseUrl,
+  readAuth: readAuthStore,
+})
+
 /**
  * 画中画窗口加载地址：与主窗同源（生产 = 服务器 SPA；dev = vite dev server）。
  * 两者都是 createWebHistory（HTML5 路由），必须用 path 形式 /pip——hash 形式 /#/pip
@@ -225,6 +233,12 @@ async function buildShellEnv() {
     env.MAO_BASE_URL = maoBaseUrl
   } else {
     delete env.MAO_BASE_URL
+  }
+  // 浏览器直播录制开关（V202）：开启时 sidecar 采集侧把每场直播落盘为回放
+  if (await browserLiveRecordFlag.get()) {
+    env.MAO_BROWSER_LIVE_RECORD = '1'
+  } else {
+    delete env.MAO_BROWSER_LIVE_RECORD
   }
   return env
 }
@@ -1285,6 +1299,8 @@ ipcMain.handle('auth-set-tokens', (_event, payload = {}) => {
   }
   // 终端主机只标「下次重连用新 token」；userId 变化（账号切换）时杀掉旧账号的 PTY（§4.5）
   terminalHost.onTokensWritten(payload.token || null)
+  // 录制开关缓存随登录态失效（V202）：下次 shell 执行按新账号重新拉 readiness
+  browserLiveRecordFlag.invalidate()
 })
 
 ipcMain.handle('auth-clear-tokens', (_event, payload) => {

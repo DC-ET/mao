@@ -3,10 +3,10 @@
     <header class="live-header">
       <span v-if="variant === 'pip'" class="drag-spacer" aria-hidden="true"></span>
       <span class="live-title" :title="state?.pageUrl || ''">{{ title }}</span>
-      <span v-if="state?.cliSession && state.cliSession !== 'default'" class="cli-chip">{{ state.cliSession }}</span>
+      <span v-if="viewMode === 'live' && state?.cliSession && state.cliSession !== 'default'" class="cli-chip">{{ state.cliSession }}</span>
       <span class="header-actions" :class="{ 'no-drag': variant === 'pip' }">
         <el-popconfirm
-          v-if="state?.isLive"
+          v-if="viewMode === 'live' && state?.isLive"
           title="停止浏览器？Agent 后续的浏览器操作将失败。"
           confirm-button-text="停止"
           cancel-button-text="取消"
@@ -20,7 +20,7 @@
           </template>
         </el-popconfirm>
         <button
-          v-if="variant === 'tab' && isElectron"
+          v-if="variant === 'tab' && isElectron && viewMode === 'live'"
           class="icon-btn"
           type="button"
           aria-label="还原为画中画窗口"
@@ -28,6 +28,16 @@
           @click="onRestore"
         >
           <el-icon><CopyDocument /></el-icon>
+        </button>
+        <button
+          v-if="viewMode === 'replay'"
+          class="icon-btn"
+          type="button"
+          aria-label="退出回放"
+          title="退出回放"
+          @click="exitReplay"
+        >
+          <el-icon><Close /></el-icon>
         </button>
       </span>
     </header>
@@ -37,20 +47,34 @@
       :class="{ 'no-drag': variant === 'pip' }"
       @dblclick="onDblClick"
     >
-      <canvas
-        v-show="state?.frame"
-        ref="canvasRef"
-        class="live-canvas"
-      ></canvas>
-      <div v-if="!state?.frame" class="live-placeholder">
-        <template v-if="state?.stoppedReason">
-          <p class="placeholder-main">直播已结束</p>
-          <p class="placeholder-sub">{{ stopReasonText }}</p>
-        </template>
-        <template v-else>
-          <p class="placeholder-main">等待 Agent 打开浏览器…</p>
-          <p class="placeholder-sub">Agent 使用 browser-use 技能操作浏览器时，画面会实时显示在这里</p>
-        </template>
+      <template v-if="viewMode === 'live'">
+        <canvas
+          v-show="state?.frame"
+          ref="canvasRef"
+          class="live-canvas"
+        ></canvas>
+        <div v-if="!state?.frame" class="live-placeholder">
+          <template v-if="state?.stoppedReason">
+            <p class="placeholder-main">直播已结束</p>
+            <p class="placeholder-sub">{{ stopReasonText }}</p>
+          </template>
+          <template v-else>
+            <p class="placeholder-main">等待 Agent 打开浏览器…</p>
+            <p class="placeholder-sub">Agent 使用 browser-use 技能操作浏览器时，画面会实时显示在这里</p>
+          </template>
+        </div>
+        <!-- 回放入口（V202 §5.1）：Tab 内非直播态常驻（含结束后定格帧态），画布角落浮层 -->
+        <button
+          v-if="variant === 'tab' && !state?.isLive"
+          type="button"
+          class="replay-entry"
+          @click="enterReplay"
+        >历史回放</button>
+      </template>
+      <BrowserLiveReplay v-else :session-id="lockedSessionId" />
+      <div v-if="viewMode === 'replay' && store.sessions[String(lockedSessionId ?? '')]?.isLive" class="live-resume-banner">
+        <span>该会话正在进行新的直播</span>
+        <button type="button" class="resume-btn" @click="exitReplay">切回实时</button>
       </div>
     </div>
   </div>
@@ -62,11 +86,12 @@
  * 与主窗直播 Tab（variant=tab，可还原回画中画）共用同一组件。帧数据一律来自
  * browserLiveStore（Electron 下由主进程枢纽扇出；Web 下由 useStreamWS 直喂）。
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElIcon } from 'element-plus'
-import { CircleCloseFilled, CopyDocument } from '@element-plus/icons-vue'
+import { CircleCloseFilled, Close, CopyDocument } from '@element-plus/icons-vue'
 import { useBrowserLiveStore } from '../../stores/browserLive'
 import { isElectronClient } from '../../utils/platform'
+import BrowserLiveReplay from './BrowserLiveReplay.vue'
 
 const props = withDefaults(defineProps<{
   variant: 'pip' | 'tab'
@@ -88,6 +113,7 @@ const state = computed(() => {
 })
 
 const title = computed(() => {
+  if (viewMode.value === 'replay') return '浏览器回放'
   if (!state.value) return '浏览器直播'
   if (state.value.stoppedReason && !state.value.isLive) return '浏览器直播 · 已结束'
   if (!state.value.pageUrl) return '浏览器直播'
@@ -133,7 +159,40 @@ function drawFrame(frame: string | null | undefined) {
 // 懒加载组件的 watch 注册，immediate 触发时 canvasRef 尚为 null），不补画会黑屏
 // 停在等待态（2026-11-21 Windows 真机 smoke）
 watch(() => state.value?.frame, (frame) => { drawFrame(frame) })
-onMounted(() => { drawFrame(state.value?.frame) })
+onMounted(() => {
+  drawFrame(state.value?.frame)
+  consumeReplayBrowse()
+})
+
+// ---------- 回放模式（V202，技术方案 §5.1）----------
+// 进入回放后锁定所属会话（BrowserLiveView 缺省跟随 activeSessionId，切会话不漂移）；
+// 播放中该会话重新开播只在顶部提示 + 可一键切回实时，不自动打断复盘。
+const viewMode = ref<'live' | 'replay'>('live')
+const lockedSessionId = ref<number | null>(null)
+
+function enterReplay() {
+  lockedSessionId.value = numericSessionId.value
+  viewMode.value = 'replay'
+}
+
+function exitReplay() {
+  viewMode.value = 'live'
+  lockedSessionId.value = null
+  // canvas 随 viewMode 重新挂载，等渲染完成再补画，否则定格帧缺失
+  void nextTick(() => drawFrame(state.value?.frame))
+}
+
+/** chip 无直播点击 → Tab 打开后落在回放列表（记账在 store：Tab 在点击后才创建，
+ *  实例本地基线会吞掉未消费的请求，见评审 P1-1）。 */
+function consumeReplayBrowse() {
+  const request = store.consumeReplayBrowse()
+  if (!request) return
+  const target = request.sessionId != null ? Number(request.sessionId) : numericSessionId.value
+  if (target == null || !Number.isFinite(target)) return
+  lockedSessionId.value = target
+  viewMode.value = 'replay'
+}
+watch(() => store.replayBrowse.seq, consumeReplayBrowse)
 
 function onDblClick() {
   if (props.variant === 'pip' && isElectron) {
@@ -248,6 +307,47 @@ onBeforeUnmount(() => {
   padding: 12px;
   text-align: center;
   color: #6e6e80;
+}
+.replay-entry {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+  padding: 5px 14px;
+  font-size: 12px;
+  border: 1px solid #2c2c36;
+  border-radius: 8px;
+  background: rgba(26, 26, 33, 0.9);
+  color: #c8c8d4;
+  cursor: pointer;
+}
+.replay-entry:hover {
+  border-color: #4da3ff;
+  color: #e6e6eb;
+}
+.live-resume-banner {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 12px;
+  background: rgba(26, 26, 33, 0.92);
+  border: 1px solid #4a3a20;
+  border-radius: 8px;
+  font-size: 11px;
+  color: #d9a441;
+  z-index: 2;
+}
+.resume-btn {
+  border: none;
+  background: transparent;
+  color: #4da3ff;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
 }
 .placeholder-main {
   font-size: 13px;

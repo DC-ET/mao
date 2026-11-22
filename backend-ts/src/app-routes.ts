@@ -133,6 +133,8 @@ import { registerLlmCallRoutes } from './usage/llm-call.routes.js';
 import { registerLlmUsageAdminRoutes } from './usage/llm-usage-admin.routes.js';
 import { registerUploadRoutes } from './config/upload.routes.js';
 import { registerSessionRoutes } from './session/session.routes.js';
+import { registerBrowserReplayRoutes } from './browser-replay/browser-replay.routes.js';
+import { BrowserReplayService } from './browser-replay/browser-replay.service.js';
 import { registerSessionShareRoutes } from './session/session-share.routes.js';
 import { MysqlSessionShareRepository } from './session/session-share.repository.js';
 import { SessionShareService } from './session/session-share.service.js';
@@ -512,7 +514,12 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       sessionHistory: sessionRepo,
       onboardingPreference: deps.onboardingPrefRepo,
     });
-    registerReadinessRoutes(api, { readinessService, permissionService });
+    registerReadinessRoutes(api, {
+      readinessService,
+      permissionService,
+      // 浏览器直播录制开关随 readiness 下发（仅登录即可读）：桌面主进程据此注入 LOCAL shell env
+      browserLiveRecordEnabled: () => settingService.getBrowserLiveRecordEnabled(),
+    });
     registerToolRoutes(api, { toolService: restToolService });
     registerAuditLogRoutes(api, { auditLogService: auditService, permissionService });
     registerLlmCallRoutes(api, { llmCallService, permissionService });
@@ -548,6 +555,12 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       hasDeviceConnection: deps.hasDeviceConnection,
       getExecutorClientType: deps.getExecutorClientType,
       getTerminalHost: deps.getTerminalHost,
+    });
+    // 浏览器直播回放读取（技术方案 2026-11-22 §4.1）：数据源是会话 runtime 目录（无 DB 表），
+    // 归属校验走 sessionService.getSession + userId 比对，与 session.routes 同口径
+    registerBrowserReplayRoutes(api, {
+      sessionService,
+      replayService: new BrowserReplayService(runtimeResolver),
     });
     const sessionShareService = new SessionShareService(
       new MysqlSessionShareRepository(db),

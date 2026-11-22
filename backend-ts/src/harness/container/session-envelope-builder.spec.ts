@@ -52,6 +52,24 @@ describe('SessionEnvelopeBuilder env vars', () => {
     expect(envelope.envVars).toEqual({});
     expect(envelope.userId).toBe(7);
   });
+
+  it('录制开关开启时 envVars 追加 MAO_BROWSER_LIVE_RECORD（V202），关闭/读取失败不追加', async () => {
+    const root = useTmpDir('mao-envelope-record-');
+    const make = (flag: () => Promise<boolean>) => new SessionEnvelopeBuilder({
+      runtimeResolver: RuntimeDataResolver.forTest(join(root, 'runtime'), join(root, 'users')),
+      envVariableService: { resolveForSession: async () => ({ NPM_REGISTRY: 'https://mirror.internal' }) },
+      browserLiveRecordEnabled: flag,
+    }, join(root, 'deps'));
+
+    const on = await make(async () => true).build({ userId: 7, sessionId: 9, workspace: null });
+    expect(on.envVars).toEqual({ NPM_REGISTRY: 'https://mirror.internal', MAO_BROWSER_LIVE_RECORD: '1' });
+
+    const off = await make(async () => false).build({ userId: 7, sessionId: 9, workspace: null });
+    expect(off.envVars).toEqual({ NPM_REGISTRY: 'https://mirror.internal' });
+
+    const failing = await make(async () => { throw new Error('db down'); }).build({ userId: 7, sessionId: 9, workspace: null });
+    expect(failing.envVars).toEqual({ NPM_REGISTRY: 'https://mirror.internal' });
+  });
 });
 
 describe('buildDepsEnv pip source', () => {

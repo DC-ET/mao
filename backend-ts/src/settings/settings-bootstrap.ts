@@ -52,6 +52,9 @@ export const SETTINGS_BOOTSTRAP_ENTRIES: SettingsBootstrapEntry[] = [
   { settingKey: 'notify.workerDelayMs', envName: 'TASK_NOTIFICATION_WORKER_DELAY_MS' },
   { settingKey: 'notify.batchSize', envName: 'TASK_NOTIFICATION_BATCH_SIZE' },
   { settingKey: 'notify.maxAttempts', envName: 'TASK_NOTIFICATION_MAX_ATTEMPTS' },
+  // 清理时效（V202）：TTL 迁移不种值（NULL），存量部署的 env 在此一次性导入 DB，此后后台可调
+  { settingKey: 'harness.cleanup.browserReplayTtlDays', envName: 'MAO_CLEANUP_BROWSER_REPLAY_DAYS' },
+  { settingKey: 'harness.cleanup.shellOutputMaxAgeDays', envName: 'MAO_CLEANUP_SHELL_MAX_AGE_DAYS' },
 ];
 
 /**

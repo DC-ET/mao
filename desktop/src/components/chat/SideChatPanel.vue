@@ -109,12 +109,12 @@
     <!-- 输入区 -->
     <div class="input-area">
       <div class="side-task-entry">
-        <!-- 浏览器直播状态条（方案 2026-11-22）：仅本边路会话直播中显示（与主会话 chip 的全局 hasAnyLive 不同），点击打开直播 Tab。 -->
+        <!-- 浏览器直播状态条（方案 2026-11-22）：本边路会话直播中，或该会话已有历史回放（V202）时显示，点击打开直播 Tab。 -->
         <button
-          v-if="hasRealSession && browserLiveStore.sessions[String(realSessionId)]?.isLive"
+          v-if="showBrowserLiveChip"
           type="button"
           class="browser-live-chip"
-          title="点击查看浏览器直播"
+          title="点击查看浏览器直播 / 历史回放"
           @click="openBrowserLive"
         >
           <span class="live-dot" aria-hidden="true"></span>浏览器
@@ -235,8 +235,12 @@ const draftStore = useDraftStore()
 const { connect, createSideSession, sendMessage, cancel, retryExecution, subscribe, unsubscribe, sendAskUserQuestionsResult, enqueueMessage } = useStreamWS()
 const { pendingApprovals, confirmApproval } = useToolApprovals()
 const browserLiveStore = useBrowserLiveStore()
-/** 打开浏览器直播视图：Electron 收起画中画开 Tab（复用放大链路）；Web 派发事件由 TaskView 开 Tab。 */
+/** 打开浏览器直播视图：Electron 收起画中画开 Tab（复用放大链路）；Web 派发事件由 TaskView 开 Tab。
+ *  无直播时点击 → Tab 打开后落在回放列表模式。 */
 function openBrowserLive() {
+  if (!browserLiveStore.hasAnyLive && realSessionId.value > 0) {
+    browserLiveStore.requestReplayBrowse(realSessionId.value)
+  }
   if (isElectronClient()) {
     ;(window as any).electronAPI?.browserLive?.expand()
   } else {
@@ -332,6 +336,18 @@ const parentCloudProjectKey = computed(() => {
 // Real session ID: start with props if positive, otherwise 0
 const realSessionId = ref(props.sideSessionId > 0 ? props.sideSessionId : 0)
 const hasRealSession = computed(() => realSessionId.value > 0)
+
+/** 浏览器 chip 显示条件：本边路会话直播中，或该会话已有历史回放（V202，30s 惰性探测）。
+ *  必须排在 realSessionId/hasRealSession 与 parentExecutionMode inject 之后：immediate watch 会立即求值，前向引用即 TDZ 崩整页。 */
+const showBrowserLiveChip = computed(() => {
+  const live = browserLiveStore.sessions[String(realSessionId.value)]?.isLive === true
+  const replayAvailable = browserLiveStore.replayAvailability[String(realSessionId.value)]?.available === true
+  return hasRealSession.value && (live || replayAvailable)
+})
+// 会话切换或直播状态翻转都要重探可用性（翻转时 store 已把缓存置过期）
+watch([() => realSessionId.value, () => browserLiveStore.sessions[String(realSessionId.value)]?.isLive], ([sid]) => {
+  if (sid > 0) void browserLiveStore.ensureReplayAvailability(sid, parentExecutionMode.value)
+}, { immediate: true })
 
 /** 真实边路会话的设备绑定（loadSideSessionMeta 从会话详情回填） */
 const sideSessionDevice = ref<{

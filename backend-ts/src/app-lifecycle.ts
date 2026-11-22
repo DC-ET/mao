@@ -133,6 +133,11 @@ export function assembleLifecycle(deps: LifecycleDeps): LifecycleResult {
     cfg.app.harness.cleanup,
     (_userId: number, sessionId: number) => d.wsHandler.hasExecutionClaim(sessionId),
     cfg.app.harness.skillViewsDir,
+    // 清理时效后台化（V202）：每轮现读 system_setting，后台改值下一轮即生效
+    async () => ({
+      shellOutputMaxAgeDays: await d.settingService.getShellOutputMaxAgeDays(),
+      browserReplayTtlDays: await d.settingService.getBrowserReplayTtlDays(),
+    }),
   );
   runtimeCleanup.start();
   const subagentExecutionRecovery = new SubagentExecutionRecoveryService(
