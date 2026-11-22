@@ -1,4 +1,6 @@
 import type { FastifyRequest } from 'fastify';
+import { BusinessException } from './business-exception.js';
+import { ErrorCode } from './error-code.js';
 
 export function queryMap(request: FastifyRequest): Record<string, string | undefined> {
   return (request.query ?? {}) as Record<string, string | undefined>;
@@ -12,8 +14,18 @@ export function pathParam(request: FastifyRequest, name: string): string {
   return String((request.params as Record<string, string | undefined>)[name] ?? '');
 }
 
+/**
+ * 路径参数中的自增 ID。非法值（缺失 / 非数字 / 非正整数）直接抛 PARAM_INVALID（400），
+ * 而不是把 NaN 透给 repository：`WHERE id = NaN` 会被 MySQL 当成未知列名而报
+ * `Unknown column 'NaN' in 'where clause'`，表现为 500（线上 /v1/agents/list 命中
+ * `/v1/agents/:id` 即此路径）。口径与 inbox / open-api-call-log 的本地 pathId 一致。
+ */
 export function pathId(request: FastifyRequest, name = 'id'): number {
-  return Number(pathParam(request, name));
+  const id = Number(pathParam(request, name));
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, `路径参数 ${name} 必须为正整数`);
+  }
+  return id;
 }
 
 export function queryInt(request: FastifyRequest, name: string, fallback: number): number {

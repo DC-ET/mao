@@ -60,12 +60,14 @@ describe('admin user usage routes', () => {
   });
 
   it(':id 非数字返回 PARAM_INVALID', async () => {
-    const { app } = buildApp();
+    const { app, summaryForUser } = buildApp();
     const res = await app.inject({ method: 'GET', url: '/v1/admin/users/abc/usage/summary' });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body) as { code: number; message: string };
-    expect(body.code).not.toBe(0);
-    expect(body.message).toContain('用户 ID');
+    expect(body.code).toBe(2001);
+    expect(body.message).toContain('id');
+    // 非数字 id 不得触达服务层（旧代码在此处的 Number.isFinite 兜底是死代码，从未命中）
+    expect(summaryForUser).not.toHaveBeenCalled();
   });
 
   it('summary 透传解析后的周期与自定义区间；非法 range 回落 last30', async () => {

@@ -44,10 +44,9 @@ export function registerLlmUsageAdminRoutes(app: FastifyInstance, deps: LlmUsage
   const resolveTargetUser = async (request: FastifyRequest): Promise<number> => {
     const currentUserId = requireUserId(request);
     await requirePermission(deps.permissionService, currentUserId, 'analytics:read');
+    // 非数字 :id 由公共 pathId 抛 PARAM_INVALID（旧代码在此处 Number.isFinite 兜底，
+    // 但 pathId 返回类型就是 number，NaN 检查永不命中，属死代码）。
     const id = pathId(request);
-    if (!Number.isFinite(id)) {
-      throw new BusinessException(ErrorCode.PARAM_INVALID, '用户 ID 必须为数字');
-    }
     const user = await deps.userLookup.findById(id);
     if (user == null) {
       throw new BusinessException(ErrorCode.USER_NOT_FOUND);

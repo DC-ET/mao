@@ -432,6 +432,39 @@ describe('CRUD routes', () => {
     }
   });
 
+  it('rejects non-numeric path ids with PARAM_INVALID instead of leaking NaN into SQL', async () => {
+    // 线上案例：GET /v1/agents/list 命中 /v1/agents/:id，pathId 返回 NaN 后被拼进
+    // `WHERE id = NaN`，MySQL 报 "Unknown column 'NaN'"，整条请求 500。
+    const agent = { id: 1, name: 'A', systemPrompt: 'p', isDefault: 0 };
+    const agentService = {
+      listAgents: vi.fn(async () => [agent]),
+      getAgent: vi.fn(async () => agent),
+      getAgentExperiences: vi.fn(async () => []),
+      getAgentSuggestedQuestions: vi.fn(async () => []),
+    };
+    const app = await appWithUser(f => registerAgentRoutes(f, {
+      agentService: agentService as never,
+      experienceService: {} as never,
+      suggestedQuestionService: {} as never,
+      userRepo: { findById: vi.fn(async () => null) } as never,
+      mcpServerValidator: {} as never,
+      httpToolValidator: {} as never,
+      permissionService: { hasPermission: vi.fn(async () => true) },
+    }));
+    try {
+      for (const raw of ['list', 'enabled', 'abc', '0', '-1', '1.5']) {
+        const res = await app.inject({ method: 'GET', url: `/v1/agents/${raw}` });
+        expect(res.statusCode, `GET /v1/agents/${raw}`).toBe(200);
+        expect(res.json().code, `GET /v1/agents/${raw}`).toBe(2001);
+      }
+      // 合法 id 仍照常透传到 service
+      expect((await app.inject({ method: 'GET', url: '/v1/agents/1' })).json().data).toMatchObject({ id: 1, name: 'A' });
+      expect(agentService.getAgent).toHaveBeenCalledWith(1);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('rejects malformed httpToolIds with a business error instead of 500 or silent loss', async () => {
     const agent = { id: 1, name: 'A', systemPrompt: 'p', isDefault: 0 };
     const agentService = {
