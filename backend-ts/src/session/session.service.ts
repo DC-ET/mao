@@ -22,7 +22,7 @@ import {
   type PreparedSearch,
   type SearchListParams,
 } from './message-search.js';
-import type { MessageSearchHitRow, MessageSearchSqlFilter } from './session.repository.js';
+import type { ChannelSessionBrief, MessageSearchHitRow, MessageSearchSqlFilter } from './session.repository.js';
 
 export { buildSnippet, indexOfIgnoreCase };
 import { collectEntityIds, parseEntityId } from '../common/request.js';
@@ -324,6 +324,16 @@ export class SessionService {
   async listSessions(userId: number, keyword?: string | null, status?: string | null): Promise<Session[]> {
     const { whereSql, params } = this.baseSessionListQuery(userId, keyword, status);
     return this.sessionRepo.list(whereSql, params, 'ORDER BY updated_at DESC, id DESC');
+  }
+
+  /** IM 渠道 `/tasks` 列表转发（技术方案 2026-11-22 §4.2；口径见仓库层注释）。 */
+  async listRecentChannelSessionBriefs(
+    userId: number,
+    source: SessionSource,
+    limit: number,
+    excludeProjectKeyPrefixes: string[] = [],
+  ): Promise<ChannelSessionBrief[]> {
+    return this.sessionRepo.listRecentChannelSessionBriefs(userId, source, limit, excludeProjectKeyPrefixes);
   }
 
   /**

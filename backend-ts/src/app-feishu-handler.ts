@@ -130,6 +130,19 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
   const feishuTaskQueue = new FeishuTaskQueueService(feishuInboundQueueRepo);
   const queuePositionOf = createQueuePositionHelper({ feishuInboundQueueRepo });
   const persistCancelledIfActive = createPersistCancelledHelper({ sessionService: d.sessionService, taskTerminal: d.taskTerminal, feishuProgressCardRepo });
+  /**
+   * `/stop` 与进度卡「取消任务」共用的取消闭包（技术方案 2026-11-22 D2）：同一实现喂两处，杜绝两份取消口径。
+   * 有 AgentLoop（含崩溃恢复续跑）时只靠取消标志收尾；内存无循环且 DB 仍活跃时补写 CANCELLED 并排空队列。
+   */
+  const stopRunningSession = async (sessionId: number): Promise<boolean> => {
+    feishuInboundHandler.cancel(sessionId);
+    return persistFeishuCancelIfIdle({
+      sessionId,
+      hadLoop: d.agentLoop.getCancelFlag(sessionId) != null,
+      persistCancelledIfActive,
+      drainNextIfPending: (id: number) => feishuInboundHandler.drainNextIfPending(id),
+    });
+  };
   const feishuInboundHandler = new AgentFeishuInboundHandler({
     registry: d.wsRegistry,
     cardToolTickMs: cfg.feishu.bot.cardToolTickMs,
@@ -185,6 +198,12 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
       createGroupSession: (accountId: string, context: FeishuInboundContext) =>
         feishuMessageService.createGroupSession(accountId, context),
     },
+    // 渠道控制命令（技术方案 2026-11-22 §4.3）：/stop 复用卡片取消同一闭包；/tasks 查本渠道简报
+    //（排除群聊绑定会话——群/话题 project_key 前缀 feishu-chat-，D10）；群 /stop 的群级目标只读查询。
+    stopRunning: stopRunningSession,
+    listChannelSessions: (userId: number, limit: number) =>
+      d.sessionService.listRecentChannelSessionBriefs(userId, 'feishu', limit, ['feishu-chat-']),
+    findGroupSession: (accountId: string, chatId: string) => feishuMessageService.findGroupSession(accountId, chatId),
     p2pSessionControl: {
       findActiveSession: async (accountId: any, context: any) => {
         const triggerUserId = await resolveFeishuUserId(accountId, context);
@@ -455,15 +474,7 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
     }),
     interrupt: (sessionId: number) => feishuInboundHandler.interrupt(sessionId),
     interruptAndDrain: (sessionId: number) => feishuInboundHandler.interruptAndDrain(sessionId),
-    cancelRunning: async (sessionId: number) => {
-      feishuInboundHandler.cancel(sessionId);
-      return persistFeishuCancelIfIdle({
-        sessionId,
-        hadLoop: d.agentLoop.getCancelFlag(sessionId) != null,
-        persistCancelledIfActive,
-        drainNextIfPending: (id: number) => feishuInboundHandler.drainNextIfPending(id),
-      });
-    },
+    cancelRunning: stopRunningSession,
     toggleDislike: async (sessionId: number, cardMessageId: string | null) => {
       const session = await d.sessionService.getSession(sessionId).catch(() => null);
       if (session == null) return null;

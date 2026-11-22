@@ -7,6 +7,8 @@ import { CompositeAgentEventListener } from '../harness/core/composite-agent-eve
 import { NoopAgentEventListener } from '../harness/core/agent-event-listener.js';
 import { FeishuCardProgressListener, countCompletedAgentRounds, type FeishuCardProgress } from './card-progress-listener.js';
 import { inboundFileItems, isInboundAttachmentOnly } from './event-normalizer.js';
+import { parseChannelCommand, renderChannelSessionList, type ChannelCommand } from '../common/channel-command.js';
+import type { ChannelSessionBrief } from '../session/session.repository.js';
 import { toWorkspaceRelative } from '../common/workspace-path.js';
 import { mapWithConcurrency } from '../common/concurrency.js';
 import { isActivePhase } from '../session/util/session-group-key.js';
@@ -89,6 +91,34 @@ export function isNewSessionCommand(text: string | null | undefined): boolean {
   return /^[-—]{3,}$/u.test((text ?? '').trim());
 }
 
+/** 剥掉正文里的 @ 展示名（飞书 text 内 @ 以 `@名称` 原文出现）；名单为空原样返回。 */
+export function stripFeishuMentionNames(text: string, names: string[] | null | undefined): string {
+  let result = text ?? '';
+  for (const name of names ?? []) {
+    if (name == null || name === '') continue;
+    result = result.replaceAll(`@${name}`, '');
+  }
+  return result.trim();
+}
+
+/**
+ * 群聊命令的剥名文本：@ 本机器人、剥掉 @ 机器人名后的正文 trim 结果；不满足群命令前提返回 null。
+ * 前提：普通对话群（话题内 null——话题命令按 R8 沿用免 @ 放行语义直接以正文判定，不在此剥）、
+ * isBotMentioned、名单非空（is_at_me 兜底命中、身份无法确认时无法可靠剥名，一律 null——
+ * 方向是漏触发而非误触发，安全默认）。
+ * 群 `/new` 之外的命令（/stop /help）共用同一剥名口径。
+ */
+export function groupCommandTextOf(
+  event: Pick<FeishuNormalizedMessage, 'chatType' | 'threadId' | 'isBotMentioned' | 'text' | 'botMentionNames'>,
+): string | null {
+  if (event.chatType !== 'group') return null;
+  if (event.threadId != null && event.threadId !== '') return null;
+  if (event.isBotMentioned !== true) return null;
+  const names = event.botMentionNames ?? [];
+  if (names.length === 0) return null;
+  return stripFeishuMentionNames(event.text ?? '', names);
+}
+
 /**
  * 群聊 `/new` 新会话指令（普通对话群专属）：@ 本机器人、剥掉 @ 机器人名后正文 trim 恰为 `/new`。
  * 大小写敏感；`/new 帮我查` 是普通任务；话题内（threadId 非空）不命中；没 @ 不命中（今天也不触发）。
@@ -98,17 +128,7 @@ export function isNewSessionCommand(text: string | null | undefined): boolean {
 export function isGroupNewSessionCommand(
   event: Pick<FeishuNormalizedMessage, 'chatType' | 'threadId' | 'isBotMentioned' | 'text' | 'botMentionNames'>,
 ): boolean {
-  if (event.chatType !== 'group') return false;
-  if (event.threadId != null && event.threadId !== '') return false;
-  if (event.isBotMentioned !== true) return false;
-  const names = event.botMentionNames ?? [];
-  if (names.length === 0) return false;
-  let text = event.text ?? '';
-  for (const name of names) {
-    if (name == null || name === '') continue;
-    text = text.replaceAll(`@${name}`, '');
-  }
-  return text.trim() === '/new';
+  return groupCommandTextOf(event) === '/new';
 }
 
 /**
@@ -140,6 +160,30 @@ const NEW_SESSION_CONFIRM_TEXT = '已开启新会话，后续消息将在新的�
 const GROUP_NEW_SESSION_CONFIRM_TEXT = '已开启新会话，之后本群里 @ 机器人的消息都会进入这个新会话。';
 const SWITCH_SESSION_CONFIRM_TEXT = '已切换到该消息所在的会话，后续消息将以该会话上下文为准。';
 const NEW_SESSION_FAILED_TEXT = '开启新会话失败，请稍后再试。';
+
+// 渠道控制命令文案（技术方案 2026-11-22 §4.6 文案表；中英混合禁用、emoji 禁用）。
+const CHANNEL_COMMAND_FAILED_TEXT = '命令处理失败，请稍后再试。';
+const CHANNEL_COMMAND_UNSUPPORTED_TEXT = '此命令暂不支持。';
+const STOP_CONFIRM_TEXT = '已停止当前任务。';
+const STOP_IDLE_TEXT = '当前没有进行中的任务。';
+const GROUP_NO_SESSION_TEXT = '本群还没有会话。';
+const TASKS_EMPTY_TEXT = '该渠道还没有任务记录。';
+const SWITCH_TASKS_CONFIRM_TEXT = '已切换到「{标题}」，后续消息将以该会话上下文为准。';
+const ALREADY_CURRENT_TEXT = '已在当前会话。';
+const CHANNEL_HELP_TEXT = [
+  '可用命令：',
+  '/new 开启新会话',
+  '/stop 停止当前任务',
+  '/tasks 查看最近任务',
+  '/tasks <序号> 切换到对应任务，如 /tasks 2',
+  '/help 显示本帮助',
+].join('\n');
+const GROUP_HELP_TEXT = [
+  '可用命令：',
+  '/new 开启新会话（之后本群里 @ 机器人的消息都会进入这个新会话）',
+  '/stop 停止当前任务（群内任意成员可停止群任务）',
+  '/help 显示本帮助',
+].join('\n');
 
 type FeishuContentPart =
   | { type: 'text'; text: string }
@@ -243,6 +287,15 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     createQueueCard?: (context: FeishuInboundContext, queueId: number, sessionId: number) => Promise<string | null>;
     /** botId 解析（accountId → feishu_bot.id）。 */
     resolveBotId?: (accountId: string) => number;
+    /**
+     * 渠道控制命令 `/stop`：终止指定会话的进行中执行（与进度卡「取消」同一服务闭包，装配层同喂两处）。
+     * 返回 true=已置取消（含崩溃恢复补写终态），false=空闲。未配置时命令回「暂不支持」。
+     */
+    stopRunning?: (sessionId: number) => Promise<boolean>;
+    /** 渠道控制命令 `/tasks`：该用户本渠道最近会话简报（群聊绑定会话已由装配层排除）。 */
+    listChannelSessions?: (userId: number, limit: number) => Promise<ChannelSessionBrief[]>;
+    /** 群命令 `/stop` 的群级目标查询（只读，不创建；null=本群还没有会话）。 */
+    findGroupSession?: (accountId: string, chatId: string) => Promise<{ sessionId: number } | null>;
     /** 私聊多会话控制（未配置时 `---`/引用切换不生效，行为与旧版一致）。 */
     p2pSessionControl?: FeishuP2pSessionControl;
     /** 群 `/new` 新会话控制（未配置时群里 `/new` 按普通消息走现有群逻辑，行为与旧版一致）。 */
@@ -493,8 +546,10 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
   }> {
     const control = this.options.p2pSessionControl!;
     const accountId = context.accountId;
-    // 1) `---` 新建会话：创建新 session + 指针切换 + 拦截本消息（不入会话消息流）。
-    if (isNewSessionCommand(context.text)) {
+    const command = parseChannelCommand(context.text);
+    // 1) `---` / `/new` 新建会话：创建新 session + 指针切换 + 拦截本消息（不入会话消息流）。
+    //    `/new` 是 `---` 的等价别名（技术方案 2026-11-22 D8 对齐三渠道肌肉记忆）。
+    if (isNewSessionCommand(context.text) || command.kind === 'NEW') {
       try {
         const created = await control.createSession(accountId, context);
         await control.recordMessageMapping(accountId, context.messageId, created.id, 'IN');
@@ -503,6 +558,57 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
         console.error(`飞书私聊新建会话失败, accountId=${accountId}, messageId=${context.messageId}`, error);
         return { intercepted: true, confirm: { text: NEW_SESSION_FAILED_TEXT, sessionId: null } };
       }
+    }
+    // 1.5) 渠道控制命令（/stop /tasks /tasks <n> /help）：命中即拦截，不进会话消息流、不触发 Agent。
+    //      命令埠未配置（测试直调 / 旧装配）时回「暂不支持」，不让命令文本落进 Agent。
+    if (command.kind === 'STOP') {
+      const stopRunning = this.options.stopRunning;
+      if (stopRunning == null) {
+        return { intercepted: true, confirm: { text: CHANNEL_COMMAND_UNSUPPORTED_TEXT, sessionId: null } };
+      }
+      try {
+        const active = await control.findActiveSession(accountId, context);
+        if (active == null) {
+          return { intercepted: true, confirm: { text: STOP_IDLE_TEXT, sessionId: null } };
+        }
+        const ok = await stopRunning(active.id);
+        return { intercepted: true, confirm: { text: ok ? STOP_CONFIRM_TEXT : STOP_IDLE_TEXT, sessionId: null } };
+      } catch (error) {
+        console.error(`飞书私聊 /stop 处理失败, accountId=${accountId}, messageId=${context.messageId}`, error);
+        return { intercepted: true, confirm: { text: CHANNEL_COMMAND_FAILED_TEXT, sessionId: null } };
+      }
+    }
+    if (command.kind === 'TASKS' || command.kind === 'TASKS_SELECT') {
+      const listChannelSessions = this.options.listChannelSessions;
+      if (listChannelSessions == null) {
+        return { intercepted: true, confirm: { text: CHANNEL_COMMAND_UNSUPPORTED_TEXT, sessionId: null } };
+      }
+      try {
+        const briefs = await listChannelSessions(context.maoUserId ?? 0, 5);
+        const listText = (): string => (briefs.length === 0 ? TASKS_EMPTY_TEXT : renderChannelSessionList(briefs, isActivePhase));
+        if (command.kind === 'TASKS' || command.index > briefs.length) {
+          // 裸 /tasks、空列表、越界序号：一律回列表（越界回退是 D8 定案）。
+          return { intercepted: true, confirm: { text: listText(), sessionId: null } };
+        }
+        const target = briefs[command.index - 1]!;
+        const active = await control.findActiveSession(accountId, context);
+        if (active != null && active.id === target.id) {
+          return { intercepted: true, confirm: { text: ALREADY_CURRENT_TEXT, sessionId: active.id } };
+        }
+        const switched = await control.switchSession(accountId, context, target.id);
+        if (switched == null) {
+          // 指针行不存在 / 归属拒绝（列表过期间隙目标被删或转移）：回退列表。
+          return { intercepted: true, confirm: { text: listText(), sessionId: null } };
+        }
+        const title = (target.title ?? '').trim() === '' ? '未命名会话' : target.title!;
+        return { intercepted: true, confirm: { text: SWITCH_TASKS_CONFIRM_TEXT.replace('{标题}', title), sessionId: switched.id } };
+      } catch (error) {
+        console.error(`飞书私聊 /tasks 处理失败, accountId=${accountId}, messageId=${context.messageId}`, error);
+        return { intercepted: true, confirm: { text: CHANNEL_COMMAND_FAILED_TEXT, sessionId: null } };
+      }
+    }
+    if (command.kind === 'HELP') {
+      return { intercepted: true, confirm: { text: CHANNEL_HELP_TEXT, sessionId: null } };
     }
     // 2) 引用切换：parentId 查映射定位归属会话；命中且 ≠ 当前活跃 → 切指针并回复确认；
     //    未命中（历史消息/跨聊天/映射缺失）→ 静默保持当前会话，仅记日志。
@@ -561,12 +667,23 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     })();
   }
 
-  /** 群聊入站：`/new` 指令分支 + 话题分支 + 现有逻辑。话题消息优先路由到话题会话；映射未命中降级走现有群逻辑。 */
+  /** 群聊入站：`/new` 指令分支 + 渠道控制命令（/stop /help）+ 话题分支 + 现有逻辑。话题消息优先路由到话题会话；映射未命中降级走现有群逻辑。 */
   private async onGroupMessage(context: FeishuInboundContext): Promise<FeishuReply | null> {
     // 群 `/new` 指令：不进入会话消息流、不触发 Agent，只切换指针并回复确认。
     // 未装配 groupSessionControl（测试直调/旧调用方）时按普通消息走现有群逻辑。
     if (isGroupNewSessionCommand(context) && this.options.groupSessionControl != null) {
       return this.handleGroupNewSessionCommand(context);
+    }
+    // 渠道控制命令（/stop /help，技术方案 2026-11-22）：@ 剥名后全等命中即拦截。
+    // 话题内（映射已存在免 @ 放行，R8）按正文直判（@ 了机器人也剥名后判定）；
+    // 只认 STOP / HELP——/new 话题内维持既有不命中口径，/tasks 不做群聊版（§2.2）。
+    const groupCommand = this.groupChannelCommand(context);
+    if (groupCommand.kind === 'STOP') {
+      return this.handleGroupStopCommand(context);
+    }
+    if (groupCommand.kind === 'HELP') {
+      await this.options.onReply?.(context, GROUP_HELP_TEXT);
+      return null;
     }
     // 话题路径：threadId 存在且话题会话控制已配置。
     if (context.threadId != null && this.options.threadSessionControl != null) {
@@ -623,6 +740,49 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
       await this.options.onReply?.(context, NEW_SESSION_FAILED_TEXT);
       return null;
     }
+  }
+
+  /** 群聊（含话题内）渠道控制命令识别：非群返回 NONE；话题内正文直判（@ 名剥除后判定），普通群走剥名口径。 */
+  private groupChannelCommand(context: FeishuInboundContext): ChannelCommand {
+    if (context.chatType !== 'group') return { kind: 'NONE' };
+    if (context.threadId != null && context.threadId !== '') {
+      return parseChannelCommand(stripFeishuMentionNames(context.text ?? '', context.botMentionNames));
+    }
+    const text = groupCommandTextOf(context);
+    return text == null ? { kind: 'NONE' } : parseChannelCommand(text);
+  }
+
+  /**
+   * 群命令 `/stop`（技术方案 2026-11-22 D7/D11）：目标按话题优先——话题映射命中停话题会话，
+   * 未命中落回群级指针；两者都没有回「本群还没有会话。」。不校验触发成员（群会话是共享决策面）。
+   */
+  private async handleGroupStopCommand(context: FeishuInboundContext): Promise<FeishuReply | null> {
+    const stopRunning = this.options.stopRunning;
+    if (stopRunning == null) {
+      await this.options.onReply?.(context, CHANNEL_COMMAND_UNSUPPORTED_TEXT);
+      return null;
+    }
+    try {
+      let target: number | null = null;
+      if (context.threadId != null && context.threadId !== '') {
+        const threadSession = await this.options.threadSessionControl?.findSession?.(context.accountId, context) ?? null;
+        target = threadSession?.sessionId ?? null;
+      }
+      if (target == null && context.chatId != null) {
+        const conversation = await this.options.findGroupSession?.(context.accountId, context.chatId) ?? null;
+        target = conversation?.sessionId ?? null;
+      }
+      if (target == null) {
+        await this.options.onReply?.(context, GROUP_NO_SESSION_TEXT);
+        return null;
+      }
+      const ok = await stopRunning(target);
+      await this.options.onReply?.(context, ok ? STOP_CONFIRM_TEXT : STOP_IDLE_TEXT);
+    } catch (error) {
+      console.error(`飞书群 /stop 处理失败, accountId=${context.accountId}, chatId=${context.chatId}`, error);
+      await this.options.onReply?.(context, CHANNEL_COMMAND_FAILED_TEXT);
+    }
+    return null;
   }
 
   /** 共享执行路径：buildMessage → busy 检查/入队/执行（按 sessionId 粒度互斥）。 */

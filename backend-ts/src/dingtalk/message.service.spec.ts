@@ -33,3 +33,39 @@ describe('DingtalkMessageService group context', () => {
     expect(prompt).not.toContain('合并的第三条');
   });
 });
+
+describe('DingtalkMessageService switchP2pSession（/tasks 切换，2026-11-22 D4）', () => {
+  function makeRepo(rows: Map<string, Record<string, unknown>>) {
+    return {
+      findConversation: vi.fn(async (_botId: number, conversationId: string) => rows.get(conversationId) ?? null),
+      saveConversation: vi.fn(async (row: Record<string, unknown>) => {
+        rows.set(String(row.conversationId), { ...rows.get(String(row.conversationId)), ...row });
+        return rows.get(String(row.conversationId)) as never;
+      }),
+    };
+  }
+
+  it('归属校验通过后 upsert 指针：保留原 owner/工作区，指针指向目标会话', async () => {
+    const rows = new Map<string, Record<string, unknown>>([
+      ['cid', { id: 1, botId: 3, conversationId: 'cid', chatType: 'p2p', sessionId: 20, ownerUserId: 9, workspace: '/ws/p9', title: null }],
+    ]);
+    const repo = makeRepo(rows);
+    const service = new DingtalkMessageService(repo as never, { create: vi.fn() } as never);
+    const switched = await service.switchP2pSession('3', { conversationId: 'cid' } as never, 32);
+    expect(switched).toEqual(expect.objectContaining({ sessionId: 32, ownerUserId: 9, workspace: '/ws/p9' }));
+    expect(repo.saveConversation).toHaveBeenCalledWith(expect.objectContaining({
+      botId: 3, conversationId: 'cid', chatType: 'p2p', sessionId: 32, ownerUserId: 9, workspace: '/ws/p9',
+    }));
+  });
+
+  it('指针行不存在或目标即当前：返回 null 不写库', async () => {
+    const rows = new Map<string, Record<string, unknown>>([
+      ['cid', { id: 1, botId: 3, conversationId: 'cid', chatType: 'p2p', sessionId: 20, ownerUserId: 9, workspace: '/ws', title: null }],
+    ]);
+    const repo = makeRepo(rows);
+    const service = new DingtalkMessageService(repo as never, { create: vi.fn() } as never);
+    expect(await service.switchP2pSession('3', { conversationId: 'cid' } as never, 20)).toBeNull();
+    expect(await service.switchP2pSession('3', { conversationId: 'missing' } as never, 32)).toBeNull();
+    expect(repo.saveConversation).not.toHaveBeenCalled();
+  });
+});

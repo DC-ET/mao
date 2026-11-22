@@ -318,3 +318,39 @@ describe('DingtalkInboundProcessor 合并窗口', () => {
     expect((onMessage.mock.calls[1][0] as { text: string }).text).toBe('乙');
   });
 });
+
+describe('DingtalkInboundProcessor 合并窗口豁免渠道命令（D9）', () => {
+  const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+  function windowed(onMessage: (ctx: unknown) => Promise<null>): DingtalkInboundProcessor {
+    return new DingtalkInboundProcessor({ onMessage } as never, { mergeWindowMs: 30, resolveUserId: async () => 7 });
+  }
+
+  it('/stop 在前序文本窗口内到达：不入批，冲刷后单独触发', async () => {
+    const onMessage = vi.fn(async () => null);
+    const inbound = windowed(onMessage as never);
+    await inbound.process('1', event({ messageId: 'm_t', text: '继续' }));
+    await inbound.process('1', event({ messageId: 'm_stop', text: '/stop' }));
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect((onMessage.mock.calls[0][0] as { text: string }).text).toBe('继续');
+    expect((onMessage.mock.calls[1][0] as { text: string }).text).toBe('/stop');
+    await wait(120);
+    expect(onMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('群 /stop（cleanText 已剥 @）同样豁免；非命令文本照常合并', async () => {
+    const onMessage = vi.fn(async () => null);
+    const inbound = windowed(onMessage as never);
+    await inbound.process('1', event({ messageId: 'm_g1', chatType: 'group', text: '先看看', isInAtList: true }));
+    await inbound.process('1', event({ messageId: 'm_g2', chatType: 'group', text: '/stop', isInAtList: true }));
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect((onMessage.mock.calls[1][0] as { text: string }).text).toBe('/stop');
+
+    const merged = windowed(onMessage as never);
+    await merged.process('2', event({ messageId: 'm_n1', text: '第一句' }));
+    await merged.process('2', event({ messageId: 'm_n2', text: '/tasks 帮我查天气' }));
+    await wait(120);
+    expect(onMessage).toHaveBeenCalledTimes(3);
+    expect((onMessage.mock.calls[2][0] as { text: string }).text).toBe('第一句\n\n/tasks 帮我查天气');
+  });
+});

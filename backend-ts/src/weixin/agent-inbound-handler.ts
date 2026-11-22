@@ -13,8 +13,26 @@ import { toWorkspaceRelative } from '../common/workspace-path.js';
 import { mapWithConcurrency } from '../common/concurrency.js';
 import { INBOUND_IMAGE_COMPRESS_CONCURRENCY, PromptImageResizer } from '../harness/tool/prompt-image-resizer.js';
 import type { InboundFile, WeixinInboundHandler, WeixinInboundMessageContext, WeixinReply } from './types.js';
+import { parseChannelCommand, renderChannelSessionList, type ChannelCommand } from '../common/channel-command.js';
 
 const DEFAULT_IMAGE_PROMPT = '请查看这张图片';
+
+// 渠道控制命令文案（技术方案 2026-11-22 §4.6 文案表；中英混合禁用、emoji 禁用）。
+const NEW_SESSION_CONFIRM_TEXT = '已开启新会话，后续消息将在新的上下文中处理。';
+const CHANNEL_COMMAND_FAILED_TEXT = '命令处理失败，请稍后再试。';
+const STOP_CONFIRM_TEXT = '已停止当前任务。';
+const STOP_IDLE_TEXT = '当前没有进行中的任务。';
+const TASKS_EMPTY_TEXT = '该渠道还没有任务记录。';
+const SWITCH_TASKS_CONFIRM_TEXT = '已切换到「{标题}」，后续消息将以该会话上下文为准。';
+const ALREADY_CURRENT_TEXT = '已在当前会话。';
+const CHANNEL_HELP_TEXT = [
+  '可用命令：',
+  '/new 开启新会话',
+  '/stop 停止当前任务',
+  '/tasks 查看最近任务',
+  '/tasks <序号> 切换到对应任务，如 /tasks 2',
+  '/help 显示本帮助',
+].join('\n');
 
 export interface WeixinHarnessService {
   prepareMessage(sessionId: number, content: unknown): Promise<string> | string;
@@ -148,6 +166,12 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
     }
     const sessionId = session.id!;
     bindWeixinSessionPeer(sessionId, context.fromUserId);
+    // 渠道控制命令（技术方案 2026-11-22 §4.5）：命中即拦截回复——不 bump generation、不落库、不开新执行，
+    // 未命中文本逐字节走原链路（含下方 abortRunningExecution 在内的既有行为完全不变）。
+    const command = parseChannelCommand(context.body);
+    if (command.kind !== 'NONE') {
+      return this.handleChannelCommand(session, userId, command);
+    }
     const generation = this.nextGeneration(sessionId);
     this.abortRunningExecution(sessionId, userId);
 
@@ -183,6 +207,54 @@ export class AgentWeixinInboundHandler implements WeixinInboundHandler {
     return new Promise<WeixinReply | null>((resolve) => {
       this.agentExecutor(() => this.runAgent(session, userId, generation, executionId, savedMessage.id ?? null, resolve));
     });
+  }
+
+  /**
+   * 微信渠道控制命令（技术方案 2026-11-22 §4.5）：
+   * - STOP：忙判定复用 abortRunningExecution 的双旗标口径；不 bump generation、不打断自己；
+   * - NEW：归档旧 + 建新，不 abort（旧会话在跑则并行跑完写回旧会话）；
+   * - TASKS / TASKS_SELECT / HELP：同构飞书私聊；切换先 abort 再翻转 status（D5「新会话打断旧执行」）。
+   * 命令消息不 saveMessage，自然不进会话消息流。
+   */
+  private async handleChannelCommand(session: Session, userId: number, command: ChannelCommand): Promise<WeixinReply | null> {
+    const sessionId = session.id!;
+    try {
+      if (command.kind === 'STOP') {
+        // 忙判定：双旗标（本 handler + AgentLoop）之外再查 WS/桌面跨通道占位——
+        // autoConsume 500ms 启动占位窗内旗标尚未注册，漏查会把执行中的任务误报「空闲」（评审 P2-1）。
+        const busy = this.cancelFlags.has(sessionId)
+          || this.deps.agentLoop?.getCancelFlag?.(sessionId) != null
+          || this.isSessionExecuting?.(sessionId) === true;
+        if (!busy) return { text: STOP_IDLE_TEXT };
+        this.abortRunningExecution(sessionId, userId);
+        return { text: STOP_CONFIRM_TEXT };
+      }
+      if (command.kind === 'NEW') {
+        await this.deps.weixinSessionService!.createNewSession(userId);
+        return { text: NEW_SESSION_CONFIRM_TEXT };
+      }
+      if (command.kind === 'TASKS' || command.kind === 'TASKS_SELECT') {
+        const briefs = await this.deps.weixinSessionService!.listRecentSessions(userId, 5);
+        const listText = (): string => (briefs.length === 0 ? TASKS_EMPTY_TEXT : renderChannelSessionList(briefs, isActivePhase));
+        if (command.kind === 'TASKS' || command.index > briefs.length) {
+          // 裸 /tasks、空列表、越界序号：一律回列表（越界回退是 D8 定案）。
+          return { text: listText() };
+        }
+        const target = briefs[command.index - 1]!;
+        if (target.id === sessionId) return { text: ALREADY_CURRENT_TEXT };
+        // D5：先 abort 当前会话在跑执行，再翻转 status（切换失败罕见；abort 先行与「新消息打断」一致）。
+        this.abortRunningExecution(sessionId, userId);
+        const switched = await this.deps.weixinSessionService!.switchSession(userId, target.id);
+        if (switched.outcome === 'REJECTED') return { text: listText() };
+        if (switched.outcome === 'CURRENT') return { text: ALREADY_CURRENT_TEXT };
+        const title = (target.title ?? '').trim() === '' ? '未命名会话' : target.title!;
+        return { text: SWITCH_TASKS_CONFIRM_TEXT.replace('{标题}', title) };
+      }
+      return { text: CHANNEL_HELP_TEXT };
+    } catch (error) {
+      console.error(`微信渠道命令处理失败, userId=${userId}, sessionId=${sessionId}`, error);
+      return { text: CHANNEL_COMMAND_FAILED_TEXT };
+    }
   }
 
   private async runAgent(

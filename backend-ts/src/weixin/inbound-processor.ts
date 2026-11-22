@@ -13,6 +13,7 @@ import type {
 import type { WeixinVoiceReplyService } from './voice-reply.service.js';
 import type { WeixinWebhookFallbackService } from './webhook-fallback.service.js';
 import { InboundMergeWindow } from '../common/inbound-merge-window.js';
+import { parseChannelCommand } from '../common/channel-command.js';
 
 const ITEM_TYPE_TEXT = 1;
 const ITEM_TYPE_IMAGE = 2;
@@ -172,11 +173,15 @@ export class InboundProcessor {
     return `${entry.accountId}:${String(entry.message.from_user_id ?? '')}`;
   }
 
-  /** 准入：仅纯文本消息入窗。带图片/文件/语音的消息整体豁免出窗（媒体不跨消息合并）。 */
+  /** 准入：仅纯文本消息入窗。带图片/文件/语音的消息整体豁免出窗（媒体不跨消息合并）。
+   *  渠道控制命令（/new /stop /tasks /help，技术方案 2026-11-22 D9）不入窗：并入批次会先走
+   *  abortRunningExecution 把在跑任务打断、再把命令文本当任务执行——比飞书 / 钉钉更糟，必须豁免。 */
   private canJoinEntry(entry: WeixinWindowEntry): boolean {
     const itemList = entry.message.item_list;
     if (!Array.isArray(itemList)) return true;
-    return itemList.every((item) => Number((item as Record<string, unknown>).type ?? -1) === ITEM_TYPE_TEXT);
+    if (!itemList.every((item) => Number((item as Record<string, unknown>).type ?? -1) === ITEM_TYPE_TEXT)) return false;
+    if (parseChannelCommand(this.extractMessageBody(entry.message)).kind !== 'NONE') return false;
+    return true;
   }
 
   /** 处理已在认领表中登记的消息（重放路径：行已存在，无需再次入队）。

@@ -42,6 +42,11 @@ export class FeishuMessageService {
     return this.repository.findGroupConversation(accountId, p2pChatIdOf(context), userId);
   }
 
+  /** 查询群级当前活跃会话（不动指针、不创建；群命令 /stop 的只读目标查询）。 */
+  findGroupSession(accountId: string, chatId: string): Promise<FeishuConversation | null> {
+    return this.repository.findGroupConversation(accountId, chatId);
+  }
+
   /**
    * `---` 新建私聊会话：创建新 session 并把活跃指针切到它（chat 级锁内）。
    * 工作区由 sessionFactory 按 `private-{userId}` 固定分配，同一私聊所有会话天然共享根工作区。

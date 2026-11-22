@@ -1,6 +1,7 @@
 import type { FeishuInboundHandler, FeishuNormalizedMessage, FeishuInboundContext, FeishuReply, FeishuPostFileItem } from './types.js';
 import { inboundFileItems, inboundImageKeys, isInboundAttachmentOnly } from './event-normalizer.js';
-import { isGroupNewSessionCommand, isNewSessionCommand } from './agent-inbound-handler.js';
+import { groupCommandTextOf, isGroupNewSessionCommand, isNewSessionCommand, stripFeishuMentionNames } from './agent-inbound-handler.js';
+import { parseChannelCommand } from '../common/channel-command.js';
 import type { FeishuMessageService } from './message.service.js';
 import { botSenderLabel, isBotSender } from './message.service.js';
 import { describeMessageText, FEISHU_CARD_UPGRADE_FALLBACK } from './message-detail.js';
@@ -429,8 +430,17 @@ export class FeishuInboundProcessor {
     if (inboundFileItems(event).length > 0) return false;
     // `---` 新建会话（p2p 专属）与 p2p 引用切换：混入批次会让指令/指针切换失效或错位。
     if (isNewSessionCommand(event.text)) return false;
-    // 群 `/new` 新会话指令：先冲刷该发送者窗口里的前序文本再单独触发，避免与上下文读取/指针切换错位。
-    if (isGroupNewSessionCommand(event)) return false;
+    // 渠道控制命令（/new /stop /tasks /help）：并入批次会让全等匹配失效，命令文本落进 Agent（D9）。
+    if (parseChannelCommand(event.text).kind !== 'NONE') return false;
+    // 群命令：先冲刷该发送者窗口里的前序文本再单独触发，避免与上下文读取/指针切换/取消错位。
+    // 普通群走剥名口径（名单为空时剥名不可靠 → 不豁免，漏触发优先，与群 /new 同口径）；
+    // 话题内与 handler 侧同口径——正文剥 @ 名后直判（映射已存在免 @ 放行，裸命令与 @ 命令都生效，R8/D11）。
+    if (event.threadId != null && event.threadId !== '') {
+      if (parseChannelCommand(stripFeishuMentionNames(event.text ?? '', event.botMentionNames)).kind !== 'NONE') return false;
+    } else {
+      const groupCommandText = groupCommandTextOf(event);
+      if (groupCommandText != null && parseChannelCommand(groupCommandText).kind !== 'NONE') return false;
+    }
     if (event.chatType === 'p2p' && event.parentId != null && event.parentId !== '') return false;
     return true;
   }

@@ -1390,3 +1390,81 @@ describe('FeishuInboundProcessor 群 /new 占位时序', () => {
     expect(onMessage.mock.calls[1][0].groupSessionSwitch).toEqual({ sessionId: 10, created: true });
   });
 });
+
+describe('FeishuInboundProcessor 合并窗口豁免渠道命令（D9）', () => {
+  const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+  function windowedProcessor(onMessage: (ctx: FeishuInboundContext) => Promise<FeishuReply | null>): FeishuInboundProcessor {
+    return new FeishuInboundProcessor(makeHandler(onMessage), {
+      mergeWindowMs: 30, authorizeSender: async () => true, messageService: makeLogService().svc as never,
+    });
+  }
+
+  it('p2p /stop 在前序文本窗口内到达：不入批，冲刷后单独触发', async () => {
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = windowedProcessor(onMessage);
+    await processor.process('1', makeEvent({ messageId: 'om_t', chatType: 'p2p', text: '继续', isBotMentioned: true }));
+    await processor.process('1', makeEvent({ messageId: 'om_stop', chatType: 'p2p', text: '/stop', isBotMentioned: true }));
+    // 命令立即单独触发（批次先冲刷），不再等窗口到点。
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(onMessage.mock.calls[0][0].text).toBe('继续');
+    expect(onMessage.mock.calls[1][0].text).toBe('/stop');
+    await wait(120);
+    expect(onMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('群 @ 命令剥名后命中：豁免出窗单独触发', async () => {
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = windowedProcessor(onMessage);
+    await processor.process('1', makeEvent({ messageId: 'om_g1', text: '先看看', isBotMentioned: true, botMentionNames: ['助手'] }));
+    await processor.process('1', makeEvent({ messageId: 'om_g2', text: '@助手 /stop', isBotMentioned: true, botMentionNames: ['助手'] }));
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(onMessage.mock.calls[1][0].text).toBe('@助手 /stop');
+  });
+
+  it('非命令文本（/tasks 带其他文字）照常入窗合并', async () => {
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = windowedProcessor(onMessage);
+    await processor.process('1', makeEvent({ messageId: 'om_n1', chatType: 'p2p', text: '第一句', isBotMentioned: true }));
+    await processor.process('1', makeEvent({ messageId: 'om_n2', chatType: 'p2p', text: '/tasks 帮我查天气', isBotMentioned: true }));
+    await wait(120);
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0][0].text).toBe('第一句\n\n/tasks 帮我查天气');
+  });
+
+  it('群名单为空时命令不豁免（漏触发优先），照常入窗', async () => {
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = windowedProcessor(onMessage);
+    await processor.process('1', makeEvent({ messageId: 'om_e1', text: '第一句', isBotMentioned: true, botMentionNames: [] }));
+    await processor.process('1', makeEvent({ messageId: 'om_e2', text: '@机器人 /stop', isBotMentioned: true, botMentionNames: [] }));
+    await wait(120);
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0][0].text).toBe('第一句\n\n@机器人 /stop');
+  });
+
+  it('话题内带 @ 的命令剥名后豁免出窗（R8/D11：话题命令生效）', async () => {
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      mergeWindowMs: 30, authorizeSender: async () => true, messageService: makeLogService().svc as never,
+      // 话题映射已存在（免 @ 放行前提）。
+      resolveThreadSession: async () => ({ sessionId: 31, rootMessageId: 'om_root' }) as never,
+    });
+    await processor.process('1', makeEvent({ messageId: 'om_th1', text: '先看看', threadId: 'omt_1', isBotMentioned: true, botMentionNames: ['助手'] }));
+    await processor.process('1', makeEvent({ messageId: 'om_th2', text: '@助手 /stop', threadId: 'omt_1', isBotMentioned: true, botMentionNames: ['助手'] }));
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(onMessage.mock.calls[0][0].text).toBe('先看看');
+    expect(onMessage.mock.calls[1][0].text).toBe('@助手 /stop');
+  });
+
+  it('话题内裸命令（免 @ 放行场景）同样豁免出窗', async () => {
+    const onMessage = vi.fn(async () => ({ text: 'r' }));
+    const processor = new FeishuInboundProcessor(makeHandler(onMessage), {
+      mergeWindowMs: 30, authorizeSender: async () => true, messageService: makeLogService().svc as never,
+      resolveThreadSession: async () => ({ sessionId: 31, rootMessageId: 'om_root' }) as never,
+    });
+    await processor.process('1', makeEvent({ messageId: 'om_tb1', text: '先看看', threadId: 'omt_1', isBotMentioned: false }));
+    await processor.process('1', makeEvent({ messageId: 'om_tb2', text: '/stop', threadId: 'omt_1', isBotMentioned: false }));
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(onMessage.mock.calls[1][0].text).toBe('/stop');
+  });
+});

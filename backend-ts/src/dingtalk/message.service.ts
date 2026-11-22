@@ -49,6 +49,25 @@ export class DingtalkMessageService {
     });
   }
 
+  /**
+   * `/tasks <n>` 切换私聊指针（技术方案 2026-11-22 D4）：指针行不存在或目标即当前返回 null
+   * （调用方前置已挡「即当前」，null 只剩失败语义）；归属校验由装配层 switchSession 完成后才到这里。
+   * upsert 保留原行 ownerUserId / workspace（私聊工作区按用户固定，切换不换工作区）。
+   */
+  async switchP2pSession(accountId: string, context: DingtalkInboundContext, targetSessionId: number): Promise<DingtalkConversation | null> {
+    const existing = await this.repository.findConversation(Number(accountId), context.conversationId);
+    if (existing == null || existing.sessionId === targetSessionId) return null;
+    return this.repository.saveConversation({
+      botId: Number(accountId),
+      conversationId: context.conversationId,
+      chatType: 'p2p',
+      sessionId: targetSessionId,
+      ownerUserId: existing.ownerUserId,
+      workspace: existing.workspace ?? null,
+      title: null,
+    });
+  }
+
   claimInbound(accountId: string, message: DingtalkNormalizedMessage): Promise<boolean> {
     return this.repository.claimInboundMessage(Number(accountId), message.messageId, message.conversationId);
   }

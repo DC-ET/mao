@@ -463,3 +463,137 @@ describe('AgentWeixinInboundHandler 平台队列接力（0.0.434）', () => {
     handler.shutdown();
   });
 });
+
+describe('AgentWeixinInboundHandler 渠道控制命令（2026-11-22 技术方案）', () => {
+  interface DepsOverrides {
+    createNewSession?: ReturnType<typeof vi.fn>;
+    listRecentSessions?: ReturnType<typeof vi.fn>;
+    switchSession?: ReturnType<typeof vi.fn>;
+    cancelFlag?: { get(): boolean; set(v: boolean): void } | null;
+  }
+
+  function makeCommandHandler(overrides: DepsOverrides = {}) {
+    const flag = overrides.cancelFlag ?? null;
+    const createNewSession = overrides.createNewSession ?? vi.fn(async () => ({ id: 101, userId: 1 }));
+    const listRecentSessions = overrides.listRecentSessions ?? vi.fn(async () => []);
+    const switchSession = overrides.switchSession ?? vi.fn(async () => ({ outcome: 'REJECTED' }) as never);
+    const saveMessage = vi.fn(async () => ({ id: 10, content: 'msg' }));
+    const prepareMessage = vi.fn(async () => 'exec-1');
+    const execute = vi.fn(async () => undefined);
+    const closeByConversation = vi.fn();
+    const registry = { send: vi.fn() };
+    const sessionService = {
+      saveMessage,
+      updatePhase: vi.fn(),
+      getMessages: vi.fn(async () => [{ role: 'ASSISTANT', content: 'latest-reply' }]),
+      cleanupIncompleteTail: vi.fn(async () => 0),
+      updateContextTokens: vi.fn(),
+    };
+    const handler = new AgentWeixinInboundHandler({
+      weixinSessionService: {
+        getOrCreateWeixinSession: vi.fn(async () => ({ id: 100, userId: 1 })),
+        createNewSession,
+        listRecentSessions,
+        switchSession,
+      },
+      harnessService: { prepareMessage, execute },
+      sessionService,
+      accountRepository: { findByAccountId: vi.fn(async () => ({ userId: 1 })) },
+      agentLoop: {
+        registerCancelFlag: vi.fn(() => ({ get: () => false, set: () => undefined })),
+        // 仅在需要忙判定的用例提供 getCancelFlag；缺省不提供（waitForForeignLoop 直接放行，
+        // 非命令文本的原链路不被 800ms 安静窗拖慢）。
+        ...(flag != null ? { getCancelFlag: vi.fn(() => flag) } : {}),
+        requestCancel: vi.fn(),
+      },
+      shellSessionManager: { closeByConversation },
+      registry,
+      taskTerminalService: { finishExecution: vi.fn() },
+      activityService: { record: vi.fn(async () => ({ id: 1 })) },
+      activityHeartbeat: { touch: vi.fn() },
+      sessionTodoMapper: { deleteBySessionId: vi.fn(), selectBySessionId: vi.fn(async () => []) },
+      modelService: { getModel: vi.fn(async () => ({ supportsVision: 0 })) },
+      weixinFileStorageService: { saveFile: vi.fn() },
+    } as unknown as AgentWeixinInboundHandlerDeps);
+    return { handler, createNewSession, listRecentSessions, switchSession, saveMessage, prepareMessage, execute, closeByConversation, registry };
+  }
+
+  it('/stop 忙（loop 有取消旗标）：置旗 + 关 shell，回复已停止；不落库不开新执行', async () => {
+    const flag = { value: false, get: () => flag.value, set: (v: boolean) => { flag.value = v; } };
+    const { handler, saveMessage, prepareMessage } = makeCommandHandler({ cancelFlag: flag });
+    const reply = await handler.onMessage({ accountId: 'acc-1', body: '/stop' } as WeixinInboundMessageContext);
+    expect(flag.value).toBe(true);
+    expect(reply?.text).toBe('已停止当前任务。');
+    expect(saveMessage).not.toHaveBeenCalled();
+    expect(prepareMessage).not.toHaveBeenCalled();
+  });
+
+  it('/stop 空闲：仅提示，无任何副作用', async () => {
+    const { handler, saveMessage, prepareMessage, closeByConversation } = makeCommandHandler({ cancelFlag: null });
+    const reply = await handler.onMessage({ accountId: 'acc-1', body: '/stop' } as WeixinInboundMessageContext);
+    expect(reply?.text).toBe('当前没有进行中的任务。');
+    expect(saveMessage).not.toHaveBeenCalled();
+    expect(prepareMessage).not.toHaveBeenCalled();
+    expect(closeByConversation).not.toHaveBeenCalled();
+  });
+
+  it('/new：建新会话并回复确认；不打断旧执行（不关 shell）', async () => {
+    const { handler, createNewSession, closeByConversation, saveMessage, prepareMessage } = makeCommandHandler({});
+    const reply = await handler.onMessage({ accountId: 'acc-1', body: '/new' } as WeixinInboundMessageContext);
+    expect(createNewSession).toHaveBeenCalledWith(1);
+    expect(reply?.text).toBe('已开启新会话，后续消息将在新的上下文中处理。');
+    expect(closeByConversation).not.toHaveBeenCalled();
+    expect(saveMessage).not.toHaveBeenCalled();
+    expect(prepareMessage).not.toHaveBeenCalled();
+  });
+
+  it('/tasks：查本人简报并回复列表', async () => {
+    const listRecentSessions = vi.fn(async () => [
+      { id: 100, title: '查天气', phase: 'RUNNING', updatedAt: '2026-11-22 11:30:00' },
+    ]);
+    const { handler, listRecentSessions: listed, saveMessage } = makeCommandHandler({ listRecentSessions });
+    await handler.onMessage({ accountId: 'acc-1', body: '/tasks' } as WeixinInboundMessageContext);
+    expect(listed).toHaveBeenCalledWith(1, 5);
+    expect(saveMessage).not.toHaveBeenCalled();
+  });
+
+  it('/tasks 2：先 abort 当前执行再切换，回复确认（D5）', async () => {
+    const flag = { value: false, get: () => flag.value, set: (v: boolean) => { flag.value = v; } };
+    const switchSession = vi.fn(async () => ({ outcome: 'SWITCHED', session: { id: 32, userId: 1, status: 'ACTIVE' } }));
+    const listRecentSessions = vi.fn(async () => [
+      { id: 100, title: '甲', phase: null, updatedAt: null },
+      { id: 32, title: '乙任务', phase: null, updatedAt: null },
+    ]);
+    const { handler, switchSession: switched, closeByConversation } = makeCommandHandler({ cancelFlag: flag, switchSession, listRecentSessions });
+    const reply = await handler.onMessage({ accountId: 'acc-1', body: '/tasks 2' } as WeixinInboundMessageContext);
+    expect(flag.value).toBe(true);
+    expect(closeByConversation).toHaveBeenCalledWith(100);
+    expect(switched).toHaveBeenCalledWith(1, 32);
+    expect(reply?.text).toBe('已切换到「乙任务」，后续消息将以该会话上下文为准。');
+  });
+
+  it('/tasks 2 目标即当前：回复已在当前会话，不 abort 不切换', async () => {
+    const flag = { value: false, get: () => flag.value, set: (v: boolean) => { flag.value = v; } };
+    const switchSession = vi.fn(async () => ({ outcome: 'SWITCHED' }) as never);
+    const listRecentSessions = vi.fn(async () => [{ id: 100, title: '甲', phase: null, updatedAt: null }]);
+    const { handler, switchSession: switched, closeByConversation } = makeCommandHandler({ cancelFlag: flag, switchSession, listRecentSessions });
+    await handler.onMessage({ accountId: 'acc-1', body: '/tasks 1' } as WeixinInboundMessageContext);
+    expect(flag.value).toBe(false);
+    expect(closeByConversation).not.toHaveBeenCalled();
+    expect(switched).not.toHaveBeenCalled();
+  });
+
+  it('/help：命令一览；非命令文本仍走原链路（abort 语义不变）', async () => {
+    const help = makeCommandHandler({});
+    const reply = await help.handler.onMessage({ accountId: 'acc-1', body: '/help' } as WeixinInboundMessageContext);
+    expect(reply?.text).toContain('/tasks <序号> 切换到对应任务');
+    expect(help.saveMessage).not.toHaveBeenCalled();
+
+    const normal = makeCommandHandler({ cancelFlag: null });
+    await normal.handler.onMessage({ accountId: 'acc-1', body: '/tasks 帮我查天气' } as WeixinInboundMessageContext);
+    // 未命中：既有「新消息打断旧执行」语义不变（abort 会关 shell），消息照常落库执行。
+    expect(normal.closeByConversation).toHaveBeenCalledWith(100);
+    expect(normal.saveMessage).toHaveBeenCalledTimes(1);
+    expect(normal.prepareMessage).toHaveBeenCalledTimes(1);
+  });
+});

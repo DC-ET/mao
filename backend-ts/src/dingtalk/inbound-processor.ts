@@ -1,4 +1,5 @@
 import { isInboundFileMessage, isNewSessionCommand, isUnsupportedMedia } from './event-normalizer.js';
+import { parseChannelCommand } from '../common/channel-command.js';
 import type { DingtalkMessageService } from './message.service.js';
 import type { DingtalkInboundContext, DingtalkInboundHandler, DingtalkNormalizedMessage } from './types.js';
 import { InboundMergeWindow } from '../common/inbound-merge-window.js';
@@ -191,7 +192,7 @@ export class DingtalkInboundProcessor {
     return [entry.accountId, entry.event.conversationId, entry.event.senderUserid ?? ''].join(':');
   }
 
-  /** 准入：仅文本类且会触发的消息入窗。豁免：语音/视频/文件、带图富文本、p2p `---` 新建会话。 */
+  /** 准入：仅文本类且会触发的消息入窗。豁免：语音/视频/文件、带图富文本、p2p `---` 新建会话、渠道控制命令。 */
   private canJoinEntry(entry: DingtalkWindowEntry): boolean {
     const event = entry.event;
     if (!JOINABLE_MSGTYPES.has(event.msgtype)) return false;
@@ -199,6 +200,10 @@ export class DingtalkInboundProcessor {
     if (event.downloadCodes.length > 0) return false;
     // `---` 新建会话（p2p 专属）：混入批次会让指令失效或错位。
     if (event.chatType === 'p2p' && isNewSessionCommand(event.text)) return false;
+    // 渠道控制命令（/new /stop /tasks /help，D9）：text 已由 cleanText 剥 @，并入批次会让
+    // 全等匹配失效、命令文本落进 Agent。群 /tasks 未实现但 /stop /help 同样豁免——
+    // 命令不参与合并是渠道无关口径。
+    if (parseChannelCommand(event.text).kind !== 'NONE') return false;
     return true;
   }
 

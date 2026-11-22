@@ -2274,3 +2274,235 @@ describe('isGroupNewSessionCommand', () => {
     expect(isGroupNewSessionCommand({ ...base, isBotMentioned: false })).toBe(false);
   });
 });
+
+
+describe('AgentFeishuInboundHandler 渠道控制命令（2026-11-22 技术方案）', () => {
+  function makeP2pContext(overrides: Partial<FeishuInboundContext> = {}): FeishuInboundContext {
+    return makeContext({ chatType: 'p2p', chatId: null, maoUserId: 42, ...overrides });
+  }
+
+  interface Brief { id: number; title: string | null; phase: string | null; updatedAt: string | null; }
+
+  function makeCommandHandler(overrides: {
+    sessionService?: ReturnType<typeof makeSessionService>;
+    control?: Record<string, unknown>;
+    stopRunning?: (sessionId: number) => Promise<boolean>;
+    listChannelSessions?: (userId: number, limit: number) => Promise<Brief[]>;
+    findGroupSession?: (accountId: string, chatId: string) => Promise<{ sessionId: number } | null>;
+    threadSessionControl?: Record<string, unknown>;
+  } = {}) {
+    const sessionService = overrides.sessionService ?? makeSessionService();
+    const harness = { prepareMessage: vi.fn(() => 'e'), execute: vi.fn(async () => undefined) };
+    const onReply = vi.fn(async () => 'om_reply');
+    const handler = new AgentFeishuInboundHandler({
+      sessionService,
+      harnessService: harness as never,
+      listenerFactory: async () => listener,
+      p2pSessionControl: (overrides.control ?? makeP2pControl()) as never,
+      threadSessionControl: overrides.threadSessionControl as never,
+      stopRunning: overrides.stopRunning,
+      listChannelSessions: overrides.listChannelSessions,
+      findGroupSession: overrides.findGroupSession,
+      onReply,
+    });
+    return { handler, sessionService, harness, onReply };
+  }
+
+  function replyTexts(onReply: ReturnType<typeof vi.fn>): string[] {
+    return onReply.mock.calls.map((call: unknown[]) => String(call[1]));
+  }
+
+  it('p2p /new 与 --- 同路径：createSession + 拦截', async () => {
+    const control = makeP2pControl();
+    const { handler, sessionService, harness } = makeCommandHandler({ control });
+    const reply = await handler.onMessage(makeP2pContext({ text: '/new', messageId: 'om_new' }));
+    expect(reply).toBeNull();
+    expect(control.createSession).toHaveBeenCalledTimes(1);
+    expect(sessionService.saveUserMessage).not.toHaveBeenCalled();
+    expect(harness.execute).not.toHaveBeenCalled();
+    expect(control.recordMessageMapping).toHaveBeenCalledWith('1', 'om_new', 8, 'IN');
+  });
+
+  it('p2p /stop 忙：置取消并回复已停止；消息不落库不触发 Agent', async () => {
+    const stopRunning = vi.fn(async () => true);
+    const control = makeP2pControl({ findActiveSession: vi.fn(async () => ({ id: 7 })) });
+    const { handler, sessionService, harness, onReply } = makeCommandHandler({ control, stopRunning });
+    const reply = await handler.onMessage(makeP2pContext({ text: '/stop' }));
+    expect(reply).toBeNull();
+    expect(stopRunning).toHaveBeenCalledWith(7);
+    expect(sessionService.saveUserMessage).not.toHaveBeenCalled();
+    expect(harness.execute).not.toHaveBeenCalled();
+    expect(replyTexts(onReply)).toContain('已停止当前任务。');
+  });
+
+  it('p2p /stop 空闲（无绑定会话）：回复没有进行中任务，不调 stopRunning', async () => {
+    const stopRunning = vi.fn(async () => true);
+    const control = makeP2pControl({ findActiveSession: vi.fn(async () => null) });
+    const { handler, onReply } = makeCommandHandler({ control, stopRunning });
+    await handler.onMessage(makeP2pContext({ text: '/stop' }));
+    expect(stopRunning).not.toHaveBeenCalled();
+    expect(replyTexts(onReply)).toContain('当前没有进行中的任务。');
+  });
+
+  it('p2p /stop 空闲（端口返回 false）：回复没有进行中任务', async () => {
+    const stopRunning = vi.fn(async () => false);
+    const { handler, onReply } = makeCommandHandler({ stopRunning });
+    await handler.onMessage(makeP2pContext({ text: '/stop' }));
+    expect(stopRunning).toHaveBeenCalledTimes(1);
+    expect(replyTexts(onReply)).toContain('当前没有进行中的任务。');
+  });
+
+  it('p2p /tasks：查询本人本渠道简报并渲染列表，拦截不落库', async () => {
+    const listChannelSessions = vi.fn(async () => [
+      { id: 9, title: '查天气', phase: 'RUNNING', updatedAt: '2026-11-22 11:30:00' },
+      { id: 5, title: '写周报', phase: 'IDLE', updatedAt: '2026-11-22 10:00:00' },
+    ]);
+    const { handler, sessionService, harness, onReply } = makeCommandHandler({ listChannelSessions });
+    const reply = await handler.onMessage(makeP2pContext({ text: '/tasks' }));
+    expect(reply).toBeNull();
+    expect(listChannelSessions).toHaveBeenCalledWith(42, 5);
+    expect(sessionService.saveUserMessage).not.toHaveBeenCalled();
+    expect(harness.execute).not.toHaveBeenCalled();
+    const text = replyTexts(onReply).join('\n');
+    expect(text).toContain('1. 查天气（进行中）');
+    expect(text).toContain('2. 写周报 ·');
+    expect(text).toContain('回复 /tasks <序号> 切换，如 /tasks 2');
+  });
+
+  it('p2p /tasks 空列表：回复还没有任务记录', async () => {
+    const listChannelSessions = vi.fn(async () => []);
+    const { handler, onReply } = makeCommandHandler({ listChannelSessions });
+    await handler.onMessage(makeP2pContext({ text: '/tasks' }));
+    expect(replyTexts(onReply)).toContain('该渠道还没有任务记录。');
+  });
+
+  it('p2p /tasks 2 越界：回退列表', async () => {
+    const listChannelSessions = vi.fn(async () => [{ id: 9, title: '唯一任务', phase: null, updatedAt: null }]);
+    const control = makeP2pControl();
+    const { handler, onReply } = makeCommandHandler({ control, listChannelSessions });
+    await handler.onMessage(makeP2pContext({ text: '/tasks 2' }));
+    expect(control.switchSession).not.toHaveBeenCalled();
+    expect(replyTexts(onReply).some((t) => t.includes('唯一任务'))).toBe(true);
+  });
+
+  it('p2p /tasks 2 目标即当前会话：回复已在当前会话，不切换', async () => {
+    const listChannelSessions = vi.fn(async () => [
+      { id: 5, title: '甲', phase: null, updatedAt: null },
+      { id: 7, title: '乙', phase: null, updatedAt: null },
+    ]);
+    const control = makeP2pControl({ findActiveSession: vi.fn(async () => ({ id: 7 })) });
+    const { handler, onReply } = makeCommandHandler({ control, listChannelSessions });
+    await handler.onMessage(makeP2pContext({ text: '/tasks 2' }));
+    expect(control.switchSession).not.toHaveBeenCalled();
+    expect(replyTexts(onReply)).toContain('已在当前会话。');
+  });
+
+  it('p2p /tasks 1 归属拒绝（switch 返回 null）：回退列表', async () => {
+    const listChannelSessions = vi.fn(async () => [{ id: 99, title: '他人会话', phase: null, updatedAt: null }]);
+    const control = makeP2pControl({ findActiveSession: vi.fn(async () => ({ id: 7 })), switchSession: vi.fn(async () => null) });
+    const { handler, onReply } = makeCommandHandler({ control, listChannelSessions });
+    await handler.onMessage(makeP2pContext({ text: '/tasks 1' }));
+    expect(control.switchSession).toHaveBeenCalledWith('1', expect.anything(), 99);
+    expect(replyTexts(onReply).some((t) => t.includes('他人会话'))).toBe(true);
+  });
+
+  it('p2p /tasks 2 成功：切换并回复确认（带目标标题）', async () => {
+    const listChannelSessions = vi.fn(async () => [
+      { id: 5, title: '甲任务', phase: null, updatedAt: null },
+      { id: 9, title: '乙任务', phase: null, updatedAt: null },
+    ]);
+    const control = makeP2pControl({ findActiveSession: vi.fn(async () => ({ id: 5 })), switchSession: vi.fn(async () => ({ id: 9 })) });
+    const { handler, harness, onReply } = makeCommandHandler({ control, listChannelSessions });
+    const reply = await handler.onMessage(makeP2pContext({ text: '/tasks 2' }));
+    expect(reply).toBeNull();
+    expect(control.switchSession).toHaveBeenCalledWith('1', expect.anything(), 9);
+    expect(replyTexts(onReply)).toContain('已切换到「乙任务」，后续消息将以该会话上下文为准。');
+    expect(harness.execute).not.toHaveBeenCalled();
+  });
+
+  it('p2p /help：回复命令一览并拦截', async () => {
+    const { handler, harness, onReply } = makeCommandHandler({});
+    await handler.onMessage(makeP2pContext({ text: '/help' }));
+    expect(harness.execute).not.toHaveBeenCalled();
+    expect(replyTexts(onReply).some((t) => t.includes('/tasks <序号> 切换到对应任务'))).toBe(true);
+  });
+
+  it('p2p 命令埠未配置：回复暂不支持，不落进 Agent', async () => {
+    const { handler, harness, onReply } = makeCommandHandler({});
+    await handler.onMessage(makeP2pContext({ text: '/stop' }));
+    expect(harness.execute).not.toHaveBeenCalled();
+    expect(replyTexts(onReply)).toContain('此命令暂不支持。');
+  });
+
+  it('p2p 非命令文本（含 /tasks 带其他文字）原链路', async () => {
+    const { handler, sessionService, harness } = makeCommandHandler({});
+    await handler.onMessage(makeP2pContext({ text: '/tasks 帮我查天气' }));
+    expect(sessionService.saveUserMessage).toHaveBeenCalledTimes(1);
+    expect(harness.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('群 /stop：有群会话 → 停止并回复已停止', async () => {
+    const stopRunning = vi.fn(async () => true);
+    const findGroupSession = vi.fn(async () => ({ sessionId: 12 }));
+    const { handler, harness, onReply } = makeCommandHandler({ stopRunning, findGroupSession });
+    await handler.onMessage(makeContext({ text: '@助手 /stop', botMentionNames: ['助手'] }));
+    expect(findGroupSession).toHaveBeenCalledWith('1', 'oc_group');
+    expect(stopRunning).toHaveBeenCalledWith(12);
+    expect(harness.execute).not.toHaveBeenCalled();
+    expect(replyTexts(onReply)).toContain('已停止当前任务。');
+  });
+
+  it('群 /stop：无群会话 → 回复本群还没有会话', async () => {
+    const stopRunning = vi.fn(async () => true);
+    const findGroupSession = vi.fn(async () => null);
+    const { handler, onReply } = makeCommandHandler({ stopRunning, findGroupSession });
+    await handler.onMessage(makeContext({ text: '@助手 /stop', botMentionNames: ['助手'] }));
+    expect(stopRunning).not.toHaveBeenCalled();
+    expect(replyTexts(onReply)).toContain('本群还没有会话。');
+  });
+
+  it('群 /stop 话题内：话题映射命中停话题会话，不查群指针（D11）', async () => {
+    const stopRunning = vi.fn(async () => true);
+    const findGroupSession = vi.fn(async () => ({ sessionId: 12 }));
+    const threadSessionControl = { findSession: vi.fn(async () => ({ sessionId: 31, rootMessageId: 'om_root' })) };
+    const { handler, onReply } = makeCommandHandler({ stopRunning, findGroupSession, threadSessionControl });
+    await handler.onMessage(makeContext({ text: '@助手 /stop', botMentionNames: ['助手'], threadId: 'omt_1' }));
+    expect(threadSessionControl.findSession).toHaveBeenCalled();
+    expect(stopRunning).toHaveBeenCalledWith(31);
+    expect(findGroupSession).not.toHaveBeenCalled();
+    expect(replyTexts(onReply)).toContain('已停止当前任务。');
+  });
+
+  it('群 /stop 话题内：映射未命中落回群级指针（D11）', async () => {
+    const stopRunning = vi.fn(async () => true);
+    const findGroupSession = vi.fn(async () => ({ sessionId: 12 }));
+    const threadSessionControl = { findSession: vi.fn(async () => null) };
+    const { handler, onReply } = makeCommandHandler({ stopRunning, findGroupSession, threadSessionControl });
+    await handler.onMessage(makeContext({ text: '@助手 /stop', botMentionNames: ['助手'], threadId: 'omt_1' }));
+    expect(stopRunning).toHaveBeenCalledWith(12);
+    expect(replyTexts(onReply)).toContain('已停止当前任务。');
+  });
+
+  it('群 /help：群命令一览（不含 /tasks），拦截', async () => {
+    const { handler, harness, onReply } = makeCommandHandler({});
+    await handler.onMessage(makeContext({ text: '@助手 /help', botMentionNames: ['助手'] }));
+    expect(harness.execute).not.toHaveBeenCalled();
+    const texts = replyTexts(onReply);
+    expect(texts.some((t) => t.includes('群内任意成员可停止群任务'))).toBe(true);
+    expect(texts.some((t) => t.includes('/tasks'))).toBe(false);
+  });
+
+  it('群名单为空（is_at_me 兜底）：命令不命中，原链路执行', async () => {
+    const { handler, sessionService, harness } = makeCommandHandler({});
+    await handler.onMessage(makeContext({ text: '@机器人 /stop', botMentionNames: [] }));
+    expect(sessionService.saveUserMessage).toHaveBeenCalledTimes(1);
+    expect(harness.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('群 /stop 埠未配置：回复暂不支持', async () => {
+    const { handler, harness, onReply } = makeCommandHandler({});
+    await handler.onMessage(makeContext({ text: '@助手 /stop', botMentionNames: ['助手'] }));
+    expect(harness.execute).not.toHaveBeenCalled();
+    expect(replyTexts(onReply)).toContain('此命令暂不支持。');
+  });
+});

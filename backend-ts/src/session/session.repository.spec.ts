@@ -361,4 +361,32 @@ describe('SessionRepository failed-session recovery queries', () => {
     expect(text).toContain('ORDER BY agg.lastActiveAt DESC, agg.workspace ASC');
     expect(params).toEqual([7, 7]);
   });
+
+  it('listRecentChannelSessionBriefs 口径：source/session_type/未归档/软删过滤 + 群前缀排除 + LIMIT 排序', async () => {
+    const rows = [{ id: 5, title: '任务', phase: 'RUNNING', updatedAt: '2026-11-22 10:00:00' }];
+    const db = mockDb(null, rows);
+    const repo = new SessionRepository(db as never);
+    expect(await repo.listRecentChannelSessionBriefs(7, 'feishu', 5, ['feishu-chat-', 'dingtalk-chat-'])).toEqual(rows);
+    const [sql, params] = db.query.mock.calls[0];
+    const text = String(sql);
+    expect(text).toContain('user_id = ?');
+    expect(text).toContain('source = ?');
+    expect(text).toContain("session_type = 'NORMAL'");
+    expect(text).toContain("(status IS NULL OR status <> 'ARCHIVED')");
+    expect(text).toContain('deleted = 0');
+    expect(text).toContain('project_key NOT LIKE ?');
+    expect(text.match(/project_key NOT LIKE \?/g)).toHaveLength(2);
+    expect(text).toContain('ORDER BY updated_at DESC, id DESC');
+    expect(text).toContain('LIMIT ?');
+    expect(params).toEqual([7, 'feishu', 'feishu-chat-%', 'dingtalk-chat-%', 5]);
+  });
+
+  it('listRecentChannelSessionBriefs：未传前缀时无 NOT LIKE 子句（微信渠道）', async () => {
+    const db = mockDb(null, []);
+    const repo = new SessionRepository(db as never);
+    await repo.listRecentChannelSessionBriefs(7, 'weixin', 5);
+    const [sql, params] = db.query.mock.calls[0];
+    expect(String(sql)).not.toContain('NOT LIKE');
+    expect(params).toEqual([7, 'weixin', 5]);
+  });
 });

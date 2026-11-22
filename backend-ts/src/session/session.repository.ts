@@ -51,6 +51,14 @@ export const SESSION_MARK_SOURCES = ['embed'] as const satisfies readonly Sessio
 export const isSessionMarkSource = (value: unknown): value is 'embed' =>
   typeof value === 'string' && (SESSION_MARK_SOURCES as readonly string[]).includes(value);
 
+/** IM 渠道 `/tasks` 列表行：轻量简报，不含执行模式 / 工作区等重字段（技术方案 2026-11-22 §4.2）。 */
+export interface ChannelSessionBrief {
+  id: number;
+  title: string | null;
+  phase: string | null;
+  updatedAt: string | null;
+}
+
 export interface MessageSearchSqlFilter {
   mode: 'FULLTEXT' | 'LIKE';
   userId: number;
@@ -351,6 +359,39 @@ export class SessionRepository {
     return this.db.queryOne<Session>(
       `SELECT * FROM \`session\` WHERE user_id = ? AND project_key = ? AND status = 'ACTIVE' AND ${notDeleted()} LIMIT 1`,
       [userId, projectKey],
+    );
+  }
+
+  /**
+   * IM 渠道控制命令 `/tasks` 的会话简报列表（技术方案 2026-11-22 D3/D10）：
+   * 该用户、该渠道来源、普通会话、未归档、未删除，按最近活跃排序。
+   * 渠道映射表无用户维度（飞书）/无历史（钉钉），`session.source` 是唯一渠道事实源。
+   * `excludeProjectKeyPrefixes`：排除群聊绑定会话（群/话题 project_key 前缀由各渠道工厂写死，
+   * 如飞书 `feishu-chat-`、钉钉 `dingtalk-chat-`）——群会话属共享决策面，不得被私聊指针切换。
+   */
+  async listRecentChannelSessionBriefs(
+    userId: number,
+    source: ContractSessionSource,
+    limit: number,
+    excludeProjectKeyPrefixes: string[] = [],
+  ): Promise<ChannelSessionBrief[]> {
+    const params: unknown[] = [userId, source];
+    let prefixSql = '';
+    for (const prefix of excludeProjectKeyPrefixes) {
+      if (prefix === '') continue;
+      prefixSql += ` AND project_key NOT LIKE ?`;
+      params.push(`${escapeLike(prefix)}%`);
+    }
+    params.push(limit);
+    return this.db.query<ChannelSessionBrief>(
+      `SELECT id, title, phase, updated_at AS updatedAt
+       FROM \`session\`
+       WHERE user_id = ? AND source = ? AND session_type = 'NORMAL'
+         AND (status IS NULL OR status <> 'ARCHIVED') AND ${notDeleted()}
+         ${prefixSql}
+       ORDER BY updated_at DESC, id DESC
+       LIMIT ?`,
+      params,
     );
   }
 

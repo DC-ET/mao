@@ -206,3 +206,80 @@ describe('WeixinSessionService withUserLock', () => {
     expect(locksOf(service).size).toBe(0);
   });
 });
+
+describe('WeixinSessionService 渠道控制命令三方法（2026-11-22 技术方案）', () => {
+  function makeService() {
+    const sessionService = { createSession: vi.fn(async () => ({ id: 77, userId: 1, status: 'ACTIVE' })) };
+    const sessionRepo = {
+      findActiveByUserAndProjectKey: vi.fn(),
+      findById: vi.fn(),
+      updateFields: vi.fn(async () => 1),
+      updateById: vi.fn(async () => undefined),
+      listRecentChannelSessionBriefs: vi.fn(async () => []),
+    };
+    const agentService = { getAgent: vi.fn(), requireDefaultAgent: vi.fn(async () => ({ id: 10, enabled: 1 })) };
+    const modelService = { getModel: vi.fn(), getDefaultModel: vi.fn(async () => ({ id: 100 })) };
+    const systemSettingService = { getValue: vi.fn(async () => null) };
+    const service = new WeixinSessionService(
+      sessionService as never, sessionRepo as never, agentService as never,
+      modelService as never, systemSettingService as never,
+    );
+    return { service, sessionService, sessionRepo };
+  }
+
+  it('/new：归档当前 ACTIVE 会话并新建（source=weixin，互斥单行）', async () => {
+    const { service, sessionService, sessionRepo } = makeService();
+    sessionRepo.findActiveByUserAndProjectKey.mockResolvedValue({ id: 5, userId: 1, status: 'ACTIVE' });
+    const created = await service.createNewSession(1);
+    expect(sessionRepo.updateFields).toHaveBeenCalledWith(5, { status: 'ARCHIVED' });
+    expect(sessionService.createSession).toHaveBeenCalledWith(
+      1, 10, '微信Bot会话', 'CLOUD', null, 'FULL', false, 'linux', '/bin/bash', 'Linux', 100,
+      'weixin-bot', 'new', null, null, 'weixin',
+    );
+    expect(created.id).toBe(77);
+  });
+
+  it('/new：无活跃会话直接新建', async () => {
+    const { service, sessionRepo } = makeService();
+    sessionRepo.findActiveByUserAndProjectKey.mockResolvedValue(null);
+    await service.createNewSession(1);
+    expect(sessionRepo.updateFields).not.toHaveBeenCalled();
+  });
+
+  it('/tasks：转发简报查询（weixin 来源，无前缀过滤）', async () => {
+    const { service, sessionRepo } = makeService();
+    sessionRepo.listRecentChannelSessionBriefs.mockResolvedValue([{ id: 5, title: 't', phase: null, updatedAt: null }]);
+    const briefs = await service.listRecentSessions(1, 5);
+    expect(sessionRepo.listRecentChannelSessionBriefs).toHaveBeenCalledWith(1, 'weixin', 5);
+    expect(briefs).toHaveLength(1);
+  });
+
+  it('/tasks <n> 切换：归属 / projectKey 校验拒绝', async () => {
+    const { service, sessionRepo } = makeService();
+    sessionRepo.findById.mockResolvedValue({ id: 32, userId: 2, projectKey: 'weixin-bot', status: 'ARCHIVED' });
+    expect(await service.switchSession(1, 32)).toEqual({ outcome: 'REJECTED' });
+    sessionRepo.findById.mockResolvedValue({ id: 32, userId: 1, projectKey: 'other-key', status: 'ARCHIVED' });
+    expect(await service.switchSession(1, 32)).toEqual({ outcome: 'REJECTED' });
+    sessionRepo.findById.mockResolvedValue(null);
+    expect(await service.switchSession(1, 32)).toEqual({ outcome: 'REJECTED' });
+    expect(sessionRepo.updateFields).not.toHaveBeenCalled();
+  });
+
+  it('/tasks <n> 切换：目标即当前 ACTIVE 返回 CURRENT', async () => {
+    const { service, sessionRepo } = makeService();
+    sessionRepo.findById.mockResolvedValue({ id: 5, userId: 1, projectKey: 'weixin-bot', status: 'ACTIVE' });
+    sessionRepo.findActiveByUserAndProjectKey.mockResolvedValue({ id: 5, userId: 1, status: 'ACTIVE' });
+    expect(await service.switchSession(1, 5)).toEqual({ outcome: 'CURRENT' });
+    expect(sessionRepo.updateFields).not.toHaveBeenCalled();
+  });
+
+  it('/tasks <n> 切换：旧 ACTIVE 翻 ARCHIVED、目标翻 ACTIVE', async () => {
+    const { service, sessionRepo } = makeService();
+    sessionRepo.findById.mockResolvedValue({ id: 32, userId: 1, projectKey: 'weixin-bot', status: 'ARCHIVED' });
+    sessionRepo.findActiveByUserAndProjectKey.mockResolvedValue({ id: 5, userId: 1, status: 'ACTIVE' });
+    const result = await service.switchSession(1, 32);
+    expect(result).toEqual({ outcome: 'SWITCHED', session: expect.objectContaining({ id: 32, status: 'ACTIVE' }) });
+    expect(sessionRepo.updateFields).toHaveBeenNthCalledWith(1, 5, { status: 'ARCHIVED' });
+    expect(sessionRepo.updateFields).toHaveBeenNthCalledWith(2, 32, { status: 'ACTIVE' });
+  });
+});

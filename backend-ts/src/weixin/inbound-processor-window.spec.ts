@@ -186,3 +186,32 @@ describe('InboundProcessor 合并窗口', () => {
     expect(await processor.reclaimStuckMessages('acc-1')).toEqual([]);
   });
 });
+
+
+describe('InboundProcessor 合并窗口豁免渠道命令（D9）', () => {
+  it('/stop 不与前序纯文本合并，冲刷后单独触发；非命令文本照常合并', async () => {
+    const repo = makeRepo();
+    const { processor, inboundHandler } = makeProcessor(repo, 30);
+    const keyA = WeixinInboundMessageRepository.messageKeyOf(textMessage('继续'));
+    const keyStop = WeixinInboundMessageRepository.messageKeyOf(textMessage('/stop'));
+    await processor.processInboundMessage('acc-1', textMessage('继续'), keyA);
+    await processor.processInboundMessage('acc-1', textMessage('/stop'), keyStop);
+    // 命令立即单独触发（批次先冲刷），不等窗口到点。
+    expect(inboundHandler.onMessage).toHaveBeenCalledTimes(2);
+    expect(inboundHandler.onMessage.mock.calls[0][0].body).toBe('继续');
+    expect(inboundHandler.onMessage.mock.calls[1][0].body).toBe('/stop');
+    await wait(120);
+    expect(inboundHandler.onMessage).toHaveBeenCalledTimes(2);
+    expect(repo.markDone).toHaveBeenCalledWith('acc-1', keyA);
+    expect(repo.markDone).toHaveBeenCalledWith('acc-1', keyStop);
+
+    // 非命令文本（/tasks 带其他文字）照常入窗合并。
+    const keyN1 = WeixinInboundMessageRepository.messageKeyOf(textMessage('第一句'));
+    const keyN2 = WeixinInboundMessageRepository.messageKeyOf(textMessage('/tasks 帮我查天气'));
+    await processor.processInboundMessage('acc-2', textMessage('第一句'), keyN1);
+    await processor.processInboundMessage('acc-2', textMessage('/tasks 帮我查天气'), keyN2);
+    await wait(120);
+    expect(inboundHandler.onMessage).toHaveBeenCalledTimes(3);
+    expect(inboundHandler.onMessage.mock.calls[2][0].body).toBe('第一句\n/tasks 帮我查天气');
+  });
+});

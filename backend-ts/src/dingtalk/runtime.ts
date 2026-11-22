@@ -251,11 +251,28 @@ export function createDingtalkRuntime(deps: {
   };
 
   const handlerBox: { current: AgentDingtalkInboundHandler | null } = { current: null };
+  /**
+   * `/stop` 与互动卡「取消任务」共用的取消闭包（技术方案 2026-11-22 D2）：同一实现喂两处，杜绝两份取消口径。
+   * 有 AgentLoop（含崩溃恢复续跑）时只靠取消标志收尾；内存无循环且 DB 仍活跃时补写 CANCELLED 并排空队列。
+   */
+  const stopRunningSession = async (sessionId: number): Promise<boolean> => {
+    handlerBox.current?.cancel(sessionId);
+    return persistDingtalkCancelIfIdle({
+      sessionId,
+      hadLoop: deps.agentLoop.getCancelFlag(sessionId) != null,
+      persistCancelledIfActive,
+      drainNextIfPending: (id) => handlerBox.current?.drainNextIfPending(id) ?? Promise.resolve(),
+    });
+  };
   const handler = new AgentDingtalkInboundHandler({
     registry: deps.wsRegistry as never,
     isSessionExecuting: deps.isSessionExecuting,
     onQueuesDrained: deps.onQueuesDrained,
     resolveStreamUserId: async (sessionId) => (await deps.sessionService.getSession(sessionId).catch(() => null))?.userId ?? null,
+    // 渠道控制命令（技术方案 2026-11-22 §4.4）：/stop 复用互动卡取消同一闭包；/tasks 查本渠道简报
+    //（排除群聊绑定会话——群 project_key 前缀 dingtalk-chat-，D10）。
+    stopRunning: stopRunningSession,
+    listChannelSessions: (userId, limit) => deps.sessionService.listRecentChannelSessionBriefs(userId, 'dingtalk', limit, ['dingtalk-chat-']),
     sessionService: {
       getOrCreateSession: async (accountId, context) => {
         const owner = context.maoUserId;
@@ -294,6 +311,20 @@ export function createDingtalkRuntime(deps: {
       createSession: async (accountId, context) => {
         if (context.maoUserId == null) throw new Error('钉钉用户未绑定');
         const conversation = await messageService.createP2pSession(accountId, context, context.maoUserId);
+        await applyBotConfig(conversation.sessionId, Number(accountId));
+        return { id: conversation.sessionId };
+      },
+      // `/tasks <n>` 切换（技术方案 2026-11-22 D4）：归属校验口径对齐飞书引用切换——
+      // 目标会话必须存在且属于触发者；通过后 messageService 原子 upsert 指针（保留原 owner/工作区）。
+      switchSession: async (accountId, context, targetSessionId) => {
+        if (context.maoUserId == null) return null;
+        const targetSession = await deps.sessionRepo.findById(targetSessionId);
+        if (targetSession == null || targetSession.userId !== context.maoUserId) {
+          console.warn(`钉钉 /tasks 切换拒绝: 目标会话不存在或归属其他用户, sessionId=${targetSessionId}, trigger=${context.maoUserId}`);
+          return null;
+        }
+        const conversation = await messageService.switchP2pSession(accountId, context, targetSessionId);
+        if (conversation == null) return null;
         await applyBotConfig(conversation.sessionId, Number(accountId));
         return { id: conversation.sessionId };
       },
@@ -475,15 +506,7 @@ export function createDingtalkRuntime(deps: {
     queuePort: queue,
     findProgress: (outTrackId) => progressRepo.findByOutTrackId(outTrackId),
     interruptAndDrain: (sessionId) => handler.interruptAndDrain(sessionId),
-    cancelRunning: async (sessionId) => {
-      handler.cancel(sessionId);
-      return persistDingtalkCancelIfIdle({
-        sessionId,
-        hadLoop: deps.agentLoop.getCancelFlag(sessionId) != null,
-        persistCancelledIfActive,
-        drainNextIfPending: (id) => handler.drainNextIfPending(id),
-      });
-    },
+    cancelRunning: stopRunningSession,
     getPhase: async (sessionId) => (await deps.sessionService.getSession(sessionId).catch(() => null))?.phase ?? null,
     toggleDislike: deps.feedbackService == null ? undefined : async (sessionId) => {
       const session = await deps.sessionService.getSession(sessionId).catch(() => null);

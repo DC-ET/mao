@@ -267,3 +267,194 @@ describe('AgentDingtalkInboundHandler 队列上下文透传（一卡到底，批
     expect(ctx.progressCardOutTrackId).toBeNull();
   });
 });
+
+describe('AgentDingtalkInboundHandler 渠道控制命令（2026-11-22 技术方案）', () => {
+  interface Brief { id: number; title: string | null; phase: string | null; updatedAt: string | null; }
+
+  function makeCommandHandler(overrides: {
+    control?: Record<string, unknown>;
+    stopRunning?: (sessionId: number) => Promise<boolean>;
+    listChannelSessions?: (userId: number, limit: number) => Promise<Brief[]>;
+    settleCancel?: (sessionId: number) => Promise<void>;
+    queueService?: Record<string, unknown>;
+  } = {}) {
+    const execute = vi.fn(async () => undefined);
+    const saveUserMessage = vi.fn(async () => 11);
+    const getOrCreateSession = vi.fn(async () => ({ id: 20, workspace: '/ws', executionUserId: 9 }));
+    const onReply = vi.fn(async () => undefined);
+    const built = new AgentDingtalkInboundHandler({
+      sessionService: {
+        getOrCreateSession,
+        saveUserMessage,
+        getLatestAssistantReply: async () => '回复',
+      },
+      harnessService: { prepareMessage: () => 'evt', execute },
+      listenerFactory: async () => ({}) as never,
+      p2pSessionControl: {
+        findActiveSession: vi.fn(async () => ({ id: 20 })),
+        createSession: vi.fn(async () => ({ id: 21 })),
+        ...(overrides.control ?? {}),
+      } as never,
+      stopRunning: overrides.stopRunning,
+      listChannelSessions: overrides.listChannelSessions,
+      ...(overrides.settleCancel != null ? { settleCancel: overrides.settleCancel } : {}),
+      ...(overrides.queueService != null ? { queueService: overrides.queueService as never } : {}),
+      onReply,
+    });
+    return { handler: built, execute, saveUserMessage, getOrCreateSession, onReply };
+  }
+
+  function replyTexts(onReply: ReturnType<typeof vi.fn>): string[] {
+    return onReply.mock.calls.map((call: unknown[]) => String(call[1]));
+  }
+
+  it('p2p /new 与 --- 同路径：abandon 序列 + createSession + 拦截', async () => {
+    const settleCancel = vi.fn(async () => undefined);
+    const createSession = vi.fn(async () => ({ id: 21 }));
+    const onReply = vi.fn(async () => undefined);
+    const { handler, execute, saveUserMessage } = makeCommandHandler({
+      control: { findActiveSession: vi.fn(async () => ({ id: 20 })), createSession },
+    });
+    // settleCancel 经 options 传入需要重建；为断言 abandon 序列单独构造。
+    const built = new AgentDingtalkInboundHandler({
+      sessionService: { getOrCreateSession: vi.fn(), saveUserMessage: vi.fn(async () => 11), getLatestAssistantReply: async () => 'r' },
+      harnessService: { prepareMessage: () => 'evt', execute } as never,
+      p2pSessionControl: { findActiveSession: vi.fn(async () => ({ id: 20 })), createSession } as never,
+      settleCancel,
+      onReply,
+    });
+    await built.onMessage(context({ text: '/new' }));
+    expect(settleCancel).toHaveBeenCalledWith(20);
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(saveUserMessage).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(onReply).toHaveBeenCalledWith(expect.anything(), '已开启新会话，后续消息将在新的上下文中处理。', 21);
+    void handler;
+  });
+
+  it('p2p /stop 忙：置取消并回复已停止；不落库不执行', async () => {
+    const stopRunning = vi.fn(async () => true);
+    const { handler, execute, saveUserMessage, onReply } = makeCommandHandler({ stopRunning });
+    await handler.onMessage(context({ text: '/stop' }));
+    expect(stopRunning).toHaveBeenCalledWith(20);
+    expect(saveUserMessage).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(replyTexts(onReply)).toContain('已停止当前任务。');
+  });
+
+  it('p2p /stop 空闲：无绑定会话不调 stopRunning；端口 false 同文案', async () => {
+    const stopRunning = vi.fn(async () => false);
+    const control = { findActiveSession: vi.fn(async () => null) };
+    const { handler, onReply } = makeCommandHandler({ control, stopRunning });
+    await handler.onMessage(context({ text: '/stop' }));
+    expect(stopRunning).not.toHaveBeenCalled();
+    expect(replyTexts(onReply)).toContain('当前没有进行中的任务。');
+    const second = makeCommandHandler({ stopRunning });
+    await second.handler.onMessage(context({ text: '/stop' }));
+    expect(replyTexts(second.onReply)).toContain('当前没有进行中的任务。');
+  });
+
+  it('p2p /tasks：查询本人简报并渲染列表', async () => {
+    const listChannelSessions = vi.fn(async () => [
+      { id: 31, title: '查天气', phase: 'RUNNING', updatedAt: '2026-11-22 11:30:00' },
+    ]);
+    const { handler, onReply, saveUserMessage, execute } = makeCommandHandler({ listChannelSessions });
+    await handler.onMessage(context({ text: '/tasks', maoUserId: 9 }));
+    expect(listChannelSessions).toHaveBeenCalledWith(9, 5);
+    expect(saveUserMessage).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    const text = replyTexts(onReply).join('\n');
+    expect(text).toContain('1. 查天气（进行中）');
+    expect(text).toContain('回复 /tasks <序号> 切换，如 /tasks 2');
+  });
+
+  it('p2p /tasks 2：归属拒绝（switch 返回 null）回退列表且不收尾旧会话；成功切换按 abandon 序列收尾旧会话', async () => {
+    const briefs = [
+      { id: 31, title: '甲', phase: null, updatedAt: null },
+      { id: 32, title: '乙', phase: null, updatedAt: null },
+    ];
+    const switchSession = vi.fn(async () => null);
+    const onReply = vi.fn(async () => undefined);
+    const settleCancel = vi.fn(async () => undefined);
+    const rejected = makeCommandHandler({
+      control: { findActiveSession: vi.fn(async () => ({ id: 31 })), switchSession },
+      listChannelSessions: vi.fn(async () => briefs),
+      settleCancel,
+    });
+    await rejected.handler.onMessage(context({ text: '/tasks 2' }));
+    expect(switchSession).toHaveBeenCalledWith('3', expect.anything(), 32);
+    expect(replyTexts(rejected.onReply).some((t) => t.includes('乙'))).toBe(true);
+    // 归属拒绝：旧会话保持原状，不收尾。
+    expect(settleCancel).not.toHaveBeenCalled();
+
+    const switchOk = vi.fn(async () => ({ id: 32 }));
+    const settleOk = vi.fn(async () => undefined);
+    const queue = { claimNext: vi.fn(async () => null), complete: vi.fn(async () => undefined) };
+    const accepted = makeCommandHandler({
+      control: { findActiveSession: vi.fn(async () => ({ id: 31 })), switchSession: switchOk },
+      listChannelSessions: vi.fn(async () => briefs),
+      settleCancel: settleOk,
+      queueService: queue,
+    });
+    await accepted.handler.onMessage(context({ text: '/tasks 2' }));
+    // D5/R3：切换成功后按 `---` 既有 abandon 序列收尾旧会话（取消→补写终态→清队列）。
+    expect(settleOk).toHaveBeenCalledWith(31);
+    expect(queue.claimNext).toHaveBeenCalledWith(31);
+    expect(replyTexts(accepted.onReply)).toContain('已切换到「乙」，后续消息将以该会话上下文为准。');
+  });
+
+  it('p2p /tasks 2 目标即当前：回复已在当前会话，不切换', async () => {
+    const switchSession = vi.fn(async () => ({ id: 32 }));
+    const { handler, onReply } = makeCommandHandler({
+      control: { findActiveSession: vi.fn(async () => ({ id: 32 })), switchSession },
+      listChannelSessions: vi.fn(async () => [
+        { id: 31, title: '甲', phase: null, updatedAt: null },
+        { id: 32, title: '乙', phase: null, updatedAt: null },
+      ]),
+    });
+    await handler.onMessage(context({ text: '/tasks 2' }));
+    expect(switchSession).not.toHaveBeenCalled();
+    expect(replyTexts(onReply)).toContain('已在当前会话。');
+  });
+
+  it('p2p /help：命令一览；/stop /tasks 带其他文字不命中走原链路', async () => {
+    const { handler, onReply, saveUserMessage, execute } = makeCommandHandler({});
+    await handler.onMessage(context({ text: '/help' }));
+    expect(replyTexts(onReply).some((t) => t.includes('/tasks <序号> 切换到对应任务'))).toBe(true);
+
+    const normal = makeCommandHandler({});
+    await normal.handler.onMessage(context({ text: '/tasks 帮我查天气' }));
+    expect(normal.saveUserMessage).toHaveBeenCalledTimes(1);
+    expect(normal.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('群 /stop：有群会话行 → 停止并回复；无行 → 本群还没有会话', async () => {
+    const stopRunning = vi.fn(async () => true);
+    const groupStop = makeCommandHandler({
+      control: { findActiveSession: vi.fn(async () => ({ id: 45 })) },
+      stopRunning,
+    });
+    await groupStop.handler.onMessage(context({ chatType: 'group', text: '/stop' }));
+    expect(stopRunning).toHaveBeenCalledWith(45);
+    expect(replyTexts(groupStop.onReply)).toContain('已停止当前任务。');
+
+    const emptyStop = makeCommandHandler({
+      control: { findActiveSession: vi.fn(async () => null) },
+      stopRunning,
+    });
+    await emptyStop.handler.onMessage(context({ chatType: 'group', text: '/stop' }));
+    expect(replyTexts(emptyStop.onReply)).toContain('本群还没有会话。');
+  });
+
+  it('群 /help：群命令一览（不含 /new /tasks）；群命令埠缺失回暂不支持', async () => {
+    const groupHelp = makeCommandHandler({});
+    await groupHelp.handler.onMessage(context({ chatType: 'group', text: '/help' }));
+    const texts = replyTexts(groupHelp.onReply);
+    expect(texts.some((t) => t.includes('群内任意成员可停止群任务'))).toBe(true);
+    expect(texts.some((t) => t.includes('/tasks'))).toBe(false);
+
+    const portless = makeCommandHandler({});
+    await portless.handler.onMessage(context({ chatType: 'group', text: '/stop' }));
+    expect(replyTexts(portless.onReply)).toContain('此命令暂不支持。');
+  });
+});

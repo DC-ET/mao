@@ -6,6 +6,8 @@ import { userMessagePayloadOf } from '../session/ws/streaming-ws-handler.js';
 import { wsEvent } from '../session/ws/ws-event.js';
 import type { StreamingWsRegistry } from '../session/ws/streaming-ws-registry.js';
 import { isInboundFileMessage, isNewSessionCommand } from './event-normalizer.js';
+import { parseChannelCommand, renderChannelSessionList, type ChannelCommand } from '../common/channel-command.js';
+import type { ChannelSessionBrief } from '../session/session.repository.js';
 import { toWorkspaceRelative } from '../common/workspace-path.js';
 import { mapWithConcurrency } from '../common/concurrency.js';
 import { isActivePhase } from '../session/util/session-group-key.js';
@@ -44,12 +46,40 @@ export interface DingtalkMediaDownload {
 export interface DingtalkP2pSessionControl {
   findActiveSession(accountId: string, context: DingtalkInboundContext): Promise<{ id: number } | null>;
   createSession(accountId: string, context: DingtalkInboundContext): Promise<{ id: number }>;
+  /**
+   * `/tasks <n>` 切换私聊指针：归属校验（目标会话存在且属于触发者）+ 指针 upsert。
+   * null=指针行不存在 / 目标即当前 / 归属拒绝（调用方回退列表）。
+   */
+  switchSession?(accountId: string, context: DingtalkInboundContext, targetSessionId: number): Promise<{ id: number } | null>;
   finalizeNewSessionTitle?(sessionId: number, title: string): Promise<boolean>;
 }
 
 const NEW_SESSION_CONFIRM_TEXT = '已开启新会话，后续消息将在新的上下文中处理。';
 const NEW_SESSION_FAILED_TEXT = '开启新会话失败，请稍后再试。';
 const NEW_SESSION_TITLE_MAX_CHARS = 20;
+
+// 渠道控制命令文案（技术方案 2026-11-22 §4.6 文案表；中英混合禁用、emoji 禁用）。
+const CHANNEL_COMMAND_FAILED_TEXT = '命令处理失败，请稍后再试。';
+const CHANNEL_COMMAND_UNSUPPORTED_TEXT = '此命令暂不支持。';
+const STOP_CONFIRM_TEXT = '已停止当前任务。';
+const STOP_IDLE_TEXT = '当前没有进行中的任务。';
+const GROUP_NO_SESSION_TEXT = '本群还没有会话。';
+const TASKS_EMPTY_TEXT = '该渠道还没有任务记录。';
+const SWITCH_TASKS_CONFIRM_TEXT = '已切换到「{标题}」，后续消息将以该会话上下文为准。';
+const ALREADY_CURRENT_TEXT = '已在当前会话。';
+const CHANNEL_HELP_TEXT = [
+  '可用命令：',
+  '/new 开启新会话',
+  '/stop 停止当前任务',
+  '/tasks 查看最近任务',
+  '/tasks <序号> 切换到对应任务，如 /tasks 2',
+  '/help 显示本帮助',
+].join('\n');
+const GROUP_HELP_TEXT = [
+  '可用命令：',
+  '/stop 停止当前任务（群内任意成员可停止群任务）',
+  '/help 显示本帮助',
+].join('\n');
 const NOOP_CANCEL_FLAG: CancelFlag = { get: () => false, set: () => undefined };
 
 type ContentPart = { type: 'text'; text: string } | { type: 'image_url'; imageUrl: { url: string } };
@@ -106,6 +136,13 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
     onQueuesDrained?: (sessionId: number) => void;
     createQueueCard?: (context: DingtalkInboundContext, queueId: number, sessionId: number, rankNo?: number) => Promise<string | null>;
     resolveBotId?: (accountId: string) => number;
+    /**
+     * 渠道控制命令 `/stop`：终止指定会话的进行中执行（与互动卡「取消」同一服务闭包，装配层同喂两处）。
+     * 返回 true=已置取消（含崩溃恢复补写终态），false=空闲。未配置时命令回「暂不支持」。
+     */
+    stopRunning?: (sessionId: number) => Promise<boolean>;
+    /** 渠道控制命令 `/tasks`：该用户本渠道最近会话简报（群聊绑定会话已由装配层排除）。 */
+    listChannelSessions?: (userId: number, limit: number) => Promise<ChannelSessionBrief[]>;
     p2pSessionControl?: DingtalkP2pSessionControl;
     onReply?: (context: DingtalkInboundContext, text: string, sessionId?: number) => Promise<void>;
     noteReplyFailure?: (sessionId: number, reason: string) => Promise<void>;
@@ -190,13 +227,29 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
 
   async onMessage(context: DingtalkInboundContext): Promise<DingtalkReply | null> {
     if (context.chatType === 'p2p' && this.options.p2pSessionControl != null) return this.onP2pMessage(context);
+    // 群聊渠道控制命令（/stop /help，技术方案 2026-11-22）：text 已由 cleanText 剥 @，全等命中即拦截。
+    // 只认 STOP / HELP——群 /new、/tasks 不做（§2.2）。未 @ 的群消息在 processor 处已被丢弃，不会到这里。
+    if (context.chatType !== 'p2p') {
+      const groupCommand = parseChannelCommand(context.text);
+      if (groupCommand.kind === 'STOP') return this.handleGroupStopCommand(context);
+      if (groupCommand.kind === 'HELP') {
+        await this.options.onReply?.(context, GROUP_HELP_TEXT);
+        return null;
+      }
+    }
     const session = await this.options.sessionService.getOrCreateSession(context.accountId, context);
     return this.executeWithSession(session, context);
   }
 
   private async onP2pMessage(context: DingtalkInboundContext): Promise<DingtalkReply | null> {
     const outcome = await this.withP2pChatLock(context, async (): Promise<P2pOutcome> => {
-      if (isNewSessionCommand(context.text)) return this.openNewSession(context);
+      const command = parseChannelCommand(context.text);
+      // `/new` 与 `---` 同走新建分支（完整 abandon 语义）。
+      if (command.kind === 'NEW' || isNewSessionCommand(context.text)) return this.openNewSession(context);
+      // 渠道控制命令（/stop /tasks /tasks <n> /help）：命中即拦截，不进会话消息流、不触发 Agent。
+      if (command.kind === 'STOP' || command.kind === 'TASKS' || command.kind === 'TASKS_SELECT' || command.kind === 'HELP') {
+        return this.handleP2pCommand(context, command);
+      }
       const session = await this.options.sessionService.getOrCreateSession(context.accountId, context);
       await this.renameIfNeeded(session.id, context);
       if (isInboundFileMessage(context)) {
@@ -210,14 +263,86 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
     return this.executeWithSession(outcome.session, context);
   }
 
+  /**
+   * 私聊渠道控制命令（技术方案 2026-11-22 §4.4）：结构与飞书私聊同构。
+   * 命令埠未配置（测试直调 / 旧装配）时回「暂不支持」，不让命令文本落进 Agent。
+   */
+  private async handleP2pCommand(context: DingtalkInboundContext, command: ChannelCommand): Promise<P2pOutcome> {
+    const control = this.options.p2pSessionControl!;
+    try {
+      if (command.kind === 'STOP') {
+        const stopRunning = this.options.stopRunning;
+        if (stopRunning == null) return { intercepted: true, confirm: CHANNEL_COMMAND_UNSUPPORTED_TEXT };
+        const active = await control.findActiveSession(context.accountId, context);
+        if (active == null) return { intercepted: true, confirm: STOP_IDLE_TEXT };
+        const ok = await stopRunning(active.id);
+        return { intercepted: true, confirm: ok ? STOP_CONFIRM_TEXT : STOP_IDLE_TEXT };
+      }
+      if (command.kind === 'TASKS' || command.kind === 'TASKS_SELECT') {
+        const listChannelSessions = this.options.listChannelSessions;
+        if (listChannelSessions == null) return { intercepted: true, confirm: CHANNEL_COMMAND_UNSUPPORTED_TEXT };
+        const briefs = await listChannelSessions(context.maoUserId ?? 0, 5);
+        const listText = (): string => (briefs.length === 0 ? TASKS_EMPTY_TEXT : renderChannelSessionList(briefs, isActivePhase));
+        if (command.kind === 'TASKS' || command.index > briefs.length) {
+          // 裸 /tasks、空列表、越界序号：一律回列表（越界回退是 D8 定案）。
+          return { intercepted: true, confirm: listText() };
+        }
+        const target = briefs[command.index - 1]!;
+        const active = await control.findActiveSession(context.accountId, context);
+        if (active != null && active.id === target.id) {
+          return { intercepted: true, confirm: ALREADY_CURRENT_TEXT };
+        }
+        const switched = await control.switchSession?.(context.accountId, context, target.id);
+        if (switched == null) {
+          // 指针行不存在 / 目标即当前前置已挡 / 归属拒绝（列表过期间隙）：回退列表。不动旧会话。
+          return { intercepted: true, confirm: listText() };
+        }
+        // D5：切换成功后按 `---` 既有 abandon 序列收尾旧会话（取消执行、补写终态、放弃排队消息）；
+        // 归属拒绝/指针缺失时不收尾——旧任务保持原状。
+        if (active != null && active.id !== switched.id) {
+          await this.abandonSession(active.id);
+        }
+        const title = (target.title ?? '').trim() === '' ? '未命名会话' : target.title!;
+        return { intercepted: true, confirm: SWITCH_TASKS_CONFIRM_TEXT.replace('{标题}', title), sessionId: switched.id };
+      }
+      return { intercepted: true, confirm: CHANNEL_HELP_TEXT };
+    } catch (error) {
+      console.error(`钉钉私聊渠道命令处理失败, accountId=${context.accountId}, messageId=${context.messageId}`, error);
+      return { intercepted: true, confirm: CHANNEL_COMMAND_FAILED_TEXT };
+    }
+  }
+
+  /**
+   * 群命令 `/stop`（技术方案 2026-11-22 D7）：群会话是共享决策面，不校验触发成员。
+   * 目标为群级会话行（conversation 表 group 行与 p2p 行同构，findActive 不区分 chatType，只读）。
+   */
+  private async handleGroupStopCommand(context: DingtalkInboundContext): Promise<DingtalkReply | null> {
+    const stopRunning = this.options.stopRunning;
+    const findActiveSession = this.options.p2pSessionControl?.findActiveSession;
+    if (stopRunning == null || findActiveSession == null) {
+      await this.options.onReply?.(context, CHANNEL_COMMAND_UNSUPPORTED_TEXT);
+      return null;
+    }
+    try {
+      const active = await findActiveSession(context.accountId, context);
+      if (active == null) {
+        await this.options.onReply?.(context, GROUP_NO_SESSION_TEXT);
+        return null;
+      }
+      const ok = await stopRunning(active.id);
+      await this.options.onReply?.(context, ok ? STOP_CONFIRM_TEXT : STOP_IDLE_TEXT);
+    } catch (error) {
+      console.error(`钉钉群 /stop 处理失败, accountId=${context.accountId}, conversationId=${context.conversationId}`, error);
+      await this.options.onReply?.(context, CHANNEL_COMMAND_FAILED_TEXT);
+    }
+    return null;
+  }
+
   private async openNewSession(context: DingtalkInboundContext): Promise<P2pOutcome> {
     const control = this.options.p2pSessionControl!;
     const active = await control.findActiveSession(context.accountId, context);
     if (active != null) {
-      this.abandoned.add(active.id);
-      this.cancel(active.id);
-      await this.options.settleCancel?.(active.id);
-      await this.dropQueued(active.id);
+      await this.abandonSession(active.id);
     }
     try {
       const created = await control.createSession(context.accountId, context);
@@ -226,6 +351,17 @@ export class AgentDingtalkInboundHandler implements DingtalkInboundHandler {
       console.error(`钉钉私聊新建会话失败, accountId=${context.accountId}, messageId=${context.messageId}`, error);
       return { intercepted: true, confirm: NEW_SESSION_FAILED_TEXT };
     }
+  }
+
+  /**
+   * `---` 与 `/tasks <n>` 切换共用的旧会话收尾序列（技术方案 2026-11-22 R3，逐字复用 `---` 既有语义）：
+   * 标记放弃（旧会话队列不再执行）→ 置取消 → 补写 CANCELLED → 丢弃排队消息。
+   */
+  private async abandonSession(sessionId: number): Promise<void> {
+    this.abandoned.add(sessionId);
+    this.cancel(sessionId);
+    await this.options.settleCancel?.(sessionId);
+    await this.dropQueued(sessionId);
   }
 
   private async renameIfNeeded(sessionId: number, context: DingtalkInboundContext): Promise<void> {
