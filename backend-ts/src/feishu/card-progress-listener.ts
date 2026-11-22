@@ -2,6 +2,7 @@ import type { AgentEventListener } from '../harness/core/agent-event-listener.js
 import type { ChatUsage, ToolCall } from '../harness/llm/chat-request.js';
 import { ToolResultSummarizer } from '../session/util/tool-result-summarizer.js';
 import { stripCitationMarkers } from '../session/util/citation-markers.js';
+import { clipByCodePoints } from '../common/utf8.js';
 import { formatFeishuDuration } from './progress-card.js';
 
 export interface FeishuCardProgress {
@@ -90,7 +91,8 @@ export class FeishuCardProgressListener implements AgentEventListener {
       if (!this.hasRunningTool()) this.stopTicker();
     }
     const next = this.content + delta;
-    this.content = next.length <= CARD_TEXT_MAX ? next : next.slice(0, CARD_TEXT_MAX);
+    // 按码点截断：码元硬切会把代理对（emoji）从中间切断，产出孤立代理进入卡片 JSON
+    this.content = clipByCodePoints(next, CARD_TEXT_MAX);
   }
 
   onToolCallStart(toolCall: ToolCall): void {
@@ -127,11 +129,11 @@ export class FeishuCardProgressListener implements AgentEventListener {
     const tool = this.tools.get(toolCallId);
     if (tool == null) {
       // 乱序兜底：结果先于 start 到达的 entry 没有起表时刻，不参与计时。
-      this.tools.set(toolCallId, { name: `工具 ${toolCallId}`, argumentsJson: null, summary: trimCardText(result.replace(/\s+/g, ' ')).slice(0, 240), startedAtMs: null });
+      this.tools.set(toolCallId, { name: `工具 ${toolCallId}`, argumentsJson: null, summary: clipByCodePoints(result.replace(/\s+/g, ' ').trim(), 240), startedAtMs: null });
       return;
     }
     tool.summary = ToolResultSummarizer.summarize(tool.name, tool.argumentsJson, result)
-      ?? trimCardText(result.replace(/\s+/g, ' ')).slice(0, 240);
+      ?? clipByCodePoints(result.replace(/\s+/g, ' ').trim(), 240);
     // 最后一个在途工具结束即停刷新；模型思考阶段卡片静止是既有行为。
     if (!this.hasRunningTool()) this.stopTicker();
   }
@@ -277,7 +279,7 @@ const THINKING_TEXT = '正在思考…';
 
 /** 只去掉整段首尾空白。内部换行必须保留，发出卡片时再调用。 */
 function trimCardText(value: string): string {
-  return value.trim().slice(0, CARD_TEXT_MAX);
+  return clipByCodePoints(value.trim(), CARD_TEXT_MAX);
 }
 
 function normalizeRoundOffset(value: number): number {

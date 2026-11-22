@@ -4,6 +4,7 @@ import type * as Lark from '@larksuiteoapi/node-sdk';
 import { replaceMentionKeys } from './event-normalizer.js';
 import { collectPostImageKeys, describeMessageText } from './message-detail.js';
 import { botSenderLabel } from './message.service.js';
+import { clipByCodePoints } from '../common/utf8.js';
 
 /** 飞书合并转发外壳的固定英文。只用于识别「日志里还没展开」，不拿它做入站分支。 */
 export const FEISHU_MERGE_FORWARD_TEXT = 'Merged and Forwarded Message';
@@ -353,8 +354,9 @@ function collectUserIds(nodes: ForwardNode[], ids: Set<string>): void {
 async function spill(messageId: string, workspace: string | null, full: string): Promise<string> {
   if (full.length <= INLINE_LIMIT) return full;
   const path = workspace != null && workspace !== '' ? await writeMergeForwardFile(workspace, messageId, full) : null;
-  if (path != null) return `${full.slice(0, INLINE_LIMIT)}\n全文见 @{${path}}@`;
-  return `${full.slice(0, INLINE_LIMIT)}（其余已截断）`;
+  const inline = clipByCodePoints(full, INLINE_LIMIT);
+  if (path != null) return `${inline}\n全文见 @{${path}}@`;
+  return `${inline}（其余已截断）`;
 }
 
 async function writeMergeForwardFile(workspace: string, messageId: string, content: string): Promise<string | null> {

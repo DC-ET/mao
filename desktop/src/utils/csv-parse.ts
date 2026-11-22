@@ -98,7 +98,11 @@ export function parseCsv(content: string): CsvParseResult {
 
   while (i < text.length) {
     if (rows.length >= CSV_MAX_ROWS) {
-      truncated = true
+      // 已满额：只有剩余内容还含真实数据行时才标记截断——拖尾空行会被 endRow 跳过，
+      // 零丢失不应误报（2026-11-22 逻辑 BUG 审查 BUG-5）。轻量扫描代替全量解析：
+      // 剥掉引号与空白后仍有字符即视为还有数据行（跨行引号字段的内文必含非引号字符；
+      // 纯 `""` 空引号行与空行同被 endRow 跳过，不误报）。
+      truncated = text.slice(i).replace(/[\s"]/g, '').length > 0
       break
     }
     const ch = text[i]

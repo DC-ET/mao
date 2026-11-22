@@ -233,11 +233,10 @@ export class TerminalHostHandler {
       this.establishActive(conn);
       return;
     }
-    // 被替换的活跃主机是另一个进程（同一进程不会开第二条主机连接）：
-    // 它的在途 open 不会再应答，立即失败，不等 10 秒超时
-    this.deps.relay.failPendingForDevice(userId, deviceId);
     if (current.client === 'electron' && client === 'cli') {
-      // D12：Electron 活跃时 CLI 只能待命，不替换（PTY 不能迁进程）
+      // D12：Electron 活跃时 CLI 只能待命，不替换（PTY 不能迁进程）。
+      // 此处不能 failPending：Electron 仍是活跃主机，其未应答的在途 open 会正常回应，
+      // 强制失败会误报「设备离线」或留下无登记孤儿 PTY（2026-11-22 审查 BUG-2）。
       conn.active = false;
       const list = this.standbyHosts.get(key) ?? [];
       list.push(conn);
@@ -245,6 +244,9 @@ export class TerminalHostHandler {
       this.send(socket, { type: 'connected', userId, role: 'standby' });
       return;
     }
+    // 被替换的活跃主机是另一个进程（同一进程不会开第二条主机连接）：
+    // 它的在途 open 不会再应答，立即失败，不等 10 秒超时
+    this.deps.relay.failPendingForDevice(userId, deviceId);
     // 同级替换，或 CLI 活跃时 Electron 到场顶替：旧连接 4000，新连接对账后上位
     this.activeHosts.delete(key);
     this.connections.delete(current.socket.id);

@@ -24,8 +24,9 @@ export function diffEditorLayoutOptions(inline: boolean): {
   }
 }
 
-/** 变更跳转游标：循环步进（Δ=±1），总数为 0 时原样返回 -1。 */
+/** 变更跳转游标：循环步进（Δ=±1），未选中初值（-1）正向跳首处、反向跳末处，总数为 0 时原样返回 -1。 */
 export function nextHunkIndex(current: number, total: number, delta: 1 | -1): number {
   if (total <= 0) return -1
+  if (current < 0) return delta === 1 ? 0 : total - 1
   return (current + delta + total) % total
 }

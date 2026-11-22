@@ -72,7 +72,6 @@ async function connect(handler: TerminalHostHandler, id: string, frame: Record<s
 
 const HOST_LOST_CALLS = (relay: { calls: Array<{ op: string; args: unknown[] }> }) =>
   relay.calls.filter((c) => c.op === 'hostLost');
-
 describe('TerminalHostHandler', () => {
   it('auth：token / deviceId / client 校验，通过后回 connected role=active 并对账', async () => {
     const { handler, relay } = makeHandler();
@@ -113,6 +112,27 @@ describe('TerminalHostHandler', () => {
     expect(handler.getStatus(7, 'dev-1')).toBe('enabled');
     // 状态值（enabled）全程未变：只有 Electron 首连广播一次，升位不重复广播
     expect(statusChanges.length).toBe(1);
+  });
+
+  it('CLI 到场待命（standby）不得 failPending——活跃 Electron 的在途 open 仍会被正常应答（2026-11-22 审查 BUG-2，已修复转正）', async () => {
+    // Electron 是活跃主机、某 open 在途（10s 窗口）时，设备上的 mao-agent CLI 重连 auth
+    // 走 standby 分支（不替换主机）；此刻发往活跃 Electron 的在途 open 本会得到 opened 应答，
+    // 却被无条件的 failPendingForDevice 强制 reject →「执行端设备离线」，或孤儿 PTY。
+    // failPending 只应发生在「替换」与 demoteDeadActive（旧主机已半死）两条路径上。
+    const { handler, relay } = makeHandler();
+    await connect(handler, 'e1', { deviceId: 'dev-1', client: 'electron', terminals: [] });
+    relay.calls.length = 0;
+    const cli = await connect(handler, 'c1', { deviceId: 'dev-1', client: 'cli', terminals: [] });
+    expect(cli.last()).toMatchObject({ type: 'connected', role: 'standby' });
+    expect(relay.calls.filter((c) => c.op === 'failPending')).toHaveLength(0);
+  });
+
+  it('对照（替换路径）：CLI 活跃时 Electron 到场顶替，旧主机在途 open 必须 failPending', async () => {
+    const { handler, relay } = makeHandler();
+    await connect(handler, 'c1', { deviceId: 'dev-1', client: 'cli', terminals: [] });
+    relay.calls.length = 0;
+    await connect(handler, 'e1', { deviceId: 'dev-1', client: 'electron', terminals: [] });
+    expect(relay.calls.filter((c) => c.op === 'failPending')).toHaveLength(1);
   });
 
   it('CLI 活跃时 Electron 到场：CLI 被 4000 replaced，Electron 对账关闭 CLI 时代的登记', async () => {

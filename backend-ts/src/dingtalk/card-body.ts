@@ -1,3 +1,5 @@
+import { clipByCodePoints } from '../common/utf8.js';
+
 const TITLES = {
   running: '正在处理',
   completed: '处理完成',
@@ -54,7 +56,8 @@ export function progressCardParams(input: {
   if (tools.length > 0) sections.push(`**本轮工具**\n${tools.map((tool) => `- ${tool}`).join('\n')}`);
   return {
     title: TITLES[input.status],
-    body: sections.join('\n\n').slice(0, BODY_MAX),
+    // 按码点截断，防代理对被切出孤立代理（同 feishu 侧口径）
+    body: clipByCodePoints(sections.join('\n\n'), BODY_MAX),
     status: input.status,
     // 按钮可见性用 boolean 变量：钉钉卡片平台只把「boolean 变量 + isTrue/isFalse」
     // 渲染成可用的 @data{...} 条件，字符串 isEqual 比较导入后会被抹成空条件

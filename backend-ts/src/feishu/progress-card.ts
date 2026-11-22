@@ -1,5 +1,6 @@
 import { feishuAskCustomName, feishuAskSelectName, feishuAskSubmitName } from './ask-answers.js';
 import type { FeishuPendingAsk } from './ask-form-store.js';
+import { clipByCodePoints } from '../common/utf8.js';
 
 /** 飞书进度卡片状态：RUNNING 为执行中，其余为终态。 */
 export type FeishuCardStatus = 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
@@ -186,7 +187,7 @@ export function buildFeishuProgressCard(
   if (waiting) {
     sections.push({ tag: 'markdown', content: waitingHint(pendingAsks.length), text_align: 'left', text_size: 'normal_v2' });
   }
-  if (content.trim() !== '') sections.push({ tag: 'markdown', content: limitMarkdownTables(content.slice(0, 6000)), text_align: 'left', text_size: 'normal_v2' });
+  if (content.trim() !== '') sections.push({ tag: 'markdown', content: limitMarkdownTables(clipByCodePoints(content, 6000)), text_align: 'left', text_size: 'normal_v2' });
   if (status === 'RUNNING') {
     const subagentText = subagentSection(subagents);
     if (subagentText != null) {

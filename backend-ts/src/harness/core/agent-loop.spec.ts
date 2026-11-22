@@ -13,6 +13,7 @@ import type { ActiveContextCalculator } from './active-context-calculator.js';
 import type { ToolDispatcher } from '../tool/tool-dispatcher.js';
 import type { LlmAdapter, StreamCallback, StreamChunk, ToolCall } from '../llm/chat-request.js';
 import type { ShellSessionManager } from '../shell/shell-session-manager.js';
+
 import type { SessionService } from '../deps.js';
 import type { McpClientManager } from '../mcp/mcp-client-manager.js';
 import type { Tool } from '../tool/tool.js';
@@ -716,6 +717,45 @@ describe('AgentLoop', () => {
     const assistant = ctx.messages.find((m) => m.role === 'assistant' && m.toolCalls?.length);
     expect(assistant!.toolCalls).toHaveLength(1);
     expect(assistant!.toolCalls![0].id).toBe('call-real');
+  });
+
+  it('findMergeTarget 兜底：带 index 且 byIndex 落空的 id 首片必须追加为新调用，不得并入占位调用（2026-11-22 审查 BUG-1，已修复转正）', async () => {
+    // 缺陷史：兜底曾缺 index 前置条件，带 index 且 byIndex 落空的 id 首片被并进占位调用——
+    // read_file 的 name 被丢弃、arguments 拼成非法 JSON、第二条调用整条丢失。
+
+    // 首片无 id 的调用被合成占位后，同一轮流里另一条「带真实 id 且 index 不匹配任何现有调用」
+    // 的 tool call 是新调用——按流式协议必然如此；当前实现却把它并进唯一占位（index 0），
+    // read_file 的 name 被丢弃、arguments 拼成非法 JSON，第二条调用整条丢失。
+    const ctx = context();
+    ctx.tools = [namedTool('shell'), namedTool('read_file')];
+    const l = listener();
+    const p = persistence();
+    promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+    backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+    stubActiveContext(5);
+    toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
+    let call = 0;
+    llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, callback: StreamCallback) => {
+      if (call++ === 0) {
+        callback.onChunk(toolChunk({ index: 0, function: { name: 'shell', arguments: '{"command":' } }));
+        // index=1 不匹配任何现有调用：新 tool call（带真实 id），必须 push
+        callback.onChunk(toolChunk({ index: 1, id: 'call-read', function: { name: 'read_file', arguments: '{"path":"a.ts"}' } }));
+        callback.onChunk(toolChunk({ index: 0, function: { arguments: '"pwd"}' } }));
+        callback.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+      } else {
+        callback.onChunk(contentChunk(null, 'done'));
+        callback.onComplete({ promptTokens: 4, completionTokens: 1, totalTokens: 5 });
+      }
+    });
+
+    await agentLoop.execute(ctx, l, p);
+
+    expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledTimes(2);
+    const dispatches = vi.mocked(toolDispatcher.dispatchInvocation).mock.calls.map((c) => c[0]);
+    expect(dispatches).toEqual(expect.arrayContaining([
+      expect.objectContaining({ toolName: 'shell', argumentsJson: '{"command":"pwd"}' }),
+      expect.objectContaining({ toolName: 'read_file', argumentsJson: '{"path":"a.ts"}' }),
+    ]));
   });
 
   it('appends a later id-only arguments chunk onto the same tool call', async () => {

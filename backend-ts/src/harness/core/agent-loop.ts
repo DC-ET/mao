@@ -898,8 +898,13 @@ export class AgentLoop {
       // 恰有一条未写回真实 id 的占位调用，它就是归并目标——否则同一调用会被拆成两条
       // 重复派发（占位参数截断 + 无名尾巴），用户命令实际未被完整执行。
       // 多条占位时无法判定归属，保持旧行为。
-      const provisional = existing.filter((tc) => tc.id != null && provisionalIds.has(tc.id));
-      if (provisional.length === 1) return provisional[0];
+      // 兜底仅限「不带 index」的分片：带 index 且 byIndex 落空 = 流式协议上的新调用，
+      // 必须走 push 分支——并入占位会吞掉第二条调用并把第一条参数拼坏
+      // （2026-11-22 逻辑 BUG 审查 BUG-1，docs/code-review/2026-11/2026-11-22-logic-bug-review-01.md）。
+      if (delta.index == null) {
+        const provisional = existing.filter((tc) => tc.id != null && provisionalIds.has(tc.id));
+        if (provisional.length === 1) return provisional[0];
+      }
       return undefined;
     }
     if (delta.index != null) {
