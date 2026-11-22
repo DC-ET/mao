@@ -176,6 +176,16 @@
       />
 
       <div v-if="sessionId && !isNewTaskMode" class="side-task-entry">
+        <!-- 浏览器直播状态条（原顶栏图标迁此）：任一会话直播中即显示，点击打开直播视图。 -->
+        <button
+          v-if="browserLiveStore.hasAnyLive"
+          type="button"
+          class="browser-live-chip"
+          title="点击查看浏览器直播"
+          @click="openBrowserLive"
+        >
+          <span class="live-dot" aria-hidden="true"></span>浏览器
+        </button>
         <button type="button" class="side-task-btn" @click="openSideTask?.()">
           + 边路任务
         </button>
@@ -253,6 +263,8 @@ import { useCurrentDevice } from '../../composables/useCurrentDevice'
 import { LOCATE_FLASH_KEY, useMessageLocate } from '../../composables/useMessageLocate'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type LocalWorkspaceSummary, type TaskPhase } from '../../stores/session'
+import { useBrowserLiveStore } from '../../stores/browserLive'
+import { isElectronClient } from '../../utils/platform'
 import { useDraftStore } from '../../stores/draft'
 import { api } from '../../api'
 import { ElMessage } from 'element-plus'
@@ -308,6 +320,15 @@ const openSideTask = inject<
 
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
+const browserLiveStore = useBrowserLiveStore()
+/** 打开浏览器直播视图：Electron 收起画中画开 Tab（复用放大链路）；Web 派发事件由 TaskView 开 Tab。 */
+function openBrowserLive() {
+  if (isElectronClient()) {
+    ;(window as any).electronAPI?.browserLive?.expand()
+  } else {
+    window.dispatchEvent(new CustomEvent('browser-live-expand'))
+  }
+}
 const draftStore = useDraftStore()
 const router = useRouter()
 const commandEditDialogRef = ref<InstanceType<typeof CommandEditDialog>>()
@@ -1262,6 +1283,42 @@ function handleNewTaskAgentChange(id: string | null) {
   background: var(--aw-divider-soft);
   color: var(--aw-ink);
   border-color: var(--aw-hairline);
+}
+
+/* 浏览器直播状态条：复用 side-task-btn 的外观变量，margin-right:auto 把自己推到行左端 */
+.browser-live-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  height: var(--aw-btn-height);
+  border: 1px solid var(--aw-divider-soft);
+  background: var(--aw-canvas-parchment);
+  color: var(--aw-ink-muted-48);
+  font-size: var(--aw-text-fine);
+  padding: var(--aw-btn-padding);
+  border-radius: var(--aw-radius-xs);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.browser-live-chip:hover {
+  background: var(--aw-divider-soft);
+  color: var(--aw-ink);
+  border-color: var(--aw-hairline);
+}
+
+.browser-live-chip .live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--el-color-success, #67c23a);
+  animation: browser-live-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes browser-live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 
 .messages {
