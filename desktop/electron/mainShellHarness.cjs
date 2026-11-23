@@ -176,6 +176,7 @@ async function loadMain(options = {}) {
       quit: () => {
         state.quitCalls++
         for (const cb of (state.appHandlers['before-quit'] || []).slice()) cb()
+        if (options.quitAborts) return
         // 真实 Electron：before-quit 后窗口开始关闭
         for (const w of state.windows.filter((x) => !x.destroyed)) w.close()
       },

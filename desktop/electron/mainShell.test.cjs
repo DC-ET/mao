@@ -195,32 +195,88 @@ test('基线：托盘提示只发一次（二次关窗不再提示）', async ()
   assert.equal(h.state.sent.filter((s) => s.channel === 'tray-first-close-hint').length, 1)
 })
 
-test('回归：托盘模式下重启安装先放行关窗，窗口被销毁而不是藏起来', async () => {
-  const h = await loadMain({ prefs: { closeToTray: 'tray' }, platform: 'darwin' })
-  // 不在启动时置 packaged，避免 whenReady 里 3 秒后的自动检查拖住事件循环
-  h.state.packaged = true
-  await h.invoke('check-for-update')
-  h.emitUpdater('update-downloaded', { version: '9.9.9' })
-  const result = await h.invoke('install-update')
-  assert.equal(result.success, true)
-  assert.equal(h.state.quitAndInstallCalls, 1)
-  assert.equal(h.win().isDestroyed(), true, 'quitAndInstall 先关窗时不得被收成托盘隐藏')
-  assert.equal(h.state.sent.filter((s) => s.channel === 'tray-first-close-hint').length, 0)
+function prepareReplaceableApp() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-install-app-'))
+  const exe = path.join(root, 'Mao.app', 'Contents', 'MacOS', 'Mao')
+  fs.mkdirSync(path.dirname(exe), { recursive: true })
+  fs.writeFileSync(exe, '')
+  const zip = path.join(root, 'update.zip')
+  fs.writeFileSync(zip, 'zip')
+  return { exe, zip }
+}
+
+test('回归：托盘模式下 macOS 重启安装自己替换应用，不走 Squirrel', async () => {
+  const appDir = prepareReplaceableApp()
+  const previousStall = process.env.MAO_UPDATE_INSTALL_STALL_MS
+  process.env.MAO_UPDATE_INSTALL_STALL_MS = '600000'
+  process.env.MAO_UPDATE_INSTALL_DRY_RUN = '1'
+  process.env.MAO_UPDATE_EXEC_PATH = appDir.exe
+  try {
+    const h = await loadMain({ prefs: { closeToTray: 'tray' }, platform: 'darwin' })
+    // 不在启动时置 packaged，避免 whenReady 里 3 秒后的自动检查拖住事件循环
+    h.state.packaged = true
+    await h.invoke('check-for-update')
+    h.emitUpdater('update-downloaded', { version: '9.9.9', downloadedFile: appDir.zip })
+    const result = await h.invoke('install-update')
+    assert.equal(result.success, true)
+    assert.equal(h.state.quitAndInstallCalls, 0)
+    assert.equal(h.state.quitCalls, 1)
+    assert.equal(h.win().isDestroyed(), true, '替换安装退出时不得把关窗收成托盘隐藏')
+    assert.equal(h.state.sent.filter((s) => s.channel === 'tray-first-close-hint').length, 0)
+    const plan = JSON.parse(fs.readFileSync(path.join(h.userDataDir, 'mac-update-install-plan.json'), 'utf8'))
+    assert.equal(plan.zipPath, appDir.zip)
+    assert.equal(plan.bundlePath.endsWith('/Mao.app'), true)
+  } finally {
+    if (previousStall == null) delete process.env.MAO_UPDATE_INSTALL_STALL_MS
+    else process.env.MAO_UPDATE_INSTALL_STALL_MS = previousStall
+    delete process.env.MAO_UPDATE_INSTALL_DRY_RUN
+    delete process.env.MAO_UPDATE_EXEC_PATH
+  }
 })
 
-test('macOS 重启安装没有退出时提示手动下载 dmg', async () => {
+test('macOS 不能就地替换时提示手动下载 dmg，且不退出', async () => {
+  delete process.env.MAO_UPDATE_EXEC_PATH
+  delete process.env.MAO_UPDATE_INSTALL_DRY_RUN
+  const h = await loadMain({ platform: 'darwin', dialogResponse: 0 })
+  h.state.packaged = true
+  await h.invoke('check-for-update')
+  h.emitUpdater('update-downloaded', {
+    version: '0.0.530',
+    files: [
+      { url: 'Mao-0.0.530-arm64.dmg', arch: 'arm64' },
+      { url: 'Mao-0.0.530-intel.dmg', arch: 'x64' },
+    ],
+  })
+  const result = await h.invoke('install-update')
+  assert.equal(result.success, false)
+  assert.equal(h.state.quitCalls, 0)
+  assert.equal(h.state.quitAndInstallCalls, 0)
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(h.state.dialogs.length, 1)
+  assert.equal(h.state.dialogs[0].title, '自动更新没有完成')
+  assert.equal(h.state.dialogs[0].message.includes('0.0.530'), true)
+  const opened = h.state.openExternal[0] || ''
+  const expected = process.arch === 'arm64' ? 'Mao-0.0.530-arm64.dmg' : 'Mao-0.0.530-intel.dmg'
+  assert.equal(opened.endsWith(expected), true, opened)
+})
+
+test('macOS 退出被取消时提示手动下载 dmg', async () => {
+  const appDir = prepareReplaceableApp()
   const previous = process.env.MAO_UPDATE_INSTALL_STALL_MS
   process.env.MAO_UPDATE_INSTALL_STALL_MS = '20'
+  process.env.MAO_UPDATE_INSTALL_DRY_RUN = '1'
+  process.env.MAO_UPDATE_EXEC_PATH = appDir.exe
   try {
     const h = await loadMain({
       platform: 'darwin',
-      updaterInstallQuits: false,
+      quitAborts: true,
       dialogResponse: 0,
     })
     h.state.packaged = true
     await h.invoke('check-for-update')
     h.emitUpdater('update-downloaded', {
       version: '0.0.530',
+      downloadedFile: appDir.zip,
       files: [
         { url: 'Mao-0.0.530-arm64.dmg', arch: 'arm64' },
         { url: 'Mao-0.0.530-intel.dmg', arch: 'x64' },
@@ -228,16 +284,35 @@ test('macOS 重启安装没有退出时提示手动下载 dmg', async () => {
     })
     const result = await h.invoke('install-update')
     assert.equal(result.success, true)
+    assert.equal(h.state.quitAndInstallCalls, 0)
+    assert.equal(h.win().isDestroyed(), false)
     await new Promise((resolve) => setTimeout(resolve, 50))
     assert.equal(h.state.dialogs.length, 1)
     assert.equal(h.state.dialogs[0].title, '自动更新没有完成')
-    assert.equal(h.state.dialogs[0].message.includes('0.0.530'), true)
-    const opened = h.state.openExternal[0] || ''
-    const expected = process.arch === 'arm64' ? 'Mao-0.0.530-arm64.dmg' : 'Mao-0.0.530-intel.dmg'
-    assert.equal(opened.endsWith(expected), true, opened)
   } finally {
     if (previous == null) delete process.env.MAO_UPDATE_INSTALL_STALL_MS
     else process.env.MAO_UPDATE_INSTALL_STALL_MS = previous
+    delete process.env.MAO_UPDATE_INSTALL_DRY_RUN
+    delete process.env.MAO_UPDATE_EXEC_PATH
+  }
+})
+
+test('macOS 退出时安装已下载的更新，不走 Squirrel', async () => {
+  const appDir = prepareReplaceableApp()
+  process.env.MAO_UPDATE_INSTALL_DRY_RUN = '1'
+  process.env.MAO_UPDATE_EXEC_PATH = appDir.exe
+  try {
+    const h = await loadMain({ platform: 'darwin' })
+    h.state.packaged = true
+    await h.invoke('check-for-update')
+    h.emitUpdater('update-downloaded', { version: '9.9.9', downloadedFile: appDir.zip })
+    h.tray().menuTemplate.find((item) => item.label === '退出').click()
+    assert.equal(h.state.quitAndInstallCalls, 0)
+    assert.equal(h.state.quitCalls, 1)
+    assert.equal(fs.existsSync(path.join(h.userDataDir, 'mac-update-install-plan.json')), true)
+  } finally {
+    delete process.env.MAO_UPDATE_INSTALL_DRY_RUN
+    delete process.env.MAO_UPDATE_EXEC_PATH
   }
 })
 

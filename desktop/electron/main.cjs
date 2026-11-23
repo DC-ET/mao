@@ -24,6 +24,7 @@ const { createBrowserLiveRuntime } = require('./browserLive.cjs')
 const { createBrowserLiveRecordFlag } = require('./browserLiveRecordFlag.cjs')
 const { createPipWindowManager } = require('./pipWindow.cjs')
 const updateInstallFallback = require('./updateInstallFallback.cjs')
+const macUpdateInstall = require('./macUpdateInstall.cjs')
 
 
 app.setName('Mao')
@@ -160,6 +161,7 @@ let updaterStatus = 'idle'
 let updaterProgressPercent = null
 let installWatchTimer = null
 let manualInstallPromptOpen = false
+let darwinInstallStarted = false
 
 /**
  * Get the full user PATH by executing a login shell.
@@ -336,9 +338,74 @@ function watchDarwinInstallStall() {
   cancelInstallWatch()
   installWatchTimer = setTimeout(() => {
     installWatchTimer = null
-    // 进程还在：ShipIt 没有接手，重启安装没有发生。
+    // 进程还在：替换脚本没有等到退出，重启安装没有发生。
     void promptManualInstall()
   }, updateInstallFallback.installStallMs())
+  // 应用真的退出后这个定时器不必拖住进程；退出被取消时事件循环仍在，到点会提示。
+  if (typeof installWatchTimer.unref === 'function') installWatchTimer.unref()
+}
+
+function macUpdateExecPath() {
+  return process.env.MAO_UPDATE_EXEC_PATH || process.execPath
+}
+
+function startDarwinBundleInstall() {
+  if (darwinInstallStarted) return { success: true }
+  const zipPath = typeof downloadedUpdateInfo?.downloadedFile === 'string'
+    ? downloadedUpdateInfo.downloadedFile
+    : ''
+  const plan = macUpdateInstall.planMacInstall({
+    execPath: macUpdateExecPath(),
+    zipPath,
+  })
+  if (!plan.ok) {
+    console.warn('[updater] mac install skipped:', plan.reason)
+    return { success: false, error: plan.reason }
+  }
+  const userDataDir = app.getPath('userData')
+  if (process.env.MAO_UPDATE_INSTALL_DRY_RUN === '1') {
+    macUpdateInstall.writeInstallScript(path.join(userDataDir, macUpdateInstall.SCRIPT_NAME))
+    fs.writeFileSync(path.join(userDataDir, macUpdateInstall.PLAN_NAME), JSON.stringify({
+      bundlePath: plan.bundlePath,
+      zipPath: plan.zipPath,
+    }))
+    darwinInstallStarted = true
+    return { success: true }
+  }
+  try {
+    const scriptPath = path.join(userDataDir, macUpdateInstall.SCRIPT_NAME)
+    macUpdateInstall.writeInstallScript(scriptPath)
+    const child = spawn('/bin/bash', [
+      scriptPath,
+      String(process.pid),
+      plan.zipPath,
+      plan.bundlePath,
+      path.join(userDataDir, macUpdateInstall.LOG_NAME),
+      macUpdateInstall.APP_BUNDLE_NAME,
+      macUpdateInstall.installWaitSeconds(),
+      process.env.MAO_UPDATE_INSTALL_NO_RELAUNCH === '1' ? '0' : '1',
+    ], { detached: true, stdio: 'ignore' })
+    child.unref()
+    if (!child.pid) return { success: false, error: 'spawn-failed' }
+  } catch (error) {
+    console.error('[updater] mac install helper failed:', error)
+    return { success: false, error: 'spawn-failed' }
+  }
+  darwinInstallStarted = true
+  return { success: true }
+}
+
+function installDownloadedMacUpdate() {
+  const started = startDarwinBundleInstall()
+  recordDarwinInstallAttempt()
+  if (!started.success) {
+    void promptManualInstall()
+    return { success: false }
+  }
+  quitting = true
+  watchDarwinInstallStall()
+  app.quit()
+  return { success: true }
 }
 
 async function checkStaleInstallAttempt() {
@@ -357,11 +424,11 @@ function installDownloadedUpdate() {
   if (!updateDownloaded) {
     return { success: false, error: 'Update has not been downloaded yet.' }
   }
-  // macOS 的 quitAndInstall 先关窗、后发 before-quit。默认「关窗收托盘」会在
-  // quitting 仍为 false 时把 close 变成 hide，退出被取消，安装不会开始。
-  recordDarwinInstallAttempt()
+  // macOS 不把 zip 交给 Squirrel。Squirrel 会用当前应用的签名指定要求校验新包，
+  // 证书或 ad-hoc 一变就装不上。这里改由独立脚本在进程退出后替换 .app。
+  if (process.platform === 'darwin') return installDownloadedMacUpdate()
+  // 先置 quitting，避免「关窗收托盘」把接下来的 close 收成 hide，导致退出被取消。
   quitting = true
-  watchDarwinInstallStall()
   autoUpdater.quitAndInstall(false, true)
   return { success: true }
 }
@@ -563,7 +630,9 @@ function setupAutoUpdater() {
   updaterInitialized = true
 
   autoUpdater.autoDownload = true
-  autoUpdater.autoInstallOnAppQuit = true
+  // macOS 上 autoInstallOnAppQuit 会在下载完成时把 zip 交给 Squirrel 做签名校验。
+  // 关掉之后，退出时由 before-quit 里的本机替换脚本安装。
+  autoUpdater.autoInstallOnAppQuit = process.platform !== 'darwin'
 
   applyUpdateFeedUrl()
 
@@ -576,6 +645,7 @@ function setupAutoUpdater() {
   autoUpdater.on('update-available', (info) => {
     updateDownloaded = false
     downloadedUpdateInfo = null
+    darwinInstallStarted = false
     setUpdaterStatus('available', 0)
     sendToRenderer('update-available', info)
   })
@@ -1318,7 +1388,12 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   quitting = true
-  cancelInstallWatch()
+  if (process.platform === 'darwin' && updateDownloaded && !darwinInstallStarted) {
+    startDarwinBundleInstall()
+    recordDarwinInstallAttempt()
+  }
+  // 本机替换已经启动时保留看门定时器：退出若被取消，进程还在就改提示手动安装。
+  if (!darwinInstallStarted) cancelInstallWatch()
   // 快捷键全部注销后同步清掉跟踪值：否则退出若被中止，之后「重设同一个键」会命中
   // 同键早退而跳过 register，键保持未注册但 UI/偏好显示已启用
   currentShortcutAccel = null
