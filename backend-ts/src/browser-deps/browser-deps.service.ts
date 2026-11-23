@@ -20,7 +20,8 @@ const execFile = promisify(execFileCb);
  *   （npmmirror 镜像源）下载 chromium。win32 的 npm/playwright-cli/npx 是 .cmd shim，exec 走 shell 化
  *   （needsWin32Shell），chrome.exe / winget 维持 execFile。
  * docker 模式：chrome 烧在镜像里，运行中容器装了会丢 → 触发 build-runtime-image.sh
- *   重建镜像（仓库内首例代码调 build 脚本）+ docker run 验证。
+ *   重建镜像（仓库内首例代码调 build 脚本）+ docker run 验证；状态与安装前都先探测
+ *   镜像内依赖（一次性容器），镜像已就绪直接 ready，不再重建。
  *
  * 单飞守卫在进程内存内（蓝绿重叠窗口的并发重复安装可接受：apt/npm 幂等）。
  */
@@ -63,6 +64,17 @@ interface ExecResult {
   ok: boolean;
   output: string;
 }
+
+/** docker 模式镜像探测结果（见 probeImage）。 */
+interface ImageProbe {
+  reachable: boolean;
+  chrome: BrowserDepsStatus['chrome'];
+  cli: BrowserDepsStatus['cli'];
+}
+
+/** 镜像内探测命令：标记前缀输出，缺依赖时 echo missing（始终 exit 0，避免把「缺依赖」误判成 docker 不可用）。 */
+const IMAGE_PROBE_COMMAND =
+  'printf "CHROME="; (google-chrome --version || echo missing); printf "CLI="; (playwright-cli --version || echo missing)';
 
 function truncate(text: string, max = DETAIL_MAX): string {
   const line = text.replace(/\s+/g, ' ').trim();
@@ -171,6 +183,40 @@ export class BrowserDepsService {
     return { chrome, cli };
   }
 
+  /**
+   * docker 模式依赖探测：以镜像内容为准（容器内系统 Chrome + playwright-cli）。
+   * 运行中的用户容器可能尚未创建，镜像才是依赖事实来源；用一次性容器跑版本命令，
+   * `--network none` 不引入网络面。镜像名来自配置、命令固定，无拼接输入。
+   * reachable=false 表示 docker/镜像本身不可用，此时 chrome/cli 不代表镜像实况。
+   */
+  private async probeImage(): Promise<ImageProbe> {
+    const result = await this.exec(
+      'docker',
+      ['run', '--rm', '--network', 'none', this.deps.image, 'bash', '-c', IMAGE_PROBE_COMMAND],
+      20_000,
+    );
+    const absent: ImageProbe = {
+      reachable: false,
+      chrome: { present: false, kind: null, version: null },
+      cli: { present: false, version: null },
+    };
+    if (!result.ok) return absent;
+    const read = (prefix: string): string | null => {
+      const line = result.output.split('\n').map((s) => s.trim()).find((s) => s.startsWith(prefix));
+      const value = line?.slice(prefix.length).trim() ?? '';
+      return value === '' || value === 'missing' ? null : truncate(value, 120);
+    };
+    const chromeVersion = read('CHROME=');
+    const cliVersion = read('CLI=');
+    return {
+      reachable: true,
+      chrome: chromeVersion != null
+        ? { present: true, kind: 'system', version: chromeVersion }
+        : { present: false, kind: null, version: null },
+      cli: cliVersion != null ? { present: true, version: cliVersion } : { present: false, version: null },
+    };
+  }
+
   private async exec(cmd: string, args: string[], timeoutMs: number, env?: NodeJS.ProcessEnv): Promise<ExecResult> {
     if (this.deps.execImpl != null) {
       return this.deps.execImpl(cmd, args, timeoutMs, env);
@@ -235,7 +281,6 @@ export class BrowserDepsService {
   /** 读取状态：合并实时检测；installing 孤儿（超时无归主）降级 failed 并落库。 */
   async getStatus(): Promise<BrowserDepsStatus> {
     const stored = this.normalizeStatus(await this.deps.settingRepo.findByKey(BROWSER_DEPS_SETTING_KEY).then((s) => s?.value ?? null));
-    const detected = await this.detect();
     const mode = await this.safeRuntimeMode();
     let phase: BrowserDepsPhase = stored?.phase ?? 'not_installed';
     let detail = stored?.detail ?? null;
@@ -247,8 +292,21 @@ export class BrowserDepsService {
         detail = '安装中断（后端进程重启或超时），请重新安装';
       }
     }
-    if (phase === 'ready' && !detected.chrome.present && !detected.cli.present) {
-      // 状态说 ready 但实况全没了（被卸载）：以实况为准
+    const installing = phase === 'installing' && this.inFlight != null;
+    // docker 模式以镜像为准：宿主机没有 Chrome/CLI 不代表容器内不可用。安装中跳过探测，避免拖慢轮询。
+    const probe = mode === 'docker' && !installing ? await this.probeImage() : null;
+    const detected = probe?.reachable ? { chrome: probe.chrome, cli: probe.cli } : await this.detect();
+    if (probe?.reachable) {
+      const imageReady = probe.chrome.present && probe.cli.present;
+      if (imageReady && !installing) {
+        phase = 'ready';
+        detail = `镜像 ${this.deps.image} 已含浏览器依赖`;
+      } else if (!imageReady) {
+        if (phase === 'ready') phase = 'not_installed';
+        if (phase === 'not_installed' && detail == null) detail = `镜像 ${this.deps.image} 缺少浏览器依赖`;
+      }
+    } else if (mode === 'host' && phase === 'ready' && !detected.chrome.present && !detected.cli.present) {
+      // 状态说 ready 但实况全没了（被卸载）：以实况为准；docker 模式探测不可用时保留存量状态
       phase = 'not_installed';
       detail = '检测到依赖已不存在（可能被卸载）';
     }
@@ -276,7 +334,8 @@ export class BrowserDepsService {
       return { started: false, status: await this.getStatus() };
     }
     const current = await this.getStatus();
-    if (current.phase === 'installing') {
+    if (current.phase === 'installing' || current.phase === 'ready') {
+      // docker 模式下 ready 由镜像探测得出：镜像已就绪就不该重建
       return { started: false, status: current };
     }
     const mode = await this.safeRuntimeMode();

@@ -82,7 +82,7 @@ git --version
 
 - **按需自动安装（不预装时）**：管理员在 Agent 上勾选 `browser-use` 保存、或在「管理后台 → Skills 管理」对 browser-use 点「安装依赖」时，后端自动在服务器执行安装（npm 全局 CLI → 系统 Chrome deb，失败降级为 npmmirror 镜像源的 chromium 免 root 下载；源可用 `MAO_BROWSER_CHROME_DEB_URL` / `MAO_PLAYWRIGHT_DOWNLOAD_HOST` 覆盖）。**没有任何 Agent 勾选该技能则不会安装任何东西**。就绪状态与安装进度见 Skills 管理页「浏览器依赖」列。安装要求后端进程具备服务器安装权限（默认部署以 root 运行）且能访问下载源。
 
-  未就绪时 Agent 的浏览器命令会得到可解释报错（含「管理员尚未启用浏览器依赖」指引），其余功能不受影响。docker 模式由 `mao-runtime` 镜像内置（见下节）；docker 模式下的「安装依赖」会触发镜像自动重建（首次构建可能需要十几分钟）。
+  未就绪时 Agent 的浏览器命令会得到可解释报错（含「管理员尚未启用浏览器依赖」指引），其余功能不受影响。docker 模式由 `mao-runtime` 镜像内置（见下节）：依赖状态以镜像内容为准（后端用一次性容器探测镜像内 Chrome 与 playwright-cli），镜像已就绪时 Skills 页显示「依赖就绪」、点「安装依赖」不会重建；只有镜像缺依赖（构建时 `INSTALL_CHROME=0`、旧镜像或自建镜像）才触发镜像重建。重建建议在后端环境配 `APT_MIRROR=mirrors.aliyun.com`（与生产镜像构建参数一致可命中层缓存；缺省 `deb.debian.org` 会从 apt 层全量重建，可能需要十几分钟）。
 
 **Git 说明**：CLOUD 模式通过 HTTPS Git 初始化工作区需要 `git` 命令。仅支持 HTTPS 地址；私有仓库用户在桌面端配置 Git 凭证（完整主机名）。
 
@@ -428,7 +428,7 @@ FROM message WHERE deleted = 0;
    bash scripts/build-runtime-image.sh        # 产出 mao-runtime:latest
    ```
 
-   版本从 `backend-ts/package.json` 读取。**宿主机 Node 升级后必须同步重建镜像**，否则容器内读图（sharp）与终端（node-pty）静默失败。
+   版本从 `backend-ts/package.json` 读取。**宿主机 Node 升级后必须同步重建镜像**，否则容器内读图（sharp）与终端（node-pty）静默失败。国内/内网构建机建议 `APT_MIRROR=mirrors.aliyun.com bash scripts/build-runtime-image.sh`；后端进程环境配同一个值（`backend-ts/.env`）时，Skills 页「安装依赖」触发的重建才能命中现有层缓存，否则会按缺省的 `deb.debian.org` 从 apt 层全量重建。
 
    **镜像依赖集必须覆盖 `runtime-agent` 的 import 闭包**（当前为 `sharp` / `node-pty` / `@modelcontextprotocol/sdk` / `minimatch` / `yaml`）：容器只挂载宿主机 `dist`（代码），第三方包全部来自镜像的 `node_modules`。backend-ts 新增进入该闭包的 npm 包后，必须同步加进 `Dockerfile.runtime` 并重建镜像，否则容器内 agent 启动即 `ERR_MODULE_NOT_FOUND` 退出，表现为每个用户的任务等满 15 秒后报「容器运行时通道连接超时」（0.0.379 前的 `yaml` 缺失即此形态）。0.0.379 起预检会用当前 dist 在镜像里实际加载一次 agent，漏依赖会直接拒绝切换并提示重建镜像。
 3. **数据目录**：`/opt/mao-data/runtime/channels`（socket 根）与 `/opt/mao-data/deps`（持久依赖）需存在且后端进程可写（首次启动预检会校验，不满足直接启动失败，不静默降级）。

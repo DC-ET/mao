@@ -94,6 +94,20 @@ function makeService(options: {
 const storedPhase = (repo: { rows: StoreRow[] }): BrowserDepsStatus =>
   JSON.parse(repo.rows[0].value) as BrowserDepsStatus;
 
+/** 存量 ready 状态行（docker 模式探测用例复用）。 */
+const readyRow = (): StoreRow => ({
+  settingKey: 'browser_deps.status',
+  value: JSON.stringify({
+    phase: 'ready',
+    mode: 'docker',
+    detail: null,
+    chrome: { present: true, kind: 'system', version: null },
+    cli: { present: true, version: null },
+    updatedAt: new Date().toISOString(),
+  }),
+  editable: 0,
+});
+
 describe('BrowserDepsService detect', () => {
   it('detectChrome 命中系统 Chrome', async () => {
     const { service, calls } = makeService({
@@ -192,11 +206,20 @@ describe('BrowserDepsService host 安装链', () => {
 
 describe('BrowserDepsService docker 分支', () => {
   it('触发镜像重建并验证镜像内依赖', async () => {
+    let built = false;
     const { service, repo, calls } = makeService({
       mode: 'docker',
       exec: ({ cmd, args }) => {
-        if (cmd === 'bash' && args[0]?.includes('build-runtime-image.sh')) return { ok: true, output: '完成：mao-runtime:latest' };
-        if (cmd === 'docker' && args[0] === 'run') return { ok: true, output: 'Google Chrome 158' };
+        if (cmd === 'bash' && args[0]?.includes('build-runtime-image.sh')) {
+          built = true;
+          return { ok: true, output: '完成：mao-runtime:latest' };
+        }
+        if (cmd === 'docker' && args[0] === 'run') {
+          // 构建前探测：镜像内没有依赖；构建后验证：两件都在
+          return built
+            ? { ok: true, output: 'CHROME=Google Chrome 158\nCLI=0.1.25' }
+            : { ok: true, output: 'CHROME=missing\nCLI=missing' };
+        }
         return { ok: false, output: '' };
       },
     });
@@ -206,8 +229,65 @@ describe('BrowserDepsService docker 分支', () => {
     const build = calls.find((c) => c.cmd === 'bash');
     expect(build?.args[0]).toContain('build-runtime-image.sh');
     expect(build?.env?.INSTALL_CHROME).toBe('1');
-    const verify = calls.find((c) => c.cmd === 'docker' && c.args[0] === 'run');
-    expect(verify?.args).toContain('mao-runtime:latest');
+    const runs = calls.filter((c) => c.cmd === 'docker' && c.args[0] === 'run');
+    expect(runs).toHaveLength(2);
+    expect(runs[0].args).toContain('mao-runtime:latest');
+    expect(runs[0].args).toContain('none'); // 探测容器不联网
+  });
+
+  it('镜像内依赖已就绪时直接 ready，install 不再触发重建', async () => {
+    const { service, calls } = makeService({
+      mode: 'docker',
+      exec: ({ cmd }) => (cmd === 'docker'
+        ? { ok: true, output: 'CHROME=Google Chrome 158.0.8127.36\nCLI=0.1.25' }
+        : { ok: false, output: '' }),
+    });
+    const status = await service.getStatus();
+    expect(status.phase).toBe('ready');
+    expect(status.mode).toBe('docker');
+    expect(status.chrome.version).toContain('158');
+    expect(status.cli.version).toContain('0.1.25');
+
+    const { started, status: after } = await service.install();
+    expect(started).toBe(false);
+    expect(after.phase).toBe('ready');
+    expect(calls.some((c) => c.cmd === 'bash')).toBe(false);
+  });
+
+  it('docker 模式宿主机没有依赖也不打回 not_installed（镜像就绪优先）', async () => {
+    const { service } = makeService({
+      mode: 'docker',
+      rows: [readyRow()],
+      exec: ({ cmd }) => (cmd === 'docker'
+        ? { ok: true, output: 'CHROME=Google Chrome 158\nCLI=0.1.25' }
+        : { ok: false, output: '' }),
+    });
+    const status = await service.getStatus();
+    expect(status.phase).toBe('ready');
+  });
+
+  it('镜像缺 CLI 时按未安装处理，并说明镜像缺依赖', async () => {
+    const { service } = makeService({
+      mode: 'docker',
+      rows: [readyRow()],
+      exec: ({ cmd }) => (cmd === 'docker'
+        ? { ok: true, output: 'CHROME=Google Chrome 158\nCLI=missing' }
+        : { ok: false, output: '' }),
+    });
+    const status = await service.getStatus();
+    expect(status.phase).toBe('not_installed');
+    expect(status.detail).toContain('缺少浏览器依赖');
+  });
+
+  it('docker 探测不可用时保留存量状态，不误打回', async () => {
+    const { service } = makeService({
+      mode: 'docker',
+      rows: [readyRow()],
+      exec: () => ({ ok: false, output: 'Cannot connect to the Docker daemon' }),
+    });
+    const status = await service.getStatus();
+    expect(status.phase).toBe('ready');
+    expect(status.chrome.present).toBe(false);
   });
 
   it('构建失败落 failed 并提示手动重建', async () => {
