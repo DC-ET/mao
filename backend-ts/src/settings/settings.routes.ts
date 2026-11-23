@@ -127,7 +127,8 @@ export function registerSystemSettingRoutes(app: FastifyInstance, deps: SystemSe
       ['Region', merged.region], ['AccessKey ID', merged.accessKeyId],
       ['AccessKey Secret', merged.accessKeySecret], ['Bucket', merged.bucket],
     ], {
-      sign: (key, expires, method) => signOssRequest(merged, method, key, expires, Date.now()).uploadUrl,
+      // OSS 的 Content-Type 参与签名：探针 PUT 带 text/plain 头，签名时必须带同一值
+      sign: (key, expires, method, contentType) => signOssRequest(merged, method, key, expires, Date.now(), contentType).uploadUrl,
     }, defaultStorageProbeHttp());
     return sendOk(reply, { ok: true });
   });
