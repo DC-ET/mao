@@ -9,6 +9,8 @@ import { nowDateTime } from '../utils/datetime'
 import { mapCompactionEvents } from '../utils/chatMessage'
 import { stripImageUrlLines } from '../utils/imageUrlAnnotation'
 import { clientKind, isElectronClient } from '../utils/platform'
+import { isAndroidCapacitor } from '../utils/capacitor'
+import { currentPageVersion, resolveClientVersion } from '../utils/client-version'
 import { getLocalDeviceInfo } from '../utils/device-info'
 import { updateSideTaskTabTitleFor } from './useCenterTabs'
 import { notifyInboxSystemUpdate, setupDesktopNotifyBridge } from './useInboxSystemNotify'
@@ -287,23 +289,38 @@ export function useStreamWS() {
     ws = socket
     intentionalClose = false
 
-    // 设备身份（仅 Electron）：IPC 异步取（模块级缓存），拿到后发首帧。
-    // 浏览器没有设备身份，auth 帧同步发出、不带 device，保持旧广播行为（技术方案 2026-11-05 §4.2）。
+    // 设备身份（仅 Electron）：IPC 异步取，拿到后发首帧。
+    // 浏览器没有设备身份，auth 帧同步发出、不带 device。
+    // 版本随首帧上报：浏览器是页面构建版本（同步）；桌面等壳版本、安卓等 APK 版本后再发。
     const sendAuth = () => {
-      if (!isElectronClient()) {
-        socket.send(JSON.stringify({ type: 'auth', token, client }))
+      const deliver = (
+        device: { id: string; name: string; platform: string } | null,
+        clientVersion: string | undefined,
+      ) => {
+        if (socket !== ws || socket.readyState !== WebSocket.OPEN) return
+        const electron = isElectronClient()
+        socket.send(JSON.stringify({
+          type: 'auth',
+          token,
+          client,
+          ...(clientVersion ? { clientVersion } : {}),
+          ...(electron && device ? { device } : {}),
+          // 客户端能力声明（技术方案 2026-11-18 D2）：renderer 有 file_op 执行器才声明。
+          // 浏览器 / 安卓不是文件投递候选，capabilities 保持缺省。
+          ...(electron ? { capabilities: ['file_op'] } : {}),
+        }))
+      }
+      if (!isElectronClient() && !isAndroidCapacitor()) {
+        deliver(null, currentPageVersion())
         return
       }
-      void getLocalDeviceInfo().then((device) => {
-        // 等待期间连接可能已被更新的连接 / disconnect() 取代，或已断开
-        if (socket !== ws || socket.readyState !== WebSocket.OPEN) return
-        // 客户端能力声明（技术方案 2026-11-18 D2）：renderer 有 file_op 执行器，显式声明
-        // 让服务端分层投递走档 1；浏览器 clientType 为 browser，本就不是投递候选，无需声明。
-        socket.send(JSON.stringify({
-          type: 'auth', token, client,
-          ...(device ? { device } : {}),
-          capabilities: ['file_op'],
-        }))
+      const versionPromise = resolveClientVersion()
+      if (!isElectronClient()) {
+        void versionPromise.then((clientVersion) => deliver(null, clientVersion))
+        return
+      }
+      void Promise.all([getLocalDeviceInfo(), versionPromise]).then(([device, clientVersion]) => {
+        deliver(device, clientVersion)
       })
     }
 

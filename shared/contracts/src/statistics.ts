@@ -23,6 +23,11 @@ export interface OnlineDeviceConnection {
   authExpiresAt: number | null;
   /** 认证来源；company_sso 有值，本地登录为 null */
   authSource: string | null;
+  /**
+   * 客户端连上时自报的版本。旧客户端未上报、或上报值非法时为 null。
+   * 桌面=壳版本，安卓=APK 版本，浏览器=页面构建版本，CLI=mao-agent 版本，嵌入=SDK 版本。
+   */
+  clientVersion: string | null;
   device: OnlineDeviceDeviceInfo | null;
 }
 

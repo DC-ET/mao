@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { WsClient, serializePayload, buildStreamUrl } from '../src/ws/ws-client';
+import { getCliVersion } from '../src/util/version';
 import {
   WS_HEARTBEAT_INTERVAL_MS,
   WS_RECONNECT_INITIAL_MS,
@@ -70,6 +71,7 @@ describe('WsClient', () => {
     });
     // 客户端能力声明（技术方案 2026-11-18 D2）：服务端按连接分层投递文件代理请求
     expect((server.received[authIndex] as { capabilities?: string[] }).capabilities).toEqual(['file_op']);
+    expect((server.received[authIndex] as { clientVersion?: string }).clientVersion).toBe(getCliVersion());
     expect(subscribeIndex).toBeGreaterThan(authIndex);
     client.close();
   });

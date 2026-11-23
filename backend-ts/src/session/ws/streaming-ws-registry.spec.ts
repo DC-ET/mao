@@ -389,11 +389,20 @@ describe('StreamingWsRegistry listConnections（管理后台在线设备页）',
         connectedAt: 1_760_000_000_000,
         authExpiresAt: 1_760_100_000_000,
         authSource: 'company_sso',
+        clientVersion: null,
         device: { id: 'dev-a', name: 'Mac', platform: 'darwin' },
       }]);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('storesClientVersionAndClearsItOnReRegisterWithoutOne', () => {
+    const session = mockSocket('ws-1');
+    registry.register(session, 7, 'electron', undefined, true, { id: 'dev-a', name: 'Mac', platform: 'darwin' }, undefined, '0.0.532');
+    expect(registry.listConnections()[0].clientVersion).toBe('0.0.532');
+    registry.register(session, 7, 'electron', undefined, true, { id: 'dev-a', name: 'Mac', platform: 'darwin' });
+    expect(registry.listConnections()[0].clientVersion).toBeNull();
   });
 
   it('browserConnectionKeepsJwtExpiryWithoutAuthSource', () => {

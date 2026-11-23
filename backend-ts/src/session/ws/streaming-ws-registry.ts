@@ -64,6 +64,8 @@ export interface WsConnectionSnapshot {
   /** 认证到期时间，epoch ms；company_sso 有值，本地登录为 null。 */
   authExpiresAt: number | null;
   authSource: string | null;
+  /** 连接自报的客户端版本；缺省或非法为 null（旧客户端不带该字段）。 */
+  clientVersion: string | null;
   /** 连接自报设备信息，仅 electron / cli 携带；android / browser / embed 为 null。 */
   device: WsDeviceInfo | null;
 }
@@ -152,6 +154,8 @@ export class StreamingWsRegistry {
   private readonly connectionDevice = new Map<string, WsDeviceInfo>();
   /** socket.id → 连接建立时间（register 时刷新）：在线设备页展示连接时长用。 */
   private readonly connectionConnectedAt = new Map<string, number>();
+  /** socket.id → 客户端自报版本（auth 帧 clientVersion，在线设备页展示）。 */
+  private readonly connectionClientVersion = new Map<string, string>();
   /** userId → deviceId → 当前执行连接（同设备覆盖为最新一条，避免多窗口/多实例重复执行）。 */
   private readonly deviceExecutors = new Map<number, Map<string, WsSocket>>();
   /** agent sessionId → 绑定的 embed 连接（页面执行端）。每个会话只绑定一个页面连接。 */
@@ -201,6 +205,7 @@ export class StreamingWsRegistry {
     pageEnabled = true,
     device?: WsDeviceInfo | null,
     capabilities?: ReadonlySet<string>,
+    clientVersion?: string | null,
   ): void {
     if (this.closedConnections.has(session)) return;
     // 同一 socket 重复 auth / 重连注册：先释放旧设备映射，避免旧 deviceId 指向已失效连接
@@ -219,6 +224,8 @@ export class StreamingWsRegistry {
     this.sessionPageEnabled.set(session.id, pageEnabled);
     this.connectionCapabilities.set(session.id, capabilities ? new Set(capabilities) : new Set());
     this.connectionConnectedAt.set(session.id, Date.now());
+    if (clientVersion) this.connectionClientVersion.set(session.id, clientVersion);
+    else this.connectionClientVersion.delete(session.id);
     let set = this.userSessions.get(userId);
     if (!set) {
       set = new Set();
@@ -236,7 +243,7 @@ export class StreamingWsRegistry {
       // 同 deviceId 覆盖为最新连接：同机多窗口 / 快速重连时只保留一个执行连接
       executors.set(device.id, session);
     }
-    console.info(`WS stream registered: userId=${userId}, wsSessionId=${session.id}, clientType=${normalizedClientType}, pageEnabled=${pageEnabled}, deviceId=${device?.id ?? '-'}`);
+    console.info(`WS stream registered: userId=${userId}, wsSessionId=${session.id}, clientType=${normalizedClientType}, clientVersion=${clientVersion || '-'}, pageEnabled=${pageEnabled}, deviceId=${device?.id ?? '-'}`);
   }
 
   unregister(session: WsSocket): void {
@@ -247,6 +254,7 @@ export class StreamingWsRegistry {
     this.sessionPageEnabled.delete(session.id);
     this.connectionCapabilities.delete(session.id);
     this.connectionConnectedAt.delete(session.id);
+    this.connectionClientVersion.delete(session.id);
     this.releaseEmbedConnection(session);
     this.releaseDevice(session);
     const userId = this.sessionToUser.get(session.id);
@@ -673,6 +681,7 @@ export class StreamingWsRegistry {
           connectedAt: this.connectionConnectedAt.get(session.id) ?? 0,
           authExpiresAt: auth?.metadata.expiresAt ?? null,
           authSource: auth?.metadata.authSource ?? null,
+          clientVersion: this.connectionClientVersion.get(session.id) ?? null,
           device: this.connectionDevice.get(session.id) ?? null,
         });
       }

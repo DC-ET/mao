@@ -673,13 +673,14 @@ export class StreamingWsHandler {
       const pageEnabled = typeof root.pageEnabled === 'boolean' ? root.pageEnabled : true;
       const device = this.parseDevice(root);
       const capabilities = this.parseCapabilities(root);
+      const clientVersion = this.parseClientVersion(root);
       // 注册前记下当前执行连接的类型：覆盖后若类型变了（桌面 ↔ mao-agent），
       // 在线态没变也要再广播一帧，横幅才能换文案。同类型互顶不发。
       const previousType = device != null ? this.currentExecutorClientType(metadata.userId, device.id) : null;
       // 注册前判定设备此前是否已有执行连接：只有「无 → 有」的跃迁才广播上线，
       // 同设备重连/多窗口覆盖（register 内 releaseDevice 回退）不产生状态变化，不广播。
       const deviceWasOnline = device != null && this.deps.registry.hasDeviceConnection(metadata.userId, device.id);
-      this.deps.registry.register(session, metadata.userId, clientType, metadata, pageEnabled, device, capabilities);
+      this.deps.registry.register(session, metadata.userId, clientType, metadata, pageEnabled, device, capabilities, clientVersion);
       // 能力协商（技术方案 2026-11-06 §4.1）：声明本服务端支持审批广播 + 回声放行。
       // 旧后端不带该字段，新客户端按 false 处理（投票后立即本地放行）；每次连接重新判定，不跨重连粘滞。
       this.deps.registry.sendToConnection(
@@ -3107,6 +3108,19 @@ export class StreamingWsHandler {
     if (!id || !name || !platform) return null;
     if (id.length > 64 || name.length > 128 || platform.length > 32) return null;
     return { id, name, platform };
+  }
+
+  /**
+   * auth 帧自报版本（在线设备页展示）。只接受短版本串：首字符为字母或数字，
+   * 其余为字母、数字、点、加号、下划线、连字符，最长 32。缺省 / 非法 → null，
+   * 不拒绝连接（旧客户端不带该字段，照常上线，页面显示「-」）。
+   */
+  private parseClientVersion(root: Record<string, unknown>): string | null {
+    const raw = root.clientVersion;
+    if (typeof raw !== 'string') return null;
+    const version = raw.trim();
+    if (!/^[0-9A-Za-z][0-9A-Za-z.+_-]{0,31}$/.test(version)) return null;
+    return version;
   }
 
   /**

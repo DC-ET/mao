@@ -158,7 +158,7 @@ describe('StatisticsService getOnlineDevices（在线设备实时快照）', () 
   it('aggregatesTotalsByClientTypeAndDedupesDevices', async () => {
     const connections = [
       // 同一用户同机：桌面多窗口（同 deviceId）+ CLI 进程（共用 device.json）→ 三条连接一台设备
-      { wsSessionId: 'ws-1', userId: 1, clientType: 'electron', connectedAt: 100, authExpiresAt: null, authSource: null, device: { id: 'dev-a', name: 'Mac', platform: 'darwin' } },
+      { wsSessionId: 'ws-1', userId: 1, clientType: 'electron', connectedAt: 100, authExpiresAt: null, authSource: null, clientVersion: '0.0.532', device: { id: 'dev-a', name: 'Mac', platform: 'darwin' } },
       { wsSessionId: 'ws-2', userId: 1, clientType: 'electron', connectedAt: 200, authExpiresAt: null, authSource: null, device: { id: 'dev-a', name: 'Mac', platform: 'darwin' } },
       { wsSessionId: 'ws-3', userId: 1, clientType: 'cli', connectedAt: 300, authExpiresAt: null, authSource: null, device: { id: 'dev-a', name: 'Mac', platform: 'darwin' } },
       // 另一台设备
@@ -180,7 +180,8 @@ describe('StatisticsService getOnlineDevices（在线设备实时快照）', () 
     expect(vo.byClientType).toEqual({ electron: 2, android: 1, cli: 2, browser: 2, embed: 0 });
     expect(vo.users.map((u) => u.username)).toEqual(['alice', 'bob']);
     expect(vo.users[0].connections).toHaveLength(4);
-    expect(vo.users[0].connections[0]).toMatchObject({ wsSessionId: 'ws-1', device: { id: 'dev-a' } });
+    expect(vo.users[0].connections[0]).toMatchObject({ wsSessionId: 'ws-1', clientVersion: '0.0.532', device: { id: 'dev-a' } });
+    expect(vo.users[1].connections[1].clientVersion).toBeNull();
     expect(vo.users[1].displayName).toBeNull();
     expect(vo.users[1].connections[0]).toMatchObject({ wsSessionId: 'ws-5', authExpiresAt: null });
     expect(vo.users[1].connections[1]).toMatchObject({ wsSessionId: 'ws-6', authExpiresAt: 999, authSource: 'company_sso' });

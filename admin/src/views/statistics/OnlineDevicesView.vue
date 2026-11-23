@@ -50,6 +50,15 @@
             <el-tag size="small" :type="row.tagType">{{ row.typeLabel }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="版本" width="120" show-overflow-tooltip>
+          <template #header>
+            <span title="客户端连上时自报的版本。桌面是已安装的壳版本，安卓是 APK 版本，浏览器是当前页面版本，终端 CLI 是 mao-agent 版本，页面嵌入是 SDK 版本。旧客户端显示 -">版本</span>
+          </template>
+          <template #default="{ row }">
+            <span v-if="row.clientVersion">{{ row.clientVersion }}</span>
+            <span v-else class="muted">-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="设备名" min-width="120" show-overflow-tooltip>
           <template #default="{ row }">{{ row.device?.name || '-' }}</template>
         </el-table-column>
@@ -111,6 +120,7 @@ interface ConnectionRow {
   typeLabel: string
   tagType: 'success' | 'warning' | 'info' | 'primary' | 'danger'
   device: OnlineDeviceConnection['device']
+  clientVersion: string | null
   durationText: string
   expiresText: string
   authSource: string | null
@@ -135,6 +145,7 @@ const rows = computed<ConnectionRow[]>(() => {
         typeLabel: wsClientTypeLabel(conn.clientType),
         tagType: TAG_TYPES[conn.clientType],
         device: conn.device,
+        clientVersion: conn.clientVersion,
         durationText: formatDuration(now - conn.connectedAt),
         expiresText: conn.authExpiresAt != null ? formatEpoch(conn.authExpiresAt) : '-',
         authSource: conn.authSource

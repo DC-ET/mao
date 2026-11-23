@@ -17,6 +17,12 @@ export interface WsAuthFrame {
   token: string;
   client: WsClientType;
   /**
+   * 客户端自报版本（管理后台在线设备页展示）。
+   * 桌面是已安装的壳版本，安卓是 APK versionName，浏览器是当前页面构建版本，
+   * CLI 是 mao-agent 包版本，页面嵌入是 SDK 版本。缺省表示旧客户端未上报。
+   */
+  clientVersion?: string;
+  /**
    * 写/操作类页面能力声明；缺省 false（新 SDK 显式发送，旧版 SDK 不发送该字段按 true 兼容）。
    * 只约束写/操作类 page_* 工具（见 contracts/page.ts）；读类工具不受此开关控制，始终提供。
    */

@@ -1,6 +1,7 @@
 import WebSocket from 'ws';
 import type { WsEvent } from './event-types';
 import { resolveDeviceIdentity, type DeviceIdentity } from '../local/device-identity';
+import { getCliVersion } from '../util/version';
 import {
   WS_CLIENT_TYPE,
   WS_HEARTBEAT_INTERVAL_MS,
@@ -243,6 +244,7 @@ export class WsClient {
         this.send({
           type: 'auth', token, client,
           device,
+          clientVersion: getCliVersion(),
           // 客户端能力声明（技术方案 2026-11-18 D2）：服务端按连接定向投递文件代理等能力感知请求
           capabilities: ['file_op'],
         });

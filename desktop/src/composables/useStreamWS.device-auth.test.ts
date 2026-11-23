@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { PAGE_VERSION } from '../utils/client-version'
 import { createPinia, setActivePinia } from 'pinia'
 
 vi.mock('../utils/auth-storage', () => ({
@@ -76,8 +77,9 @@ class FakeWebSocket {
 
 // Electron 形态：window.electronAPI 注入 getDeviceInfo（其余桥接方法缺省时空转）
 const getDeviceInfo = vi.fn(async () => ({ id: 'dev-electron', name: 'Mac A', platform: 'darwin' }))
+const getAppVersion = vi.fn(async () => '0.0.532')
 const windowStub = new EventTarget() as unknown as Record<string, unknown>
-windowStub.electronAPI = { getDeviceInfo }
+windowStub.electronAPI = { getDeviceInfo, getAppVersion }
 Object.defineProperty(globalThis, 'window', {
   value: windowStub, writable: true, configurable: true,
 })
@@ -111,6 +113,7 @@ describe('useStreamWS Electron auth device', () => {
       device: { id: 'dev-electron', name: 'Mac A', platform: 'darwin' },
       // 客户端能力声明（技术方案 2026-11-18 D2）：renderer 有 file_op 执行器，显式声明走分层投递档 1
       capabilities: ['file_op'],
+      clientVersion: '0.0.532',
     })
     // 首帧必须是 auth：设备身份在 IPC 异步返回后才发，期间不得有业务帧抢先
     expect(sockets[0].sent[0]?.type).toBe('auth')
@@ -130,6 +133,7 @@ describe('useStreamWS Electron auth device', () => {
       expect(auth).toBeDefined()
       expect((auth as { client?: string }).client).toBe('browser')
       expect((auth as { capabilities?: unknown }).capabilities).toBeUndefined()
+      expect((auth as { clientVersion?: string }).clientVersion).toBe(PAGE_VERSION)
     } finally {
       ;(globalThis as any).window = electronWindow
     }

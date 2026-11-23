@@ -978,7 +978,7 @@ describe('StreamingWsHandler', () => {
     registry.hasLocalClientConnection.mockReturnValue(false);
     const connected: WsSocket = { id: 'ws-1', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
     await handler.handleTextMessage(connected, JSON.stringify({ type: 'auth', token: 'valid.jwt.token', client: 'electron' }));
-    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'electron', authMetadata, true, null, expect.anything());
+    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'electron', authMetadata, true, null, expect.anything(), null);
     expect(registry.sendToConnection).toHaveBeenCalledWith(connected, expect.objectContaining({ type: 'connected' }));
     // 已认证连接再次发 auth 应为无害 no-op（不重复注册）
     registry.register.mockClear();
@@ -1006,7 +1006,7 @@ describe('StreamingWsHandler', () => {
     const connected: WsSocket = { id: 'ws-embed', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
     // 大小写不敏感归一化为 'embed'
     await handler.handleTextMessage(connected, JSON.stringify({ type: 'auth', token: 'valid.jwt.token', client: 'Embed' }));
-    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'embed', authMetadata, true, null, expect.anything());
+    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'embed', authMetadata, true, null, expect.anything(), null);
   });
 
   it('authFramePageEnabledFalseIsPassedToRegistry', async () => {
@@ -1017,7 +1017,7 @@ describe('StreamingWsHandler', () => {
     await handler.handleTextMessage(connected, JSON.stringify({
       type: 'auth', token: 'valid.jwt.token', client: 'embed', pageEnabled: false,
     }));
-    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'embed', authMetadata, false, null, expect.anything());
+    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'embed', authMetadata, false, null, expect.anything(), null);
   });
 
   it('authFramePageEnabledNonBooleanFallsBackToTrue', async () => {
@@ -1029,7 +1029,28 @@ describe('StreamingWsHandler', () => {
     await handler.handleTextMessage(connected, JSON.stringify({
       type: 'auth', token: 'valid.jwt.token', client: 'embed', pageEnabled: 'false',
     }));
-    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'embed', authMetadata, true, null, expect.anything());
+    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'embed', authMetadata, true, null, expect.anything(), null);
+  });
+
+  it('authFrameClientVersionIsStoredAndInvalidValuesAreIgnored', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValueOnce(null).mockReturnValue(7);
+    jwtService.getAccessTokenMetadata.mockReturnValue(authMetadata);
+    const connected: WsSocket = { id: 'ws-ver', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
+    await handler.handleTextMessage(connected, JSON.stringify({
+      type: 'auth', token: 'valid.jwt.token', client: 'electron', clientVersion: ' 0.0.532 ',
+    }));
+    expect(registry.register).toHaveBeenCalledWith(connected, 7, 'electron', authMetadata, true, null, expect.anything(), '0.0.532');
+    expect(connected.close).not.toHaveBeenCalled();
+
+    registry.register.mockClear();
+    registry.getUserId.mockReturnValueOnce(null);
+    const noisy: WsSocket = { id: 'ws-bad', readyState: WS_OPEN, send: vi.fn(), close: vi.fn() };
+    await handler.handleTextMessage(noisy, JSON.stringify({
+      type: 'auth', token: 'valid.jwt.token', client: 'cli', clientVersion: 'v1\ninjected',
+    }));
+    expect(registry.register).toHaveBeenCalledWith(noisy, 7, 'cli', authMetadata, true, null, expect.anything(), null);
+    expect(noisy.close).not.toHaveBeenCalled();
   });
 
   // LOCAL 执行端上下线广播（技术方案 2026-11-05 §4.1-7 实时化）：targetDeviceOnline
@@ -1241,7 +1262,7 @@ describe('StreamingWsHandler', () => {
     registry.getUserId.mockReturnValue(null);
     jwtService.getAccessTokenMetadata.mockReturnValue(authMetadata);
     await handler.handleTextMessage(ws, JSON.stringify({ type: 'auth', token: 'ok', client: 'cli' }));
-    expect(registry.register).toHaveBeenCalledWith(ws, 7, 'cli', authMetadata, true, null, expect.anything());
+    expect(registry.register).toHaveBeenCalledWith(ws, 7, 'cli', authMetadata, true, null, expect.anything(), null);
   });
 
   it('autoConsumesQueuedMessageAfterExecutionCompletes', async () => {

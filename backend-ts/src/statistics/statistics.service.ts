@@ -215,6 +215,7 @@ export class StatisticsService {
         connectedAt: conn.connectedAt,
         authExpiresAt: conn.authExpiresAt,
         authSource: conn.authSource,
+        clientVersion: conn.clientVersion ?? null,
         device: conn.device,
       });
     }

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WsClient } from './ws-client';
+import { EMBED_CLIENT_VERSION } from '../version';
 
 /**
  * fake WebSocket：必须保留 CONNECTING/OPEN/CLOSING/CLOSED 静态常量，
@@ -127,7 +128,7 @@ describe('WsClient', () => {
     socket.open();
     await p;
     // 未提供 getPageEnabled 时按关闭声明（fail-closed，页面操作缺省关闭）
-    expect(socket.frames()[0]).toEqual({ type: 'auth', token: 'tok', client: 'embed', pageEnabled: false });
+    expect(socket.frames()[0]).toEqual({ type: 'auth', token: 'tok', client: 'embed', pageEnabled: false, clientVersion: EMBED_CLIENT_VERSION });
     expect(ws.connected.value).toBe(true);
     // 尚未收到 connected 帧：业务上不可用
     expect(ws.authenticated.value).toBe(false);
@@ -149,7 +150,7 @@ describe('WsClient', () => {
     socket.open();
     await vi.advanceTimersByTimeAsync(0);
     await p;
-    expect(socket.frames()[0]).toEqual({ type: 'auth', token: 'tok', client: 'embed', pageEnabled: false });
+    expect(socket.frames()[0]).toEqual({ type: 'auth', token: 'tok', client: 'embed', pageEnabled: false, clientVersion: EMBED_CLIENT_VERSION });
     // 断线重连：能力声明随新连接 auth 帧重发
     socket.serverClose(1006);
     await vi.advanceTimersByTimeAsync(1_100);
@@ -159,7 +160,7 @@ describe('WsClient', () => {
     socket2.open();
     await vi.advanceTimersByTimeAsync(0);
     await p2;
-    expect(socket2.frames()[0]).toEqual({ type: 'auth', token: 'tok', client: 'embed', pageEnabled: false });
+    expect(socket2.frames()[0]).toEqual({ type: 'auth', token: 'tok', client: 'embed', pageEnabled: false, clientVersion: EMBED_CLIENT_VERSION });
     ws.disconnect();
   });
 
