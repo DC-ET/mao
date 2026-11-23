@@ -59,19 +59,26 @@
             <span v-else class="muted">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="设备名" min-width="120" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.device?.name || '-' }}</template>
-        </el-table-column>
-        <el-table-column label="平台" width="100">
-          <template #default="{ row }">{{ row.device?.platform || '-' }}</template>
-        </el-table-column>
-        <el-table-column label="设备 ID" min-width="180" class-name="device-id-col">
+        <el-table-column label="额外信息" min-width="240" class-name="extra-info-col">
+          <template #header>
+            <span title="桌面客户端和终端 CLI 显示设备名、平台和设备 ID。公司 SSO 登录的连接会标出「公司 SSO」。都没有时为 -">额外信息</span>
+          </template>
           <template #default="{ row }">
-            <div v-if="row.device" class="device-id-cell">
-              <el-tooltip :content="row.device.id" placement="top" :show-after="300" :enterable="false">
-                <button type="button" class="device-id" title="点击复制设备 ID" @click="copyDeviceId(row.device.id)">{{ row.device.id }}</button>
-              </el-tooltip>
-              <el-button class="device-id-copy" type="primary" link size="small" aria-label="复制设备 ID" title="复制设备 ID" @click.stop="copyDeviceId(row.device.id)">复制</el-button>
+            <div v-if="row.device || row.authSourceLabel" class="extra-info">
+              <template v-if="row.device">
+                <div class="extra-info-meta">
+                  <span class="extra-info-name">{{ row.device.name || '-' }}</span>
+                  <span class="muted">·</span>
+                  <span>{{ row.device.platform || '-' }}</span>
+                </div>
+                <div class="device-id-cell">
+                  <el-tooltip :content="row.device.id" placement="top" :show-after="300" :enterable="false">
+                    <button type="button" class="device-id" title="点击复制设备 ID" @click="copyDeviceId(row.device.id)">{{ row.device.id }}</button>
+                  </el-tooltip>
+                  <el-button class="device-id-copy" type="primary" link size="small" aria-label="复制设备 ID" title="复制设备 ID" @click.stop="copyDeviceId(row.device.id)">复制</el-button>
+                </div>
+              </template>
+              <div v-if="row.authSourceLabel">{{ row.authSourceLabel }}</div>
             </div>
             <span v-else class="muted">-</span>
           </template>
@@ -81,12 +88,6 @@
         </el-table-column>
         <el-table-column label="认证到期" width="170">
           <template #default="{ row }">{{ row.expiresText }}</template>
-        </el-table-column>
-        <el-table-column label="来源" width="120">
-          <template #default="{ row }">
-            <span v-if="row.authSource">{{ row.authSource }}</span>
-            <span v-else class="muted">-</span>
-          </template>
         </el-table-column>
       </el-table>
     </el-card>
@@ -120,10 +121,10 @@ interface ConnectionRow {
   typeLabel: string
   tagType: 'success' | 'warning' | 'info' | 'primary' | 'danger'
   device: OnlineDeviceConnection['device']
+  authSourceLabel: string | null
   clientVersion: string | null
   durationText: string
   expiresText: string
-  authSource: string | null
 }
 
 const loading = ref(false)
@@ -145,10 +146,10 @@ const rows = computed<ConnectionRow[]>(() => {
         typeLabel: wsClientTypeLabel(conn.clientType),
         tagType: TAG_TYPES[conn.clientType],
         device: conn.device,
+        authSourceLabel: connectionAuthLabel(conn.authSource),
         clientVersion: conn.clientVersion,
         durationText: formatDuration(now - conn.connectedAt),
-        expiresText: conn.authExpiresAt != null ? formatEpoch(conn.authExpiresAt) : '-',
-        authSource: conn.authSource
+        expiresText: conn.authExpiresAt != null ? formatEpoch(conn.authExpiresAt) : '-'
       })
     }
   }
@@ -167,6 +168,13 @@ const clientTypeCounts = computed(() => {
 })
 
 const lastUpdatedText = computed(() => (lastUpdated.value ? formatEpoch(lastUpdated.value.getTime()) : ''))
+
+/** 连接凭据类型。普通登录的令牌不带这个标记，返回 null，额外信息里不占一行。 */
+function connectionAuthLabel(source: string | null): string | null {
+  if (!source) return null
+  if (source === 'company_sso') return '公司 SSO'
+  return source
+}
 
 /** epoch ms → 北京时间（与 utils/datetime.ts 同一展示口径，这里是数字入参的窄封装）。 */
 function formatEpoch(ms: number): string {
@@ -311,8 +319,29 @@ onBeforeUnmount(stopTimer)
   align-items: center;
 }
 
-:deep(.device-id-col .cell) {
+:deep(.extra-info-col .cell) {
   overflow: hidden;
+}
+
+.extra-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.extra-info-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.extra-info-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .device-id-cell {
