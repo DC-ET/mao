@@ -33,6 +33,18 @@
             <el-icon :size="14" :class="{ spinning: loading && !operation }"><Refresh /></el-icon>
           </button>
         </template>
+        <el-tooltip v-if="allowDiscard && files.length > 0" :content="discardDisabledReason || '撤销全部未提交改动'" placement="top" :show-after="300">
+          <span>
+            <button
+              class="git-action-btn git-discard-all"
+              :disabled="!!discardDisabledReason"
+              aria-label="撤销全部未提交改动"
+              @click="handleDiscardAll"
+            >
+              <el-icon :size="14" :class="{ spinning: discarding }"><RefreshLeft /></el-icon>
+            </button>
+          </span>
+        </el-tooltip>
         <el-tooltip v-if="showExpand" content="在中央 Tab 打开 Git 管理器" placement="top" :show-after="300">
           <span>
             <button class="git-action-btn" aria-label="打开 Git 管理器" @click="$emit('expand')">
@@ -61,22 +73,10 @@
           </span>
         </el-tooltip>
       </div>
-      <div class="git-commit-actions">
-        <button
-          v-if="allowDiscard"
-          class="git-discard-all"
-          :disabled="!!discardDisabledReason"
-          :title="discardDisabledReason || '撤销全部未提交改动'"
-          @click="handleDiscardAll"
-        >
-          <el-icon :size="14" :class="{ spinning: discarding }"><RefreshLeft /></el-icon>
-          撤销全部
-        </button>
-        <button class="git-commit-submit" :disabled="!!commitWithMessageDisabledReason" @click="emit('commit-with-message')">
-          <el-icon :size="14" :class="{ spinning: committing }"><Check /></el-icon>
-          提交
-        </button>
-      </div>
+      <button class="git-commit-submit" :disabled="!!commitWithMessageDisabledReason" @click="emit('commit-with-message')">
+        <el-icon :size="14" :class="{ spinning: committing }"><Check /></el-icon>
+        提交
+      </button>
     </div>
 
     <div v-if="error" class="git-state git-error">
@@ -585,39 +585,8 @@ function toggleDir(path: string) {
   cursor: default;
 }
 
-.git-commit-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.git-commit-actions .git-commit-submit {
-  flex: 1;
-}
-
-.git-discard-all {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid color-mix(in srgb, var(--aw-danger) 45%, var(--aw-hairline));
-  border-radius: var(--aw-radius-sm);
-  background: transparent;
+.git-action-btn.git-discard-all:hover:not(:disabled) {
   color: var(--aw-danger);
-  font-size: var(--git-fs-meta, 12px);
-  font-weight: 600;
-  cursor: pointer;
-  transition: background-color 0.15s, opacity 0.15s;
-}
-
-.git-discard-all:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--aw-danger) 8%, transparent);
-}
-
-.git-discard-all:disabled {
-  opacity: 0.4;
-  cursor: default;
 }
 
 .git-commit-submit {

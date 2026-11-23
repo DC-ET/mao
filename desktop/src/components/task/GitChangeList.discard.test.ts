@@ -84,9 +84,8 @@ describe('GitChangeList 撤销改动', () => {
 
   it('撤销进行中：撤销与提交按钮都禁用并说明原因', () => {
     const { host, app } = mount({ allowDiscard: true, discarding: true, commitMessage: 'x' })
-    const all = host.querySelector('.git-discard-all') as HTMLButtonElement
+    const all = host.querySelector('.git-toolbar .git-discard-all[aria-label="撤销全部未提交改动"]') as HTMLButtonElement
     expect(all.disabled).toBe(true)
-    expect(all.title).toBe('撤销进行中')
     expect((host.querySelector('.git-commit-submit') as HTMLButtonElement).disabled).toBe(true)
     expect((host.querySelector('.git-discard-btn') as HTMLButtonElement).title).toBe('撤销进行中')
     app.unmount()

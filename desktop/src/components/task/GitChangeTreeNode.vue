@@ -48,7 +48,7 @@
         :title="discardDisabledReason || `撤销 ${node.name} 的改动`"
         @click.stop="$emit('discard', node)"
       >
-        <el-icon :size="13"><RefreshLeft /></el-icon>
+        <el-icon :size="12"><RefreshLeft /></el-icon>
       </button>
     </div>
 
@@ -249,15 +249,16 @@ function typeClass(type: string) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   margin-left: 6px;
   border: none;
   border-radius: var(--aw-radius-xs);
   background: transparent;
-  color: var(--aw-ink-muted-48);
+  color: var(--aw-ink-muted-40);
   cursor: pointer;
   opacity: 0;
+  transition: opacity 0.12s, color 0.12s;
 }
 
 .git-node-row:hover .git-discard-btn,
@@ -266,8 +267,7 @@ function typeClass(type: string) {
 }
 
 .git-discard-btn:hover:not(:disabled) {
-  color: var(--aw-danger);
-  background: color-mix(in srgb, var(--aw-danger) 10%, transparent);
+  color: var(--aw-ink-muted-64);
 }
 
 .git-discard-btn:disabled {
