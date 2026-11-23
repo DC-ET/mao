@@ -60,6 +60,7 @@
         :file-provider="fileProvider"
         :execution-mode="executionMode"
         :workspace="workspace"
+        :agent-running="agentRunning"
         @open-git-diff="(file, repoPath) => emit('open-git-diff', file, repoPath)"
         @open-commit-diff="emit('open-commit-diff', $event)"
         @open-branch-diff="emit('open-branch-diff', $event)"
@@ -113,6 +114,8 @@ const props = defineProps<{
   gitProvider: WorkspaceGitProvider | null
   executionMode?: string
   workspace?: string
+  /** 当前会话 Agent 正在运行（Git 管理器撤销确认框追加风险提示） */
+  agentRunning?: boolean
 }>()
 
 const emit = defineEmits<{

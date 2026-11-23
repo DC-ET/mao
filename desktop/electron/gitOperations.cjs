@@ -18,6 +18,11 @@ const writeLocks = new Set()
 const BRANCH_NAME_PATTERN = /^[A-Za-z0-9._/-]+$/
 const STASH_REF_PATTERN = /^stash@\{\d+\}$/
 const STASH_ACTIONS = ['apply', 'pop', 'drop']
+/** 撤销改动：与后端 GitWriteOperationService.discard 同口径（显式路径上限 / 单次 git 批量 / 进行中标记） */
+const MAX_DISCARD_PATHS = 1000
+const DISCARD_BATCH_SIZE = 200
+const IN_PROGRESS_MARKERS = ['MERGE_HEAD', 'REBASE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply', 'sequencer']
+const LITERAL_PATHSPECS = { env: { GIT_LITERAL_PATHSPECS: '1' } }
 
 function runGit(cwd, args, options = {}) {
   return new Promise((resolve) => {
@@ -33,7 +38,7 @@ function runGit(cwd, args, options = {}) {
       maxBuffer: MAX_GIT_OUTPUT_BYTES,
       timeout: gitTimeoutMs(),
       killSignal: 'SIGKILL',
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...options.env },
     }, (error, stdout, stderr) => {
       finish({
         exitCode: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
@@ -540,10 +545,208 @@ async function stashOp(workspace, repoPath, action, ref) {
   })
 }
 
+/**
+ * 撤销路径校验（与后端 normalizeDiscardPaths 同规则）：null/undefined = 全部；空数组拒绝；去重后上限 1000。
+ * 未跟踪目录项（嵌套仓库）保留结尾 `/` 以对上变更集的键。
+ */
+function normalizeDiscardPaths(paths) {
+  if (paths == null) return null
+  if (!Array.isArray(paths)) throw new Error('撤销路径无效')
+  if (paths.length === 0) throw new Error('未指定要撤销的文件')
+  const normalized = new Set(paths.map((raw) => {
+    if (typeof raw !== 'string') throw new Error('撤销路径无效')
+    let value = raw.replace(/\\/g, '/')
+    while (value.startsWith('./')) value = value.slice(2)
+    const body = value.endsWith('/') ? value.slice(0, -1) : value
+    if (!body || body.startsWith('/') || /^[A-Za-z]:/.test(body) || /[\0\r\n]/.test(body)
+      || body.split('/').some((part) => part === '' || part === '.' || part === '..')) {
+      throw new Error('撤销路径无效')
+    }
+    return value
+  }))
+  if (normalized.size > MAX_DISCARD_PATHS) throw new Error(`一次最多撤销 ${MAX_DISCARD_PATHS} 个文件，请使用撤销全部`)
+  return [...normalized]
+}
+
+/** 「撤销全部」确认摘要：路径默认排序后以 \n 连接取 SHA-256（与后端 discardDigest、前端 utils/git-manager 同算法） */
+function discardDigest(paths) {
+  return crypto.createHash('sha256').update([...paths].sort().join('\n'), 'utf8').digest('hex')
+}
+
+function chunk(items, size) {
+  const batches = []
+  for (let i = 0; i < items.length; i += size) batches.push(items.slice(i, i + size))
+  return batches
+}
+
+function isDirectoryEntry(target) {
+  try {
+    return fs.lstatSync(target).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+function isInside(root, target) {
+  return target === root || target.startsWith(root + path.sep)
+}
+
+/** 删掉一个文件或符号链接本身（不跟随），再自下而上删除变空的父目录（止于仓库根）；目录一律不删。 */
+function removeWorktreeFile(repoRoot, relativePath) {
+  const target = path.join(repoRoot, relativePath)
+  let parent
+  try {
+    parent = fs.realpathSync(path.dirname(target))
+  } catch {
+    return
+  }
+  if (!isInside(repoRoot, parent)) throw new Error('路径访问被拒绝')
+  const real = path.join(parent, path.basename(target))
+  let stat = null
+  try {
+    stat = fs.lstatSync(real)
+  } catch {
+    stat = null
+  }
+  if (stat?.isDirectory()) return
+  if (stat) {
+    try {
+      fs.unlinkSync(real)
+    } catch (error) {
+      throw new Error(`删除「${relativePath}」失败（${error.code || '未知错误'}）`)
+    }
+  }
+  let current = parent
+  while (current !== repoRoot && isInside(repoRoot, current)) {
+    try {
+      fs.rmdirSync(current)
+    } catch {
+      return
+    }
+    current = path.dirname(current)
+  }
+}
+
+async function gitlinkPaths(repoRoot, paths, hasHead) {
+  const found = new Set()
+  for (const batch of chunk(paths, DISCARD_BATCH_SIZE)) {
+    const listings = [await runGit(repoRoot, ['ls-files', '-s', '--', ...batch], LITERAL_PATHSPECS)]
+    if (hasHead) listings.push(await runGit(repoRoot, ['ls-tree', 'HEAD', '--', ...batch], LITERAL_PATHSPECS))
+    for (const listing of listings) {
+      if (listing.exitCode !== 0) throw new Error(describeGitFailure(listing, '读取子模块信息失败'))
+      for (const line of listing.stdout.split(/\r?\n/)) {
+        const tab = line.indexOf('\t')
+        if (tab > 0 && line.startsWith('160000 ')) found.add(line.slice(tab + 1))
+      }
+    }
+  }
+  return found
+}
+
+async function pendingOperationError(repoRoot) {
+  const markers = await runGit(repoRoot, ['rev-parse', ...IN_PROGRESS_MARKERS.flatMap((name) => ['--git-path', name])])
+  if (markers.exitCode !== 0) return describeGitFailure(markers, '读取仓库状态失败')
+  const pending = markers.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+    .some((marker) => fs.existsSync(path.resolve(repoRoot, marker)))
+  if (pending) return '仓库有进行中的合并、变基或拣选，请先处理完再撤销'
+  if (await hasConflicts(repoRoot)) return '存在未解决的冲突，请先处理完再撤销'
+  return null
+}
+
+function discardMessage(all, done, skipped) {
+  let message
+  if (all && skipped === 0) message = '已撤销全部未提交改动'
+  else if (done.length === 1) message = `已撤销 ${done[0]} 的改动`
+  else message = `已撤销 ${done.length} 个文件的改动`
+  return skipped > 0 ? `${message}，跳过 ${skipped} 项（嵌套仓库或子模块，需手动处理）` : message
+}
+
+/**
+ * 撤销未提交改动（与后端 GitWriteOperationService.discard 逐条同规则，技术方案 2026-11-23）。
+ * paths 为 null = 全部，须带 expectedDigest 且与当前变更集一致；类型按当前变更集重算；
+ * 嵌套仓库目录项与子模块跳过；只 unlink 文件、rmdir 空目录，没有递归删除。
+ * @param {string} workspace
+ * @param {string} [repoPath]
+ * @param {string[] | null} paths
+ * @param {string} [expectedDigest]
+ */
+async function discard(workspace, repoPath, paths, expectedDigest) {
+  return withWriteLock(workspace, repoPath, 'discard', async (resolvedRoot) => {
+    const repoRoot = fs.realpathSync(resolvedRoot)
+    let requested
+    try {
+      requested = normalizeDiscardPaths(paths)
+    } catch (error) {
+      return operationError('discard', error.message)
+    }
+    const pending = await pendingOperationError(repoRoot)
+    if (pending) return operationError('discard', pending)
+    const changes = await collectChangedFiles(repoRoot)
+    if (changes.size === 0) return operationError('discard', '没有可撤销的改动')
+    let targets
+    if (requested == null) {
+      if (typeof expectedDigest !== 'string' || !expectedDigest) return operationError('discard', '缺少改动确认摘要，请刷新后重试')
+      if (discardDigest(changes.keys()) !== expectedDigest.toLowerCase()) return operationError('discard', '改动已变化，请刷新后重新确认')
+      targets = [...changes.values()]
+    } else {
+      const missing = requested.find((item) => !changes.has(item))
+      if (missing) return operationError('discard', `「${missing}」不在当前改动中，请刷新后重试`)
+      targets = requested.map((item) => changes.get(item))
+    }
+
+    const hasHead = (await runGit(repoRoot, ['rev-parse', '--verify', '-q', 'HEAD'])).exitCode === 0
+    const trackedPaths = targets.filter((file) => !file.untracked).flatMap((file) => (file.oldPath ? [file.path, file.oldPath] : [file.path]))
+    const gitlinks = await gitlinkPaths(repoRoot, trackedPaths, hasHead)
+    const restore = []
+    const remove = []
+    const unlink = []
+    const done = []
+    let skipped = 0
+    for (const file of targets) {
+      if (file.untracked) {
+        if (file.path.endsWith('/') || isDirectoryEntry(path.join(repoRoot, file.path))) {
+          skipped++
+          continue
+        }
+        unlink.push(file.path)
+      } else if (gitlinks.has(file.path) || (file.oldPath && gitlinks.has(file.oldPath))) {
+        skipped++
+        continue
+      } else if (file.changeType === 'CREATED' || file.changeType === 'COPIED') {
+        remove.push(file.path)
+      } else if (file.changeType === 'RENAMED') {
+        if (!hasHead || !file.oldPath) return operationError('discard', `「${file.path}」没有可恢复的提交内容`)
+        restore.push(file.oldPath)
+        remove.push(file.path)
+      } else {
+        if (!hasHead) return operationError('discard', `「${file.path}」没有可恢复的提交内容`)
+        restore.push(file.path)
+      }
+      done.push(file.path)
+    }
+    if (done.length === 0) return operationError('discard', '嵌套仓库或子模块不支持撤销，请手动处理')
+
+    for (const batch of chunk(restore, DISCARD_BATCH_SIZE)) {
+      const result = await runGit(repoRoot, ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...batch], LITERAL_PATHSPECS)
+      if (result.exitCode !== 0) return operationError('discard', describeGitFailure(result, '撤销失败'))
+    }
+    for (const batch of chunk(remove, DISCARD_BATCH_SIZE)) {
+      const result = await runGit(repoRoot, ['rm', '-f', '-q', '--ignore-unmatch', '--', ...batch], LITERAL_PATHSPECS)
+      if (result.exitCode !== 0) return operationError('discard', describeGitFailure(result, '撤销失败'))
+    }
+    for (const item of [...remove, ...unlink]) removeWorktreeFile(repoRoot, item)
+    const state = await getRemoteState(repoRoot)
+    return { success: true, operation: 'discard', message: discardMessage(requested == null, done, skipped), branch: state.branch }
+  })
+}
+
 module.exports = {
   MAX_COMMIT_DIFF_BYTES,
   buildCommitInput,
   commit,
+  discard,
+  discardDigest,
+  normalizeDiscardPaths,
   fairlyTruncateDiffs,
   fetch,
   getRemoteState,

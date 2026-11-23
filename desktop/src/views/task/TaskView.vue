@@ -43,6 +43,7 @@
         :git-provider="gitProvider"
         :execution-mode="executionMode"
         :workspace="workspace"
+        :agent-running="isActiveSessionPhase(currentPhase)"
         @open-file="handleOpenFile"
         @add-file-to-chat="handleAddFileToChat"
         @add-commit-to-chat="quoteReplyToChat"
@@ -119,6 +120,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAgentStore } from '../../stores/agent'
 import { useSessionStore, type LocalWorkspaceSummary, type TaskPhase, type SubagentItem } from '../../stores/session'
 import { isElectronClient } from '../../utils/platform'
+import { isActiveSessionPhase } from '../../utils/sessionPhase'
 import { persistedContextWindow } from '../../stores/session/context-window'
 import { useDraftStore } from '../../stores/draft'
 import { usePanelLayout } from '../../composables/usePanelLayout'

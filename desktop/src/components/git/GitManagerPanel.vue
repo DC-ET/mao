@@ -132,7 +132,11 @@
         :commit-message="commitDraft"
         :generating="generatingMessage"
         :committing="operation === 'commit-with-message'"
+        allow-discard
+        :discarding="operation === 'discard'"
+        :agent-running="agentRunning"
         @refresh="handleRefreshAll"
+        @discard="handleDiscard"
         @commit="runOperation('commit')"
         @pull="runOperation('pull')"
         @push="runOperation('push')"
@@ -228,6 +232,8 @@ const props = defineProps<{
   fileProvider?: WorkspaceFileProvider | null
   executionMode?: string
   workspace?: string
+  /** 当前会话 Agent 正在运行（撤销确认框追加风险提示） */
+  agentRunning?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -294,6 +300,8 @@ const statusProviderRef = computed<WorkspaceGitProvider | null>(() => {
       fetchRemote: () => p.fetchRemote(repoPath),
       switchBranch: (branch: string, opts?: { create?: boolean }) => p.switchBranch(branch, opts, repoPath),
       stashOp: (action: GitStashAction, ref: string) => p.stashOp(action, ref, repoPath),
+      // 必须显式覆盖：漏写时 ...p 展开出的原方法不带 repoPath，会撤到工作区根仓库
+      discard: (paths: string[] | null, expectedDigest?: string) => p.discard(paths, expectedDigest, repoPath),
     }
   }
   return p
@@ -323,9 +331,9 @@ const {
 
 const { operation, run } = useGitOperations(statusProviderRef)
 
-/** 变更视图只展示 commit/pull/push 三态的旋转图标，fetch/switch/stash 不属于它的工具栏 */
-const changesOperation = computed<'commit' | 'pull' | 'push' | null>(() =>
-  operation.value === 'commit' || operation.value === 'pull' || operation.value === 'push'
+/** 变更视图只关心 commit/pull/push/discard（旋转态与禁用），fetch/switch/stash 不属于它的工具栏 */
+const changesOperation = computed<'commit' | 'pull' | 'push' | 'discard' | null>(() =>
+  operation.value === 'commit' || operation.value === 'pull' || operation.value === 'push' || operation.value === 'discard'
     ? operation.value
     : null,
 )
@@ -430,6 +438,11 @@ function handleCreateBranch(name: string) {
 
 function handleStashOp(action: GitStashAction, ref: string) {
   void run('stash', action, ref).then(() => handleRefreshAll())
+}
+
+/** 撤销改动：GitChangeList 已确认，成功或失败都全量刷新，避免清单停在旧状态 */
+function handleDiscard(paths: string[] | null, expectedDigest?: string) {
+  void run('discard', paths, expectedDigest).then(() => handleRefreshAll())
 }
 
 function handleOpenCommitDiff(payload: { hash: string; file: GitChangedFile }) {

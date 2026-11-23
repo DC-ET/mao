@@ -368,3 +368,36 @@ describe('compareBranches / compareBranchFileDiff', () => {
     expect(diff.truncated).toBe(true)
   })
 })
+
+describe('discard', () => {
+  beforeEach(() => {
+    vi.mocked(api.post).mockClear()
+  })
+
+  it('CLOUD 打到 /files/workspace-git-discard，透传 paths / expectedDigest / repoPath', async () => {
+    vi.mocked(api.post).mockResolvedValueOnce({ data: { success: true, operation: 'discard' } } as any)
+    const provider = createCloudGitProvider('3')
+    const result = await provider.discard(null, 'abc', 'sub-repo')
+    expect(result.success).toBe(true)
+    expect(vi.mocked(api.post)).toHaveBeenCalledWith('/files/workspace-git-discard', {
+      sessionId: 3, repoPath: 'sub-repo', paths: null, expectedDigest: 'abc',
+    })
+  })
+
+  it('CLOUD 会话未就绪时返回失败而不发请求', async () => {
+    const result = await createCloudGitProvider('').discard(['a.txt'])
+    expect(result).toMatchObject({ success: false, operation: 'discard', error: '会话未就绪' })
+    expect(vi.mocked(api.post)).not.toHaveBeenCalled()
+  })
+
+  it('LOCAL 走 gitDiscard IPC 并落 discard 活动记录', async () => {
+    const gitDiscard = vi.fn(async () => ({ success: false, operation: 'discard', error: '改动已变化，请刷新后重新确认' }))
+    ;(globalThis as any).window = { electronAPI: { gitDiscard } }
+    const result = await createLocalGitProvider('/tmp/ws', '7').discard(['a.txt'], undefined, 'sub-repo')
+    expect(result.success).toBe(false)
+    expect(gitDiscard).toHaveBeenCalledWith('/tmp/ws', 'sub-repo', ['a.txt'], undefined)
+    const recorded = vi.mocked(api.post).mock.calls[0]
+    expect(recorded[0]).toBe('/files/workspace-git-activity')
+    expect((recorded[1] as any).result).toMatchObject({ operation: 'discard', success: false, repoPath: 'sub-repo' })
+  })
+})

@@ -18,6 +18,8 @@ const state = vi.hoisted(() => ({
   refreshLoadedViewsCalls: 0,
   isRootGit: false,
   multiRepoMode: false,
+  selectedRepoPath: '',
+  operationsProvider: null as any,
   tooltips: [] as string[],
 }))
 
@@ -66,7 +68,7 @@ vi.mock('../../composables/useGitRepos', async () => {
       repos: ref([]),
       isRootGit: ref(state.isRootGit),
       multiRepoMode: ref(state.multiRepoMode),
-      selectedRepoPath: ref(''),
+      selectedRepoPath: ref(state.selectedRepoPath),
       selectedRepo: ref(null),
       refresh: async () => { state.refreshReposCalls += 1 },
       selectRepo: () => {},
@@ -111,25 +113,28 @@ vi.mock('../../composables/useGitManager', async () => {
 vi.mock('../../composables/useGitOperations', async () => {
   const { ref } = await import('vue')
   return {
-    useGitOperations: () => ({
-      operation: ref(null),
-      run: async (op: string) => {
-        state.calls.push(op)
-        return { success: true, message: '远端已更新' }
-      },
-    }),
+    useGitOperations: (providerRef: any) => {
+      state.operationsProvider = providerRef
+      return {
+        operation: ref(null),
+        run: async (op: string) => {
+          state.calls.push(op)
+          return { success: true, message: '远端已更新' }
+        },
+      }
+    },
   }
 })
 
 import GitManagerPanel from './GitManagerPanel.vue'
 
-function mountPanel(events?: { onGitChanged?: () => void }) {
+function mountPanel(events?: { onGitChanged?: () => void }, gitProvider: object = {}) {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const app = createApp({
     render: () => h(GitManagerPanel as any, {
       sessionId: 's1',
-      gitProvider: {},
+      gitProvider,
       onGitChanged: events?.onGitChanged,
     } as any),
   })
@@ -157,7 +162,22 @@ beforeEach(() => {
   state.refreshLoadedViewsCalls = 0
   state.isRootGit = false
   state.multiRepoMode = false
+  state.selectedRepoPath = ''
+  state.operationsProvider = null
   state.tooltips = []
+})
+
+describe('GitManagerPanel 多仓库撤销', () => {
+  it('多仓库包装把选中仓库的 repoPath 带给 discard，不会撤到工作区根仓库', async () => {
+    state.status = { isGit: true, branch: 'main', hasRemote: false }
+    state.multiRepoMode = true
+    state.selectedRepoPath = 'sub-repo'
+    const discard = vi.fn(async () => ({ success: true, operation: 'discard' }))
+    const { app } = mountPanel(undefined, { discard })
+    await state.operationsProvider.value.discard(null, 'digest-1')
+    expect(discard).toHaveBeenCalledWith(null, 'digest-1', 'sub-repo')
+    app.unmount()
+  })
 })
 
 describe('GitManagerPanel 顶部刷新按钮', () => {

@@ -388,6 +388,7 @@ interface ElectronAPI {
   gitFetch(workspace: string | undefined, repoPath: string | undefined): Promise<GitOperationResult>
   gitSwitchBranch(workspace: string | undefined, repoPath: string | undefined, branch: string, create?: boolean): Promise<GitOperationResult>
   gitStashOp(workspace: string | undefined, repoPath: string | undefined, action: GitStashAction, ref: string): Promise<GitOperationResult>
+  gitDiscard(workspace: string | undefined, repoPath: string | undefined, paths: string[] | null, expectedDigest?: string): Promise<GitOperationResult>
   checkForUpdate(): Promise<{ skipped?: boolean; reason?: string; updateInfo?: AppUpdateInfo | null }>
   installUpdate(): Promise<{ success: boolean; error?: string }>
   onUpdateChecking(callback: (data: { feedUrl?: string }) => void): RemoveListener

@@ -65,7 +65,7 @@ export interface GitFileDiff {
   unavailableReason?: string
 }
 
-export type GitOperationType = 'commit' | 'pull' | 'push' | 'fetch' | 'switch' | 'stash'
+export type GitOperationType = 'commit' | 'pull' | 'push' | 'fetch' | 'switch' | 'stash' | 'discard'
 
 export interface GitOperationResult {
   success: boolean

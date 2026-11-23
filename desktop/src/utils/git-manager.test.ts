@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   buildGitTree,
   collectDirPaths,
+  collectTreeFilePaths,
   formatRelativeTime,
+  gitDiscardDigest,
   gitPullDisabledReason,
   gitPushDisabledReason,
   gitSyncDisabledReason,
@@ -290,5 +292,20 @@ describe('buildGitTree / collectDirPaths（变更视图与分支对比视图共�
     collectDirPaths(tree, out)
     expect(out.has('a/b/c')).toBe(true)
     expect(out.has('d')).toBe(true)
+  })
+})
+
+describe('discard helpers', () => {
+  it('gitDiscardDigest 与后端 / Electron 同一测试向量（排序后 \\n 连接取 SHA-256）', async () => {
+    expect(await gitDiscardDigest(['src/b.ts', 'a.txt', '中文.png']))
+      .toBe('b725ad5be7af285c2495ae3c1689c6e2bd2cdd13c515da0c48dcc1a609d24061')
+  })
+
+  it('collectTreeFilePaths 收齐目录节点下的全部文件路径', () => {
+    const files = ['src/a.ts', 'src/lib/b.ts', 'README.md'].map((path) => ({
+      path, changeType: 'MODIFIED', insertions: 0, deletions: 0,
+    })) as GitChangedFile[]
+    const src = buildGitTree(files).find((node) => node.kind === 'dir')!
+    expect(collectTreeFilePaths(src).sort()).toEqual(['src/a.ts', 'src/lib/b.ts'])
   })
 })

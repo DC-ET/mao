@@ -3,8 +3,8 @@ import { ElMessage } from 'element-plus'
 import type { WorkspaceGitProvider } from './workspace-git-provider'
 import type { GitOperationResult, GitStashAction } from '../types/git'
 
-/** 写操作集合：commit/pull/push 侧边栏与大 Tab 共用；commit-with-message（两步提交第二步）/fetch/switch/stash 仅大 Tab。 */
-export type GitWriteOperation = 'commit' | 'pull' | 'push' | 'fetch' | 'switch' | 'stash' | 'commit-with-message'
+/** 写操作集合：commit/pull/push 侧边栏与大 Tab 共用；commit-with-message（两步提交第二步）/fetch/switch/stash/discard 仅大 Tab。 */
+export type GitWriteOperation = 'commit' | 'pull' | 'push' | 'fetch' | 'switch' | 'stash' | 'discard' | 'commit-with-message'
 
 /** 各写操作的入参元组（与 WorkspaceGitProvider 对应方法的签名一致）。 */
 interface GitWriteOperationArgs {
@@ -16,6 +16,8 @@ interface GitWriteOperationArgs {
   fetch: [repoPath?: string]
   switch: [branch: string, opts?: { create?: boolean }, repoPath?: string]
   stash: [action: GitStashAction, ref: string, repoPath?: string]
+  /** paths 为 null = 全部（须带 expectedDigest） */
+  discard: [paths: string[] | null, expectedDigest?: string, repoPath?: string]
 }
 
 const OPERATION_LABELS: Record<GitWriteOperation, string> = {
@@ -26,6 +28,7 @@ const OPERATION_LABELS: Record<GitWriteOperation, string> = {
   fetch: '获取远端更新',
   switch: '切换分支',
   stash: 'stash 操作',
+  discard: '撤销改动',
 }
 
 function successMessage(operation: GitWriteOperation, result: GitOperationResult): string {
@@ -60,6 +63,7 @@ export function useGitOperations(provider: Ref<WorkspaceGitProvider | null>) {
       else if (op === 'push') result = await p.push(...(args as GitWriteOperationArgs['push']))
       else if (op === 'fetch') result = await p.fetchRemote(...(args as GitWriteOperationArgs['fetch']))
       else if (op === 'switch') result = await p.switchBranch(...(args as GitWriteOperationArgs['switch']))
+      else if (op === 'discard') result = await p.discard(...(args as GitWriteOperationArgs['discard']))
       else result = await p.stashOp(...(args as GitWriteOperationArgs['stash']))
       if (result.success) {
         ElMessage.success(successMessage(op, result))

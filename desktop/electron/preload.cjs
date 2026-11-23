@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   gitFetch: (workspace, repoPath) => ipcRenderer.invoke('git-fetch', { workspace, repoPath }),
   gitSwitchBranch: (workspace, repoPath, branch, create) => ipcRenderer.invoke('git-switch-branch', { workspace, repoPath, branch, create }),
   gitStashOp: (workspace, repoPath, action, ref) => ipcRenderer.invoke('git-stash-op', { workspace, repoPath, action, ref }),
+  gitDiscard: (workspace, repoPath, paths, expectedDigest) => ipcRenderer.invoke('git-discard', { workspace, repoPath, paths, expectedDigest }),
   checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
   installUpdate: () => ipcRenderer.invoke('install-update'),
   onUpdateChecking: (callback) => onIpc('update-checking', callback),

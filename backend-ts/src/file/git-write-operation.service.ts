@@ -1,7 +1,7 @@
-import { chmodSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync, realpathSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { chmodSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync, realpathSync, lstatSync, unlinkSync, rmdirSync } from 'node:fs';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { utf8Prefix } from '../common/utf8.js';
@@ -29,7 +29,12 @@ const BRANCH_NAME_PATTERN = /^[A-Za-z0-9._/-]+$/;
 const STASH_REF_PATTERN = /^stash@\{\d+\}$/;
 const STASH_ACTIONS = ['apply', 'pop', 'drop'];
 /** LOCAL 活动记录白名单：与 GitWriteOperationService 的写操作一一对应 */
-const LOCAL_ACTIVITY_OPERATIONS = ['commit', 'pull', 'push', 'fetch', 'switch', 'stash'];
+const LOCAL_ACTIVITY_OPERATIONS = ['commit', 'pull', 'push', 'fetch', 'switch', 'stash', 'discard'];
+/** 撤销改动：显式路径上限、单次 git 调用的路径批量、进行中操作的标记（经 rev-parse --git-path 定位） */
+const MAX_DISCARD_PATHS = 1000;
+const DISCARD_BATCH_SIZE = 200;
+const IN_PROGRESS_MARKERS = ['MERGE_HEAD', 'REBASE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply', 'sequencer'];
+const LITERAL_PATHSPECS = { GIT_LITERAL_PATHSPECS: '1' };
 
 /** git 子进程超时（毫秒）。MAO_TEST_GIT_TIMEOUT_MS 仅供测试缩短挂起类用例的等待时间（小于 1s 视为无效）。 */
 function gitTimeoutMs(): number {
@@ -312,6 +317,108 @@ export class GitWriteOperationService {
       success.stashRef = ref;
       return success;
     });
+  }
+
+  /**
+   * 撤销未提交改动（技术方案 2026-11-23）。paths 为 null 表示全部，此时必须带 expectedDigest
+   * （确认框所见清单的摘要），与执行时重算的变更集不一致即拒绝：写锁挡不住 Agent 的文件工具，
+   * 确认之后才出现的文件不能被「全部」带走。类型一律按当前变更集重算，不信任前端。
+   * 嵌套仓库目录项与子模块跳过；删除只用 unlink + 空目录 rmdir，整条链路没有递归删除。
+   */
+  async discard(session: Session, repoPath: string | null | undefined, paths: unknown, expectedDigest?: unknown): Promise<GitOperationResult> {
+    return this.locked(session, repoPath, 'discard', async (repo) => {
+      const requested = normalizeDiscardPaths(paths);
+      await this.requireNoPendingOperation(repo);
+      const changes = await this.workspaceGitService.changedFiles(repo);
+      if (changes.size === 0) throw new BusinessException(ErrorCode.PARAM_INVALID, '没有可撤销的改动');
+      let targets: GitChangedFileDTO[];
+      if (requested == null) {
+        if (typeof expectedDigest !== 'string' || expectedDigest.length === 0) {
+          throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少改动确认摘要，请刷新后重试');
+        }
+        if (discardDigest([...changes.keys()]) !== expectedDigest.toLowerCase()) {
+          throw new BusinessException(ErrorCode.PARAM_INVALID, '改动已变化，请刷新后重新确认');
+        }
+        targets = [...changes.values()];
+      } else {
+        targets = requested.map((path) => {
+          const file = changes.get(path);
+          if (file == null) throw new BusinessException(ErrorCode.PARAM_INVALID, `「${path}」不在当前改动中，请刷新后重试`);
+          return file;
+        });
+      }
+      const hasHead = (await this.run(repo, ['rev-parse', '--verify', '-q', 'HEAD'], {})).success;
+      const plan = await this.planDiscard(repo, targets, hasHead);
+      if (plan.done.length === 0) throw new BusinessException(ErrorCode.PARAM_INVALID, '嵌套仓库或子模块不支持撤销，请手动处理');
+      for (const batch of chunk(plan.restore, DISCARD_BATCH_SIZE)) {
+        requireSuccess(await this.run(repo, ['restore', '--source=HEAD', '--staged', '--worktree', '--', ...batch], LITERAL_PATHSPECS), '撤销失败');
+      }
+      for (const batch of chunk(plan.remove, DISCARD_BATCH_SIZE)) {
+        requireSuccess(await this.run(repo, ['rm', '-f', '-q', '--ignore-unmatch', '--', ...batch], LITERAL_PATHSPECS), '撤销失败');
+      }
+      for (const path of [...plan.remove, ...plan.unlink]) removeWorktreeFile(repo, path);
+      return successResult('discard', await this.branch(repo), discardMessage(requested == null, plan.done, plan.skipped));
+    });
+  }
+
+  private async planDiscard(repo: string, targets: GitChangedFileDTO[], hasHead: boolean): Promise<DiscardPlan> {
+    const plan: DiscardPlan = { restore: [], remove: [], unlink: [], done: [], skipped: 0 };
+    const trackedPaths = targets
+      .filter((f) => f.untracked !== true)
+      .flatMap((f) => (f.oldPath ? [f.path, f.oldPath] : [f.path]));
+    const gitlinks = await this.gitlinkPaths(repo, trackedPaths, hasHead);
+    for (const file of targets) {
+      if (file.untracked === true) {
+        if (file.path.endsWith('/') || isDirectoryEntry(join(repo, file.path))) {
+          plan.skipped++;
+          continue;
+        }
+        plan.unlink.push(file.path);
+      } else if (gitlinks.has(file.path) || (file.oldPath != null && gitlinks.has(file.oldPath))) {
+        plan.skipped++;
+        continue;
+      } else if (file.changeType === 'CREATED' || file.changeType === 'COPIED') {
+        plan.remove.push(file.path);
+      } else if (file.changeType === 'RENAMED') {
+        if (!hasHead || !file.oldPath) throw new BusinessException(ErrorCode.PARAM_INVALID, `「${file.path}」没有可恢复的提交内容`);
+        plan.restore.push(file.oldPath);
+        plan.remove.push(file.path);
+      } else {
+        if (!hasHead) throw new BusinessException(ErrorCode.PARAM_INVALID, `「${file.path}」没有可恢复的提交内容`);
+        plan.restore.push(file.path);
+      }
+      plan.done.push(file.path);
+    }
+    return plan;
+  }
+
+  /** 子模块路径（索引或 HEAD 中模式为 160000）：git restore 只改 gitlink，子模块检出不变，必须跳过 */
+  private async gitlinkPaths(repo: string, paths: string[], hasHead: boolean): Promise<Set<string>> {
+    const found = new Set<string>();
+    for (const batch of chunk(paths, DISCARD_BATCH_SIZE)) {
+      const listings = [await this.run(repo, ['ls-files', '-s', '--', ...batch], LITERAL_PATHSPECS)];
+      if (hasHead) listings.push(await this.run(repo, ['ls-tree', 'HEAD', '--', ...batch], LITERAL_PATHSPECS));
+      for (const listing of listings) {
+        requireSuccess(listing, '读取子模块信息失败');
+        for (const line of listing.output.split('\n')) {
+          const tab = line.indexOf('\t');
+          if (tab > 0 && line.startsWith('160000 ')) found.add(line.slice(tab + 1));
+        }
+      }
+    }
+    return found;
+  }
+
+  private async requireNoPendingOperation(repo: string): Promise<void> {
+    const markers = await this.run(repo, ['rev-parse', ...IN_PROGRESS_MARKERS.flatMap((name) => ['--git-path', name])], {});
+    requireSuccess(markers, '读取仓库状态失败');
+    const paths = markers.output.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+    if (paths.some((path) => existsSync(resolve(repo, path)))) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '仓库有进行中的合并、变基或拣选，请先处理完再撤销');
+    }
+    if (await this.hasConflicts(repo)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '存在未解决的冲突，请先处理完再撤销');
+    }
   }
 
   async recordLocalActivity(session: Session, request: LocalGitActivity | null): Promise<void> {
@@ -605,6 +712,108 @@ export class GitWriteOperationService {
 
 interface GitResult { exitCode: number; output: string; success: boolean }
 interface RemoteState { branch: string | null; detached: boolean; remotes: string[]; upstream: string | null }
+interface DiscardPlan { restore: string[]; remove: string[]; unlink: string[]; done: string[]; skipped: number }
+
+/**
+ * 撤销路径校验：null/undefined = 全部；空数组拒绝（不能被当成「全部」）；去重后上限 1000。
+ * 只收仓库内相对路径；未跟踪目录项（嵌套仓库）保留结尾 `/` 以对上变更集的键。
+ */
+export function normalizeDiscardPaths(paths: unknown): string[] | null {
+  if (paths == null) return null;
+  if (!Array.isArray(paths)) throw new BusinessException(ErrorCode.PARAM_INVALID, '撤销路径无效');
+  if (paths.length === 0) throw new BusinessException(ErrorCode.PARAM_INVALID, '未指定要撤销的文件');
+  const normalized = new Set(paths.map(normalizeDiscardPath));
+  if (normalized.size > MAX_DISCARD_PATHS) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, `一次最多撤销 ${MAX_DISCARD_PATHS} 个文件，请使用撤销全部`);
+  }
+  return [...normalized];
+}
+
+function normalizeDiscardPath(raw: unknown): string {
+  if (typeof raw !== 'string') throw new BusinessException(ErrorCode.PARAM_INVALID, '撤销路径无效');
+  let path = raw.replace(/\\/g, '/');
+  while (path.startsWith('./')) path = path.slice(2);
+  const body = path.endsWith('/') ? path.slice(0, -1) : path;
+  if (
+    body.length === 0
+    || body.startsWith('/')
+    || /^[A-Za-z]:/.test(body)
+    || /[\0\r\n]/.test(body)
+    || body.split('/').some((part) => part === '' || part === '.' || part === '..')
+  ) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, '撤销路径无效');
+  }
+  return path;
+}
+
+/** 「撤销全部」确认摘要：变更集路径按默认排序后以 \n 连接取 SHA-256（与前端 utils/git-manager 同算法） */
+export function discardDigest(paths: Iterable<string>): string {
+  return createHash('sha256').update([...paths].sort().join('\n'), 'utf8').digest('hex');
+}
+
+function discardMessage(all: boolean, done: string[], skipped: number): string {
+  let message: string;
+  if (all && skipped === 0) message = '已撤销全部未提交改动';
+  else if (done.length === 1) message = `已撤销 ${done[0]} 的改动`;
+  else message = `已撤销 ${done.length} 个文件的改动`;
+  return skipped > 0 ? `${message}，跳过 ${skipped} 项（嵌套仓库或子模块，需手动处理）` : message;
+}
+
+function isDirectoryEntry(path: string): boolean {
+  try {
+    return lstatSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 删掉工作区里的一个文件或符号链接本身（不跟随），再自下而上删除变空的父目录（止于仓库根）。
+ * 父目录 realpath 必须在仓库内；目录一律不删。
+ */
+function removeWorktreeFile(repo: string, relativePath: string): void {
+  const target = join(repo, relativePath);
+  let parent: string;
+  try {
+    parent = realpathSync(dirname(target));
+  } catch {
+    return;
+  }
+  if (parent !== repo && !parent.startsWith(repo + sep)) {
+    throw new BusinessException(ErrorCode.FORBIDDEN, '路径访问被拒绝');
+  }
+  const real = join(parent, basename(target));
+  let isDir = false;
+  let exists = true;
+  try {
+    isDir = lstatSync(real).isDirectory();
+  } catch {
+    exists = false;
+  }
+  if (isDir) return;
+  if (exists) {
+    try {
+      unlinkSync(real);
+    } catch (e) {
+      throw new BusinessException(ErrorCode.INTERNAL_ERROR, `删除「${relativePath}」失败（${(e as NodeJS.ErrnoException).code ?? '未知错误'}）`);
+    }
+  }
+  let current = parent;
+  while (current !== repo && current.startsWith(repo + sep)) {
+    try {
+      rmdirSync(current);
+    } catch {
+      return;
+    }
+    current = dirname(current);
+  }
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const batches: T[][] = [];
+  for (let i = 0; i < items.length; i += size) batches.push(items.slice(i, i + size));
+  return batches;
+}
 
 class GitOperationException extends Error {
   constructor(message: string, readonly conflict: boolean, readonly stashRef: string | null, result: GitResult) {

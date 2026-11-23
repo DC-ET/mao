@@ -65,3 +65,16 @@ describe('useGitOperations commit-with-message', () => {
     expect(p.commitWithMessage).toHaveBeenCalledWith('第一条')
   })
 })
+
+describe('useGitOperations discard', () => {
+  it('把 null（全部）与摘要、路径数组原样交给 provider.discard', async () => {
+    const discard = vi.fn(async () => ({ success: true, operation: 'discard', message: '已撤销全部未提交改动' }))
+    const { run } = useGitOperations(ref(stubProvider({ discard })))
+
+    await run('discard', null, 'digest-1')
+    await run('discard', ['a.txt', 'src/b.ts'])
+
+    expect(discard.mock.calls).toEqual([[null, 'digest-1'], [['a.txt', 'src/b.ts']]])
+    expect(ElMessage.success).toHaveBeenCalledWith('已撤销全部未提交改动')
+  })
+})

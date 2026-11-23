@@ -400,6 +400,7 @@ describe('file routes', () => {
       fetchRemote: vi.fn(async () => ({ success: true, operation: 'fetch', message: '远端已更新' })),
       switchBranch: vi.fn(async () => ({ success: true, operation: 'switch', branch: 'main' })),
       stashOp: vi.fn(async () => ({ success: true, operation: 'stash', message: '已应用 stash@{0}' })),
+      discard: vi.fn(async () => ({ success: true, operation: 'discard', message: '已撤销 a.txt 的改动' })),
     } as unknown as GitWriteOperationService;
     registerFileRoutes(app, {
       fileService: {} as FileService,
@@ -435,6 +436,7 @@ describe('file routes', () => {
       ['/v1/files/workspace-git-switch-branch', { sessionId: 2, branch: 'main' }],
       ['/v1/files/workspace-git-stash', { sessionId: 2, action: 'apply', ref: 'stash@{0}' }],
       ['/v1/files/workspace-git-commit-message', { sessionId: 2 }],
+      ['/v1/files/workspace-git-discard', { sessionId: 2, paths: ['a.txt'] }],
     ] as const) {
       const body = await post(url, payload);
       expect(body.code).not.toBe(0);
@@ -479,6 +481,11 @@ describe('file routes', () => {
     expect((await post('/v1/files/workspace-git-switch-branch', { sessionId: 1, branch: 'main', create: true })).data.branch).toBe('main');
     expect(vi.mocked(gitWriteOperationService.switchBranch).mock.calls[0][3]).toBe(true);
     expect((await post('/v1/files/workspace-git-stash', { sessionId: 1, action: 'pop', ref: 'stash@{0}' })).data.message).toBe('已应用 stash@{0}');
+    // 撤销改动：paths / expectedDigest 原样透传，省略 paths 视为全部（null）
+    expect((await post('/v1/files/workspace-git-discard', { sessionId: 1, repoPath: 'demo', paths: ['a.txt'] })).data.operation).toBe('discard');
+    expect(vi.mocked(gitWriteOperationService.discard).mock.calls.at(-1)).toEqual([expect.anything(), 'demo', ['a.txt'], undefined]);
+    await post('/v1/files/workspace-git-discard', { sessionId: 1, expectedDigest: 'abc' });
+    expect(vi.mocked(gitWriteOperationService.discard).mock.calls.at(-1)).toEqual([expect.anything(), undefined, null, 'abc']);
 
     await app.close();
   });

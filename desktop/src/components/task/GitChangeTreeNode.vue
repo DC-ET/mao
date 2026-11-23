@@ -40,6 +40,16 @@
           <span class="del">-{{ node.file.deletions }}</span>
         </template>
       </span>
+      <button
+        v-if="showDiscard && node.kind === 'file'"
+        class="git-discard-btn"
+        :disabled="!!discardDisabledReason"
+        :aria-label="`撤销 ${node.name} 的改动`"
+        :title="discardDisabledReason || `撤销 ${node.name} 的改动`"
+        @click.stop="$emit('discard', node)"
+      >
+        <el-icon :size="13"><RefreshLeft /></el-icon>
+      </button>
     </div>
 
     <template v-if="node.kind === 'dir' && expanded">
@@ -50,9 +60,12 @@
         :depth="depth + 1"
         :collapsed="collapsed"
         :deleted-tag="deletedTag"
+        :show-discard="showDiscard"
+        :discard-disabled-reason="discardDisabledReason"
         @toggle="$emit('toggle', $event)"
         @open-diff="$emit('open-diff', $event)"
         @contextmenu="$emit('contextmenu', $event)"
+        @discard="$emit('discard', $event)"
       />
     </template>
   </div>
@@ -60,7 +73,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ArrowRight, ArrowDown, Folder, FolderOpened, Document } from '@element-plus/icons-vue'
+import { ArrowRight, ArrowDown, Folder, FolderOpened, Document, RefreshLeft } from '@element-plus/icons-vue'
 import type { GitChangedFile, GitTreeNode } from '../../types/git'
 
 const props = defineProps<{
@@ -72,12 +85,17 @@ const props = defineProps<{
    * 两点分支对比视图传「仅基准分支」；其它视图（变更 / 提交 diff）不传，行为不变。
    */
   deletedTag?: string
+  /** 中央 Git 管理器「变更」视图：文件行末尾显示撤销按钮；对比 / 侧边栏视图不传 */
+  showDiscard?: boolean
+  /** 撤销按钮禁用原因（非空即禁用，并写在 title 上） */
+  discardDisabledReason?: string
 }>()
 
 const emit = defineEmits<{
   toggle: [path: string]
   'open-diff': [file: GitChangedFile]
   'contextmenu': [payload: { node: GitTreeNode; x: number; y: number }]
+  discard: [node: GitTreeNode]
 }>()
 
 const expanded = computed(() => {
@@ -225,6 +243,45 @@ function typeClass(type: string) {
 
 .add { color: var(--aw-diff-add); }
 .del { color: var(--aw-diff-del); }
+
+.git-discard-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 6px;
+  border: none;
+  border-radius: var(--aw-radius-xs);
+  background: transparent;
+  color: var(--aw-ink-muted-48);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.git-node-row:hover .git-discard-btn,
+.git-discard-btn:focus-visible {
+  opacity: 1;
+}
+
+.git-discard-btn:hover:not(:disabled) {
+  color: var(--aw-danger);
+  background: color-mix(in srgb, var(--aw-danger) 10%, transparent);
+}
+
+.git-discard-btn:disabled {
+  cursor: default;
+}
+
+.git-node-row:hover .git-discard-btn:disabled {
+  opacity: 0.38;
+}
+
+@media (hover: none) {
+  .git-discard-btn { opacity: 1; }
+  .git-discard-btn:disabled { opacity: 0.38; }
+}
 
 [data-theme="dark"] .git-node-row:hover {
   background: rgba(255, 255, 255, 0.06);

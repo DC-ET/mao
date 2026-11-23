@@ -8,6 +8,7 @@ import type {
   GitFileDiff,
   GitLogEntry,
   GitOperationResult,
+  GitOperationType,
   GitRemoteInfo,
   GitReposResult,
   GitStashAction,
@@ -53,6 +54,11 @@ export interface WorkspaceGitProvider {
   fetchRemote(repoPath?: string): Promise<GitOperationResult>
   switchBranch(branch: string, opts?: { create?: boolean }, repoPath?: string): Promise<GitOperationResult>
   stashOp(action: GitStashAction, ref: string, repoPath?: string): Promise<GitOperationResult>
+  /**
+   * 撤销未提交改动（仅中央 Git 管理器）。paths 为 null = 全部，此时 expectedDigest 必填
+   * （确认框所见清单的 gitDiscardDigest），服务端 / Electron 发现变更集已变就拒绝。
+   */
+  discard(paths: string[] | null, expectedDigest?: string, repoPath?: string): Promise<GitOperationResult>
 }
 
 function emptyStatus(error?: string): GitStatusResult {
@@ -119,7 +125,7 @@ function normalizeDiff(data: any, fallbackPath: string): GitFileDiff {
   }
 }
 
-function failedOperation(operation: 'commit' | 'pull' | 'push' | 'fetch' | 'switch' | 'stash', error: unknown): GitOperationResult {
+function failedOperation(operation: GitOperationType, error: unknown): GitOperationResult {
   return {
     success: false,
     operation,
@@ -338,6 +344,17 @@ export function createLocalGitProvider(workspace: string, sessionId: string): Wo
       await recordLocalActivity(numericSessionId, repoPath, result, started)
       return result
     },
+    async discard(paths: string[] | null, expectedDigest?: string, repoPath?: string) {
+      const started = Date.now()
+      let result: GitOperationResult
+      try {
+        result = await window.electronAPI.gitDiscard(workspace, repoPath, paths, expectedDigest)
+      } catch (e) {
+        result = failedOperation('discard', e)
+      }
+      await recordLocalActivity(numericSessionId, repoPath, result, started)
+      return result
+    },
   }
 }
 
@@ -395,6 +412,7 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
       async fetchRemote() { return failedOperation('fetch', new Error('会话未就绪')) },
       async switchBranch() { return failedOperation('switch', new Error('会话未就绪')) },
       async stashOp() { return failedOperation('stash', new Error('会话未就绪')) },
+      async discard() { return failedOperation('discard', new Error('会话未就绪')) },
     }
   }
 
@@ -610,6 +628,16 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
         return data
       } catch (e) {
         return failedOperation('stash', e)
+      }
+    },
+    async discard(paths: string[] | null, expectedDigest?: string, repoPath?: string) {
+      try {
+        const { data } = await api.post('/files/workspace-git-discard', {
+          sessionId: numericSessionId, repoPath, paths, expectedDigest,
+        })
+        return data
+      } catch (e) {
+        return failedOperation('discard', e)
       }
     },
   }

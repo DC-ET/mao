@@ -61,10 +61,22 @@
           </span>
         </el-tooltip>
       </div>
-      <button class="git-commit-submit" :disabled="!!commitWithMessageDisabledReason" @click="emit('commit-with-message')">
-        <el-icon :size="14" :class="{ spinning: committing }"><Check /></el-icon>
-        提交
-      </button>
+      <div class="git-commit-actions">
+        <button
+          v-if="allowDiscard"
+          class="git-discard-all"
+          :disabled="!!discardDisabledReason"
+          :title="discardDisabledReason || '撤销全部未提交改动'"
+          @click="handleDiscardAll"
+        >
+          <el-icon :size="14" :class="{ spinning: discarding }"><RefreshLeft /></el-icon>
+          撤销全部
+        </button>
+        <button class="git-commit-submit" :disabled="!!commitWithMessageDisabledReason" @click="emit('commit-with-message')">
+          <el-icon :size="14" :class="{ spinning: committing }"><Check /></el-icon>
+          提交
+        </button>
+      </div>
     </div>
 
     <div v-if="error" class="git-state git-error">
@@ -85,9 +97,12 @@
           :node="node"
           :depth="0"
           :collapsed="collapsed"
+          :show-discard="allowDiscard"
+          :discard-disabled-reason="discardDisabledReason"
           @toggle="toggleDir"
           @open-diff="(file) => $emit('open-diff', file)"
           @contextmenu="handleNodeContextmenu"
+          @discard="discardNode"
         />
       </div>
     </div>
@@ -98,7 +113,10 @@
       :y="ctxMenu.y"
       :show-open-in-finder="executionMode !== 'CLOUD' && canOpenInFinder"
       :show-download-actions="executionMode === 'CLOUD'"
+      :show-discard="allowDiscard"
+      :discard-label="ctxMenu.node?.kind === 'dir' ? '撤销此目录的改动' : '撤销此改动'"
       @hide="ctxMenu.visible = false"
+      @discard="handleContextDiscard"
       @copy-absolute="handleCopyAbsolute"
       @copy-relative="handleCopyRelative"
       @open-in-finder="handleOpenInFinder"
@@ -117,8 +135,8 @@
 
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
-import { Check, CircleCheck, Download, FullScreen, MagicStick, Refresh, Upload } from '@element-plus/icons-vue'
-import { ElTooltip, ElMessage } from 'element-plus'
+import { Check, CircleCheck, Download, FullScreen, MagicStick, Refresh, RefreshLeft, Upload } from '@element-plus/icons-vue'
+import { ElTooltip, ElMessage, ElMessageBox } from 'element-plus'
 import type { GitChangedFile, GitOperationType, GitTreeNode } from '../../types/git'
 import GitChangeTreeNode from './GitChangeTreeNode.vue'
 import GitContextMenu from './GitContextMenu.vue'
@@ -128,7 +146,17 @@ import DownloadLinkDialog from '../common/DownloadLinkDialog.vue'
 import { isWechatBrowser } from '../../utils/user-agent'
 import { isAndroidCapacitor } from '../../utils/capacitor'
 import { isMobileDevice } from '../../composables/usePanelLayout'
-import { buildGitTree, collectDirPaths, gitPullDisabledReason, gitPushDisabledReason } from '../../utils/git-manager'
+import {
+  buildGitTree,
+  collectDirPaths,
+  collectTreeFilePaths,
+  gitDiscardDigest,
+  gitPullDisabledReason,
+  gitPushDisabledReason,
+} from '../../utils/git-manager'
+
+/** 目录撤销一次最多提交的路径数（与后端 / Electron 的显式路径上限一致） */
+const MAX_DISCARD_PATHS = 1000
 
 const props = defineProps<{
   files: GitChangedFile[]
@@ -162,6 +190,12 @@ const props = defineProps<{
   generating?: boolean
   /** 两步提交进行中（提交按钮旋转态） */
   committing?: boolean
+  /** 中央 Git 管理器：显示「撤销全部」、文件行撤销按钮和右键撤销项；侧边栏不传 */
+  allowDiscard?: boolean
+  /** 撤销进行中（撤销按钮旋转态，提交 / 生成一并禁用） */
+  discarding?: boolean
+  /** 当前会话 Agent 正在运行：确认框追加风险提示，不禁用撤销 */
+  agentRunning?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -175,6 +209,8 @@ const emit = defineEmits<{
   'open-diff': [file: GitChangedFile]
   'add-file-to-chat': [filePath: string]
   expand: []
+  /** 用户确认后发出：paths 为 null = 全部（附确认清单摘要），否则只撤这些文件 */
+  discard: [paths: string[] | null, expectedDigest?: string]
 }>()
 
 const canOpenInFinder = computed(() => typeof window !== 'undefined' && !!window.electronAPI?.showItemInFolder)
@@ -288,6 +324,7 @@ const commitDisabledReason = computed(() => {
 const generateDisabledReason = computed(() => {
   if (props.generating) return '正在生成提交信息…'
   if (props.committing) return '提交进行中'
+  if (props.discarding) return '撤销进行中'
   if (props.operation) return 'Git 操作进行中'
   if (props.loading) return '正在读取 Git 状态'
   if (props.error) return 'Git 状态不可用'
@@ -299,6 +336,7 @@ const generateDisabledReason = computed(() => {
 const commitWithMessageDisabledReason = computed(() => {
   if (props.committing) return '提交进行中'
   if (props.generating) return '正在生成提交信息…'
+  if (props.discarding) return '撤销进行中'
   if (props.operation) return 'Git 操作进行中'
   if (props.loading) return '正在读取 Git 状态'
   if (props.error) return 'Git 状态不可用'
@@ -306,6 +344,64 @@ const commitWithMessageDisabledReason = computed(() => {
   if (!(props.commitMessage ?? '').trim()) return '请先填写提交信息'
   return ''
 })
+
+const discardDisabledReason = computed(() => {
+  if (props.discarding) return '撤销进行中'
+  if (props.committing) return '提交进行中'
+  if (props.generating) return '正在生成提交信息…'
+  if (props.operation) return 'Git 操作进行中'
+  if (props.loading) return '正在读取 Git 状态'
+  if (props.error) return 'Git 状态不可用'
+  if (props.files.length === 0) return '没有可撤销的改动'
+  return ''
+})
+
+async function confirmDiscard(message: string): Promise<boolean> {
+  const warning = props.agentRunning ? 'Agent 正在运行，可能仍在修改这些文件。' : ''
+  try {
+    await ElMessageBox.confirm(`${message}${warning}`, '撤销改动', {
+      type: 'warning',
+      confirmButtonText: '撤销',
+      cancelButtonText: '取消',
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 撤销全部：在点击时快照清单，确认后把这份快照的摘要交给服务端核对 */
+async function handleDiscardAll() {
+  if (discardDisabledReason.value) return
+  const paths = props.files.map((file) => file.path)
+  const confirmed = await confirmDiscard(
+    `将撤销全部 ${paths.length} 个文件的未提交改动。已跟踪文件回到最近一次提交，未跟踪的新文件会被删除。此操作无法恢复。`,
+  )
+  if (!confirmed) return
+  emit('discard', null, await gitDiscardDigest(paths))
+}
+
+async function discardNode(node: GitTreeNode) {
+  if (discardDisabledReason.value) {
+    ElMessage.warning(discardDisabledReason.value)
+    return
+  }
+  if (node.kind === 'file') {
+    if (await confirmDiscard(`将撤销「${node.file.path}」的未提交改动。此操作无法恢复。`)) emit('discard', [node.file.path])
+    return
+  }
+  const paths = collectTreeFilePaths(node)
+  if (paths.length === 0) return
+  if (paths.length > MAX_DISCARD_PATHS) {
+    ElMessage.warning('该目录改动过多，请使用撤销全部')
+    return
+  }
+  if (await confirmDiscard(`将撤销该目录下 ${paths.length} 个文件的未提交改动。此操作无法恢复。`)) emit('discard', paths)
+}
+
+function handleContextDiscard() {
+  if (ctxMenu.node) void discardNode(ctxMenu.node)
+}
 
 /** 拉取 / 推送禁用原因与中央 Git 管理器顶部状态条同一口径（utils/git-manager），避免两处漂移 */
 const pullDisabledReason = computed(() => gitPullDisabledReason(props))
@@ -486,6 +582,41 @@ function toggleDir(path: string) {
 
 .git-commit-generate:disabled {
   opacity: 0.38;
+  cursor: default;
+}
+
+.git-commit-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.git-commit-actions .git-commit-submit {
+  flex: 1;
+}
+
+.git-discard-all {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--aw-danger) 45%, var(--aw-hairline));
+  border-radius: var(--aw-radius-sm);
+  background: transparent;
+  color: var(--aw-danger);
+  font-size: var(--git-fs-meta, 12px);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s, opacity 0.15s;
+}
+
+.git-discard-all:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--aw-danger) 8%, transparent);
+}
+
+.git-discard-all:disabled {
+  opacity: 0.4;
   cursor: default;
 }
 

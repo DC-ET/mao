@@ -24,6 +24,7 @@ gitOpsLib.commit = async (workspace, repoPath, message) => {
   calls.commit.push({ workspace, repoPath, message })
   return { ok: true, committed: true }
 }
+gitOpsLib.discard = async (workspace, repoPath, paths, expectedDigest) => ({ workspace, repoPath, paths, expectedDigest })
 
 const { registerGitIpc } = require('./gitIpc.cjs')
 
@@ -31,7 +32,7 @@ const handlers = {}
 const fakeIpc = { handle: (channel, cb) => { handlers[channel] = cb } }
 registerGitIpc(fakeIpc, { getWorkspace: () => '/fallback/ws' })
 
-// §5.6 的 19 条通道，名称与今天一致
+// §5.6 的 19 条通道 + 撤销改动（2026-11-23）的 git-discard
 const EXPECTED_CHANNELS = [
   'git-repos', 'git-status', 'git-status-refresh', 'git-file-diff',
   'git-commit-input', 'git-commit', 'git-pull', 'git-push',
@@ -39,10 +40,22 @@ const EXPECTED_CHANNELS = [
   'git-branch-compare', 'git-branch-compare-file-diff',
   'git-branches', 'git-stashes', 'git-remotes',
   'git-fetch', 'git-switch-branch', 'git-stash-op',
+  'git-discard',
 ]
 
 test('通道名集合与今天一致（§5.6）', () => {
   assert.deepEqual(Object.keys(handlers).sort(), [...EXPECTED_CHANNELS].sort())
+})
+
+test('git-discard 透传路径与摘要，省略 paths 视为全部（null）', async () => {
+  assert.deepEqual(
+    await handlers['git-discard'](null, { repoPath: 'sub', paths: ['a.txt'] }),
+    { workspace: '/fallback/ws', repoPath: 'sub', paths: ['a.txt'], expectedDigest: undefined },
+  )
+  assert.deepEqual(
+    await handlers['git-discard'](null, { workspace: '/ws', expectedDigest: 'abc' }),
+    { workspace: '/ws', repoPath: undefined, paths: null, expectedDigest: 'abc' },
+  )
 })
 
 test('workspace 省略时回退 getWorkspace()；显式 workspace 原样透传', async () => {

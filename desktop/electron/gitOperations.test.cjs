@@ -5,11 +5,13 @@ const fs = require('fs')
 const http = require('node:http')
 const os = require('os')
 const path = require('path')
-const { EXCLUDED_REPO_DIRS, getGitStatus, listGitRepos, refreshGitStatus } = require('./gitStatus.cjs')
+const { EXCLUDED_REPO_DIRS, collectChangedFiles, getGitStatus, listGitRepos, refreshGitStatus } = require('./gitStatus.cjs')
 const {
   MAX_COMMIT_DIFF_BYTES,
   buildCommitInput,
   commit,
+  discard,
+  discardDigest,
   fairlyTruncateDiffs,
   fetch,
   getRemoteState,
@@ -585,4 +587,109 @@ test('stash op rejects unknown actions and bad refs', async (t) => {
   }
   // 校验失败不动 stash 栈
   assert.equal(git(repo, ['stash', 'list']).includes('wip'), true)
+})
+
+// ===== 撤销改动（技术方案 2026-11-23）：与后端 GitWriteOperationService.discard 同口径 =====
+
+async function changeDigest(dir) {
+  return discardDigest((await collectChangedFiles(fs.realpathSync(dir))).keys())
+}
+
+function initDiscardRepo(t) {
+  const dir = initRepo(t)
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n')
+  fs.writeFileSync(path.join(dir, '.gitignore'), 'ignored.log\n')
+  git(dir, ['add', '-A'])
+  git(dir, ['commit', '-m', 'seed'])
+  return dir
+}
+
+test('discard one file keeps untracked neighbours', async (t) => {
+  const dir = initDiscardRepo(t)
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'changed\n')
+  fs.writeFileSync(path.join(dir, 'new.txt'), 'new\n')
+  const result = await discard(dir, undefined, ['a.txt'])
+  assert.equal(result.success, true, result.error)
+  assert.equal(result.message, '已撤销 a.txt 的改动')
+  assert.equal(fs.readFileSync(path.join(dir, 'a.txt'), 'utf8'), 'a\n')
+  assert.equal(fs.existsSync(path.join(dir, 'new.txt')), true)
+})
+
+test('discard all keeps ignored files, prunes emptied dirs and requires a matching digest', async (t) => {
+  const dir = initDiscardRepo(t)
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'changed\n')
+  fs.mkdirSync(path.join(dir, 'x', 'y'), { recursive: true })
+  fs.writeFileSync(path.join(dir, 'x', 'y', 'n.txt'), 'n\n')
+  fs.writeFileSync(path.join(dir, 'ignored.log'), 'log\n')
+  const digest = await changeDigest(dir)
+
+  assert.equal((await discard(dir, undefined, null)).error, '缺少改动确认摘要，请刷新后重试')
+  fs.writeFileSync(path.join(dir, 'late.txt'), 'late\n')
+  assert.equal((await discard(dir, undefined, null, digest)).error, '改动已变化，请刷新后重新确认')
+  assert.equal(fs.existsSync(path.join(dir, 'late.txt')), true)
+
+  const result = await discard(dir, undefined, null, await changeDigest(dir))
+  assert.equal(result.message, '已撤销全部未提交改动')
+  assert.equal(fs.existsSync(path.join(dir, 'x')), false)
+  assert.equal(fs.existsSync(path.join(dir, 'ignored.log')), true)
+  assert.equal(git(dir, ['status', '--porcelain']), '')
+})
+
+test('discard rejects traversal and paths outside the change set', async (t) => {
+  const dir = initDiscardRepo(t)
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'changed\n')
+  assert.equal((await discard(dir, undefined, ['../x'])).error, '撤销路径无效')
+  assert.equal((await discard(dir, undefined, [])).error, '未指定要撤销的文件')
+  assert.match((await discard(dir, undefined, ['README.md'])).error, /不在当前改动中/)
+})
+
+test('discard undoes renames and staged new files', async (t) => {
+  const dir = initDiscardRepo(t)
+  fs.mkdirSync(path.join(dir, 'moved'))
+  git(dir, ['mv', 'a.txt', 'moved/a2.txt'])
+  fs.writeFileSync(path.join(dir, 'staged.txt'), 's\n')
+  git(dir, ['add', 'staged.txt'])
+  const result = await discard(dir, undefined, ['moved/a2.txt', 'staged.txt'])
+  assert.equal(result.message, '已撤销 2 个文件的改动')
+  assert.equal(fs.readFileSync(path.join(dir, 'a.txt'), 'utf8'), 'a\n')
+  assert.equal(fs.existsSync(path.join(dir, 'moved')), false)
+  assert.equal(fs.existsSync(path.join(dir, 'staged.txt')), false)
+})
+
+test('discard refuses merge and stash-pop conflicts', async (t) => {
+  const dir = initDiscardRepo(t)
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'stashed\n')
+  git(dir, ['stash'])
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'head\n')
+  git(dir, ['commit', '-am', 'head'])
+  try { git(dir, ['stash', 'pop']) } catch { /* 预期冲突 */ }
+  assert.equal((await discard(dir, undefined, ['a.txt'])).error, '存在未解决的冲突，请先处理完再撤销')
+  assert.match(git(dir, ['status', '--porcelain']), /UU a\.txt/)
+
+  git(dir, ['reset', '--hard', '-q'])
+  git(dir, ['checkout', '-q', '-b', 'other'])
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'other\n')
+  git(dir, ['commit', '-am', 'other'])
+  git(dir, ['checkout', '-q', 'main'])
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'main\n')
+  git(dir, ['commit', '-am', 'main'])
+  try { git(dir, ['merge', 'other']) } catch { /* 预期冲突 */ }
+  assert.equal((await discard(dir, undefined, ['a.txt'])).error, '仓库有进行中的合并、变基或拣选，请先处理完再撤销')
+})
+
+test('discard skips untracked nested repositories', async (t) => {
+  const dir = initDiscardRepo(t)
+  const nested = path.join(dir, 'nested')
+  fs.mkdirSync(nested)
+  git(nested, ['init', '-q'])
+  fs.writeFileSync(path.join(nested, 'x.txt'), 'x\n')
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'changed\n')
+  assert.equal((await discard(dir, undefined, ['nested/'])).error, '嵌套仓库或子模块不支持撤销，请手动处理')
+  const result = await discard(dir, undefined, null, await changeDigest(dir))
+  assert.equal(result.message, '已撤销 a.txt 的改动，跳过 1 项（嵌套仓库或子模块，需手动处理）')
+  assert.equal(fs.existsSync(path.join(nested, 'x.txt')), true)
+})
+
+test('discardDigest matches the shared vector used by backend and renderer', () => {
+  assert.equal(discardDigest(['src/b.ts', 'a.txt', '中文.png']), 'b725ad5be7af285c2495ae3c1689c6e2bd2cdd13c515da0c48dcc1a609d24061')
 })

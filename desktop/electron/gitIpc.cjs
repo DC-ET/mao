@@ -27,6 +27,7 @@ const {
   fetch: gitFetch,
   switchBranch: gitSwitchBranch,
   stashOp: gitStashOp,
+  discard: gitDiscard,
 } = require('./gitOperations.cjs')
 
 function registerGitIpc(ipcMain, { getWorkspace }) {
@@ -173,6 +174,10 @@ function registerGitIpc(ipcMain, { getWorkspace }) {
 
   ipcMain.handle('git-stash-op', async (_event, { workspace, repoPath, action, ref } = {}) => {
     return gitStashOp(workspace || getWorkspace(), repoPath, action, ref)
+  })
+
+  ipcMain.handle('git-discard', async (_event, { workspace, repoPath, paths, expectedDigest } = {}) => {
+    return gitDiscard(workspace || getWorkspace(), repoPath, paths ?? null, expectedDigest)
   })
 }
 

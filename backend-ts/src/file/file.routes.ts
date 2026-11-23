@@ -528,6 +528,14 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     return sendOk(reply, await gitWriteOperationService.stashOp(session, body.repoPath, body.action, body.ref));
   });
 
+  // 撤销未提交改动：paths 省略 / null = 全部（须带 expectedDigest），数组 = 只撤这些文件
+  app.post('/v1/files/workspace-git-discard', async (request, reply) => {
+    const userId = requireUserId(request);
+    const body = bodyOf<{ sessionId?: number; repoPath?: string; paths?: unknown; expectedDigest?: unknown }>(request);
+    const session = await requireOwnedCloudGitSession(userId, body.sessionId!);
+    return sendOk(reply, await gitWriteOperationService.discard(session, body.repoPath, body.paths ?? null, body.expectedDigest));
+  });
+
   app.post('/v1/files/workspace-mkdir', async (request, reply) => {
     const userId = requireUserId(request);
     const body = bodyOf<{ sessionId?: number; workspacePath?: string; path?: string; force?: boolean }>(request);

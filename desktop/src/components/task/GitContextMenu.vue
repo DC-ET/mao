@@ -7,6 +7,13 @@
       :style="{ left: adjustedX + 'px', top: adjustedY + 'px' }"
       @click="hide"
     >
+      <template v-if="showDiscard">
+        <div class="context-menu-item is-danger" @click="$emit('discard')">
+          <el-icon><RefreshLeft /></el-icon>
+          <span>{{ discardLabel || '撤销此改动' }}</span>
+        </div>
+        <div class="context-menu-divider"></div>
+      </template>
       <div class="context-menu-item" @click="$emit('copy-absolute')">
         <el-icon><DocumentCopy /></el-icon>
         <span>复制绝对路径</span>
@@ -36,7 +43,7 @@
 
 <script setup lang="ts">
 import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { DocumentCopy, FolderOpened, ChatDotRound, Download } from '@element-plus/icons-vue'
+import { DocumentCopy, FolderOpened, ChatDotRound, Download, RefreshLeft } from '@element-plus/icons-vue'
 
 const props = defineProps<{
   visible: boolean
@@ -44,9 +51,14 @@ const props = defineProps<{
   y: number
   showOpenInFinder?: boolean
   showDownloadActions?: boolean
+  /** 中央 Git 管理器「变更」视图：顶部加撤销项（侧边栏 / 文件变更面板不传，菜单保持原四项） */
+  showDiscard?: boolean
+  /** 文件「撤销此改动」/ 目录「撤销此目录的改动」 */
+  discardLabel?: string
 }>()
 
 const emit = defineEmits<{
+  discard: []
   'copy-absolute': []
   'copy-relative': []
   'open-in-finder': []
@@ -119,6 +131,12 @@ onUnmounted(() => document.removeEventListener('click', onGlobalClick))
 .context-menu-item:hover {
   background: var(--aw-canvas-parchment, #f5f5f5);
   color: var(--aw-primary, #0066cc);
+}
+
+.context-menu-item.is-danger,
+.context-menu-item.is-danger:hover,
+[data-theme="dark"] .context-menu-item.is-danger {
+  color: var(--aw-danger, #d93025);
 }
 
 .context-menu-divider {

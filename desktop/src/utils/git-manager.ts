@@ -202,6 +202,23 @@ export function gitPushDisabledReason(state: GitSyncState): string {
   return ''
 }
 
+/** 收集节点下全部文件路径（目录撤销：服务端只认文件路径，目录节点本身不在变更集里）。 */
+export function collectTreeFilePaths(node: GitTreeNode, out: string[] = []): string[] {
+  if (node.kind === 'file') out.push(node.file.path)
+  else for (const child of node.children) collectTreeFilePaths(child, out)
+  return out
+}
+
+/**
+ * 「撤销全部」确认摘要：确认框所见清单的路径按默认排序后以 \n 连接取 SHA-256 十六进制。
+ * 与后端 discardDigest / Electron gitOperations.discardDigest 同算法；不一致时服务端拒绝执行。
+ */
+export async function gitDiscardDigest(paths: string[]): Promise<string> {
+  const bytes = new TextEncoder().encode([...paths].sort().join('\n'))
+  const hash = await crypto.subtle.digest('SHA-256', bytes)
+  return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
 /** 收集树中全部目录路径（折叠态集合清理用）。 */
 export function collectDirPaths(nodes: GitTreeNode[], out: Set<string>) {
   for (const node of nodes) {

@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -10,7 +10,7 @@ import type { RuntimeDataResolver } from '../harness/runtime/runtime-data-resolv
 import type { ActivityService } from '../session/activity.service.js';
 import type { GitTokenResolver, Session } from '../session/types.js';
 import { GitCommitMessageService, MAX_DIFF_BYTES } from './git-commit-message.service.js';
-import { GitWriteOperationService, resolveSwitchTarget } from './git-write-operation.service.js';
+import { discardDigest, GitWriteOperationService, normalizeDiscardPaths, resolveSwitchTarget } from './git-write-operation.service.js';
 import { BusinessException } from '../common/business-exception.js';
 import { WorkspaceGitService } from './workspace-git.service.js';
 
@@ -829,10 +829,225 @@ describeGit('GitWriteOperationService git', () => {
       {} as RuntimeDataResolver,
       activity as unknown as ActivityService,
     );
-    for (const operation of ['fetch', 'switch', 'stash']) {
+    for (const operation of ['fetch', 'switch', 'stash', 'discard']) {
       await service.recordLocalActivity(session(repo), { operation, success: true, repoPath: repo });
     }
-    expect(activity.record).toHaveBeenCalledTimes(3);
-    expect(activity.record.mock.calls.map((c) => c[1])).toEqual(['GIT_FETCH', 'GIT_SWITCH', 'GIT_STASH']);
+    expect(activity.record).toHaveBeenCalledTimes(4);
+    expect(activity.record.mock.calls.map((c) => c[1])).toEqual(['GIT_FETCH', 'GIT_SWITCH', 'GIT_STASH', 'GIT_DISCARD']);
+  });
+});
+
+describeGit('GitWriteOperationService discard', () => {
+  function initRepo(prefix: string): { dir: string; repo: string } {
+    const dir = useTmpDir(prefix);
+    mkdirSync(join(dir, 'repo'));
+    const repo = realpathSync(join(dir, 'repo'));
+    run(repo, 'git', 'init', '-q');
+    run(repo, 'git', 'config', 'user.email', 'test@example.com');
+    run(repo, 'git', 'config', 'user.name', 'Test');
+    writeFileSync(join(repo, 'a.txt'), 'a\n');
+    writeFileSync(join(repo, 'b.txt'), 'b\n');
+    writeFileSync(join(repo, '.gitignore'), 'ignored.log\n');
+    run(repo, 'git', 'add', '.');
+    run(repo, 'git', 'commit', '-q', '-m', 'init');
+    return { dir, repo };
+  }
+
+  async function digestOf(dir: string, repo: string): Promise<string> {
+    const files = await new WorkspaceGitService(new PathSandbox(join(dir, 'sandbox'))).changedFiles(repo);
+    return discardDigest(files.keys());
+  }
+
+  it('discards one modified file and keeps untracked neighbours', async () => {
+    const { dir, repo } = initRepo('mao-gdiscard-one-');
+    writeFileSync(join(repo, 'a.txt'), 'changed\n');
+    writeFileSync(join(repo, 'new.txt'), 'new\n');
+    const result = await newService(dir, repo).discard(session(repo), null, ['a.txt']);
+    expect(result.success).toBe(true);
+    expect(result.message).toBe('已撤销 a.txt 的改动');
+    expect(readFileSync(join(repo, 'a.txt'), 'utf8')).toBe('a\n');
+    expect(existsSync(join(repo, 'new.txt'))).toBe(true);
+  });
+
+  it('discards everything but keeps ignored files and prunes emptied untracked dirs', async () => {
+    const { dir, repo } = initRepo('mao-gdiscard-all-');
+    writeFileSync(join(repo, 'a.txt'), 'changed\n');
+    rmSync(join(repo, 'b.txt'));
+    mkdirSync(join(repo, 'x/y'), { recursive: true });
+    writeFileSync(join(repo, 'x/y/new.png'), Buffer.from([0, 1, 2]));
+    mkdirSync(join(repo, 'keep'), { recursive: true });
+    writeFileSync(join(repo, 'keep/new.txt'), 'n\n');
+    writeFileSync(join(repo, 'keep/ignored.log'), 'log\n');
+    writeFileSync(join(repo, 'ignored.log'), 'log\n');
+    const result = await newService(dir, repo).discard(session(repo), null, null, await digestOf(dir, repo));
+    expect(result.message).toBe('已撤销全部未提交改动');
+    expect(readFileSync(join(repo, 'a.txt'), 'utf8')).toBe('a\n');
+    expect(readFileSync(join(repo, 'b.txt'), 'utf8')).toBe('b\n');
+    expect(existsSync(join(repo, 'x'))).toBe(false);
+    expect(existsSync(join(repo, 'keep/new.txt'))).toBe(false);
+    expect(existsSync(join(repo, 'keep/ignored.log'))).toBe(true);
+    expect(existsSync(join(repo, 'ignored.log'))).toBe(true);
+    expect(run(repo, 'git', 'status', '--porcelain')).toBe('');
+  });
+
+  it('rejects discard-all when the change set moved after confirmation, or without digest', async () => {
+    const { dir, repo } = initRepo('mao-gdiscard-digest-');
+    writeFileSync(join(repo, 'a.txt'), 'changed\n');
+    const digest = await digestOf(dir, repo);
+    writeFileSync(join(repo, 'late.txt'), 'agent wrote this\n');
+    const service = newService(dir, repo);
+    await expect(service.discard(session(repo), null, null, digest)).rejects.toThrow('改动已变化');
+    await expect(service.discard(session(repo), null, null)).rejects.toThrow('缺少改动确认摘要');
+    expect(existsSync(join(repo, 'late.txt'))).toBe(true);
+    expect(readFileSync(join(repo, 'a.txt'), 'utf8')).toBe('changed\n');
+  });
+
+  it('removes staged new files (binary too) and undoes renames', async () => {
+    const { dir, repo } = initRepo('mao-gdiscard-staged-');
+    writeFileSync(join(repo, 'bin.dat'), Buffer.from([0, 255, 0, 1]));
+    mkdirSync(join(repo, 'moved'));
+    run(repo, 'git', 'mv', 'b.txt', 'moved/b2.txt');
+    run(repo, 'git', 'add', 'bin.dat');
+    const service = newService(dir, repo);
+    const result = await service.discard(session(repo), null, ['bin.dat', 'moved/b2.txt']);
+    expect(result.message).toBe('已撤销 2 个文件的改动');
+    expect(existsSync(join(repo, 'bin.dat'))).toBe(false);
+    expect(existsSync(join(repo, 'moved'))).toBe(false);
+    expect(readFileSync(join(repo, 'b.txt'), 'utf8')).toBe('b\n');
+    expect(run(repo, 'git', 'status', '--porcelain')).toBe('');
+  });
+
+  it('rejects traversal, empty lists and paths outside the change set', async () => {
+    const { dir, repo } = initRepo('mao-gdiscard-path-');
+    writeFileSync(join(dir, 'outside.txt'), 'keep\n');
+    writeFileSync(join(repo, 'a.txt'), 'changed\n');
+    const service = newService(dir, repo);
+    await expect(service.discard(session(repo), null, ['../outside.txt'])).rejects.toThrow('撤销路径无效');
+    await expect(service.discard(session(repo), null, ['/etc/passwd'])).rejects.toThrow('撤销路径无效');
+    await expect(service.discard(session(repo), null, [])).rejects.toThrow('未指定要撤销的文件');
+    await expect(service.discard(session(repo), null, ['b.txt'])).rejects.toThrow('不在当前改动中');
+    expect(existsSync(join(dir, 'outside.txt'))).toBe(true);
+    expect(readFileSync(join(repo, 'b.txt'), 'utf8')).toBe('b\n');
+  });
+
+  it('unlinks an untracked symlink without touching its target outside the repo', async () => {
+    const { dir, repo } = initRepo('mao-gdiscard-link-');
+    writeFileSync(join(dir, 'target.txt'), 'outside\n');
+    symlinkSync(join(dir, 'target.txt'), join(repo, 'link.txt'));
+    await newService(dir, repo).discard(session(repo), null, ['link.txt']);
+    expect(existsSync(join(repo, 'link.txt'))).toBe(false);
+    expect(readFileSync(join(dir, 'target.txt'), 'utf8')).toBe('outside\n');
+  });
+
+  it('refuses while a merge conflict is in progress and keeps MERGE_HEAD', async () => {
+    const { dir, repo } = initRepo('mao-gdiscard-merge-');
+    run(repo, 'git', 'checkout', '-q', '-b', 'other');
+    writeFileSync(join(repo, 'a.txt'), 'other\n');
+    run(repo, 'git', 'commit', '-q', '-am', 'other');
+    run(repo, 'git', 'checkout', '-q', '-');
+    writeFileSync(join(repo, 'a.txt'), 'main\n');
+    run(repo, 'git', 'commit', '-q', '-am', 'main');
+    spawnSync('git', ['merge', 'other'], { cwd: repo });
+    await expect(newService(dir, repo).discard(session(repo), null, ['a.txt'])).rejects.toThrow('进行中的合并');
+    expect(spawnSync('git', ['rev-parse', '-q', '--verify', 'MERGE_HEAD'], { cwd: repo }).status).toBe(0);
+  }, 15_000);
+
+  it('refuses stash-pop conflicts that leave no MERGE_HEAD, keeping the conflict and the stash', async () => {
+    const { dir, repo } = initRepo('mao-gdiscard-stash-');
+    writeFileSync(join(repo, 'a.txt'), 'stashed\n');
+    run(repo, 'git', 'stash', '-q');
+    writeFileSync(join(repo, 'a.txt'), 'head\n');
+    run(repo, 'git', 'commit', '-q', '-am', 'head');
+    spawnSync('git', ['stash', 'pop'], { cwd: repo });
+    await expect(newService(dir, repo).discard(session(repo), null, ['a.txt'])).rejects.toThrow('未解决的冲突');
+    expect(run(repo, 'git', 'status', '--porcelain')).toContain('UU a.txt');
+    expect(run(repo, 'git', 'stash', 'list')).not.toBe('');
+  });
+
+  it('skips untracked nested repositories and submodules instead of deleting them', async () => {
+    const { dir, repo } = initRepo('mao-gdiscard-nested-');
+    const nested = join(repo, 'nested');
+    mkdirSync(nested);
+    run(nested, 'git', 'init', '-q');
+    writeFileSync(join(nested, 'x.txt'), 'x\n');
+    run(nested, 'git', '-c', 'user.email=t@e', '-c', 'user.name=t', 'add', '.');
+    run(nested, 'git', '-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-q', '-m', 'n');
+    writeFileSync(join(repo, 'a.txt'), 'changed\n');
+    const service = newService(dir, repo);
+    await expect(service.discard(session(repo), null, ['nested/'])).rejects.toThrow('嵌套仓库或子模块不支持撤销');
+    const result = await service.discard(session(repo), null, null, await digestOf(dir, repo));
+    expect(result.message).toBe('已撤销 a.txt 的改动，跳过 1 项（嵌套仓库或子模块，需手动处理）');
+    expect(existsSync(join(nested, '.git'))).toBe(true);
+    expect(existsSync(join(nested, 'x.txt'))).toBe(true);
+
+    run(repo, 'git', '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', nested, 'sm');
+    run(repo, 'git', 'commit', '-q', '-m', 'sm');
+    const smDir = join(repo, 'sm');
+    writeFileSync(join(smDir, 'y.txt'), 'y\n');
+    run(smDir, 'git', 'add', '.');
+    run(smDir, 'git', '-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-q', '-m', 'y');
+    await expect(service.discard(session(repo), null, ['sm'])).rejects.toThrow('嵌套仓库或子模块不支持撤销');
+    expect(existsSync(join(smDir, 'y.txt'))).toBe(true);
+  }, 30_000);
+
+  it('restores more than one git batch of modified files', async () => {
+    const { dir, repo } = initRepo('mao-gdiscard-batch-');
+    const names = Array.from({ length: 230 }, (_, i) => `f${i}.txt`);
+    for (const name of names) writeFileSync(join(repo, name), 'orig\n');
+    run(repo, 'git', 'add', '.');
+    run(repo, 'git', 'commit', '-q', '-m', 'many');
+    for (const name of names) writeFileSync(join(repo, name), 'changed\n');
+    const result = await newService(dir, repo).discard(session(repo), null, names);
+    expect(result.message).toBe('已撤销 230 个文件的改动');
+    expect(run(repo, 'git', 'status', '--porcelain')).toBe('');
+  }, 30_000);
+
+  it('removes untracked files in a repo without any commit', async () => {
+    const dir = useTmpDir('mao-gdiscard-empty-');
+    const repo = join(dir, 'repo');
+    mkdirSync(repo);
+    run(repo, 'git', 'init', '-q');
+    writeFileSync(join(repo, 'n.txt'), 'n\n');
+    const result = await newService(dir, repo).discard(session(repo), null, ['n.txt']);
+    expect(result.success).toBe(true);
+    expect(existsSync(join(repo, 'n.txt'))).toBe(false);
+  });
+
+  it('records GIT_DISCARD activity for success and failure', async () => {
+    const { dir, repo } = initRepo('mao-gdiscard-activity-');
+    writeFileSync(join(repo, 'a.txt'), 'changed\n');
+    const activity = { record: vi.fn() };
+    const service = new GitWriteOperationService(
+      new WorkspaceGitService(new PathSandbox(join(dir, 'sandbox'))),
+      { generate: vi.fn() } as unknown as GitCommitMessageService,
+      { resolveForSession: vi.fn(async () => ({})), resolveForAgent: vi.fn(async () => ({})) },
+      {} as RuntimeDataResolver,
+      activity as unknown as ActivityService,
+    );
+    await service.discard(session(repo), null, ['a.txt']);
+    await expect(service.discard(session(repo), null, ['a.txt'])).rejects.toThrow('没有可撤销的改动');
+    expect(activity.record.mock.calls.map((c) => [c[1], c[5]])).toEqual([['GIT_DISCARD', 'SUCCESS'], ['GIT_DISCARD', 'ERROR']]);
+  });
+});
+
+describe('discardDigest', () => {
+  it('matches the shared vector used by desktop utils/git-manager and Electron', () => {
+    expect(discardDigest(['src/b.ts', 'a.txt', '中文.png'])).toBe('b725ad5be7af285c2495ae3c1689c6e2bd2cdd13c515da0c48dcc1a609d24061');
+  });
+});
+
+describe('normalizeDiscardPaths', () => {
+  it('normalizes separators and leading ./, dedupes, keeps directory-entry slash', () => {
+    expect(normalizeDiscardPaths(['./a\\b.txt', 'a/b.txt', 'nested/'])).toEqual(['a/b.txt', 'nested/']);
+    expect(normalizeDiscardPaths(null)).toBeNull();
+    expect(normalizeDiscardPaths(undefined)).toBeNull();
+  });
+
+  it('rejects unsafe shapes and oversize lists', () => {
+    for (const bad of ['', '.', 'a/../b', 'a//b', 'C:/x', 'a\nb', 'a\0b', '/abs']) {
+      expect(() => normalizeDiscardPaths([bad]), bad).toThrow('撤销路径无效');
+    }
+    expect(() => normalizeDiscardPaths('a.txt')).toThrow('撤销路径无效');
+    expect(() => normalizeDiscardPaths(Array.from({ length: 1001 }, (_, i) => `f${i}`))).toThrow('一次最多撤销 1000 个文件');
   });
 });
