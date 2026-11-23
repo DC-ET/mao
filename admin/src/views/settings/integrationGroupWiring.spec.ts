@@ -56,3 +56,42 @@ describe('集成组接线：catalog 声明的组必须在 SystemSettingsView 登
     expect(field?.type, '录制开关必须是 switch，不能是文本框').toBe('switch')
   })
 })
+
+/**
+ * SPECIAL_KEYS 展开后的字面量集合。块里写的是具名常量（CONTAINER_AUTO_UPGRADE_KEY 等），
+ * 字面量定义在上方，故先取标识符再回查各自的 const 声明；`...INTEGRATION_KEYS` 展开项
+ * 由上一个 describe 覆盖，这里不重复校验。
+ */
+function specialKeys(): Set<string> {
+  const start = view.indexOf('const SPECIAL_KEYS = new Set([')
+  expect(start, '未找到 SPECIAL_KEYS 声明').toBeGreaterThanOrEqual(0)
+  const end = view.indexOf('])', start)
+  expect(end, 'SPECIAL_KEYS 未收尾').toBeGreaterThan(start)
+  const block = view.slice(start, end)
+  const out = new Set<string>()
+  for (const m of block.matchAll(/(?<!\.\.\.)(\b[A-Z][A-Z0-9_]{2,}\b)/g)) {
+    const name = m[1]
+    const decl = view.match(new RegExp(`const ${name} = '([^']+)'`))
+    if (decl) out.add(decl[1])
+  }
+  return out
+}
+
+describe('内部状态键不得漏进通用分类卡片', () => {
+  // 背景（V200 browser_deps.status）：这行是浏览器依赖安装状态机的 JSON 落点
+  // （not_installed/installing/ready/failed），由 /admin/browser-deps 专用端点维护、
+  // 迁移里 editable=0，人类可读的呈现面在「Skills 管理页」browser-use 行。
+  // 它没被排除，于是「运行环境」分类卡片把它渲染成一行只读 JSON——对人零信息量，
+  // 还被设置搜索收录成死条目。修进 SPECIAL_KEYS 后该卡片 .field-readonly 回到 2 个
+  // （workspace.root / skills.dir），E2E admin-settings-cards 的计数断言即守这条。
+  it('browser_deps.status 在 SPECIAL_KEYS 中（否则运行环境卡片多一行只读 JSON）', () => {
+    expect(specialKeys(), 'browser_deps.status 必须排除：它是内部状态机 JSON，无设置页专属面板').toContain('browser_deps.status')
+  })
+
+  it('SPECIAL_KEYS 里既有同类项没被误删（容器开关/菜单可见性/容器域名解析）', () => {
+    const keys = specialKeys()
+    for (const key of ['runtime.container.autoUpgrade', 'admin.menu.hidden', 'runtime.container.inheritHostHosts', 'runtime.container.extraHosts']) {
+      expect(keys, `${key} 应从 SPECIAL_KEYS 消失？它有自己的专属面板，排除是有意的`).toContain(key)
+    }
+  })
+})
