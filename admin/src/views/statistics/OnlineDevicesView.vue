@@ -35,9 +35,25 @@
         </div>
       </div>
 
-      <el-table :data="rows" v-loading="initialLoading" stripe>
+      <el-form :inline="true" class="search-form" @submit.prevent>
+        <el-form-item label="关键词">
+          <el-input
+            v-model="keyword"
+            placeholder="用户 / 设备名 / 设备 ID / 版本 / 凭据"
+            clearable
+            style="width: 280px"
+          />
+        </el-form-item>
+        <el-form-item label="客户端类型">
+          <el-select v-model="clientType" placeholder="全部" clearable style="width: 160px">
+            <el-option v-for="opt in clientTypeOptions" :key="opt.type" :label="opt.label" :value="opt.type" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+
+      <el-table :data="pagedRows" v-loading="initialLoading" row-key="key" stripe>
         <template #empty>
-          <el-empty description="当前没有在线连接（管理后台自身不连 WS，不会出现在列表中）" :image-size="60" />
+          <el-empty :description="emptyDescription" :image-size="60" />
         </template>
         <el-table-column label="用户" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">
@@ -87,16 +103,26 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <ResponsivePagination
+        class="pagination"
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :total="filteredRows.length"
+        :page-sizes="[10, 20, 50, 100]"
+        @size-change="currentPage = 1"
+      />
     </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import type { OnlineDeviceConnection, OnlineDevicesVo, WsClientType } from '@mao/contracts'
 import { api } from '../../api'
+import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import { formatDateTime } from '../../utils/datetime'
 import { wsClientTypeLabel } from '../../utils/wsClientTypeLabels'
 
@@ -115,6 +141,7 @@ interface ConnectionRow {
   key: string
   username: string
   displayName: string | null
+  clientType: WsClientType
   typeLabel: string
   tagType: 'success' | 'warning' | 'info' | 'primary' | 'danger'
   device: OnlineDeviceConnection['device']
@@ -124,9 +151,15 @@ interface ConnectionRow {
   expiresText: string
 }
 
+const PAGE_SIZE_DEFAULT = 20
+
 const loading = ref(false)
 const vo = ref<OnlineDevicesVo | null>(null)
 const lastUpdated = ref<Date | null>(null)
+const keyword = ref('')
+const clientType = ref<WsClientType | null>(null)
+const currentPage = ref(1)
+const pageSize = ref(PAGE_SIZE_DEFAULT)
 let timer: ReturnType<typeof setInterval> | null = null
 
 const initialLoading = computed(() => loading.value && vo.value == null)
@@ -140,6 +173,7 @@ const rows = computed<ConnectionRow[]>(() => {
         key: `${user.userId}:${conn.wsSessionId}`,
         username: user.username,
         displayName: user.displayName,
+        clientType: conn.clientType,
         typeLabel: wsClientTypeLabel(conn.clientType),
         tagType: TAG_TYPES[conn.clientType],
         device: conn.device,
@@ -151,6 +185,34 @@ const rows = computed<ConnectionRow[]>(() => {
     }
   }
   return list
+})
+
+const clientTypeOptions = (Object.keys(TAG_TYPES) as WsClientType[]).map((type) => ({
+  type,
+  label: wsClientTypeLabel(type)
+}))
+
+/** 关键词不区分大小写，命中用户、设备、版本和凭据。客户端类型单选，清空表示全部。 */
+const filteredRows = computed(() => {
+  const q = keyword.value.trim().toLowerCase()
+  const type = clientType.value
+  return rows.value.filter((row) => {
+    if (type && row.clientType !== type) return false
+    if (!q) return true
+    return searchableText(row).includes(q)
+  })
+})
+
+const pagedRows = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredRows.value.slice(start, start + pageSize.value)
+})
+
+const emptyDescription = computed(() => {
+  if ((vo.value?.total.connections ?? 0) === 0) {
+    return '当前没有在线连接（管理后台自身不连 WS，不会出现在列表中）'
+  }
+  return '没有符合筛选条件的连接'
 })
 
 const clientTypeCounts = computed(() => {
@@ -165,6 +227,29 @@ const clientTypeCounts = computed(() => {
 })
 
 const lastUpdatedText = computed(() => (lastUpdated.value ? formatEpoch(lastUpdated.value.getTime()) : ''))
+
+watch([keyword, clientType], () => {
+  currentPage.value = 1
+})
+
+// 轮询后结果变少时停在仍有数据的最后一页，不把人弹回第一页。
+watch(filteredRows, (list) => {
+  const maxPage = Math.max(1, Math.ceil(list.length / pageSize.value) || 1)
+  if (currentPage.value > maxPage) currentPage.value = maxPage
+})
+
+function searchableText(row: ConnectionRow): string {
+  return [
+    row.username,
+    row.displayName ?? '',
+    row.typeLabel,
+    row.clientVersion ?? '',
+    row.device?.name ?? '',
+    row.device?.platform ?? '',
+    row.device?.id ?? '',
+    row.authSourceLabel ?? ''
+  ].join('\n').toLowerCase()
+}
 
 /** 连接凭据类型。普通登录的令牌不带这个标记，返回 null，额外信息里不占一行。 */
 function connectionAuthLabel(source: string | null): string | null {
@@ -276,6 +361,15 @@ onBeforeUnmount(stopTimer)
 .card-hint {
   font-size: 12px;
   color: var(--mao-muted);
+}
+
+.search-form {
+  margin-bottom: 4px;
+}
+
+.pagination {
+  margin-top: 16px;
+  justify-content: flex-end;
 }
 
 .stat-cards {
