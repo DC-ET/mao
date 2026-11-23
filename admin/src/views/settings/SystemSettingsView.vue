@@ -302,6 +302,9 @@ const INTEGRATION_KEYS = new Set([
   'harness.webPage.connectTimeout', 'harness.webPage.readTimeout', 'harness.webPage.maxRawBytes', 'harness.webPage.maxOutputLength', 'harness.webPage.userAgent',
   'harness.shell.maxSessionsPerConversation', 'harness.shell.sessionIdleTimeoutMinutes', 'harness.shell.sessionMaxLifetimeHours',
   'terminal.maxSessionsPerTask', 'terminal.maxSessionsGlobal', 'terminal.idleTimeoutMinutes', 'terminal.maxLifetimeHours', 'terminal.outputBufferBytes',
+  // 浏览器直播回放（V202）：录制开关是 switch、两个保留天数是 number，走 IntegrationConfigPanel 的
+  // browser-live 组；不留在「运行环境」分类卡片里（那里只能渲染成文本框，见 CONTAINER_AUTO_UPGRADE_KEY 同例）
+  'browserLive.recordEnabled', 'harness.cleanup.browserReplayTtlDays', 'harness.cleanup.shellOutputMaxAgeDays',
 ])
 
 /** 集成组显示名：key 为 IntegrationConfigPanel 的 group name，锚点 id 为 `setting-group-${name}`。 */
@@ -323,6 +326,7 @@ const INTEGRATION_LABELS: Record<string, string> = {
   'harness-shell': 'Shell 会话',
   terminal: '云端终端',
   notify: '任务通知',
+  'browser-live': '浏览器直播',
 }
 
 /** 目录分组声明：右侧卡片渲染顺序与目录一致。integration=集成配置组，category=后端 system_setting 分类；后端新增的未声明分类兜底归入「其他」。 */
@@ -400,6 +404,9 @@ const TOC_GROUPS: Array<{ label: string; sections: Array<{ kind: 'company-sso' |
       { kind: 'menu-visibility', name: 'menu-visibility' },
       { kind: 'category', name: '分享' },
       { kind: 'category', name: '审计' },
+      // 浏览器直播回放（V202，技术方案 2026-11-22 §3.1/§3.6）：录制开关 + 两个保留天数。
+      // 排在「运行环境」前：这三行 category 也是「运行环境」，进了分类卡片只能渲染成文本框
+      { kind: 'integration', name: 'browser-live' },
       { kind: 'category', name: '运行环境' },
       // 容器域名解析注入（V176）：宿主机 hosts 继承 + 自定义规则；下方为容器管理（列表/重建）
       { kind: 'container-hosts', name: 'container-hosts' },
