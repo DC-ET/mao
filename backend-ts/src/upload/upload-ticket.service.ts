@@ -63,7 +63,7 @@ export class UploadTicketService {
     let result: { uploadUrl: string; publicUrl: string };
     if (storageMode === 'oss') {
       if (configs.oss == null) throw notConfigured(label);
-      result = signOssRequest(configs.oss, 'PUT', key, TICKET_EXPIRES_SECONDS, now);
+      result = signOssRequest(configs.oss, 'PUT', key, TICKET_EXPIRES_SECONDS, now, mime);
     } else if (storageMode === 'cos') {
       if (configs.cos == null) throw notConfigured(label);
       result = signCosRequest(configs.cos, 'PUT', key, TICKET_EXPIRES_SECONDS, now);

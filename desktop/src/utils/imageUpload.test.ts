@@ -21,11 +21,14 @@ class FakeXhr {
   method = ''
   url = ''
   body: unknown = null
+  headers: Record<string, string> = {}
   open(_m: string, url: string) {
     this.method = _m
     this.url = url
   }
-  setRequestHeader() {}
+  setRequestHeader(name: string, value: string) {
+    this.headers[name] = value
+  }
   send(body: unknown) {
     this.body = body
     FakeXhr.sent.push(this)
@@ -67,6 +70,8 @@ describe('uploadImages（图片附件上传分流）', () => {
     expect(FakeXhr.sent).toHaveLength(1)
     expect(FakeXhr.sent[0].method).toBe('PUT')
     expect(FakeXhr.sent[0].url).toBe(TICKET.uploadUrl)
+    // OSS 会把请求 Content-Type 计入预签名，必须与领票据时的 contentType 完全一致
+    expect(FakeXhr.sent[0].headers['Content-Type']).toBe('image/png')
     expect(FakeXhr.sent[0].body).toBe(file)
     expect(urls).toEqual([TICKET.publicUrl])
   })

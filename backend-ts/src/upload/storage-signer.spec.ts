@@ -10,6 +10,8 @@ import { signCosRequest, signObsRequest, signOssRequest } from './storage-signer
 const FIXED_MS = 1795231545000;
 const KEY = 'uploads/42/1763693145000_avatar photo#1.png';
 const OSS_EXPECTED_SIGNATURE = '6a2bdbbad44009eb76294d0bc3786f4c926286e050927cad5648d15b42cd756a';
+/** 同一输入 + headers: {'content-type': 'image/png'} 的 SDK 输出（图片直传的真实场景）。 */
+const OSS_EXPECTED_SIGNATURE_WITH_CONTENT_TYPE = '79f7dd38a257987932a950615f5970bc1ee4e4c5a5f16253f3ce56db8faf551d';
 const COS_EXPECTED_SIGNATURE = '2cbb8235a0b73d371040a7a8a23e6275f769a3a1';
 const OBS_EXPECTED_SIGNATURE = 'YJwHYN0P397kQGi4%2BLiN6Hm5IhE%3D';
 
@@ -26,6 +28,27 @@ describe('signOssRequest（V4 预签名，对拍 ali-oss signatureUrlV4）', () 
     expect(result.uploadUrl).toContain('x-oss-signature-version=OSS4-HMAC-SHA256');
     expect(result.uploadUrl).toContain(`x-oss-signature=${OSS_EXPECTED_SIGNATURE}`);
     expect(result.publicUrl).toBe('https://mao-example-bucket.oss-cn-hangzhou.aliyuncs.com/uploads/42/1763693145000_avatar%20photo%231.png');
+  });
+
+  // 回归：OSS 会把请求携带的 Content-Type 计入 CanonicalHeaders，浏览器 PUT File 必然携带
+  // 该头；签发时不签 → 直传 403 SignatureDoesNotMatch（2026-11-23 线上图片上传全部失败）。
+  it('signsContentTypeLikeOfficialSdk', () => {
+    const result = signOssRequest(
+      { region: 'oss-cn-hangzhou', accessKeyId: 'STS.ExampleAccessKeyId', accessKeySecret: 'ExampleSecretKey', bucket: 'mao-example-bucket' },
+      'PUT', KEY, 600, FIXED_MS, 'image/png',
+    );
+    expect(result.uploadUrl).toContain(`x-oss-signature=${OSS_EXPECTED_SIGNATURE_WITH_CONTENT_TYPE}`);
+    expect(result.publicUrl).toBe('https://mao-example-bucket.oss-cn-hangzhou.aliyuncs.com/uploads/42/1763693145000_avatar%20photo%231.png');
+  });
+
+  it('omitsContentTypeWhenNotProvided', () => {
+    const cfg = { region: 'oss-cn-hangzhou', accessKeyId: 'ak', accessKeySecret: 'sk', bucket: 'b' };
+    // DELETE / 探针清理等不带 Content-Type 的请求：传空即不签该头
+    const noCt = signOssRequest(cfg, 'DELETE', 'k', 600, FIXED_MS);
+    const blank = signOssRequest(cfg, 'DELETE', 'k', 600, FIXED_MS, '  ');
+    const withCt = signOssRequest(cfg, 'PUT', 'k', 600, FIXED_MS, 'image/png');
+    expect(blank.uploadUrl).toBe(noCt.uploadUrl);
+    expect(withCt.uploadUrl).not.toBe(noCt.uploadUrl);
   });
 
   it('acceptsRegionWithoutOssPrefix', () => {

@@ -64,13 +64,21 @@ function ossSigningRegion(region: string): string {
   return region.trim().replace(/^oss-/, '');
 }
 
-/** OSS V4 预签名 PUT/DELETE：host = {bucket}.oss-{region}.aliyuncs.com（虚拟主机式）。 */
+/**
+ * OSS V4 预签名 PUT/DELETE：host = {bucket}.oss-{region}.aliyuncs.com（虚拟主机式）。
+ *
+ * contentType 必须参与签名：OSS 服务端会把请求携带的 Content-Type 计入 CanonicalHeaders
+ * （实测未签该头的预签名 URL 带 Content-Type: image/png 直传会 403 SignatureDoesNotMatch，
+ * 去掉该头才通过）。浏览器 XHR PUT File 必然携带 Content-Type，因此签发时必须签入，
+ * 且前端 PUT 携带的值要与签发时完全一致。传空表示不签（用于不带 Content-Type 的 DELETE 等）。
+ */
 export function signOssRequest(
   cfg: OssSettings,
   method: PresignMethod,
   key: string,
   expiresSeconds: number,
   nowMs: number,
+  contentType?: string | null,
 ): PresignResult {
   const region = ossSigningRegion(cfg.region);
   const accessKeyId = cfg.accessKeyId.trim();
@@ -90,12 +98,15 @@ export function signOssRequest(
   const canonicalQuery = Object.keys(queries).sort((a, b) => a.localeCompare(b))
     .map((k) => `${encodeRfc3986(k)}=${encodeRfc3986(queries[k])}`)
     .join('&');
-  // Canonical Headers / Additional Headers 均为空（不签 Content-Type，浏览器可自由携带）
+  // Canonical Headers：OSS 会把请求的 Content-Type 计入签名，必须与前端 PUT 发送值一致
+  const signedContentType = (contentType ?? '').trim();
+  const canonicalHeaders = signedContentType ? `content-type:${signedContentType}\n` : '';
+  // Additional Headers 为空
   const canonicalRequest = [
     method,
     encodeRfc3986(`/${bucket}/${key}`).replace(/%2F/g, '/'),
     canonicalQuery,
-    '',
+    canonicalHeaders,
     '',
     'UNSIGNED-PAYLOAD',
   ].join('\n');
