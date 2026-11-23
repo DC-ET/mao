@@ -100,6 +100,8 @@ export interface WsHandlerDeps {
     findOwnedMessage(sessionId: number, messageId: number): Promise<Message | null>;
     saveMessage(sessionId: number, role: string, content: unknown, a: null, b: null, c: null, d: number, e: null): Promise<Message>;
     updatePhase(sessionId: number, phase: string): Promise<void>;
+    /** 条件推进相位（CAS）：仅当当前相位在 expected 内才写，返回是否生效。 */
+    markPhaseIfIn?(sessionId: number, phase: string, expected: string[]): Promise<boolean>;
     updateField(sessionId: number, field: string, value: unknown): Promise<void>;
     updateModelId(sessionId: number, modelId: number): Promise<void>;
     getMessages(sessionId: number): Promise<Message[]>;
@@ -1081,8 +1083,32 @@ export class StreamingWsHandler {
     this.cancelFlags.set(sessionId, flag);
     this.runningExecutionIds.set(sessionId, resolvedEventId);
     this.deps.registry.subscribe(userId, sessionId);
-    this.submitExecution(sessionId, userId, resolvedEventId, (futureRef) =>
-      this.runExecution(session, userId, sessionId, resolvedEventId, flag, clearTodos, futureRef), requeueIfClaimed);
+    const submittedAt = Date.now();
+    const submitted = this.submitExecution(sessionId, userId, resolvedEventId, (futureRef) =>
+      this.runExecution(session, userId, sessionId, resolvedEventId, flag, clearTodos, futureRef, { submittedAt }), requeueIfClaimed);
+    if (submitted) {
+      // 提交即推进相位：RUNNING 原本只在 runExecution 临界区内写，而 runExecution 要等
+      // 上一轮释放同会话串行锁、还可能先在执行池排队；窗口内管理后台读 DB 仍是上一轮
+      // 终态（用户「停止」后的 CANCELLED），与前端「正在执行」矛盾。
+      // CAS（入口相位 → RUNNING）保证执行已极快收敛到失败/取消时不会覆盖终态。
+      if (session.phase != null) await this.promotePhaseToRunning(sessionId, session.phase);
+    }
+  }
+
+  /**
+   * 执行已提交时立即把 DB 相位推进到 RUNNING（CAS，仅承认入口相位）。
+   * 观察者（管理后台 /v1/admin/sessions、会话列表）读的是 DB phase，不能等
+   * runExecution 拿到同会话串行锁才更新，否则排队窗口里会一直显示上一轮的终态。
+   */
+  private async promotePhaseToRunning(sessionId: number, entryPhase: string): Promise<void> {
+    const markPhaseIfIn = this.deps.sessionService.markPhaseIfIn;
+    if (!markPhaseIfIn) return;
+    try {
+      await markPhaseIfIn.call(this.deps.sessionService, sessionId, 'RUNNING', [entryPhase]);
+    } catch (e) {
+      // 相位推进失败不能阻断已提交的执行：runExecution 入口仍会补写 RUNNING
+      console.warn(`Failed to promote session ${sessionId} to RUNNING after submit`, e);
+    }
   }
 
   /**
@@ -1125,8 +1151,25 @@ export class StreamingWsHandler {
   private async runExecution(
     session: Session, userId: number, sessionId: number, executionId: string,
     cancelFlag: { get(): boolean; set(v: boolean): void }, clearTodos: boolean, futureRef: { current: unknown },
+    timing?: { submittedAt: number },
   ): Promise<void> {
+    // 提交 → 执行体真正开跑 → 拿到同会话串行锁，两段等待都可能很长（池排队 / 上一轮
+    // 取消收尾未释放锁）。此间 DB 相位靠 promotePhaseToRunning 已推进为 RUNNING，但
+    // 真实开跑延迟需要可观测，否则排查「状态已运行但迟迟没有输出」只能靠猜。
+    const enteredAt = Date.now();
+    if (timing != null) {
+      const dispatchWaitMs = enteredAt - timing.submittedAt;
+      if (dispatchWaitMs >= 500) {
+        console.info(`Agent execution dispatch delay: sessionId=${sessionId}, executionId=${executionId}, dispatchWaitMs=${dispatchWaitMs}`);
+      }
+    }
     await this.withLock(this.sessionLocks, sessionId, async () => {
+      if (timing != null) {
+        const lockWaitMs = Date.now() - enteredAt;
+        if (lockWaitMs >= 500) {
+          console.info(`Agent execution lock wait: sessionId=${sessionId}, executionId=${executionId}, lockWaitMs=${lockWaitMs}`);
+        }
+      }
       // 本执行绑定的队列回写绑定（定时任务 lastExecutionStatus / Webhook 触发器失败计数）：
       // finally 按「值未易主」判定回收与回写，避免迟到的旧执行体消费下一次执行的绑定
       const boundSettlement = this.queueSettlements.get(sessionId) ?? null;

@@ -1538,6 +1538,18 @@ export class SessionService {
     return affected > 0;
   }
 
+  /**
+   * 条件推进相位（CAS）：仅当当前相位在 `expected` 内才写入，返回是否生效。
+   *
+   * 与 `updatePhase` 的区别：后者先读后写，读与写之间执行线程可能落入终态，
+   * 无条件写会把已取消/已完成的会话覆盖回运行态。用于「消息已提交、执行尚未开跑」
+   * 这类允许被并发终态否决的相位推进。
+   */
+  async markPhaseIfIn(sessionId: number, phase: string, expected: string[]): Promise<boolean> {
+    const affected = await this.sessionRepo.markPhaseIfIn(sessionId, phase, expected);
+    return affected > 0;
+  }
+
   async updatePhase(sessionId: number, phase: string): Promise<void> {
     const session = await this.getSession(sessionId);
     const oldPhase = session.phase;

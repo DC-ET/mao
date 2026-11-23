@@ -56,6 +56,7 @@ function makeService() {
     updateById: vi.fn(),
     updateWhere: vi.fn(),
     updateFields: vi.fn(async () => 1),
+    markPhaseIfIn: vi.fn(async () => 0),
     pageSessionsByFilter: vi.fn(),
     count: vi.fn(async () => 0),
     selectMessageSearchCandidates: vi.fn(),
@@ -144,6 +145,17 @@ describe('SessionService archive', () => {
     const { service, sessionRepo } = makeService();
     vi.mocked(sessionRepo.updateWhere).mockResolvedValue(0);
     expect(await service.restoreRunningAfterApproval(10)).toBe(false);
+  });
+
+  it('markPhaseIfInDelegatesTheConditionalUpdateAndReportsWhetherItTookEffect', async () => {
+    const { service, sessionRepo } = makeService();
+    vi.mocked(sessionRepo.markPhaseIfIn).mockResolvedValue(1);
+    await expect(service.markPhaseIfIn(10, 'RUNNING', ['CANCELLED'])).resolves.toBe(true);
+    expect(sessionRepo.markPhaseIfIn).toHaveBeenCalledWith(10, 'RUNNING', ['CANCELLED']);
+
+    // 入口相位已被执行线程推进到终态：CAS 未命中，调用方不得覆盖
+    vi.mocked(sessionRepo.markPhaseIfIn).mockResolvedValue(0);
+    await expect(service.markPhaseIfIn(10, 'RUNNING', ['CANCELLED'])).resolves.toBe(false);
   });
 
   it('listDescendantSideTaskSessionsDelegatesToRepoWithUserId', async () => {

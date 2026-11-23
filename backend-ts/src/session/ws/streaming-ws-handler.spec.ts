@@ -50,7 +50,7 @@ describe('StreamingWsHandler', () => {
   const titleService = { scheduleForFirstUserMessage: vi.fn() };
   const harnessService = { prepareMessage: vi.fn(), executeFromEvent: vi.fn(), executePrepared: vi.fn(), executeSideFirstMessage: vi.fn(), forkParentMessages: vi.fn(), requestCompaction: vi.fn(async () => true) };
   const sessionService = {
-    getSession: vi.fn(), saveMessage: vi.fn(), updatePhase: vi.fn(), updateField: vi.fn(),
+    getSession: vi.fn(), saveMessage: vi.fn(), updatePhase: vi.fn(), markPhaseIfIn: vi.fn(async () => true), updateField: vi.fn(),
     updateModelId: vi.fn(), getMessages: vi.fn(), editMessageAndTruncate: vi.fn(), save: vi.fn(),
     findOwnedMessage: vi.fn(async () => null),
     listSubagentSessions: vi.fn(async () => []),
@@ -150,6 +150,67 @@ describe('StreamingWsHandler', () => {
     // 不能清快照——否则同一会话下一轮某 server 连接失败时无法沿用上次成功的工具集。
     expect(mcpSyncService.clearLocalSession).toHaveBeenCalledWith(11);
     expect(mcpSyncService.clearSession).not.toHaveBeenCalled();
+  });
+
+  it('promotes DB phase to RUNNING as soon as the message is submitted', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    // 上一轮刚被用户「停止」：管理后台此刻看到的是 CANCELLED
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'CANCELLED'));
+    sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+    harnessService.prepareMessage.mockResolvedValue('event-promote');
+    messageQueueService.listPending.mockResolvedValue([]);
+
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'send_message', sessionId: 11, data: { content: '纠偏', eventId: 'event-promote' },
+    }));
+
+    // 执行体还没被线程池取出（未 runAll）：DB 相位必须已经是 RUNNING，
+    // 不能等 runExecution 拿到同会话串行锁才写，否则排队窗口里管理后台仍显示「已取消」。
+    expect(sessionService.markPhaseIfIn).toHaveBeenCalledWith(11, 'RUNNING', ['CANCELLED']);
+    expect(harnessService.executeFromEvent).not.toHaveBeenCalled();
+    await executor.runAll();
+  });
+
+  it('does not promote the phase when the executor rejects the message', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'CANCELLED'));
+    sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+    harnessService.prepareMessage.mockResolvedValue('event-reject');
+    messageQueueService.listPending.mockResolvedValue([]);
+    const submit = vi.spyOn(executor, 'submit').mockImplementationOnce(() => {
+      throw new Error('Agent executor rejected: active=100 queued=200');
+    });
+
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'send_message', sessionId: 11, data: { content: 'hi', eventId: 'event-reject' },
+    }));
+
+    expect(sessionService.markPhaseIfIn).not.toHaveBeenCalled();
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({
+      type: 'error', sessionId: 11, data: expect.objectContaining({ message: '服务器繁忙，请稍后重试' }),
+    }));
+    submit.mockRestore();
+  });
+
+  it('keeps the submitted execution running when the phase promotion fails', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    sessionService.getSession.mockResolvedValue(session('CLOUD', 'COMPLETED'));
+    sessionService.saveMessage.mockResolvedValue(message(99, 'USER'));
+    harnessService.prepareMessage.mockResolvedValue('event-promote-fail');
+    sessionService.markPhaseIfIn.mockRejectedValueOnce(new Error('db down'));
+    messageQueueService.listPending.mockResolvedValue([]);
+
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'send_message', sessionId: 11, data: { content: 'hi', eventId: 'event-promote-fail' },
+    }));
+    await executor.runAll();
+
+    // 相位推进只是展示口径：失败不能阻断已提交的执行，runExecution 入口仍会补写 RUNNING
+    expect(harnessService.executeFromEvent).toHaveBeenCalled();
+    expect(sessionService.updatePhase).toHaveBeenCalledWith(11, 'RUNNING');
   });
 
   it('sendMessageInjectsImageUrlsIntoThePersistedTextPart', async () => {
@@ -2611,7 +2672,7 @@ describe('StreamingWsHandler tool_approval.alwaysAllow（V135）', () => {
   const titleService = { scheduleForFirstUserMessage: vi.fn() };
   const harnessService = { prepareMessage: vi.fn(), executeFromEvent: vi.fn(), executePrepared: vi.fn(), executeSideFirstMessage: vi.fn(), forkParentMessages: vi.fn() };
   const sessionService = {
-    getSession: vi.fn(), saveMessage: vi.fn(), updatePhase: vi.fn(), updateField: vi.fn(),
+    getSession: vi.fn(), saveMessage: vi.fn(), updatePhase: vi.fn(), markPhaseIfIn: vi.fn(async () => true), updateField: vi.fn(),
     updateModelId: vi.fn(), getMessages: vi.fn(), editMessageAndTruncate: vi.fn(), save: vi.fn(),
     findOwnedMessage: vi.fn(async () => null), listSubagentSessions: vi.fn(async () => []),
     cleanupIncompleteTail: vi.fn(async () => 0), updateContextTokens: vi.fn(),
