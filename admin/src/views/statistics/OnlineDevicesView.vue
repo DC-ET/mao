@@ -50,44 +50,41 @@
             <el-tag size="small" :type="row.tagType">{{ row.typeLabel }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="版本" width="120" show-overflow-tooltip>
-          <template #header>
-            <span title="客户端连上时自报的版本。桌面是已安装的壳版本，安卓是 APK 版本，浏览器是当前页面版本，终端 CLI 是 mao-agent 版本，页面嵌入是 SDK 版本。旧客户端显示 -">版本</span>
-          </template>
-          <template #default="{ row }">
-            <span v-if="row.clientVersion">{{ row.clientVersion }}</span>
-            <span v-else class="muted">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="额外信息" min-width="240" class-name="extra-info-col">
-          <template #header>
-            <span title="桌面客户端和终端 CLI 显示设备名、平台和设备 ID。公司 SSO 登录的连接会标出「公司 SSO」。都没有时为 -">额外信息</span>
-          </template>
-          <template #default="{ row }">
-            <div v-if="row.device || row.authSourceLabel" class="extra-info">
-              <template v-if="row.device">
-                <div class="extra-info-meta">
-                  <span class="extra-info-name">{{ row.device.name || '-' }}</span>
-                  <span class="muted">·</span>
-                  <span>{{ row.device.platform || '-' }}</span>
-                </div>
-                <div class="device-id-cell">
-                  <el-tooltip :content="row.device.id" placement="top" :show-after="300" :enterable="false">
-                    <button type="button" class="device-id" title="点击复制设备 ID" @click="copyDeviceId(row.device.id)">{{ row.device.id }}</button>
-                  </el-tooltip>
-                  <el-button class="device-id-copy" type="primary" link size="small" aria-label="复制设备 ID" title="复制设备 ID" @click.stop="copyDeviceId(row.device.id)">复制</el-button>
-                </div>
-              </template>
-              <div v-if="row.authSourceLabel">{{ row.authSourceLabel }}</div>
-            </div>
-            <span v-else class="muted">-</span>
-          </template>
-        </el-table-column>
         <el-table-column label="连接时长" width="120">
           <template #default="{ row }">{{ row.durationText }}</template>
         </el-table-column>
         <el-table-column label="认证到期" width="170">
           <template #default="{ row }">{{ row.expiresText }}</template>
+        </el-table-column>
+        <el-table-column label="额外信息" min-width="280" class-name="extra-info-col">
+          <template #header>
+            <span title="每项都带名称。版本是客户端连上时自报的：桌面是已安装的壳版本，安卓是 APK 版本，浏览器是当前页面版本，终端 CLI 是 mao-agent 版本，页面嵌入是 SDK 版本。桌面客户端和终端 CLI 还有设备名、平台和设备 ID，点击设备 ID 可复制。公司 SSO 登录会有「凭据」。都没有时为 -">额外信息</span>
+          </template>
+          <template #default="{ row }">
+            <div v-if="row.clientVersion || row.device || row.authSourceLabel" class="extra-info">
+              <template v-if="row.clientVersion">
+                <span class="extra-info-label">版本</span>
+                <span class="extra-info-value">{{ row.clientVersion }}</span>
+              </template>
+              <template v-if="row.device">
+                <span class="extra-info-label">设备名</span>
+                <span class="extra-info-value">{{ row.device.name || '-' }}</span>
+                <span class="extra-info-label">平台</span>
+                <span class="extra-info-value">{{ row.device.platform || '-' }}</span>
+                <span class="extra-info-label">设备 ID</span>
+                <span class="extra-info-value">
+                  <el-tooltip :content="row.device.id" placement="top" :show-after="300" :enterable="false">
+                    <button type="button" class="device-id" title="点击复制设备 ID" @click="copyDeviceId(row.device.id)">{{ row.device.id }}</button>
+                  </el-tooltip>
+                </span>
+              </template>
+              <template v-if="row.authSourceLabel">
+                <span class="extra-info-label" title="登录凭据类型">凭据</span>
+                <span class="extra-info-value">{{ row.authSourceLabel }}</span>
+              </template>
+            </div>
+            <span v-else class="muted">-</span>
+          </template>
         </el-table-column>
       </el-table>
     </el-card>
@@ -324,44 +321,38 @@ onBeforeUnmount(stopTimer)
 }
 
 .extra-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 8px;
+  row-gap: 2px;
+  align-items: center;
   min-width: 0;
   max-width: 100%;
 }
 
-.extra-info-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
+.extra-info-label {
+  color: var(--mao-muted);
+  white-space: nowrap;
 }
 
-.extra-info-name {
+.extra-info-value {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.device-id-cell {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
+.extra-info-value :deep(.el-tooltip__trigger) {
+  display: block;
   max-width: 100%;
-}
-
-.device-id-cell :deep(.el-tooltip__trigger) {
-  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
 }
 
 .device-id {
-  flex: 1 1 auto;
-  min-width: 0;
   display: block;
+  width: 100%;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -378,10 +369,6 @@ onBeforeUnmount(stopTimer)
 
 .device-id:hover {
   color: var(--el-color-primary);
-}
-
-.device-id-copy {
-  flex: none;
 }
 
 .muted {
