@@ -234,6 +234,24 @@ test('回归：托盘模式下 macOS 重启安装自己替换应用，不走 Squ
   }
 })
 
+test('sha512 校验失败后自动重新检查更新，不把错误立刻交给界面', async () => {
+  const previous = process.env.MAO_UPDATE_DOWNLOAD_RETRY_MS
+  process.env.MAO_UPDATE_DOWNLOAD_RETRY_MS = '20'
+  try {
+    const h = await loadMain({ platform: 'darwin' })
+    h.state.packaged = true
+    await h.invoke('check-for-update')
+    const callsAfterFirst = h.state.checkForUpdateCalls
+    h.emitUpdater('error', new Error('sha512 checksum mismatch, expected abc, got def'))
+    assert.equal(h.state.sent.filter((item) => item.channel === 'update-error').length, 0)
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    assert.equal(h.state.checkForUpdateCalls, callsAfterFirst + 1)
+  } finally {
+    if (previous == null) delete process.env.MAO_UPDATE_DOWNLOAD_RETRY_MS
+    else process.env.MAO_UPDATE_DOWNLOAD_RETRY_MS = previous
+  }
+})
+
 test('macOS 不能就地替换时提示手动下载 dmg，且不退出', async () => {
   delete process.env.MAO_UPDATE_EXEC_PATH
   delete process.env.MAO_UPDATE_INSTALL_DRY_RUN

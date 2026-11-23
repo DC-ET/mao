@@ -243,6 +243,10 @@ async function loadMain(options = {}) {
         (state.updaterHandlers[ev] = state.updaterHandlers[ev] || []).push(cb)
       },
       setFeedURL() {},
+      checkForUpdates: async () => {
+        state.checkForUpdateCalls = (state.checkForUpdateCalls || 0) + 1
+        return null
+      },
       // 真实 Electron autoUpdater.quitAndInstall：先对所有窗口发 close，全部关掉之后才 before-quit。
       // 任一 close 被 preventDefault，退出取消（托盘拦截会把窗口藏起来，安装不会开始）。
       quitAndInstall() {
@@ -253,7 +257,6 @@ async function loadMain(options = {}) {
         for (const cb of (state.appHandlers['before-quit'] || []).slice()) cb()
       },
       autoDownload: false, autoInstallOnAppQuit: false,
-      checkForUpdates: async () => null,
     },
   }
 

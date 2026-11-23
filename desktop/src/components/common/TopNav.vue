@@ -439,6 +439,10 @@ async function handleUpdateClick() {
     ElMessage.info(updateTooltip.value)
     return
   }
+  if (appUpdateStatus.value === 'error') {
+    await checkAppUpdate()
+    return
+  }
   if (appUpdateAvailable.value) {
     if (isAndroidCapacitor()) {
       void confirmAndroidUpdate()

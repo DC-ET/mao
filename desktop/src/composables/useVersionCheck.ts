@@ -37,6 +37,20 @@ const appUpdateDownloaded = ref(false)
 const appUpdateVersion = ref<string | null>(null)
 const appUpdateProgress = ref<number | null>(null)
 const appUpdateError = ref<string | null>(null)
+const UPDATE_DOWNLOAD_RETRY_LIMIT = 3
+let updateDownloadRetries = 0
+let updateRetryTimer: ReturnType<typeof setTimeout> | null = null
+
+function canRetryUpdateDownload(message: string | undefined, used: number) {
+  if (used >= UPDATE_DOWNLOAD_RETRY_LIMIT) return false
+  return /checksum mismatch|ERR_CHECKSUM_MISMATCH|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ECONNREFUSED|ENOTFOUND|socket hang up|net::ERR_/i.test(message || '')
+}
+
+function clearUpdateRetryTimer() {
+  if (!updateRetryTimer) return
+  clearTimeout(updateRetryTimer)
+  updateRetryTimer = null
+}
 
 let timer: ReturnType<typeof setInterval> | null = null
 let appUpdateTimer: ReturnType<typeof setInterval> | null = null
@@ -184,6 +198,8 @@ export function useVersionCheck() {
         appUpdateProgress.value = Math.max(0, Math.min(100, progress?.percent || 0))
       }),
       electronAPI.onUpdateDownloaded?.((info) => {
+        updateDownloadRetries = 0
+        clearUpdateRetryTimer()
         appUpdateStatus.value = 'downloaded'
         appUpdateAvailable.value = true
         appUpdateDownloaded.value = true
@@ -196,8 +212,22 @@ export function useVersionCheck() {
         }
       }),
       electronAPI.onUpdateError?.((error) => {
+        const message = error?.message || '检查客户端更新失败'
+        if (canRetryUpdateDownload(message, updateDownloadRetries)) {
+          updateDownloadRetries += 1
+          const delay = Math.min(15000, 2000 * (2 ** (updateDownloadRetries - 1)))
+          appUpdateStatus.value = 'downloading'
+          appUpdateError.value = null
+          clearUpdateRetryTimer()
+          updateRetryTimer = setTimeout(() => {
+            updateRetryTimer = null
+            void checkAppUpdate()
+          }, delay)
+          return
+        }
+        updateDownloadRetries = 0
         appUpdateStatus.value = 'error'
-        appUpdateError.value = error?.message || '检查客户端更新失败'
+        appUpdateError.value = message
       })
     ].filter(Boolean) as Array<() => void>
 
@@ -214,6 +244,7 @@ export function useVersionCheck() {
       clearInterval(appUpdateTimer)
       appUpdateTimer = null
     }
+    clearUpdateRetryTimer()
     for (const removeListener of removeAppUpdaterListeners) {
       removeListener()
     }

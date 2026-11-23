@@ -67,6 +67,8 @@ Electron 壳支持自动更新。默认检查 `https://mao.example.com/uploads/r
 
 下载完成后点「重启安装」会退出进程并完成安装，不受「关闭窗口收到托盘」影响。菜单栏退出或 Cmd+Q 同样会在退出时安装已下载的更新。
 
+sha512 不一致或下载中断时，客户端会自动重新下载，最多 3 次，不用退出应用。发布 macOS 更新包用 `bash scripts/publish-mac-release.sh desktop/release`：先上传清单里的安装包和 blockmap，远端大小与本地一致后，最后才上传 `latest-mac.yml`。清单先于安装包出现时，客户端会下到半截文件并报 checksum mismatch。
+
 macOS 不把更新包交给 Squirrel。下载阶段只核对 `latest-mac.yml` 里的 sha512；重启安装或退出后，由独立脚本等进程退出，再替换当前 `.app` 并重新打开。证书更换或 ad-hoc 签名不会再导致安装失败。应用若在磁盘映像里、被系统转移到只读路径，或所在目录不可写，会提示「自动更新没有完成」，并给出当前架构的 dmg（Apple Silicon 用带 `arm64` 的包，Intel 用带 `intel` 或非 arm64 的包）。退出被取消、进程还在时当场提示；退出后重新打开仍是旧版本时再提示一次。点「下载安装包」后需退出 Mao，用包里的应用替换「应用程序」中的旧版本。Windows 仍走安装器自带的更新安装。
 
 Web 前端更新：部署 `desktop/dist` 后刷新；Electron 壳更新需用户安装新包（或走自动更新）。

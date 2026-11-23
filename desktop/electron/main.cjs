@@ -25,6 +25,7 @@ const { createBrowserLiveRecordFlag } = require('./browserLiveRecordFlag.cjs')
 const { createPipWindowManager } = require('./pipWindow.cjs')
 const updateInstallFallback = require('./updateInstallFallback.cjs')
 const macUpdateInstall = require('./macUpdateInstall.cjs')
+const updateDownloadRetry = require('./updateDownloadRetry.cjs')
 
 
 app.setName('Mao')
@@ -162,6 +163,8 @@ let updaterProgressPercent = null
 let installWatchTimer = null
 let manualInstallPromptOpen = false
 let darwinInstallStarted = false
+let updateDownloadRetries = 0
+let updateRetryTimer = null
 
 /**
  * Get the full user PATH by executing a login shell.
@@ -307,6 +310,12 @@ function cancelInstallWatch() {
   if (!installWatchTimer) return
   clearTimeout(installWatchTimer)
   installWatchTimer = null
+}
+
+function cancelUpdateRetry() {
+  if (!updateRetryTimer) return
+  clearTimeout(updateRetryTimer)
+  updateRetryTimer = null
 }
 
 async function promptManualInstall() {
@@ -661,6 +670,8 @@ function setupAutoUpdater() {
   })
 
   autoUpdater.on('update-downloaded', (info) => {
+    updateDownloadRetries = 0
+    cancelUpdateRetry()
     updateDownloaded = true
     downloadedUpdateInfo = info
     setUpdaterStatus('downloaded', 100)
@@ -668,6 +679,21 @@ function setupAutoUpdater() {
   })
 
   autoUpdater.on('error', (error) => {
+    if (updateDownloadRetry.canRetryUpdateDownload(error, updateDownloadRetries)) {
+      updateDownloadRetries += 1
+      const delay = updateDownloadRetry.retryDelayMs(updateDownloadRetries)
+      console.warn(`[updater] download failed, retry ${updateDownloadRetries} in ${delay}ms:`, error?.message || error)
+      cancelUpdateRetry()
+      updateRetryTimer = setTimeout(() => {
+        updateRetryTimer = null
+        checkForAppUpdate().catch((retryError) => {
+          console.error('[updater] retry check failed:', retryError)
+        })
+      }, delay)
+      if (typeof updateRetryTimer.unref === 'function') updateRetryTimer.unref()
+      return
+    }
+    updateDownloadRetries = 0
     console.error('[updater] error:', error)
     setUpdaterStatus('error', null)
     sendToRenderer('update-error', serializeUpdaterError(error))
@@ -1388,6 +1414,7 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   quitting = true
+  cancelUpdateRetry()
   if (process.platform === 'darwin' && updateDownloaded && !darwinInstallStarted) {
     startDarwinBundleInstall()
     recordDarwinInstallAttempt()
