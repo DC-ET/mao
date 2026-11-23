@@ -105,17 +105,20 @@ describe('ChatDeliveryBar 模板绑定与预览/下载双动作卡片', () => {
     expect(scriptContent).toContain('downloadingKeys')
   })
 
-  it('文件容器采用横向折行卡片且约束最大宽度，避免单文件被纵向 flex 默认 stretch 拉满整行', () => {
+  it('文件列表按聊天栏宽度折行，单张卡片不拉满整行', () => {
     const filesBlockStart = styleContent.indexOf('.delivery-files {')
     expect(filesBlockStart).toBeGreaterThan(-1)
     const filesBlock = styleContent.slice(filesBlockStart, styleContent.indexOf('}', filesBlockStart))
     expect(filesBlock).toContain('flex-wrap: wrap')
+    expect(filesBlock).toContain('width: 100%')
+    expect(filesBlock).toContain('min-width: 0')
     expect(filesBlock).not.toContain('flex-direction: column')
 
     const cardBlockStart = styleContent.indexOf('.delivery-file {')
     expect(cardBlockStart).toBeGreaterThan(-1)
     const cardBlock = styleContent.slice(cardBlockStart, styleContent.indexOf('}', cardBlockStart))
     expect(cardBlock).toContain('max-width: min(388px, 100%)')
+    expect(cardBlock).not.toContain('width: 100%')
     expect(styleContent).toContain('.delivery-file-main:focus-visible')
     expect(styleContent).toContain('.delivery-file-download:focus-visible')
   })

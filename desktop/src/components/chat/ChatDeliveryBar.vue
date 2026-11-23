@@ -293,6 +293,11 @@ async function handleFileDownload(d: SendDelivery) {
   flex-wrap: wrap;
   align-items: stretch;
   gap: 8px;
+  /* 父级是 align-items:flex-start 的纵向 flex，这里若不给确定宽度，wrap 容器会按文字内容收缩。
+     短文件名的内容宽小于卡片 min-width，两张就放不进这个盒子、各占一行，即使聊天栏还有空位。
+     拉满后按聊天栏折行；单张卡片仍受自身 max-width 约束，不会被拉成整行。 */
+  width: 100%;
+  min-width: 0;
   max-width: 100%;
 }
 
