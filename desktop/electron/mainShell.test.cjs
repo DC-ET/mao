@@ -208,6 +208,64 @@ test('回归：托盘模式下重启安装先放行关窗，窗口被销毁而�
   assert.equal(h.state.sent.filter((s) => s.channel === 'tray-first-close-hint').length, 0)
 })
 
+test('macOS 重启安装没有退出时提示手动下载 dmg', async () => {
+  const previous = process.env.MAO_UPDATE_INSTALL_STALL_MS
+  process.env.MAO_UPDATE_INSTALL_STALL_MS = '20'
+  try {
+    const h = await loadMain({
+      platform: 'darwin',
+      updaterInstallQuits: false,
+      dialogResponse: 0,
+    })
+    h.state.packaged = true
+    await h.invoke('check-for-update')
+    h.emitUpdater('update-downloaded', {
+      version: '0.0.530',
+      files: [
+        { url: 'Mao-0.0.530-arm64.dmg', arch: 'arm64' },
+        { url: 'Mao-0.0.530-intel.dmg', arch: 'x64' },
+      ],
+    })
+    const result = await h.invoke('install-update')
+    assert.equal(result.success, true)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    assert.equal(h.state.dialogs.length, 1)
+    assert.equal(h.state.dialogs[0].title, '自动更新没有完成')
+    assert.equal(h.state.dialogs[0].message.includes('0.0.530'), true)
+    const opened = h.state.openExternal[0] || ''
+    const expected = process.arch === 'arm64' ? 'Mao-0.0.530-arm64.dmg' : 'Mao-0.0.530-intel.dmg'
+    assert.equal(opened.endsWith(expected), true, opened)
+  } finally {
+    if (previous == null) delete process.env.MAO_UPDATE_INSTALL_STALL_MS
+    else process.env.MAO_UPDATE_INSTALL_STALL_MS = previous
+  }
+})
+
+test('重新打开后仍是旧版本时提示手动安装，装上新版本则不再提示', async () => {
+  const attempt = {
+    fromVersion: '0.0.528',
+    toVersion: '0.0.530',
+    feedUrl: 'https://mao.example.com/api/uploads/releases/',
+    files: [{ url: 'Mao-0.0.530-arm64.dmg', arch: 'arm64' }],
+    prompted: false,
+  }
+  const stale = await loadMain({ platform: 'darwin', appVersion: '0.0.528', updateAttempt: attempt })
+  assert.equal(stale.state.dialogs.length, 1)
+  assert.equal(stale.state.dialogs[0].title, '自动更新没有完成')
+  const saved = JSON.parse(require('fs').readFileSync(
+    require('path').join(stale.userDataDir, 'update-install-attempt.json'),
+    'utf8',
+  ))
+  assert.equal(saved.prompted, true)
+
+  const installed = await loadMain({ platform: 'darwin', appVersion: '0.0.530', updateAttempt: attempt })
+  assert.equal(installed.state.dialogs.length, 0)
+  assert.equal(
+    require('fs').existsSync(require('path').join(installed.userDataDir, 'update-install-attempt.json')),
+    false,
+  )
+})
+
 test('未下载完成时重启安装不放行关窗', async () => {
   const h = await loadMain({ prefs: { closeToTray: 'tray' }, platform: 'darwin' })
   const result = await h.invoke('install-update')

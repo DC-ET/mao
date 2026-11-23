@@ -64,6 +64,9 @@ async function loadMain(options = {}) {
     unregisterAllCalls: 0,
     quitCalls: 0,
     quitAndInstallCalls: 0,
+    dialogs: [],
+    openExternal: [],
+    dialogResponse: options.dialogResponse == null ? 1 : options.dialogResponse,
     packaged: options.packaged === true,
     updaterHandlers: {},
     loginItemSettings: [],
@@ -180,15 +183,26 @@ async function loadMain(options = {}) {
       dock: options.platform === 'darwin'
         ? { setBadgeCount: (n) => state.badgeCounts.push(n) }
         : undefined,
-      getVersion: () => '0.0.351',
+      getVersion: () => options.appVersion || '0.0.351',
     },
     BrowserWindow: FakeBrowserWindow,
     ipcMain: {
       handle: (channel, cb) => { state.ipcHandlers[channel] = cb },
       on: () => {},
     },
-    shell: { openExternal() {} },
-    dialog: { showMessageBox: async () => ({ response: 0 }) },
+    shell: {
+      openExternal(url) {
+        state.openExternal.push(url)
+        return Promise.resolve()
+      },
+    },
+    dialog: {
+      showMessageBox: async (winOrOpts, maybeOpts) => {
+        const opts = maybeOpts && typeof maybeOpts === 'object' ? maybeOpts : winOrOpts
+        state.dialogs.push(opts)
+        return { response: state.dialogResponse }
+      },
+    },
     Menu: {
       buildFromTemplate: (template) => ({ template }),
       setApplicationMenu: () => { state.menuSetCount++ },
@@ -232,6 +246,7 @@ async function loadMain(options = {}) {
       // 任一 close 被 preventDefault，退出取消（托盘拦截会把窗口藏起来，安装不会开始）。
       quitAndInstall() {
         state.quitAndInstallCalls++
+        if (options.updaterInstallQuits === false) return
         for (const w of state.windows.filter((x) => !x.destroyed)) w.close()
         if (state.windows.some((w) => !w.destroyed)) return
         for (const cb of (state.appHandlers['before-quit'] || []).slice()) cb()
@@ -262,6 +277,12 @@ async function loadMain(options = {}) {
   // 预置桌面偏好（在 main.cjs 读取之前落盘）
   if (options.prefs) {
     fs.writeFileSync(path.join(userDataDir, 'desktop-prefs.json'), JSON.stringify(options.prefs))
+  }
+  if (options.updateAttempt) {
+    fs.writeFileSync(
+      path.join(userDataDir, 'update-install-attempt.json'),
+      JSON.stringify(options.updateAttempt),
+    )
   }
 
   require(MAIN_PATH)

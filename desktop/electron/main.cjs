@@ -23,6 +23,7 @@ const { registerLocalFileIpc } = require('./localFileIpc.cjs')
 const { createBrowserLiveRuntime } = require('./browserLive.cjs')
 const { createBrowserLiveRecordFlag } = require('./browserLiveRecordFlag.cjs')
 const { createPipWindowManager } = require('./pipWindow.cjs')
+const updateInstallFallback = require('./updateInstallFallback.cjs')
 
 
 app.setName('Mao')
@@ -153,9 +154,12 @@ function pipContentUrl() {
 
 let updaterInitialized = false
 let updateDownloaded = false
+let downloadedUpdateInfo = null
 let updateCheckPromise = null
 let updaterStatus = 'idle'
 let updaterProgressPercent = null
+let installWatchTimer = null
+let manualInstallPromptOpen = false
 
 /**
  * Get the full user PATH by executing a login shell.
@@ -279,13 +283,85 @@ function setUpdaterStatus(status, progressPercent = updaterProgressPercent) {
   buildApplicationMenu()
 }
 
+function currentUpdateFeedUrl() {
+  const feed = serverConfigLib.resolveUpdateFeedUrl(getServerConfig(), getUpdateFeedUrlOverride())
+  return feed.url || null
+}
+
+function recordDarwinInstallAttempt() {
+  if (process.platform !== 'darwin') return
+  const info = updateInstallFallback.snapshotUpdateInfo(downloadedUpdateInfo)
+  updateInstallFallback.writeInstallAttempt(app.getPath('userData'), {
+    fromVersion: app.getVersion(),
+    toVersion: info.version,
+    feedUrl: currentUpdateFeedUrl(),
+    files: info.files,
+    prompted: false,
+    at: new Date().toISOString(),
+  })
+}
+
+function cancelInstallWatch() {
+  if (!installWatchTimer) return
+  clearTimeout(installWatchTimer)
+  installWatchTimer = null
+}
+
+async function promptManualInstall() {
+  if (process.platform !== 'darwin' || manualInstallPromptOpen) return
+  const userDataDir = app.getPath('userData')
+  const attempt = updateInstallFallback.readInstallAttempt(userDataDir)
+  if (!attempt || attempt.prompted === true) return
+  const dmgUrl = updateInstallFallback.resolveManualDmgUrl(
+    attempt.feedUrl,
+    updateInstallFallback.pickManualDmg(attempt.files, process.arch),
+  )
+  const downloadUrl = dmgUrl || (typeof attempt.feedUrl === 'string' ? attempt.feedUrl : null)
+  const copy = updateInstallFallback.manualInstallDialogCopy(attempt.toVersion)
+  const buttons = downloadUrl ? [copy.confirmLabel, copy.dismissLabel] : ['知道了']
+  manualInstallPromptOpen = true
+  updateInstallFallback.markInstallAttemptPrompted(userDataDir)
+  try {
+    const { response } = await showUpdateMessage('warning', copy.title, copy.message, buttons)
+    if (response === 0 && downloadUrl) {
+      await shell.openExternal(downloadUrl)
+    }
+  } finally {
+    manualInstallPromptOpen = false
+  }
+}
+
+function watchDarwinInstallStall() {
+  if (process.platform !== 'darwin') return
+  cancelInstallWatch()
+  installWatchTimer = setTimeout(() => {
+    installWatchTimer = null
+    // 进程还在：ShipIt 没有接手，重启安装没有发生。
+    void promptManualInstall()
+  }, updateInstallFallback.installStallMs())
+}
+
+async function checkStaleInstallAttempt() {
+  if (process.platform !== 'darwin') return
+  const userDataDir = app.getPath('userData')
+  const attempt = updateInstallFallback.readInstallAttempt(userDataDir)
+  const kind = updateInstallFallback.classifyLaunchAttempt(attempt, app.getVersion())
+  if (kind === 'success') {
+    updateInstallFallback.clearInstallAttempt(userDataDir)
+    return
+  }
+  if (kind === 'prompt') await promptManualInstall()
+}
+
 function installDownloadedUpdate() {
   if (!updateDownloaded) {
     return { success: false, error: 'Update has not been downloaded yet.' }
   }
   // macOS 的 quitAndInstall 先关窗、后发 before-quit。默认「关窗收托盘」会在
   // quitting 仍为 false 时把 close 变成 hide，退出被取消，安装不会开始。
+  recordDarwinInstallAttempt()
   quitting = true
+  watchDarwinInstallStall()
   autoUpdater.quitAndInstall(false, true)
   return { success: true }
 }
@@ -499,6 +575,7 @@ function setupAutoUpdater() {
 
   autoUpdater.on('update-available', (info) => {
     updateDownloaded = false
+    downloadedUpdateInfo = null
     setUpdaterStatus('available', 0)
     sendToRenderer('update-available', info)
   })
@@ -515,6 +592,7 @@ function setupAutoUpdater() {
 
   autoUpdater.on('update-downloaded', (info) => {
     updateDownloaded = true
+    downloadedUpdateInfo = info
     setUpdaterStatus('downloaded', 100)
     sendToRenderer('update-downloaded', info)
   })
@@ -1215,6 +1293,9 @@ app.whenReady().then(() => {
       })
     }, 3000)
   }
+  checkStaleInstallAttempt().catch((error) => {
+    console.error('[updater] manual install prompt failed:', error)
+  })
 })
 
 app.on('window-all-closed', () => {
@@ -1237,6 +1318,7 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   quitting = true
+  cancelInstallWatch()
   // 快捷键全部注销后同步清掉跟踪值：否则退出若被中止，之后「重设同一个键」会命中
   // 同键早退而跳过 register，键保持未注册但 UI/偏好显示已启用
   currentShortcutAccel = null
