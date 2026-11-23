@@ -237,6 +237,7 @@ describe('LlmCallRepository 大字段不泄入列表与窗口查询（技术方�
     expect(sql).not.toContain('system_prompt');
     expect(sql).not.toContain('tools_json');
     expect(sql).toContain('created_at');
+    expect(sql).toContain('ORDER BY created_at DESC, id DESC');
   });
 
   it('selectBySessionWindow 只查轻列：轨迹窗口不会把全会话提示词拉进内存', async () => {

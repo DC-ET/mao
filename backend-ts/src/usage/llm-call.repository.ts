@@ -225,8 +225,10 @@ export class LlmCallRepository {
       `SELECT COUNT(*) AS c FROM llm_call WHERE ${whereSql}`,
       params,
     );
+    // created_at 倒序、id 打破同一毫秒的并列。InnoDB 二级索引隐式带主键，
+    // idx_llm_call_created 能按这个顺序倒扫，时间窗里读满一页就停。
     const records = await this.db.query<LlmCallRow>(
-      `SELECT ${LLM_CALL_LIGHT_COLUMNS} FROM llm_call WHERE ${whereSql} ORDER BY id DESC LIMIT ? OFFSET ?`,
+      `SELECT ${LLM_CALL_LIGHT_COLUMNS} FROM llm_call WHERE ${whereSql} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
       [...params, size, offset],
     );
     return { records, total: Number(totalRow?.c ?? 0) };

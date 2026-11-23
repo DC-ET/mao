@@ -3,6 +3,7 @@ import { requireRequestPermission, requireUserId, sendOk } from '../common/http-
 import { addDaysYmd, isValidYmd } from '../common/json.js';
 import { queryInt, queryOptBool, queryOptInt, queryOptStr } from '../common/request.js';
 import type { PermissionService } from '../permission/permission.service.js';
+import { resolveActivityWindow } from '../session/message-search.js';
 import { parseUsageRange, type LlmCallService, type UsageDateRange } from './llm-call.service.js';
 import type { TrendGranularity } from './llm-call.repository.js';
 
@@ -12,9 +13,40 @@ export interface LlmCallRouteDeps {
 }
 
 /**
+ * 管理端调用流水的时间窗，口径与会话列表 `resolveActivityWindow` 相同
+ * （Asia/Shanghai 日历日，含起始日 00:00:00，结束日次日 00:00:00 开区间）：
+ * - `range=ALL` → 不限时间；
+ * - `dateFrom`/`dateTo` 或既有深链参数 `startDate`/`endDate` → 显式区间（可单边，优先于预设档）；
+ * - `range=1D|3D|7D|30D|90D` → 最近 N 天（含今天）；
+ * - 都没传 → 最近 7 天。避免管理端直连 API 对 `llm_call` 做全表 COUNT。
+ * 用户端 `/llm-calls/me` 不走这里，缺省仍不限时间。
+ */
+export function resolveAdminLlmCallListWindow(input: {
+  range?: string | null;
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  now?: Date;
+}): { startAt?: string; endAtExclusive?: string } {
+  const window = resolveActivityWindow({
+    range: input.range,
+    dateFrom: input.dateFrom ?? input.startDate,
+    dateTo: input.dateTo ?? input.endDate,
+    now: input.now,
+  });
+  if (window == null) return {};
+  return {
+    ...(window.from != null ? { startAt: window.from } : {}),
+    ...(window.toExclusive != null ? { endAtExclusive: window.toExclusive } : {}),
+  };
+}
+
+/**
  * 自定义起止日期 → 半开窗口 [startAt, endAtExclusive)。
  * 上界取次日 00:00:00：created_at 是 DATETIME(3)，字典序上 '...59.000' > '...59'，
  * 用 23:59:59 闭区间会漏掉结束日最后一秒的全部毫秒行。口径同 admin-analytics。
+ * 仅用户端明细使用；缺省不补窗口。
  */
 function parseDateRange(startDate?: string, endDate?: string): { startAt?: string; endAtExclusive?: string } {
   return {
@@ -44,9 +76,13 @@ export function registerLlmCallRoutes(app: FastifyInstance, deps: LlmCallRouteDe
     await requireRequestPermission(deps.permissionService, request, 'llm-call:read');
     const page = queryInt(request, 'page', 1);
     const size = queryInt(request, 'size', 20);
-    const startDate = queryOptStr(request, 'startDate');
-    const endDate = queryOptStr(request, 'endDate');
-    const range = parseDateRange(startDate, endDate);
+    const window = resolveAdminLlmCallListWindow({
+      range: queryOptStr(request, 'range'),
+      dateFrom: queryOptStr(request, 'dateFrom'),
+      dateTo: queryOptStr(request, 'dateTo'),
+      startDate: queryOptStr(request, 'startDate'),
+      endDate: queryOptStr(request, 'endDate'),
+    });
     const result = await deps.llmCallService.listForAdmin(page, size, {
       userId: queryOptInt(request, 'userId'),
       sessionId: queryOptInt(request, 'sessionId'),
@@ -55,8 +91,8 @@ export function registerLlmCallRoutes(app: FastifyInstance, deps: LlmCallRouteDe
       scene: queryOptStr(request, 'scene'),
       success: queryOptBool(request, 'success'),
       cancelled: queryOptBool(request, 'cancelled'),
-      startAt: range.startAt,
-      endAtExclusive: range.endAtExclusive,
+      startAt: window.startAt,
+      endAtExclusive: window.endAtExclusive,
     });
     return sendOk(reply, result);
   });

@@ -28,6 +28,27 @@
                 <el-option label="取消" value="cancelled" />
               </el-select>
             </el-form-item>
+            <el-form-item label="时间">
+              <el-select v-model="filters.activityRange" style="width: 120px" @change="onActivityRangeChange">
+                <el-option
+                  v-for="opt in ACTIVITY_RANGE_OPTIONS"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
+              </el-select>
+              <el-date-picker
+                v-if="filters.activityRange === 'CUSTOM'"
+                v-model="filters.activityCustomRange"
+                type="daterange"
+                value-format="YYYY-MM-DD"
+                range-separator="至"
+                start-placeholder="开始日期"
+                end-placeholder="结束日期"
+                style="width: 250px; margin-left: 8px"
+                @change="handleSearch"
+              />
+            </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="handleSearch">查询</el-button>
               <el-button @click="handleReset">重置</el-button>
@@ -92,12 +113,6 @@
                 :value="m.id"
               />
             </el-select>
-          </el-form-item>
-          <el-form-item label="开始日期">
-            <el-date-picker v-model="filters.startDate" type="date" value-format="YYYY-MM-DD" placeholder="开始" style="width: 150px" @change="handleSearch" />
-          </el-form-item>
-          <el-form-item label="结束日期">
-            <el-date-picker v-model="filters.endDate" type="date" value-format="YYYY-MM-DD" placeholder="结束" style="width: 150px" @change="handleSearch" />
           </el-form-item>
         </FilterPanel>
       </el-form>
@@ -231,7 +246,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, computed, onMounted, onActivated } from 'vue'
+import { reactive, ref, computed, watch, onMounted, onActivated } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -244,6 +259,14 @@ import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 import FilterPanel from '../../components/FilterPanel.vue'
 import { LLM_CALL_SCENE_OPTIONS, llmCallSceneLabel, llmCallProtocolLabel, formatMs, formatCost } from '../../utils/llmCallLabels'
 import { formatThroughput, throughput } from '../../utils/throughput'
+import {
+  ACTIVITY_RANGE_DEFAULT,
+  ACTIVITY_RANGE_OPTIONS,
+  activityRangeParams,
+  defaultCustomRange,
+  isActivityRangeValue,
+  type ActivityRangeValue,
+} from '../../utils/sessionActivityRange'
 
 const route = useRoute()
 const router = useRouter()
@@ -270,8 +293,9 @@ const filters = reactive({
   agentId: undefined as number | string | undefined,
   sessionId: '',
   modelId: undefined as number | undefined,
-  startDate: '',
-  endDate: '',
+  // 时间窗：默认最近 7 天（后端同口径兜底），ALL = 全部时间。预设档只把档位名交给后端算。
+  activityRange: ACTIVITY_RANGE_DEFAULT as ActivityRangeValue,
+  activityCustomRange: null as [string, string] | null,
 })
 
 /**
@@ -316,8 +340,49 @@ function applyQueryFilters() {
   filters.sessionId = typeof q.sessionId === 'string' ? q.sessionId : ''
   const modelId = Number(q.modelId)
   filters.modelId = q.modelId != null && q.modelId !== '' && Number.isFinite(modelId) ? modelId : undefined
-  filters.startDate = typeof q.startDate === 'string' ? q.startDate : ''
-  filters.endDate = typeof q.endDate === 'string' ? q.endDate : ''
+  applyTimeQuery()
+}
+
+function queryText(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+/**
+ * 地址栏时间条件 → 筛选档。
+ * `range=ALL` 放开全部时间；带了 startDate/endDate（用量分析、用户用量深链）或 dateFrom/dateTo
+ * 则进自定义档，和后端「显式日期优先于预设档」一致；都没有就回到最近 7 天。
+ */
+function applyTimeQuery() {
+  const q = route.query
+  const rangeRaw = queryText(q.range).toUpperCase()
+  const dateFrom = queryText(q.dateFrom) || queryText(q.startDate)
+  const dateTo = queryText(q.dateTo) || queryText(q.endDate)
+  if (rangeRaw === 'ALL') {
+    filters.activityRange = 'ALL'
+    filters.activityCustomRange = null
+    return
+  }
+  if (dateFrom || dateTo) {
+    filters.activityRange = 'CUSTOM'
+    filters.activityCustomRange = [dateFrom, dateTo]
+    return
+  }
+  filters.activityRange = isActivityRangeValue(rangeRaw) && rangeRaw !== 'CUSTOM'
+    ? rangeRaw
+    : ACTIVITY_RANGE_DEFAULT
+  filters.activityCustomRange = null
+}
+
+// 切到「自定义」时给一个最近 7 天的初始区间，避免空区间悄悄落回默认档
+watch(() => filters.activityRange, (next) => {
+  if (next === 'CUSTOM' && !filters.activityCustomRange?.[0] && !filters.activityCustomRange?.[1]) {
+    filters.activityCustomRange = defaultCustomRange()
+  }
+})
+
+function onActivityRangeChange(next: ActivityRangeValue) {
+  if (next === 'CUSTOM') return
+  handleSearch()
 }
 
 function formatNumber(value: number) {
@@ -385,8 +450,7 @@ function buildFilterParams(page: number, size: number): Record<string, unknown> 
     if (sessionId != null) params.sessionId = sessionId
   }
   if (filters.modelId != null) params.modelId = filters.modelId
-  if (filters.startDate) params.startDate = filters.startDate
-  if (filters.endDate) params.endDate = filters.endDate
+  Object.assign(params, activityRangeParams(filters.activityRange, filters.activityCustomRange))
   return params
 }
 
@@ -425,8 +489,8 @@ function handleReset() {
   filters.agentId = undefined
   filters.sessionId = ''
   filters.modelId = undefined
-  filters.startDate = ''
-  filters.endDate = ''
+  filters.activityRange = ACTIVITY_RANGE_DEFAULT
+  filters.activityCustomRange = null
   handleSearch()
 }
 

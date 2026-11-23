@@ -26,14 +26,25 @@
 | `--cancelled` | 否 | 布尔 | | 取消筛选：`true` 只查用户取消，`false` 排除取消 |
 | `--session-id` | 否 | 整数 | | 会话 ID |
 | `--model-id` | 否 | 整数 | | 模型 ID |
-| `--start-date` | 否 | `YYYY-MM-DD` | | 开始日期（须为真实公历日，`2026-02-31` 这类非法日期会被忽略） |
-| `--end-date` | 否 | `YYYY-MM-DD` | | 结束日期（同上） |
+| `--start-date` | 否 | `YYYY-MM-DD` | | 开始日期（须为真实公历日）。仅 `me`：非法日期（如 `2026-02-31`）会被忽略 |
+| `--end-date` | 否 | `YYYY-MM-DD` | | 结束日期。仅 `me`：非法日期会被忽略 |
+
+`me` 不带日期时不限时间（只查当前用户自己的调用）。
 
 ## 命令：llm-call list
 
 `GET /admin/llm-calls`（需 `llm-call:read`）
 
-额外支持 `--user-id`、`--agent-id`；`--cancelled` 同 `llm-call me`。
+额外支持 `--user-id`、`--agent-id`、`--range`；`--cancelled` 同 `llm-call me`。
+
+**时间窗（与管理后台「调用流水」页、会话列表同一口径）**：默认最近 7 天（含今天，不传参数也按 7 天兜底，按北京时间日历日切分）。`--range` 取值 `1d` / `3d` / `7d` / `30d` / `90d` / `all`（大小写不敏感）；`all` 才不限时间。`--start-date` / `--end-date` 是显式区间（含首尾整天，可只给一边），优先于预设档；`--range all` 会忽略这两个日期。非法档位、非法日期或开始晚于结束会直接报错，不会悄悄查全表。
+
+```bash
+mao llm-call list                       # 最近 7 天
+mao llm-call list --range 30d
+mao llm-call list --range all           # 全部时间（大表会慢）
+mao llm-call list --start-date 2026-09-01 --end-date 2026-09-15
+```
 
 ## 用户端用量汇总与趋势（我的用量抽屉）
 
@@ -68,5 +79,6 @@
 
 ```bash
 mao llm-call me --page 1 --size 20 --raw
+mao llm-call list --scene agent --range 7d
 mao llm-call list --scene agent --start-date 2026-09-01 --end-date 2026-09-15
 ```

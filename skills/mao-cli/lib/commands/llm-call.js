@@ -15,9 +15,11 @@ function help() {
 
 命令:
   mao llm-call me [--page] [--size] [--scene] [--success] [--cancelled] [--session-id] [--model-id] [--start-date] [--end-date]
-  mao llm-call list [--page] [--size] [--user-id] [--session-id] [--agent-id] [--model-id] [--scene] [--success] [--cancelled] [--start-date] [--end-date]
+  mao llm-call list [--page] [--size] [--user-id] [--session-id] [--agent-id] [--model-id] [--scene] [--success] [--cancelled] [--range] [--start-date] [--end-date]
 
 结果三态: --success true=成功; --success false=纯失败(不含取消); --cancelled true=用户取消(点停止), 与成败互斥另列一档
+list 的时间窗默认最近 7 天（含今天）。--range 1d|3d|7d|30d|90d|all；all = 全部时间。
+--start-date / --end-date 为显式区间（优先于预设档；--range all 会忽略日期）。me 不带日期时不限时间。
 `;
 }
 
@@ -52,6 +54,8 @@ async function run(ctx, subcommand, _rest, flags) {
         ...common,
         userId: getNumber(flags, 'user-id'),
         agentId: getNumber(flags, 'agent-id'),
+        // 缺省由后端按最近 7 天兜底；all = 全部时间
+        range: getString(flags, 'range'),
       }));
       emitResult(result, { raw: ctx.raw });
       return;
