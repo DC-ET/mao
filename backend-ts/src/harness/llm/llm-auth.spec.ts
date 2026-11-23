@@ -4,7 +4,7 @@ import { LlmCallContext } from '../../usage/llm-call-context.js';
 import type { EcpTokenLookup, EcpTokenProvider } from '../../auth/ecp-token-provider.js';
 
 function providerOf(lookup: EcpTokenLookup): EcpTokenProvider {
-  return { getUsableToken: async () => lookup };
+  return { getUsableToken: async () => lookup, invalidate: () => {} };
 }
 
 describe('llmAuthResolver', () => {
@@ -57,6 +57,7 @@ describe('llmAuthResolver', () => {
         captured.push(userId);
         return { ok: true, token: 'ecp-plain-token' };
       },
+      invalidate: () => {},
     };
     const resolver = createLlmAuthResolver(provider);
     const key = await LlmCallContext.runAsync({ scene: 'agent', userId: 7 }, async () =>

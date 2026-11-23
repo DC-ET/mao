@@ -1,7 +1,7 @@
 import { formatDateTime } from '../common/json.js';
 import type { EcpConfig } from './ecp.config.js';
 import { EcpClient } from './ecp.client.js';
-import type { EcpSessionStore } from './ecp-session.repository.js';
+import type { EcpSessionStore, UserEcpSession } from './ecp-session.repository.js';
 
 const TICK_INTERVAL_MS = 60_000;
 const RENEW_LEAD_MS = 30 * 60_000;
@@ -10,6 +10,15 @@ const BATCH_SIZE = 20;
 const STALE_RENEWING_MS = 5 * 60_000;
 
 export type EcpConfigSource = () => Promise<EcpConfig>;
+
+export interface EcpRenewSchedulerOptions {
+  /**
+   * 票轮换回调（renew 成功 / renew 失败导致旧票作废）。
+   * 缓存了明文的调用方（EcpTokenProvider）必须同步失效：否则 renew 后的 TTL 窗口内仍会用死票发请求，
+   * 被网关判 INVALID_ECP_TOKEN（2026-11-23 会话 2736）。
+   */
+  onSessionRotated?: (userId: number) => void;
+}
 
 export class EcpRenewScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -21,6 +30,7 @@ export class EcpRenewScheduler {
     private readonly getConfig: EcpConfigSource,
     private readonly client: Pick<EcpClient, 'renewSession'> = new EcpClient(),
     private readonly encrypt: (token: string) => string,
+    private readonly options: EcpRenewSchedulerOptions = {},
   ) {}
 
   start(): void {
@@ -70,21 +80,33 @@ export class EcpRenewScheduler {
     }
   }
 
-  private async renewOne(config: EcpConfig, row: { id?: number; sessionTokenEnc: string }): Promise<void> {
+  private async renewOne(config: EcpConfig, row: UserEcpSession): Promise<void> {
     if (row.id == null) return;
     if (!await this.sessions.markRenewing(row.id)) return;
     const oldToken = this.sessions.decryptToken(row.sessionTokenEnc);
     if (!oldToken) {
       await this.sessions.markFailed(row.id);
+      this.notifyRotated(row.userId);
       return;
     }
     try {
       const renewed = await this.client.renewSession(config, oldToken);
       await this.sessions.saveRenewed(row.id, this.encrypt(renewed.sessionToken), renewed.expiresAt);
+      this.notifyRotated(row.userId);
     } catch (e) {
       console.warn(`ECP renew failed for session id=${row.id}`, e);
       // renew 丢响应或失败：旧票可能已作废，禁止用旧票重试
       await this.sessions.markFailed(row.id);
+      this.notifyRotated(row.userId);
+    }
+  }
+
+  /** 回调异常不能打断续期循环（后面还有用户等着续票）；缓存失效失败最坏只是多跑一次查库。 */
+  private notifyRotated(userId: number): void {
+    try {
+      this.options.onSessionRotated?.(userId);
+    } catch (e) {
+      console.warn(`ECP session rotated notify failed userId=${userId}`, e);
     }
   }
 }

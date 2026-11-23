@@ -20,6 +20,12 @@ export interface EcpSessionReader {
 export interface EcpTokenProvider {
   /** 取该用户当前可用的 ECP 明文 token（结果结构化，不抛业务异常）。 */
   getUsableToken(userId: number): Promise<EcpTokenLookup>;
+  /**
+   * 票被轮换或作废后清掉该用户的缓存。
+   * ECP renew 会吊销旧票、重新登录会换新票——缓存不跟着失效，就会在 TTL 窗口内继续拿死票发请求
+   * （2026-11-23 会话 2736：renew 后 13s 的请求被网关判 INVALID_ECP_TOKEN）。
+   */
+  invalidate(userId: number): void;
 }
 
 export interface EcpTokenProviderOptions {
@@ -67,6 +73,10 @@ export function createEcpTokenProvider(
   }
 
   return {
+    invalidate(userId: number): void {
+      tokenCache.delete(userId);
+    },
+
     async getUsableToken(userId: number): Promise<EcpTokenLookup> {
       if (!(await enabled())) return { ok: false, reason: 'disabled' };
 

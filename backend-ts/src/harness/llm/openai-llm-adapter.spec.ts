@@ -887,4 +887,25 @@ describe('OpenAiLlmAdapter', () => {
     await ecpAdapter.stream(request('hi'), configOf(server, { authType: 'ecp', apiKey: 'sk-should-not-use' }), callback);
     expect(server.headers[0].authorization).toBe('Bearer ecp-plain-token');
   });
+
+  it('records a single terminal error when onError throws (agent loop semantics)', async () => {
+    server = new QueueServer();
+    server.enqueueJson('{"code":"INVALID_ECP_TOKEN","message":"Invalid ECP bearer token"}', 401);
+    await server.start();
+    let errorCount = 0;
+    const callback: StreamCallback = {
+      onChunk: () => {},
+      onComplete: () => {},
+      onError: (t) => {
+        errorCount += 1;
+        // AgentLoop 的 onError 实现就是 throw t；适配器不能因此把同一次失败再记一遍
+        throw t;
+      },
+    };
+    await expect(
+      adapter(10, 0).stream(request('401-onerror-throws'), configOf(server), callback, { get: () => false }),
+    ).rejects.toThrow(/401/);
+    expect(errorCount).toBe(1);
+    expect(server.requestCount).toBe(1);
+  });
 });

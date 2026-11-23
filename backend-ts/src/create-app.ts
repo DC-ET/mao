@@ -330,6 +330,9 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const ecpOAuthRepo = new MysqlEcpOauthStateRepository(db);
   const ecpIdentityRepo = new EcpIdentityRepository(db);
   const ecpSessionRepo = new MysqlEcpSessionRepository(db, settingsSecret);
+  // ECP 换票（登录 / 续期）必须让 LLM 凭证缓存同步失效，而 EcpTokenProvider 装配在 ecpAuth 之后：
+  // 用转发器晚绑定，避免把两处构造顺序绑死。
+  const ecpSessionRotated: { target: ((userId: number) => void) | null } = { target: null };
   const ecpAuth = new EcpAuthService(
     userRepo,
     ecpOAuthRepo,
@@ -361,6 +364,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
         },
       });
     },
+    (userId) => ecpSessionRotated.target?.(userId),
   );
   // 飞书密码绑定（技术方案 2026-11-19-channel-password-bind §4.3）：预览 / complete 路由。
   // replay 经 ctx 延迟解引用——pendingBindingProcessor 在 app-feishu-handler 装配完成后才存在。
@@ -408,10 +412,13 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const experienceService = new AgentExperienceService(new MysqlAgentExperienceRepository(db));
   const suggestedQuestionService = new AgentSuggestedQuestionService(new MysqlAgentSuggestedQuestionRepository(db));
   // 模型「当前用户 ECP Token」凭证解析链（技术方案 2026-11-19）：
-  // provider 对 user_ecp_session 解密取票（60s 正缓存、失败不缓存），resolver 被所有 LLM 出口共享。
+  // provider 对 user_ecp_session 解密取票（60s 正缓存、失败不缓存；登录/续期换票时经 ecpSessionRotated 立即失效），
+  // resolver 被所有 LLM 出口共享。
   const ecpTokenProvider = createEcpTokenProvider(ecpSessionRepo, {
     isEnabled: () => ecpAuth.isEnabled(),
   });
+  // 登录 / 续期换票后立刻清掉该用户的明文缓存，杜绝「旧票在 60s TTL 内继续发请求」的 401 窗口。
+  ecpSessionRotated.target = (userId) => ecpTokenProvider.invalidate(userId);
   const llmAuthResolver = createLlmAuthResolver(ecpTokenProvider);
   const modelRepo = new MysqlLlmModelRepository(db);
   // 浏览器依赖服务在容器运行时装配（runtimeModeResolver）之后才能构造；agent 保存钩子经
@@ -1146,7 +1153,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     sessionService, outboundDeliveryRepo, outboundSubscriptionRepo, auditService,
     genericWebhookSender,
     agentExecutor, inboxCleanupStore, callLogService, callLogCleanup,
-    ecpSessionRepo, weixinMonitor, feishuMonitor, dingtalk, pendingBindingMessages,
+    ecpSessionRepo, ecpTokenProvider, weixinMonitor, feishuMonitor, dingtalk, pendingBindingMessages,
     shellManager, terminalManager, localTerminalRelay, wsHandler, subagentMapper, sessionMap, sessionSvc,
     compactionSvc, definitionRegistry, backgroundSubagentManager, agentLoop: holder.loop!, visibility,
     localToolSessions, subagentResultDelivery, taskTerminal, harness: holder.harness!, wsRegistry,

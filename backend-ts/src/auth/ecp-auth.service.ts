@@ -34,6 +34,11 @@ export class EcpAuthService {
     private readonly getConfig: () => Promise<EcpConfig>,
     private readonly client: Pick<EcpClient, 'createFeishuAuthorization' | 'createSessionFromFeishuCallback'> = new EcpClient(),
     private readonly onAuthenticated?: (user: User, state: string) => Promise<ChannelBindOutcome | void>,
+    /**
+     * 登录换票回调：这里写入的就是新的 ECP session token，旧票随即失效。
+     * 缓存了明文的调用方（EcpTokenProvider）必须同步失效，否则同一用户立刻发起的 LLM 调用会带旧票。
+     */
+    private readonly onSessionRotated?: (userId: number) => void,
   ) {}
 
   async isEnabled(): Promise<boolean> {
@@ -104,6 +109,7 @@ export class EcpAuthService {
       const { user } = await this.identities.resolve(session.user);
       this.ensureUserEnabled(user);
       await this.sessions.upsert(user.id!, this.sessions.encryptToken(session.sessionToken), session.expiresAt);
+      this.notifySessionRotated(user.id!);
       user.lastLoginAt = formatNow();
       await this.userRepo.updateById(user);
       if (await this.stateRepo.updateByState(state!, ECP_PROCESSING, {
@@ -237,6 +243,15 @@ export class EcpAuthService {
 
   private isExpired(oauthState: EcpOauthState): boolean {
     return isShanghaiExpired(oauthState.expiresAt);
+  }
+
+  /** 换票回调异常不能让登录失败：缓存失效最坏只是下一次请求多查一次库。 */
+  private notifySessionRotated(userId: number): void {
+    try {
+      this.onSessionRotated?.(userId);
+    } catch (e) {
+      console.warn(`ECP session rotated notify failed userId=${userId}`, e);
+    }
   }
 
   private async markStateExpired(state: string): Promise<void> {

@@ -90,4 +90,29 @@ describe('createEcpTokenProvider', () => {
     await provider.getUsableToken(7);
     expect(findByUserId).toHaveBeenCalledTimes(2);
   });
+
+  it('refetchesImmediatelyAfterInvalidate', async () => {
+    // ECP renew 会吊销旧票：缓存必须能在 renew 后立刻失效，否则 TTL 窗口内会继续用死票（2026-11-23 会话 2736）
+    const findByUserId = vi.fn()
+      .mockResolvedValueOnce(session())
+      .mockResolvedValueOnce(session({ sessionTokenEnc: 'enc-renewed' }));
+    const decryptToken = vi.fn((enc: string) => (enc === 'enc-renewed' ? 'ecp-renewed' : 'ecp-old'));
+    const provider = createEcpTokenProvider({ findByUserId, decryptToken }, { ttlMs: 60_000 });
+
+    await expect(provider.getUsableToken(7)).resolves.toEqual({ ok: true, token: 'ecp-old' });
+    provider.invalidate(7);
+    await expect(provider.getUsableToken(7)).resolves.toEqual({ ok: true, token: 'ecp-renewed' });
+    expect(findByUserId).toHaveBeenCalledTimes(2);
+  });
+
+  it('keepsOtherUsersCacheWhenOneUserInvalidated', async () => {
+    const findByUserId = vi.fn(async (userId: number) => session({ userId }));
+    const provider = createEcpTokenProvider({ findByUserId, decryptToken: () => 'ecp-plain-token' }, { ttlMs: 60_000 });
+    await provider.getUsableToken(7);
+    await provider.getUsableToken(8);
+    provider.invalidate(7);
+    await provider.getUsableToken(8);
+    // 只清被轮换的用户，别的用户不该因此多查一次库
+    expect(findByUserId.mock.calls.map(([id]) => id)).toEqual([7, 8]);
+  });
 });

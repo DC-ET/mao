@@ -224,6 +224,9 @@ export class OpenAiLlmAdapter implements LlmAdapter {
           callback.onError(this.cancelledException());
           return;
         }
+        // 非 2xx 分支已经记录过终态错误；上层 onError 以 throw 回抛时会落到这里，
+        // 直接透传，避免同一请求被重复记录、重复回调（日志里看起来像两次异常调用）。
+        if (e instanceof Error && e.message.startsWith('LLM API returned')) throw e;
         // 空响应重试耗尽是终态：原样透传给 onError，禁止包装、禁止整轮流重试
         if (e instanceof EmptyResponseExhaustedException) {
           callback.onError(e);

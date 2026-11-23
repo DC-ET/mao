@@ -105,6 +105,10 @@ export function assembleLifecycle(deps: LifecycleDeps): LifecycleResult {
     () => d.settingService.getEcpConfig(),
     undefined,
     (token: string) => d.ecpSessionRepo.encryptToken(token),
+    {
+      // 续期会吊销旧票：必须同步清掉 LLM 凭证缓存，否则 renew 后的 TTL 窗口内仍会用死票发请求。
+      onSessionRotated: (userId: number) => d.ecpTokenProvider?.invalidate(userId),
+    },
   );
   ecpRenewScheduler.start();
   d.weixinMonitor.start();

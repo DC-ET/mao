@@ -110,6 +110,56 @@ describe('EcpAuthService', () => {
     );
   });
 
+  it('invalidates ECP token cache after saving a fresh session token', async () => {
+    // 登录成功写入的是新票：旧票可能已被 ECP 吊销，缓存必须同步失效（2026-11-23 会话 2736 的 401）
+    const stateRepo = {
+      insert: vi.fn(),
+      findByState: vi.fn(async () => ({
+        state: 'state-2',
+        callbackTarget: 'desktop',
+        status: ECP_PENDING,
+        expiresAt: '2099-01-01 00:00:00',
+      })),
+      updateByState: vi.fn(async () => 1),
+      consumeSuccess: vi.fn(),
+      claimPending: vi.fn(async () => 1),
+    };
+    const sessions = {
+      upsert: vi.fn(),
+      encryptToken: vi.fn(() => 'enc'),
+    };
+    const identities = {
+      resolve: vi.fn(async () => ({
+        user: { id: 42, username: 'u1', status: 1, deleted: 0 } as User,
+        action: 'existing' as const,
+      })),
+    };
+    const client = {
+      createFeishuAuthorization: vi.fn(),
+      createSessionFromFeishuCallback: vi.fn(async () => ({
+        sessionToken: 'token',
+        expiresAt: new Date('2099-01-01T00:00:00Z'),
+        user: { email: 'a@b.com', displayName: 'A' },
+      })),
+    };
+    const onSessionRotated = vi.fn();
+    const service = new EcpAuthService(
+      { updateById: vi.fn(), findById: vi.fn() } as unknown as UserRepository,
+      stateRepo,
+      identities,
+      sessions as never,
+      jwt,
+      { buildLoginResult: vi.fn() },
+      async () => ({ ...defaultEcpConfig(), enabled: true }),
+      client,
+      undefined,
+      onSessionRotated,
+    );
+    await service.completeStateWithCode('state-2', 'code-2');
+    expect(sessions.upsert).toHaveBeenCalledTimes(1);
+    expect(onSessionRotated).toHaveBeenCalledWith(42);
+  });
+
   it('rejects channel callback without state or code', async () => {
     const service = new EcpAuthService(
       {} as UserRepository,
