@@ -20,7 +20,7 @@ import type {
   StreamChunk,
   ToolCall,
 } from './chat-request.js';
-import { DEFAULT_LLM_RETRY, notifyPartialUsage } from './chat-request.js';
+import { DEFAULT_LLM_RETRY, isRetryableBadRequestDetail, notifyPartialUsage } from './chat-request.js';
 import { EmptyResponseExhaustedException } from './empty-response-exhausted.js';
 import { applyClientImpersonationHeaders } from './client-impersonation-headers.js';
 import { createStaticOnlyAuthResolver, type LlmAuthResolver } from './llm-auth.js';
@@ -104,6 +104,20 @@ export class ResponsesLlmAdapter implements LlmAdapter {
         }
         if (awaited.status < 200 || awaited.status >= 300) {
           const detail = await this.readErrorBody(awaited.body);
+          // 网关把上游 gRPC 故障包成 400（rpc error: code = ...）：与 429/5xx 共用重试额度
+          if (awaited.status === 400 && isRetryableBadRequestDetail(detail)) {
+            if (attempt > this.retry.rateLimitMaxRetries) {
+              this.logRequestError(payload, config, `LLM API returned ${awaited.status} after ${this.retry.rateLimitMaxRetries} retries: ${detail}`);
+              throw new Error(`LLM API returned ${awaited.status} after ${this.retry.rateLimitMaxRetries} retries: ${detail}`);
+            }
+            const delaySeconds = this.resolveRetryDelaySeconds(awaited.headers, attempt);
+            this.logRetry(config.modelId, 'http_status', awaited.status, attempt, delaySeconds, attemptStarted, totalStarted);
+            callback?.onRetry?.('http_status', awaited.status, attempt, this.retry.rateLimitMaxRetries, delaySeconds);
+            if (!(await this.sleepSecondsRespectingCancel(delaySeconds, cancelFlag))) {
+              throw this.cancelledException();
+            }
+            continue;
+          }
           this.logRequestError(payload, config, `LLM API returned ${awaited.status}: ${detail}`);
           throw new Error(`LLM API returned ${awaited.status}: ${detail}`);
         }
@@ -191,6 +205,20 @@ export class ResponsesLlmAdapter implements LlmAdapter {
         }
         if (awaited.status < 200 || awaited.status >= 300) {
           const detail = await this.readErrorBody(awaited.body);
+          // 网关把上游 gRPC 故障包成 400（rpc error: code = ...）：与 429/5xx 共用重试额度
+          if (awaited.status === 400 && isRetryableBadRequestDetail(detail)) {
+            if (attempt > this.retry.rateLimitMaxRetries) {
+              this.logRequestError(payload, config, `LLM API returned ${awaited.status} after ${this.retry.rateLimitMaxRetries} retries: ${detail}`);
+              callback.onError(new Error(`LLM API returned ${awaited.status} after ${this.retry.rateLimitMaxRetries} retries: ${detail}`));
+              return;
+            }
+            const delaySeconds = this.resolveRetryDelaySeconds(awaited.headers, attempt);
+            if (!(await this.notifyAndWaitForRetry(callback, cancelFlag, config.modelId, 'http_status', awaited.status, attempt, delaySeconds, attemptStarted, totalStarted))) {
+              callback.onError(this.cancelledException());
+              return;
+            }
+            continue;
+          }
           this.logRequestError(payload, config, `LLM API returned ${awaited.status}: ${detail}`);
           callback.onError(new Error(`LLM API returned ${awaited.status}: ${detail}`));
           return;

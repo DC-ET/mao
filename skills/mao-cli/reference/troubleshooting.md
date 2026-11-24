@@ -36,6 +36,7 @@
 - WebSocket 是否连通（Nginx `/api/ws/` 升级头、超时）
 - 刷新页面、换模型、查管理端会话与后端日志
 - 工具执行后返回 `400`，字段指向 `messages.*.tool_calls.*.summary`：旧版把内部工具摘要传给了不接受该字段的模型渠道。0.0.111 修复为在 Chat Completions 请求序列化时排除工具调用的 `summary`（流式/非流式均生效），内部摘要保留；升级后端后可继续使用原会话，无需清空历史或修改渠道参数。
+- `LLM API returned 400` 且错误体含 `Request was rejected due to reason: rpc error: code = ...`：上游推理服务（经 sub2api 类网关）瞬断，不是请求参数问题。0.0.534 起与 429/5xx 共用限流重试预算自动重试（日志 `LLM retry ... statusCode=400`），无需人工参与；重试耗尽仍失败说明上游持续不可用，点失败卡「重试」或稍后再发即可。
 - `LLM API returned 400` 且 `No tool output found for tool call ...`：历史里 assistant 的某个 tool_call 没有对应 tool 结果（并行工具只落了一部分、或工具图片插在两次 tool 结果中间把配对拆开）。旧版会让该会话无法继续也无法重试。0.0.144 起会补占位 tool 结果并把图片挪到整组 tool 输出之后；升级后端后可在原会话点重试，不必新开。
 - 飞书失败卡没有「重试」按钮 / 点了提示「无法定位原进度卡片」：进度卡映射只在 FAILED 终态保留（供重试定位 bot）。0.0.144 起失败卡带「重试」；升级前已失败的旧卡若映射已被清掉，需重新发送消息触发新任务。
 - 同一会话从 Responses 协议切到 Chat Completions 后 400（`messages[*]: missing field \`type\``）：Responses 流式历史 tool_calls 可能缺 `type`。0.0.128 起流式写入与 Chat Completions 序列化均补齐为 `function`；升级后端后原会话可继续使用。

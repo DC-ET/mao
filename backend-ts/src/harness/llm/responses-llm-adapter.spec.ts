@@ -439,6 +439,23 @@ describe('ResponsesLlmAdapter - chat（非流式）', () => {
     expect(server.requestCount).toBe(1);
   });
 
+  it('400 携带上游 gRPC 故障（rpc error: code = ...）时按服务端故障重试', async () => {
+    server = new QueueServer();
+    server.enqueueJson(JSON.stringify({
+      error: { message: 'Request was rejected due to reason: rpc error: code = Unavailable desc =  .', type: 'invalid_request_error' },
+    }), 400);
+    server.enqueueJson(JSON.stringify({
+      id: 'resp_grpc_retry', status: 'completed',
+      output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'ok' }] }],
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    }));
+    await server.start();
+
+    const response = await adapter().chat(request('hi'), configOf(server));
+    expect(server.requestCount).toBe(2);
+    expect(response.choices?.[0]?.message?.content).toBe('ok');
+  });
+
   it('promptCacheKey 透传为 prompt_cache_key（会话粘性缓存路由）', async () => {
     server = new QueueServer();
     server.enqueueJson(JSON.stringify({
@@ -506,6 +523,27 @@ describe('ResponsesLlmAdapter - stream（流式）', () => {
     });
     const body = parseBody(server.bodies[0]);
     expect(body.stream).toBe(true);
+  });
+
+  it('400 携带上游 gRPC 故障时重试并继续流式输出', async () => {
+    server = new QueueServer();
+    server.enqueueJson(JSON.stringify({
+      error: { message: 'Request was rejected due to reason: rpc error: code = Unavailable desc =  .' },
+    }), 400);
+    server.enqueueSse([
+      'event: response.output_text.delta',
+      'data: {"type":"response.output_text.delta","item_id":"msg_1","delta":"ok"}',
+      '',
+      'data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}',
+      '',
+    ].join('\n'));
+    await server.start();
+
+    const callback = new CapturingCallback();
+    await adapter().stream(request('hi'), configOf(server), callback);
+    expect(callback.error).toBeUndefined();
+    expect(server.requestCount).toBe(2);
+    expect(callback.retryReasons).toEqual(['http_status']);
   });
 
   it('reasoning item 流式捕获：挂到首个 function_call，随聚合持久化供下轮回传', async () => {

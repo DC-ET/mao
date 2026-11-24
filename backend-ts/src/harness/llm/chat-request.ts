@@ -212,6 +212,16 @@ export function notifyPartialUsage(callback: StreamCallback, usage: ChatUsage): 
   });
 }
 
+/**
+ * 部分网关（实测 sub2api）把上游推理服务的 gRPC 故障包成 HTTP 400：
+ * `Request was rejected due to reason: rpc error: code = Unavailable desc = ...`。
+ * 这类 400 是上游瞬断而非请求本身有问题，应与 429/5xx 一样按限流重试额度和退避重试。
+ * 只认 `rpc error: code =` 前缀，可覆盖 Unavailable / DeadlineExceeded / Internal / ResourceExhausted。
+ */
+export function isRetryableBadRequestDetail(detail: string | null | undefined): boolean {
+  return detail != null && detail.includes('rpc error: code =');
+}
+
 export type ChatCallback = Pick<StreamCallback, 'onWaiting' | 'onRetry'>;
 
 export interface LlmAdapter {

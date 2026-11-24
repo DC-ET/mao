@@ -285,6 +285,17 @@ describe('AnthropicLlmAdapter - chat (non-stream)', () => {
     expect(server.requestCount).toBe(1);
   });
 
+  it('400 携带上游 gRPC 故障（rpc error: code = ...）时按服务端故障重试', async () => {
+    server = new QueueServer();
+    server.enqueueJson('{"error":{"message":"Request was rejected due to reason: rpc error: code = Unavailable desc =  .","type":"invalid_request_error"}}', 400);
+    server.enqueueJson('{"id":"msg_grpc_retry","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}');
+    await server.start();
+
+    const response = await adapter().chat(request('hi'), configOf(server));
+    expect(server.requestCount).toBe(2);
+    expect(response.choices?.[0]?.message?.content).toBe('ok');
+  });
+
   it('多段 system 合并到顶层 system 参数', async () => {
     server = new QueueServer();
     server.enqueueJson('{"id":"m","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}');
@@ -472,6 +483,31 @@ describe('AnthropicLlmAdapter - stream', () => {
       totalTokens: 45,
       promptTokensDetails: { cachedTokens: 10, cacheCreationTokens: 3 },
     });
+  });
+
+  it('400 携带上游 gRPC 故障时重试并继续流式输出', async () => {
+    server = new QueueServer();
+    server.enqueueJson('{"error":{"message":"Request was rejected due to reason: rpc error: code = Unavailable desc =  ."}}', 400);
+    server.enqueueSse(
+      'event: message_start\n'
+      + 'data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":3}}}\n\n'
+      + 'event: content_block_delta\n'
+      + 'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n'
+      + 'event: content_block_stop\n'
+      + 'data: {"type":"content_block_stop","index":0}\n\n'
+      + 'event: message_delta\n'
+      + 'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\n'
+      + 'event: message_stop\n'
+      + 'data: {"type":"message_stop"}\n\n',
+    );
+    await server.start();
+
+    const callback = new CapturingCallback();
+    await adapter().stream(request('hi'), configOf(server), callback);
+    expect(callback.error).toBeUndefined();
+    expect(server.requestCount).toBe(2);
+    expect(callback.retryReasons).toEqual(['http_status']);
+    expect(callback.retryStatuses).toEqual([400]);
   });
 
   it('网关在 message_start 下发 input_tokens=0、真实值在 message_delta：按有值即覆盖归一', async () => {

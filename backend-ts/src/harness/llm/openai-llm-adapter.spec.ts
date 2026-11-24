@@ -695,6 +695,21 @@ describe('OpenAiLlmAdapter', () => {
     expect((callback.error as Error).message).toContain('400');
   });
 
+  it('streamRetriesUpstreamGrpcErrorWrappedIn400', async () => {
+    const grpcBody = '{"error":{"message":"Request was rejected due to reason: rpc error: code = Unavailable desc =  .","type":"invalid_request_error"}}';
+    server = new QueueServer();
+    server.enqueueJson(grpcBody, 400);
+    server.enqueueSse('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n');
+    await server.start();
+
+    const callback = new CapturingCallback();
+    await adapter(2, 0).stream(request('retry-grpc'), configOf(server), callback, { get: () => false });
+    expect(callback.error).toBeUndefined();
+    expect(server.requestCount).toBe(2);
+    expect(callback.retryReasons).toEqual(['http_status']);
+    expect(callback.retryStatuses).toEqual([400]);
+  });
+
   it('streamRetriesMidStreamRateLimitErrorEventAndSucceeds', async () => {
     // OpenRouter 等网关在流已开始后触发限流时，HTTP 状态码已是 200，
     // 错误只能内嵌在 SSE 事件里下发；必须识别并重试，否则会被误判为空响应。
@@ -836,6 +851,32 @@ describe('OpenAiLlmAdapter', () => {
       configOf(server),
     )).rejects.toThrow(/LLM API returned 400/);
     expect(server.requestCount).toBe(1);
+  });
+
+  it('chatRetriesUpstreamGrpcErrorWrappedIn400', async () => {
+    // sub2api 把上游 gRPC 故障包成 400（rpc error: code = Unavailable）：
+    // 这属于服务端瞬断，按限流/5xx 同一套预算重试，而不是当作请求错误直接失败。
+    const grpcBody = '{"error":{"message":"Request was rejected due to reason: rpc error: code = Unavailable desc =  .","type":"invalid_request_error"}}';
+    server = new QueueServer();
+    server.enqueueJson(grpcBody, 400);
+    server.enqueueJson('{"id":"ok-after-grpc-retry","choices":[]}');
+    await server.start();
+
+    const response = await adapter(2, 0).chat(request('retry-grpc'), configOf(server));
+    expect(response.id).toBe('ok-after-grpc-retry');
+    expect(server.requestCount).toBe(2);
+  });
+
+  it('chatExhaustsRetryBudgetForPersistentUpstreamGrpcError400', async () => {
+    const grpcBody = '{"error":{"message":"Request was rejected due to reason: rpc error: code = Unavailable desc =  ."}}';
+    server = new QueueServer();
+    server.enqueueJson(grpcBody, 400);
+    server.enqueueJson(grpcBody, 400);
+    await server.start();
+
+    await expect(adapter(1, 0).chat(request('retry-grpc-exhaust'), configOf(server)))
+      .rejects.toThrow(/LLM API returned 400 after 1 retries/);
+    expect(server.requestCount).toBe(2);
   });
 
   it('中断前已经到达的 usage 仍通过 onUsage 暴露', async () => {
