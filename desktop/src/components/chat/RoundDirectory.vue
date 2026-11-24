@@ -135,9 +135,11 @@ onUnmounted(() => {
   line-height: 1;
 }
 
+/* 悬停必须用不透明底：--aw-primary-lighter 是 10% 透明蓝，直接当 background
+   会把白底换掉，下面的「+ 边路」等右缘控件透上来，跟「目录」叠成重影 */
 .round-directory-handle:hover,
 .round-directory-handle.active {
-  background: var(--aw-primary-lighter);
+  background: color-mix(in srgb, var(--aw-primary) 10%, var(--aw-surface, #fff));
   color: var(--aw-primary);
 }
 
@@ -214,6 +216,12 @@ onUnmounted(() => {
 [data-theme="dark"] .round-directory-popover {
   background: #2a2a2a;
   border-color: var(--aw-hairline);
+}
+
+[data-theme="dark"] .round-directory-handle:hover,
+[data-theme="dark"] .round-directory-handle.active {
+  background: color-mix(in srgb, var(--aw-primary) 18%, #2a2a2a);
+  color: var(--aw-primary-on-dark);
 }
 
 [data-theme="dark"] .round-directory-popover {
