@@ -42,6 +42,23 @@ npm run dist    # Electron 打包（需自行处理代码签名）
 
 macOS 自动更新依赖签名后的 zip 产物，正式分发建议同时完成 notarize；Windows 建议签名 NSIS 安装包。
 
+## Windows 安装包行为
+
+`package.json` 的 `build.nsis` 显式声明了安装器行为，不依赖 electron-builder 默认值：
+
+| 选项 | 值 | 作用 |
+|------|----|------|
+| `oneClick` | `false` | 走安装向导（而非一键静默装） |
+| `perMachine` | `true` | 安装到 `Program Files`，所有用户可用；需要一次 UAC 提权 |
+| `allowToChangeInstallationDirectory` | `true` | **关键**：让 NSIS 的 `isTryToKeepShortcuts` 恒为 `false`，跳过 keepShortcuts 分支 |
+| `createDesktopShortcut` | `"always"` | 桌面快捷方式（`"always"` 与 `RECREATE_DESKTOP_SHORTCUT` 对应） |
+| `createStartMenuShortcut` | `true` | 开始菜单快捷方式 |
+| `shortcutName` | `"Mao"` | 快捷方式显示名 |
+
+`allowToChangeInstallationDirectory: true` 是修复「用户删过桌面图标后重装不重建」的必要条件：electron-builder 的 keepShortcuts 机制会读注册表里的旧记录，若旧快捷方式已被手动删除，两个 `${elseif}` 分支都不命中，安装器就不会创建图标且不报错。置 `false` 后 `$keepShortcuts` 恒为 `false`，直接进入无条件 `CreateShortCut` 分支，手动安装与 electron-updater 的 `--updated` 路径都生效。
+
+代价：安装向导多一页「选择安装目录」，且首次安装/更新会弹 UAC。若改回 per-user 安装，需同步评估 360 等杀软对 `AppData\Local\Programs` 目录 DLL 写入的启发式误报。
+
 > 仓库仅提供源码，不提供官方签名安装包。详见根目录 [README.md](../README.md)。
 
 ## 相关文档

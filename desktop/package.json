@@ -103,6 +103,14 @@
     "win": {
       "target": "nsis"
     },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Mao"
+    },
     "directories": {
       "output": "release"
     }
