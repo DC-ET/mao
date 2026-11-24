@@ -144,7 +144,7 @@
       <ChatInput
         ref="chatInputRef"
         :register-key="tabId"
-        :draft-key="tabId"
+        :draft-key="draftKey"
         :loading="sending"
         :can-continue="canContinue"
         :waiting-for-save="waitingForSave"
@@ -336,6 +336,10 @@ const parentCloudProjectKey = computed(() => {
 })
 // Real session ID: start with props if positive, otherwise 0
 const realSessionId = ref(props.sideSessionId > 0 ? props.sideSessionId : 0)
+/** 刷新后 Tab 会按真实会话 id 重建；占位 tab.id（side:0）不能当库键。 */
+const draftKey = computed(() =>
+  realSessionId.value > 0 ? `side:${realSessionId.value}` : props.tabId,
+)
 /** 边路任务自己的 Agent，不借用主会话。还没建会话或元数据未到时留空，斜杠菜单先列全部。 */
 const sideQuickCommandAgentId = computed(() => {
   const sid = realSessionId.value
@@ -700,6 +704,15 @@ watch(
   async (newId) => {
     // 切换会话后容器内容整体更换，旧基准失效
     resetScrollBaseline()
+    if (newId > 0 && realSessionId.value !== newId) {
+      const fromKey = realSessionId.value > 0 ? `side:${realSessionId.value}` : props.tabId
+      const toKey = `side:${newId}`
+      if (fromKey !== toKey) {
+        // 必须先于 draftKey 变化：子组件恢复新键时条目已经在，输入框不会被清空。
+        draftStore.rekey(fromKey, toKey)
+        nextTick(() => draftStore.clearDraft(fromKey))
+      }
+    }
     if (newId > 0 && realSessionId.value <= 0) {
       // 会话已转正：预览使命结束，丢弃在途请求与残留消息，
       // 真实数据改由下方 fetchMessages 从 REST 拉回来后填。
@@ -943,6 +956,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: Pend
   // 原文取输入框文本而非 resolvedText——后者在上传文件后会追加文件路径，与输入框内容不再相等。
   const sentText = trimmed
   const generation = ++sendGeneration
+  const draftKeyAtSend = draftKey.value
   // 发送即跟随：与主会话同一语义。不能沿用历史的上滑状态——用户点发送就是要看最新内容，
   // 而边路滚动条是隐藏的，内部状态与「看起来在底部」经常并不一致。
   resumeFollow()
@@ -999,7 +1013,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: Pend
         ElMessage.error('消息发送失败，网络连接不可用，请重试')
         return
       }
-      draftStore.clearDraft(props.tabId)
+      draftStore.clearDraft(draftKeyAtSend)
       // 等待上传 / 入队窗口内用户可以继续打字，只有未修改时才清空（与主会话 clearInputIfUnedited 同口径）
       clearInputIfUnedited(sentText, generation)
       // 入队成功后补一次定位：QueuePanel 出现会压缩消息区高度，底部会无声下移
@@ -1142,8 +1156,7 @@ async function handleChatSend(text: string, files: File[], pendingUploads?: Pend
 
     // 等待消息保存确认：仅在保存成功时清空输入（与主会话同一实现）；
     // 超时/卸载只解锁 waitingForSave，保留草稿以便重试。
-    // 发送前捕获 tabId：等待期间 tab 可能被关闭/晋升，保存成功后必须清掉对应草稿槽位。
-    const draftKeyAtSend = props.tabId
+    // 草稿键在发送开始时已经按稳定 id 捕获（draftKeyAtSend）。
     pendingSendCleanup = () => {
       saveAbort.abort()
       disposeSendListeners?.()

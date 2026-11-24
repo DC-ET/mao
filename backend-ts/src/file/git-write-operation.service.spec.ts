@@ -336,8 +336,9 @@ describeGit('GitWriteOperationService git', () => {
       const started = Date.now();
       const status = await withGitTimeoutMs(2000, () => newService(dir, repo).refreshRemoteStatus(session(repo), null));
       const elapsed = Date.now() - started;
-      // 3 个挂起远端并行获取：总等待 ≍ 单个远端预算（串行会叠成 ~3 倍）
-      expect(elapsed).toBeLessThan(4000);
+      // 3 个挂起远端并行获取：总等待接近单个 2s 预算。上界留到 2.5 倍，吃掉 SIGKILL 与
+      // 调度延迟；串行会叠成约 6s，仍然过不了这条线。
+      expect(elapsed).toBeLessThan(5000);
       expect(status.remoteStatusAvailable).toBe(false);
       expect(status.remoteStatusError).toBe('全部远端获取失败：h1、h2、h3');
     } finally {

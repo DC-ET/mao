@@ -62,6 +62,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   /** 清掉本地会话状态（token、WS、会话与草稿）。不调用后端，供登出与 401 强制下线共用。 */
   async function clearLocalSession() {
+    // 先把内存草稿冲进本机库，再清内存。登出不删库，同一浏览器再登录还能恢复。
+    await useDraftStore().flushAll()
     token.value = null
     user.value = null
     await clearTokens()
@@ -151,6 +153,9 @@ export const useAuthStore = defineStore('auth', () => {
     if (!token.value) return
     const { data } = await api.get('/users/me')
     user.value = data
+    if (typeof data?.id === 'number' && Number.isInteger(data.id)) {
+      await useDraftStore().hydrate(data.id)
+    }
   }
 
   return {

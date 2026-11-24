@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
-import { useDraftStore, type DraftEntry } from './draft'
+import { useDraftStore, type DraftEntry, setDraftLimitsForTests } from './draft'
+import { createMemoryDraftPersistence, resetDraftPersistence, setDraftPersistence } from './draft-persist'
 
 function makeEntry(text: string, fileCount = 0): DraftEntry {
   return {
@@ -118,5 +119,51 @@ describe('draft store', () => {
     const store = useDraftStore()
     store.setDraft('s:1', makeEntry('a'))
     expect(store.getDraft('s:1')?.text).toBe('a')
+  })
+})
+
+describe('draft store 持久化', () => {
+  afterEach(() => {
+    resetDraftPersistence()
+    setDraftLimitsForTests(null)
+  })
+
+  it('hydrate 不覆盖已经在内存里的条目', async () => {
+    const persistence = createMemoryDraftPersistence()
+    setDraftPersistence(persistence)
+    const store = useDraftStore()
+    await persistence.writeMeta({
+      userId: 1,
+      draftKey: 's:1',
+      html: '<p>disk</p>',
+      text: 'disk',
+      quotes: [],
+      files: [],
+      updatedAt: 1,
+    }, [], [])
+    store.setDraft('s:1', makeEntry('memory'))
+    await store.hydrate(1)
+    expect(store.getDraft('s:1')?.text).toBe('memory')
+  })
+
+  it('clearDraft 发生在写入开始之后，最终库里没有该键', async () => {
+    const gate: { release: () => void } = { release: () => {} }
+    let held = false
+    const persistence = createMemoryDraftPersistence({
+      beforeWrite: () => {
+        if (held) return
+        held = true
+        return new Promise<void>(resolve => { gate.release = () => resolve() })
+      },
+    })
+    setDraftPersistence(persistence)
+    const store = useDraftStore()
+    await store.hydrate(1)
+    store.setDraft('s:1', makeEntry('晚到'))
+    store.clearDraft('s:1')
+    gate.release()
+    await store.flushAll()
+    expect(await persistence.loadMetas(1)).toEqual([])
+    expect(store.hasDraft('s:1')).toBe(false)
   })
 })
