@@ -1,6 +1,6 @@
 # Skills「运行依赖」抽象化技术方案
 
-- 状态：已评审（可行，补充见 §10）；待开发
+- 状态：已评审（可行，补充见 §10；2026-11-24 二次评审补充见 §11，实施以 §11 为准）；待开发
 - 日期：2026-11-23
 - 一句话：把管理后台 Skills 列表里为 browser-use 特设的「浏览器依赖」列，泛化为数据驱动的「运行依赖」列；后端从单技能服务改为 provider 注册表，新增依赖型内置技能（lark-cli、dingtalk-cli、office-use…）时前端零改动。
 - 关联代码（撰写时已核实，均为当前工作区）：
@@ -16,7 +16,7 @@
 这引出一个更根本的窄化：**现状把"依赖"等同于"可安装的二进制"**。考察几个候选内置技能的真实依赖形态：
 
 - `browser-use`：CLOUD 服务器需要 Chrome + `@playwright/cli`，可安装 → install 类。
-- `lark-cli` / `dingtalk-cli`：依赖不是安装而是**凭证与开关**——平台已有 `admin/src/views/dingtalk-bot/`、`feishu-bot/` 配置页和 `feishu_bot` 表（`backend-ts/src/feishu/feishu_bot.repository.ts`；`feishu-client.ts:30-34` 用 `enabled` + 解密后的 appSecret 组 client）。未就绪的真实原因是"没配 bot / bot 停用"，正确动作是「去配置」跳转，不是「安装依赖」。按现状硬加会得到"依赖未安装 + 安装按钮"的荒谬组合，且与渠道页两处状态漂移。
+- `lark-cli` / `dingtalk-cli`：依赖不只是安装，还有**凭证与开关**。按现状硬加会得到"依赖未安装 + 安装按钮"的荒谬组合。**更正（§11.1）**：lark-cli 已接入 CLOUD shell，凭证来自 ECP 配置 `auth.ecp.config.larkAppId` + 用户 ECP 会话换出的 user_access_token（`auth/lark-uat-injector.ts`、`shell-session-tool` 注入 `LARKSUITE_CLI_USER_ACCESS_TOKEN` / `LARKSUITE_CLI_APP_ID`），**不读 `feishu_bot`**；且服务器上的 lark-cli 二进制没有任何脚本负责安装。它是 install + config 的**混合**形态，不是纯 config。
 - `office-use`：未必零服务器依赖——若产出 docx/xlsx/pdf 的转换或预览要落 LibreOffice / pandoc，它就还是 install 类。此处不作为"零依赖"样板，按实际实现评估。
 
 结论：值得抽象的不是安装实现（各家安装链形态迥异，browser 是 npm/apt/winget/镜像重建，computer-use 甚至可能只在 LOCAL、依赖在用户机上），而是**契约：状态词表、按技能的寻址、安装/配置两种动作、前端一列数据驱动渲染**。本方案落地后，新增依赖型技能的增量是"注册一个 provider"，前后端零改动。
@@ -236,3 +236,63 @@ config 的「去配置」：`action.permission` 存在时要求 `authStore.hasPe
 ### 10.4 建议实施顺序
 
 后端（contracts 类型 → service + 容错 → routes → browser provider 包装 → app-routes/create-app 装配 → agent 接口改名）→ 后端 spec → 前端 `utils/skillDeps.ts` + spec → 视图改造 → `npm run build` → 文档与 changelog 碎片。删除旧路由放在 provider 包装跑通之后一步，保证任一中间态都能编译。
+
+## 11. 二次评审补充（2026-11-24）
+
+**结论不变：需求可行，方案可行。** 但 §10 之后工作区已合入「角色技能授权」（2026-11-24 role-skill-grant 方案），导致正文改动面漏了一个 ensure 调用方、行号整体漂移；另有 lark-cli 前提事实错误、降级态会打断轮询两处设计缺口。以下条目与正文冲突时以本节为准。
+
+### 11.1 事实更正：lark-cli 不依赖 `feishu_bot`
+
+已核实：lark-cli 已经在 CLOUD shell 可用，凭证链是 ECP 配置 `auth.ecp.config` 的 `larkAppId`（`auth/ecp.config.ts:20`，非空才注入）+ 用户 ECP 会话换出的 user_access_token（`auth/lark-uat-injector.ts`，由 `create-app.ts` 的 `createLarkUatInjector` 装配），shell 注入 `LARKSUITE_CLI_USER_ACCESS_TOKEN` / `LARKSUITE_CLI_APP_ID`（`shell-session-tool.spec.ts:454-459`）。仓库内没有任何脚本/Dockerfile 安装 lark-cli 二进制。
+
+影响：
+
+1. §10.3-2 的疑问已有答案——**"lark-cli 卡在没配 bot"不成立**，config provider 不该读 `feishu_bot`。lark-cli 的依赖是三层：
+   - 服务器二进制（install 类，系统级，可在本列展示）；
+   - ECP 启用 + `larkAppId` 非空（config 类，系统级，可在本列展示，去配置页是「系统设置」，权限 `settings:read`）；
+   - 用户本人 ECP 登录态（**按用户**，管理后台系统级列表无法表达，不进本列，由运行时报错指引兜底）。
+2. 因此 §4.3 的"混合 kind provider"不再是"契约先行"，而是 lark-cli 落地时的**首个真实场景**；本方案契约（item 级 kind、provider 级 install）已能承载，无需改。
+3. D5、D15、§7、§9 中以 `feishu_bot` / `feishu-bot:read` 为例的文字只当示例，lark-cli provider 实际按上面三层设计；dingtalk-cli 的凭证来源待其方案核实，同样不要预设是 `dingtalk_bot`。
+4. §9 补一条：**按用户的依赖（个人登录态、个人 token）不进本列**——本列只表达系统级依赖，否则管理员看到的"就绪"对具体用户是假的。
+
+### 11.2 漏掉的 ensure 调用方：`RoleSkillGrantService`
+
+角色技能授权已复用同一个 ensurer：`permission/role-skill-grant.service.ts:1` 导入 `AgentBrowserDepsEnsurer`、`:27` 构造参数 `browserDepsEnsurer`、`:52` 在 `replaceForRole` 后 `ensureForSkills(names)`；装配在 `create-app.ts:658`，同样走 `browserDepsForward` 晚绑定。
+
+补充改动面（§5.1 / D7 / §4.4"调用点不变"列表一并适用）：
+
+- `role-skill-grant.service.ts`：import 与类型改 `AgentSkillDepsEnsurer`，字段 `browserDepsEnsurer` → `skillDepsEnsurer`（与 agent.service 同步改名，避免一处叫 browser 一处叫 skill）。
+- `create-app.ts`：`browserDepsForward` 更名 `skillDepsForward`、target 类型改 `SkillDepsService`，**两处**转发（AgentService 构造 :431、RoleSkillGrantService 构造 :658）一起换。漏改 :658 编译能过（结构类型），但会继续直连 `BrowserDepsService`，config/其他 install provider 永远收不到角色授权触发的 ensure。
+- `role-skill-grant.service.spec.ts`：零改动（`:24-32` 注入结构性 mock `{ ensureForSkills }`），但应在 `skill-deps.service.spec.ts` 里明确断言"registry 透传完整名单"，覆盖角色授权传 `['browser-use','git']` 这类混合名单。
+
+### 11.3 降级态会打断安装轮询（D14 缺口）
+
+D14 把 provider `status()` 抛错/超时降级为 `phase:'failed'`。安装进行中若某次探测超时（docker 模式安装中虽跳过镜像探测，但 runtime mode 解析、setting 读库仍可能慢/失败），前端会：判定"无 installing"→ 停轮询 → 显示「依赖安装失败」+ 安装按钮，而后台安装仍在跑。用户看到的是假失败，且要手动刷新才能看到最终结果。
+
+补充定案：
+
+- `SkillDepsService` 按 provider 在内存保存**最近一次成功**的 `status()` 结果。本次抛错/超时时：有缓存 → 返回缓存，每个 item 的 `detail` 追加「（本次状态读取失败，显示上次结果）」；无缓存（进程刚启动）→ 才用 D14 的降级项。缓存只做容错回退，不做命中加速（每次请求仍实时探测，保持"读取时检测"语义）。
+- 降级项补 `text: '状态读取失败'`，与真实「依赖安装失败」区分。
+- `Promise.race` 超时不会取消底层探测；前端重入门闩（D12）已防止请求堆叠，registry 侧再加**按 provider 的进行中去重**：上一次 `status()` 未结束时，新请求直接复用同一个 promise，避免多个管理员同时开页面时并发起多个 docker 一次性容器。
+- 测试补：`status()` 首次成功（installing）、第二次超时 → 返回仍为 installing 且 detail 带回退提示；无缓存超时 → 降级项 `text` 为「状态读取失败」；并发两次 `getStatusMap()` 只调用一次 provider `status()`。
+
+### 11.4 「去配置」权限码不要由后端硬编码（D15 改进）
+
+D15 让 provider 在 `action.permission` 里写前端路由守卫要的权限码，等于后端同时硬编码 admin 的路由路径和路由权限，多一个漂移点。admin 路由 `meta.permission` 已是唯一来源（`admin/src/router/index.ts`，如 `feishu-bots` → `feishu-bot:read`、`settings` → `settings:read`）。
+
+改为：`SkillDepsItem.action` 去掉 `permission`，只留 `{ label, route }`；前端用 `router.resolve(route).meta.permission` 取权限码再 `authStore.hasPermission`；`resolve` 不到路由（`matched` 为空）按无权限处理并渲染灰文本（tooltip「配置页不存在」），防止后端写错路径时用户点进 404。`utils/skillDeps.ts` 的 `configAction(items, can)` 签名不变，`can` 的实现改为"route → meta.permission → hasPermission"，仍可在单测中注入。
+
+### 11.5 安装反馈按 `started` 区分
+
+今天 `handleInstallBrowserDeps` 不论结果都提示"安装已启动"。包装层只回 `{ started }` 后，前端应在 `started:false` 时提示「依赖已在安装中或已就绪」并立即重拉 status，避免误以为又起了一次安装。成功文案通用化为 `${item.label}安装已启动，完成后状态会自动刷新`。
+
+### 11.6 文档与 changelog 遗漏
+
+- `skills/mao-cli/reference/admin.md:98` 也写着 browser-use 行的「浏览器依赖」列，正文 §8 漏列，同步改「运行依赖」。
+- `skills/bundled/README.md` 末行**并不含列名**（§8"同步列名"不成立）；该行实际过期的是"CLOUD 服务器需预装系统 Chrome 与全局 `@playwright/cli`"，应改为"服务器依赖按需安装，状态见管理后台 Skills 页「运行依赖」列"。
+- `changelog/unreleased/` 下两条**尚未发版**的碎片仍引用旧端点：`2026-11-23-browser-deps-docker-probe.md`（`GET/POST /admin/browser-deps/*`）、`2026-11-23-settings-page-render-fixes.md`（`/admin/browser-deps` 专用端点）。它们与本次改动会进同一个版本，若不改，发版说明会描述一个已经删除的端点：同任务把端点名改成 `/admin/skill-deps/*`（未发版碎片可改，月份归档文件不动）。
+- `admin/src/views/skill/SkillListView.vue` 里 `handleTabChange`、`onMounted`、`onActivated`、`onDeactivated`、`onUnmounted` 共 5 处调用 `fetchBrowserDeps` / `stopBrowserDepsPoll`，改名时一起换（keep-alive 失活停轮询的语义保留）。
+
+### 11.7 行号漂移
+
+角色技能授权合入后，正文和文首"关联代码"里的行号已过期，实施时按符号定位，不要信行号。当前值：`create-app.ts` forward 428、AgentService 注入 431、RoleSkillGrantService 注入 658、`builtinSkills` 638、构造 713、赋值 719、路由注入 1122；`app-routes.ts` import 172-173、类型 230、解构 380、注册 738-739；`agent.service.ts` 调用点 127 / 173；`agent.service.spec.ts` ensure 用例 357；`SkillListView.vue` 列 167-176、安装按钮 196-208、移动端 303-322、状态与轮询 417-470。
