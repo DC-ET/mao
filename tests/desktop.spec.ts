@@ -1241,7 +1241,8 @@ test.describe('Desktop Inbox', () => {
     await mockInboxApi(page, { items: [record({ id: 1 })], unreadCount: 1 })
 
     await page.goto('/')
-    await page.waitForSelector('.top-nav', { timeout: 15_000 })
+    // 全量串行执行时首屏资源紧张，15s 偶发不够（单跑稳定），放宽到 30s
+    await page.waitForSelector('.top-nav', { timeout: 30_000 })
 
     // 顶栏一排图标统一按 28px 点击区 + 16px 图标垂直居中的度量渲染，
     // 这里按图标中心断言「我的指令」与相邻搜索图标严格对齐。

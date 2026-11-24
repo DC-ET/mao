@@ -60,6 +60,8 @@ export interface Agent {
   mcpServerIds?: string | null;
   httpToolIds?: string | null;
   defaultModelId?: number | null;
+  /** 软删标记（与 agent/types.ts 的 Agent.deleted 同义）：角色技能授权按它判断是否还要带上限定到该 Agent 的授权。 */
+  deleted?: number | null;
   /** 团队经验库开关（V169）：0-不注入路标；缺省或 1 为启用 */
   experienceLibraryEnabled?: number | null;
   compactionEnabled?: number | boolean | null;

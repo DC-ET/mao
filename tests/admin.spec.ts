@@ -540,7 +540,8 @@ test.describe('Governance Console', () => {
     await page.click('.sidebar-menu .menu-item:has-text("角色权限")')
     await page.waitForURL(/\/roles$/)
     await expect(page.locator('text=角色列表')).toBeVisible({ timeout: 10_000 })
-    await expect(page.locator('text=权限分配')).toBeVisible()
+    // 角色页改版后是「权限」页签（RolePermissionView），不再是「权限分配」标题
+    await expect(page.locator('.el-tabs__item', { hasText: '权限' }).first()).toBeVisible()
   })
 
   test('should batch add and remove role members from the role page', async ({ page }) => {

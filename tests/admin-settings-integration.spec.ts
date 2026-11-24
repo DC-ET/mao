@@ -66,8 +66,12 @@ test('settings batch save round-trip persists and restores value', async ({ page
   await page.goto('/admin/settings')
   await page.waitForSelector('.integration-panel', { timeout: 10_000 })
 
-  const ossCard = page.locator('.group-card', { hasText: '阿里云 OSS' })
-  const sessionInput = ossCard.locator('input').nth(0) // oss.region 第一个文本输入
+  // 用字段锚点定位（settingFieldId('oss.region') = setting-field-oss.region）：
+  // 「.group-card + hasText 标题」会连外层分组容器一起命中，取 nth(0) 会拿到别的卡片的输入框。
+  const sessionInput = page.locator('#setting-field-oss\\.region input')
+  const ossCard = page.locator('.group-card').filter({ has: page.locator('#setting-field-oss\\.region') }).last()
+  // 配置回填是异步的：等 region 真正回填后再取原值，避免抢在 GET /system-settings 返回前读到空串
+  await expect(sessionInput).toHaveValue(/oss-cn-/, { timeout: 15_000 })
   const original = await sessionInput.inputValue()
   expect(original).toContain('oss-cn-')
 

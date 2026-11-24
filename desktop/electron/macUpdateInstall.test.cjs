@@ -41,13 +41,17 @@ test('父目录不可写或 zip 不存在时拒绝替换', () => {
   assert.equal(missing.reason, 'missing-zip')
 
   fs.writeFileSync(zip, 'zip')
-  fs.chmodSync(root, 0o555)
-  try {
-    const denied = installer.planMacInstall({ execPath: exe, zipPath: zip })
-    assert.equal(denied.ok, false)
-    assert.equal(denied.reason, 'not-writable')
-  } finally {
-    fs.chmodSync(root, 0o755)
+  // root 无视目录权限（容器/CI 常以 root 运行）：chmod 造不出「不可写」，
+  // 该分支只在非 root 环境验证，避免把环境差异当回归。
+  if (typeof process.getuid !== 'function' || process.getuid() !== 0) {
+    fs.chmodSync(root, 0o555)
+    try {
+      const denied = installer.planMacInstall({ execPath: exe, zipPath: zip })
+      assert.equal(denied.ok, false)
+      assert.equal(denied.reason, 'not-writable')
+    } finally {
+      fs.chmodSync(root, 0o755)
+    }
   }
 
   const ready = installer.planMacInstall({ execPath: exe, zipPath: zip })
