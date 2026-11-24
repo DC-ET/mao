@@ -408,6 +408,62 @@ describe('ShellSessionTool marker and environment handling', () => {
     expect(script.indexOf('export ECP_TOKEN')).toBeLessThan(script.indexOf('echo $ECP_TOKEN'));
   });
 
+  it('refreshes COMPANY_SSO_TOKEN before every command and clears it when the stored token is gone', async () => {
+    const companySsoInjector = { injectForUser: vi.fn(async () => 'sso-tok"en') };
+    const shellSession = {
+      sessionId: 'sh-sso',
+      writeStdin: vi.fn(),
+      incrementCommandCount: vi.fn(),
+      touch: vi.fn(),
+      currentWorkdir: '/tmp',
+      outputFile: '/tmp/out.log',
+      isAlive: () => true,
+      pendingCommand: null as { marker: string; keepSession: boolean; persist: boolean; taskId: string | null } | null,
+      beginCommand(marker: string, keepSession: boolean, persist = true, taskId: string | null = null) {
+        shellSession.pendingCommand = { marker, keepSession, persist, taskId };
+      },
+    };
+    const sessionManager = {
+      getOrCreate: vi.fn(() => shellSession),
+      getSession: vi.fn(() => shellSession),
+      close: vi.fn(),
+      listByConversation: vi.fn(() => [shellSession]),
+      refreshUserEnvironment: vi.fn(),
+      resolveEnvVarsFor: vi.fn(async () => null),
+      resolveEnvVarsForSession: vi.fn(async () => null),
+    };
+    const outputManager = {
+      readUntilMarker: vi.fn(async () => {
+        shellSession.pendingCommand = null;
+        return { output: 'ok\n', truncated: false, completed: true, exitCode: 0, matched: null };
+      }),
+    };
+    const tool = new ShellSessionTool(
+      { resolve: vi.fn((p: string) => p), resolveLenient: vi.fn((p: string) => p) } as never,
+      sessionManager as never,
+      outputManager as never,
+      { submit: vi.fn(() => 'task-1') } as never,
+      null,
+      { generateShellToken: vi.fn(() => 'jwt') },
+      { findById: vi.fn(async () => ({ username: 'alice' })) },
+      null,
+      null,
+      null,
+      companySsoInjector,
+    );
+    await tool.execute(JSON.stringify({ command: 'echo $COMPANY_SSO_TOKEN' }), 11, 7, '/tmp');
+    const script = shellSession.writeStdin.mock.calls.map((c) => String(c[0])).join('');
+    expect(script).toContain(`export COMPANY_SSO_TOKEN='sso-tok"en'`);
+    expect(script.indexOf('export COMPANY_SSO_TOKEN')).toBeLessThan(script.indexOf('echo $COMPANY_SSO_TOKEN'));
+
+    companySsoInjector.injectForUser.mockResolvedValue(null);
+    shellSession.writeStdin.mockClear();
+    await tool.execute(JSON.stringify({ command: 'echo $COMPANY_SSO_TOKEN', session_id: 'sh-sso' }), 11, 7, '/tmp');
+    const cleared = shellSession.writeStdin.mock.calls.map((c) => String(c[0])).join('');
+    expect(cleared).toContain('unset COMPANY_SSO_TOKEN\n');
+    expect(cleared).not.toContain('export COMPANY_SSO_TOKEN=');
+  });
+
   it('exports LARKSUITE_CLI credentials when lark UAT injector returns a value', async () => {
     const larkUatInjector = {
       injectForUser: vi.fn(async () => ({ uat: 'u-lark"tok', appId: 'cli_lark' })),

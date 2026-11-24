@@ -133,6 +133,7 @@ export class ContainerToolExecutor {
       this.envelopeEcpInjector(),
       this.envelopeLarkUatInjector(),
       this.envelopeBaseUrlProvider(),
+      this.envelopeCompanySsoInjector(),
     );
     for (const tool of [
       shellTool,
@@ -236,6 +237,17 @@ export class ContainerToolExecutor {
   private envelopeEcpInjector(): ShellEcpInjector {
     return {
       injectForUser: async (_userId: number) => this.currentEnvelope?.ecpToken ?? null,
+    };
+  }
+
+  private envelopeCompanySsoInjector() {
+    return {
+      injectForUser: async () => {
+        const token = this.currentEnvelope?.companySsoToken;
+        // 字段缺省表示本次查询失败，抛出让 shell 保留上一张票，而不是 unset。
+        if (token === undefined) throw new Error('COMPANY_SSO_TOKEN unavailable');
+        return token;
+      },
     };
   }
 

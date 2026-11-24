@@ -100,7 +100,7 @@ const chat = MaoChat.init({
 });
 ```
 
-`auth` 和 `getToken` 必须二选一，不自动探测 Token 类型，也不在 SSO 失败后降级为普通登录。SDK 通过 HTTPS Header 把 SSO Token 交给 `/api/v1/auth/sso/exchange`，由 Mao 调用公司官方 checkToken；普通 REST/WS 只使用换得的 Mao Token。
+`auth` 和 `getToken` 必须二选一，不自动探测 Token 类型，也不在 SSO 失败后降级为普通登录。SDK 通过 HTTPS Header 把 SSO Token 交给 `/api/v1/auth/sso/exchange`，由 Mao 调用公司官方 checkToken；普通 REST/WS 只使用换得的 Mao Token。换票成功后，服务端按用户 AES-GCM 加密覆盖保存这次提交的 company-sso token。该用户之后的 CLOUD Agent 任务会把它注入环境变量 `COMPANY_SSO_TOKEN`（见下方「任务里的公司 SSO Token」）。
 
 ### 部署与身份要求
 
@@ -118,8 +118,20 @@ const chat = MaoChat.init({
 - 页面休眠可能错过轮换，恢复后重新认证并恢复订阅；认证失效不取消已经受理的后台任务。
 - 用户变化清理旧账号内容并切换本地缓存空间；不在一条已认证 WS 上直接改 userId。
 - SDK 新增 `onEvent` 的 `auth` 事件：`authenticated`、`login_required`、`service_unavailable`、`account_forbidden`、`identity_conflict`、`configuration_error`；事件仅含状态、脱敏文案和已知用户 ID，不包含凭证。
-- 公司退出不等于所有 Mao Token 立即撤销：已签发 access 最晚到期失效；现有 shell/终端凭证保持独立生命周期，本期不提供全局注销和任务取消。
-- Token 不写入 localStorage、BroadcastChannel、URL 或上下文。上游 SSO 协议要求 query Token，SSO 网关必须脱敏其访问日志。
+- 公司退出不等于所有 Mao Token 立即撤销：已签发 access 最晚到期失效；已保存的 company-sso token 在其 `claims.exp` 之前仍会被注入，到期后不再注入。现有 shell/终端凭证保持独立生命周期，本期不提供全局注销和任务取消。
+- SDK 不把 Token 写入 localStorage、BroadcastChannel、URL 或页面上下文。服务端只在换票成功后加密落库，不写日志、不回传给普通 REST/WS。上游 SSO 协议要求 query Token，SSO 网关必须脱敏其访问日志。
+
+### 任务里的公司 SSO Token
+
+每次换票成功都会覆盖该用户上一张 company-sso token（加密存 `user_company_sso_token`，过期时间取 checkToken 的 `claims.exp`）。之后这个用户执行 CLOUD Agent 任务时：
+
+- Agent Shell 在每条命令前注入 `COMPANY_SSO_TOKEN`。再次换票后，下一条命令就是新值；票过期、解密失败或该用户从未换票成功时会 `unset`，不把上一张过期票留在会话里。查询失败时保留会话里已有的值。
+- 容器模式随会话 envelope 下发，容器内 Shell 与 MCP stdio 子进程同样能读到。MCP 进程要等重新连接才换新票。
+- 云端交互终端只在创建时注入。换票之后已打开的终端不会自动更新，需要重开。
+- LOCAL（Electron / mao-agent 本机执行）和信号哨兵脚本不注入。页面工具也不能替 Agent 去调宿主的 `getSsoToken()`。
+- 这是平台保留变量，用户 / 工作区 / 系统三层环境变量都不能覆盖。生效视图里只显示键名，不回显值。
+
+Agent 在 Shell 里可以直接用 `$COMPANY_SSO_TOKEN` 调用宿主业务接口。不要把这张票写进 `context()` 或页面可见内容。
 
 ## 关键行为
 

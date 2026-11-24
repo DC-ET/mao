@@ -80,6 +80,7 @@ async function newManager(overrides: Partial<TerminalManagerConfig> = {}, extra:
   ptyFactory?: PtyFactory;
   tokenMap?: Record<string, string>;
   ecpInjector?: { injectForUser: (userId: number) => Promise<string | null> };
+  companySsoInjector?: { injectForUser: (userId: number) => Promise<string | null> };
   larkUatInjector?: { injectForUser: (userId: number) => Promise<{ uat: string; appId: string } | null> };
   envVariableService?: { resolveForSession: (userId: number, workspace: string | null) => Promise<Record<string, string>> };
   baseUrlProvider?: { getSiteBaseUrl: () => Promise<string | null> };
@@ -93,6 +94,7 @@ async function newManager(overrides: Partial<TerminalManagerConfig> = {}, extra:
     shellToken: { generateShellToken: (userId, username) => `tok-${userId}-${username}` },
     userLookup: { findById: async (id) => ({ id, username: `user${id}` }) },
     ecpInjector: extra.ecpInjector,
+    companySsoInjector: extra.companySsoInjector,
     larkUatInjector: extra.larkUatInjector,
     baseUrlProvider: extra.baseUrlProvider,
     envVariableService: extra.envVariableService,
@@ -182,6 +184,14 @@ describe('TerminalManager', () => {
     expect(manager.occupiedCount()).toBe(1);
     expect(manager.countForSession(7)).toBe(1);
     expect(manager.countForSession(8)).toBe(0);
+  });
+
+  it('injects COMPANY_SSO_TOKEN when the user has a stored company SSO token', async () => {
+    const { manager, root } = await newManager({}, {
+      companySsoInjector: { injectForUser: async () => 'sso-session-token' },
+    });
+    await manager.create({ sessionId: 8, userId: 5, workspace: root });
+    expect(FakePty.instances[0].options.env.COMPANY_SSO_TOKEN).toBe('sso-session-token');
   });
 
   it('injects ECP_TOKEN when user has an active ECP session', async () => {

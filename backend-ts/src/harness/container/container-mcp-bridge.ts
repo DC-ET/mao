@@ -155,6 +155,7 @@ export function containerMcpEnv(serverEnv: Record<string, string>, envelope?: Ru
     if (envelope.maoToken) userCreds.MAO_TOKEN = envelope.maoToken;
     if (envelope.maoBaseUrl) userCreds.MAO_BASE_URL = envelope.maoBaseUrl;
     if (envelope.ecpToken) userCreds.ECP_TOKEN = envelope.ecpToken;
+    if (envelope.companySsoToken) userCreds.COMPANY_SSO_TOKEN = envelope.companySsoToken;
     if (envelope.larkUat) {
       userCreds.LARKSUITE_CLI_USER_ACCESS_TOKEN = envelope.larkUat.uat;
       userCreds.LARKSUITE_CLI_APP_ID = envelope.larkUat.appId;

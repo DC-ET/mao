@@ -22,6 +22,11 @@ export interface RuntimeEnvelope {
   /** 站点地址（注入 shell / MCP 的 MAO_BASE_URL）：容器内 mao / mao-agent 不再有内置默认。 */
   maoBaseUrl: string | null;
   ecpToken: string | null;
+  /**
+   * 公司 SSO 换票凭证。string 为当前有效票；null 表示确认没有（shell 会 unset）；
+   * 缺省 / undefined 表示本次查询失败，shell 保留会话里已有的值。
+   */
+  companySsoToken?: string | null;
   larkUat: { appId: string; uat: string } | null;
   /** §5.13 依赖持久化 env（NPM_CONFIG_PREFIX / PIP_TARGET / PIP_BREAK_SYSTEM_PACKAGES / PATH 前缀）。 */
   depsEnv: Record<string, string>;

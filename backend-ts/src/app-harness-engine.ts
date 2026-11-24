@@ -103,6 +103,7 @@ export interface HarnessEngineDeps {
   jwt: JwtService;
   userRepo: any;
   ecpInjector: any;
+  companySsoInjector: any;
   larkUatInjector: any;
   settingService: SystemSettingService;
   runtimeResolver: RuntimeDataResolver;
@@ -206,6 +207,7 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     jwtService: d.jwt,
     shellUserLookup: { findById: (id: number) => d.userRepo.findById(id) },
     shellEcpInjector: d.ecpInjector,
+    shellCompanySsoInjector: d.companySsoInjector,
     shellLarkUatInjector: d.larkUatInjector,
     shellBaseUrlProvider: { getSiteBaseUrl: () => d.settingService.getSiteBaseUrl() },
     webSearch: () => d.settingService.getWebSearchConfig(),

@@ -45,6 +45,46 @@ describe('CompanySsoService', () => {
     await expect(new CompanySsoService({ verify: vi.fn().mockResolvedValue(verified) }, { resolve }, jwt).exchange('synthetic', 'https://sgs.example.com/check', config)).rejects.toMatchObject({ code: 1402 });
   });
 
+  it('stores the raw SSO token on each successful exchange and overwrites it the next time', async () => {
+    const save = vi.fn(async () => {});
+    const verified = identity(3600);
+    const service = new CompanySsoService(
+      { verify: vi.fn().mockResolvedValue(verified) },
+      { resolve: vi.fn().mockResolvedValue({ user: { id: 4, username: 'test' }, action: 'existing' }) },
+      jwt,
+      undefined,
+      { save },
+    );
+    await service.exchange('sso-first', 'https://sgs.example.com/check', config);
+    await service.exchange('sso-second', 'https://sgs.example.com/check', config);
+    expect(save).toHaveBeenNthCalledWith(1, 4, 'sso-first', new Date(verified.expiresAt));
+    expect(save).toHaveBeenNthCalledWith(2, 4, 'sso-second', new Date(verified.expiresAt));
+  });
+
+  it('does not store a token when exchange is rejected before the account is resolved', async () => {
+    const save = vi.fn(async () => {});
+    const service = new CompanySsoService(
+      { verify: vi.fn().mockResolvedValue(identity(29)) },
+      { resolve: vi.fn() },
+      jwt,
+      undefined,
+      { save },
+    );
+    await expect(service.exchange('sso-expiring', 'https://sgs.example.com/check', config)).rejects.toMatchObject({ code: 1402 });
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('fails the exchange when the token cannot be stored', async () => {
+    const service = new CompanySsoService(
+      { verify: vi.fn().mockResolvedValue(identity(3600)) },
+      { resolve: vi.fn().mockResolvedValue({ user: { id: 4, username: 'test' }, action: 'existing' }) },
+      jwt,
+      undefined,
+      { save: vi.fn(async () => { throw new Error('db down'); }) },
+    );
+    await expect(service.exchange('sso-live', 'https://sgs.example.com/check', config)).rejects.toThrow('db down');
+  });
+
   it('rate limits verified email across exchanges', async () => {
     const service = new CompanySsoService({ verify: vi.fn().mockResolvedValue(identity(3600)) }, { resolve: vi.fn().mockResolvedValue({ user: { id: 4, username: 'test' }, action: 'existing' }) }, jwt);
     for (let i = 0; i < 20; i++) await service.exchange('synthetic', 'https://sgs.example.com/check', config);

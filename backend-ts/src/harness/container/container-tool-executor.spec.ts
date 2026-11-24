@@ -438,6 +438,45 @@ describe('container tool executor', () => {
     expect(parsed.output).toContain(`PATH=[${depsEnv.MAO_DEPS_BIN}${delimiter}`);
   });
 
+  it('refreshes COMPANY_SSO_TOKEN from the envelope and clears it when the token is gone', async () => {
+    const base = useTmpDir('mao-exec-sso-');
+    const workspaceRoot = join(base, 'workspace');
+    const userWorkspace = join(workspaceRoot, String(USER_ID), 'proj');
+    mkdirSync(userWorkspace, { recursive: true });
+    const executor = new ContainerToolExecutor(withShareTrees({
+      workspaceRoot,
+      runtimeDir: join(base, 'runtime'),
+      userHomeDir: join(base, 'users'),
+      userSkillsDir: join(base, 'userskills'),
+      skillViewsDir: join(base, 'skill-views'),
+      uploadDir: join(base, 'uploads'),
+      shareDir: join(base, 'share') }), USER_ID);
+    const first = await executor.handleToolCall('shell', JSON.stringify({
+      action: 'exec',
+      command: 'echo "SSO=[$COMPANY_SSO_TOKEN]"',
+      keep_session: true,
+      yield_time_ms: 8000,
+    }), { ...envelopeOf(userWorkspace), companySsoToken: 'sso-a\'b', envVars: { COMPANY_SSO_TOKEN: 'hack' } });
+    expect(JSON.parse(first).output).toContain("SSO=[sso-a'b]");
+
+    const second = await executor.handleToolCall('shell', JSON.stringify({
+      action: 'exec',
+      command: 'echo "SSO=[$COMPANY_SSO_TOKEN]"',
+      session_id: JSON.parse(first).session_id,
+      keep_session: true,
+      yield_time_ms: 8000,
+    }), { ...envelopeOf(userWorkspace), companySsoToken: 'sso-new' });
+    expect(JSON.parse(second).output).toContain('SSO=[sso-new]');
+
+    const cleared = await executor.handleToolCall('shell', JSON.stringify({
+      action: 'exec',
+      command: 'echo "SSO=[$COMPANY_SSO_TOKEN]"',
+      session_id: JSON.parse(first).session_id,
+      yield_time_ms: 8000,
+    }), { ...envelopeOf(userWorkspace), companySsoToken: null });
+    expect(JSON.parse(cleared).output).toContain('SSO=[]');
+  });
+
   it('injectsThreeLayerEnvVarsFromEnvelopeAndFiltersReservedKeys', async () => {
     const base = useTmpDir('mao-exec-env-');
     const workspaceRoot = join(base, 'workspace');

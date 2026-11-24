@@ -10,6 +10,7 @@ import type { SessionActivityHeartbeat } from './session/session-activity-heartb
 import type { McpClientManager } from './harness/mcp/mcp-client-manager.js';
 import type { AppContext } from './create-app.js';
 import type { SpawnPtyOptions, PtyLike } from './harness/terminal/remote-terminal.js';
+import type { CompanySsoTokenInjector } from './auth/company-sso-token-injector.js';
 import type { ShellEcpInjector, ShellLarkUatInjector } from './harness/tool/impl/shell-session-tool.js';
 
 import { RuntimeChannelServer } from './harness/container/runtime-channel-server.js';
@@ -45,6 +46,7 @@ export interface ContainerRuntimeDeps {
   mcpClient: McpClientManager;
   activityHeartbeat: SessionActivityHeartbeat;
   ecpInjector: ShellEcpInjector;
+  companySsoInjector?: CompanySsoTokenInjector | null;
   larkUatInjector: ShellLarkUatInjector;
 }
 
@@ -77,7 +79,7 @@ export interface ContainerRuntimeResult {
 }
 
 export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Promise<ContainerRuntimeResult> {
-  const { cfg, ctx, jwt, sessionRepo, userRepo, settingService, runtimeResolver, gitTokenResolver, envVariableService, uploadDir, userSkillsDir, shareDir, mcpClient, activityHeartbeat, ecpInjector, larkUatInjector } = deps;
+  const { cfg, ctx, jwt, sessionRepo, userRepo, settingService, runtimeResolver, gitTokenResolver, envVariableService, uploadDir, userSkillsDir, shareDir, mcpClient, activityHeartbeat, ecpInjector, companySsoInjector, larkUatInjector } = deps;
 
   const cloudRuntimeCfg = cfg.app.cloudRuntime;
   const containerChannelHolder: { registry: ContainerRegistry | null } = { registry: null };
@@ -151,6 +153,7 @@ export async function assembleContainerRuntime(deps: ContainerRuntimeDeps): Prom
     jwtService: jwt,
     userLookup: { findById: (id: number) => userRepo.findById(id) as Promise<{ username?: string | null } | null> },
     ecpInjector,
+    companySsoInjector,
     larkUatInjector,
     envVariableService,
     siteBaseUrlProvider: settingService,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isSensitiveChildEnvKey, sanitizeInheritedEnv } from './sensitive-env.js';
+import { isReservedEnvKey, isSensitiveChildEnvKey, sanitizeInheritedEnv } from './sensitive-env.js';
 
 describe('sensitive-env', () => {
   it('flags git tokens, askpass and backend secrets', () => {
@@ -19,6 +19,8 @@ describe('sensitive-env', () => {
     expect(isSensitiveChildEnvKey('DINGTALK_OAUTH_SECRET')).toBe(true);
     expect(isSensitiveChildEnvKey('MAO_TOKEN')).toBe(true);
     expect(isSensitiveChildEnvKey('ECP_TOKEN')).toBe(true);
+    expect(isSensitiveChildEnvKey('COMPANY_SSO_TOKEN')).toBe(true);
+    expect(isReservedEnvKey('COMPANY_SSO_TOKEN')).toBe(true);
     expect(isSensitiveChildEnvKey('LARKSUITE_CLI_USER_ACCESS_TOKEN')).toBe(true);
   });
 

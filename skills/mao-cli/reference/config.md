@@ -130,7 +130,7 @@ TLS 终止代理属于服务器基础设施，不是 SSO 业务设置：`TRUSTED
 
 仅变更受信代理等启动配置时需重启。Nginx 必须覆盖 `X-Forwarded-Proto` 为 `$scheme` 并设置正确客户端转发链；后端监听端口须受防火墙保护。没有精确信任代理时，HTTP 后端不会因为来路提供 `X-Forwarded-Proto: https` 就接受 SSO 换票。
 
-每 IP 每分钟最多 60 次换票、每个已校验身份每分钟最多 20 次，计数为进程内；多副本必须在网关加聚合限流。换票响应不缓存，SDK Token 不持久化。当前官方协议不要求另加应用密钥；不要把用户 Token 写入 `.env`。
+每 IP 每分钟最多 60 次换票、每个已校验身份每分钟最多 20 次，计数为进程内；多副本必须在网关加聚合限流。换票响应不缓存，SDK 不把 Token 写入浏览器持久化存储。换票成功后服务端按用户加密保存本次 company-sso token（表 `user_company_sso_token`，每次换票覆盖），供该用户的 CLOUD Agent 任务注入 `COMPANY_SSO_TOKEN`；升级需执行 V206。票过期后不再注入。当前官方协议不要求另加应用密钥；不要把用户 Token 写入 `.env`。
 
 上线前核实邮箱可信且不重分配（测试/生产的公司用户 id 可以不同），完成成功/失效/停用实测。SSO 协议将 Token 放在 query 中，SSO 服务和网关必须对 query 脱敏；Mao 不输出完整上游 URL。接入及限制见 [embed-sdk.md](embed-sdk.md#公司-sso-接入)。
 
@@ -246,7 +246,7 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 
 用户信息里的 `authSource` 标注账号来源：`LOCAL` / `LDAP` / `FEISHU` / `ECP` / `COMPANY_SSO`。
 
-云端 CLOUD shell 会为当前会话用户注入短效 `MAO_TOKEN`，供 `mao` CLI 免登录；若该用户经 ECP 飞书登录且票仍有效，同时注入 `ECP_TOKEN`（明文 ECP `sessionToken`）。
+云端 CLOUD shell 会为当前会话用户注入短效 `MAO_TOKEN`，供 `mao` CLI 免登录；若该用户经 ECP 飞书登录且票仍有效，同时注入 `ECP_TOKEN`（明文 ECP `sessionToken`）。若该用户通过公司 SSO 换过票且公司 token 未过期，同时注入 `COMPANY_SSO_TOKEN`（最近一次换票提交的 company-sso token，每条命令前刷新）。LOCAL 本机 shell 不注入这张票。
 
 ## API 前缀与文档
 

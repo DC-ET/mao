@@ -108,6 +108,7 @@ import { CompanySsoService } from './auth/company-sso.service.js';
 import { CompanySsoClient } from './auth/company-sso.client.js';
 import { CompanySsoIdentityRepository } from './auth/company-sso-identity.repository.js';
 import { CompanySsoError } from './auth/company-sso.error.js';
+import type { CompanySsoTokenWriter } from './auth/company-sso-token.repository.js';
 import { registerUserRoutes } from './user/user.routes.js';
 import { registerPermissionRoutes } from './permission/permission.routes.js';
 import { registerAdminGitCredentialRoutes, registerGitCredentialRoutes } from './user/git-credential.routes.js';
@@ -191,6 +192,8 @@ export interface RouteDeps {
   authService: AuthService;
   feishu: FeishuAuthService;
   ecpAuth: EcpAuthService;
+  /** 公司 SSO 换票成功后覆盖保存原始 token。 */
+  companySsoTokens: CompanySsoTokenWriter;
   userService: UserService;
   userRepo: MysqlUserRepository;
   permissionService: PermissionService;
@@ -369,7 +372,7 @@ export interface RouteDeps {
 export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
   const {
     app, db, cfg, apiPrefix, jwt, agentRuntimeCfg,
-    authService, feishu, ecpAuth, userService, userRepo, permissionService,
+    authService, feishu, ecpAuth, companySsoTokens, userService, userRepo, permissionService,
     gitCredentials, systemGitCredentials, envVariableService, sessionRepo,
     httpToolService, httpApiExecutor, httpToolStatsStore,
     httpToolValidator,
@@ -420,7 +423,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     registerAuthRoutes(api, authService, feishu, ecpAuth);
     registerEcpAuthRoutes(api, ecpAuth);
     registerCompanySsoRoutes(api, new CompanySsoService(
-      new CompanySsoClient(), new CompanySsoIdentityRepository(db), jwt,
+      new CompanySsoClient(), new CompanySsoIdentityRepository(db), jwt, undefined, companySsoTokens,
     ), settingService, async (event) => {
       await auditService.record({
         action: event.action === 'created' ? 'CREATE' : event.action === 'bound' ? 'UPDATE' : 'LOGIN',

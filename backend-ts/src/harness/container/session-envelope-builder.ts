@@ -2,6 +2,7 @@ import path from 'node:path';
 import { harnessLog } from '../log.js';
 import type { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
 import type { GitTokenResolver } from '../../session/types.js';
+import type { CompanySsoTokenInjector } from '../../auth/company-sso-token-injector.js';
 import type { ShellTokenIssuer, ShellUserLookup, ShellEcpInjector, ShellLarkUatInjector } from '../tool/impl/shell-session-tool.js';
 import type { RuntimeEnvelope } from './runtime-channel-protocol.js';
 
@@ -34,6 +35,7 @@ export class SessionEnvelopeBuilder {
       jwtService?: ShellTokenIssuer | null;
       userLookup?: ShellUserLookup | null;
       ecpInjector?: ShellEcpInjector | null;
+      companySsoInjector?: CompanySsoTokenInjector | null;
       larkUatInjector?: ShellLarkUatInjector | null;
       /** 三级环境变量解析（宿主机侧查库 + 解密），容器内只消费 envelope.envVars。 */
       envVariableService?: EnvVarsLookup | null;
@@ -76,6 +78,17 @@ export class SessionEnvelopeBuilder {
         ecpToken = await this.deps.ecpInjector.injectForUser(userId);
       } catch (e) {
         harnessLog('warn', `[envelope] ECP token lookup failed for user=${userId}: ${(e as Error).message}`);
+      }
+    }
+
+    let companySsoToken: string | null | undefined = null;
+    if (this.deps.companySsoInjector) {
+      try {
+        companySsoToken = await this.deps.companySsoInjector.injectForUser(userId);
+      } catch (e) {
+        // undefined：容器内 shell 不要 unset 上一张仍可能有效的票。
+        companySsoToken = undefined;
+        harnessLog('warn', `[envelope] COMPANY_SSO_TOKEN lookup failed for user=${userId}: ${(e as Error).message}`);
       }
     }
 
@@ -129,6 +142,7 @@ export class SessionEnvelopeBuilder {
       maoToken,
       maoBaseUrl,
       ecpToken,
+      companySsoToken,
       larkUat,
       depsEnv: this.buildDepsEnv(userId),
       envVars,

@@ -8,6 +8,7 @@ import type { BackgroundTaskManager } from '../../core/background-task-manager.j
 import type { GitTokenResolver } from '../../../session/types.js';
 import { matchShellDenyList } from '../../shell/command-deny-list.js';
 import { harnessLog } from '../../log.js';
+import type { CompanySsoTokenInjector } from '../../../auth/company-sso-token-injector.js';
 
 const MAX_COMMAND_LENGTH = 20000;
 const MARKER_PREFIX = '__CMD_DONE_';
@@ -68,6 +69,7 @@ export class ShellSessionTool extends BaseTool {
     private readonly ecpInjector?: ShellEcpInjector | null,
     private readonly larkUatInjector?: ShellLarkUatInjector | null,
     private readonly baseUrlProvider?: ShellBaseUrlProvider | null,
+    private readonly companySsoInjector?: CompanySsoTokenInjector | null,
   ) { super(); }
 
   getName(): string { return 'shell'; }
@@ -87,7 +89,8 @@ export class ShellSessionTool extends BaseTool {
       + '命令默认在当前工作区根目录执行；传 workdir 时工具会自动 cd，无需在 command 里再写 cd。'
       + '工作区内的任务不要在 command 里 cd 到绝对路径，直接用相对路径即可。'
       + '常驻会话里不要用 exit/exec 结束循环（会杀掉整个 bash）；应使用 break。'
-      + '若进程已退出，await_async 会交付剩余输出并 completed=true，不要再续等。';
+      + '若进程已退出，await_async 会交付剩余输出并 completed=true，不要再续等。'
+      + 'CLOUD 执行时，若当前用户有未过期的公司 SSO 换票凭证，环境变量 COMPANY_SSO_TOKEN 即该凭证，每条命令前刷新为最近一次换票的值。';
   }
   getInputSchema(): Record<string, unknown> {
     return {
@@ -492,6 +495,19 @@ export class ShellSessionTool extends BaseTool {
         }
       } catch (e) {
         harnessLog('warn', `Failed to inject ECP credentials for userId=${userId}: ${(e as Error).message}`);
+      }
+    }
+    if (this.companySsoInjector) {
+      try {
+        const ssoToken = await this.companySsoInjector.injectForUser(userId);
+        // 查到空值才 unset：查询失败保留上一条命令注入的票，避免一次库抖动把仍有效的凭证清掉。
+        if (ssoToken) {
+          session.writeStdin('export COMPANY_SSO_TOKEN=' + shellSingleQuote(ssoToken) + '\n');
+        } else {
+          session.writeStdin('unset COMPANY_SSO_TOKEN\n');
+        }
+      } catch (e) {
+        harnessLog('warn', `Failed to inject COMPANY_SSO_TOKEN for userId=${userId}: ${(e as Error).message}`);
       }
     }
     if (this.larkUatInjector) {

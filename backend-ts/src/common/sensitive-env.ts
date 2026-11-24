@@ -15,7 +15,7 @@ export function isSensitiveChildEnvKey(key: string): boolean {
   // 非 APP_ 前缀的平台主密钥/集成密钥：settings 加密主密钥与钉钉 OAuth secret
   if (key === 'SETTINGS_SECRET' || key === 'DINGTALK_OAUTH_SECRET') return true;
   // 按用户短效注入；继承会残留上一身份
-  if (key === 'MAO_TOKEN' || key === 'ECP_TOKEN') return true;
+  if (key === 'MAO_TOKEN' || key === 'ECP_TOKEN' || key === 'COMPANY_SSO_TOKEN') return true;
   if (key === 'LARKSUITE_CLI_USER_ACCESS_TOKEN') return true;
   return false;
 }
@@ -36,7 +36,7 @@ export function isSensitiveChildEnvKey(key: string): boolean {
 const RESERVED_ENV_KEYS = new Set([
   // 平台凭据（与 isSensitiveChildEnvKey 对齐）
   'GIT_ASKPASS', 'GIT_TERMINAL_PROMPT', 'APP_GIT_CREDENTIAL_SECRET', 'JWT_SECRET',
-  'MAO_TOKEN', 'ECP_TOKEN', 'LARKSUITE_CLI_USER_ACCESS_TOKEN', 'LARKSUITE_CLI_APP_ID',
+  'MAO_TOKEN', 'ECP_TOKEN', 'COMPANY_SSO_TOKEN', 'LARKSUITE_CLI_USER_ACCESS_TOKEN', 'LARKSUITE_CLI_APP_ID',
   // shell / 进程基础键
   'HOME', 'PATH', 'PWD', 'OLDPWD', 'SHELL', 'USER', 'LOGNAME', 'TERM', 'COLORTERM',
   'LANG', 'LC_ALL', 'TMPDIR', 'IFS', 'PS1', 'PS2', 'PS4', 'BASH', 'BASHOPTS', 'BASH_ENV',

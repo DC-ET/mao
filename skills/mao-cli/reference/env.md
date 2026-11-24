@@ -14,7 +14,7 @@
 | 更新 | 不传 `--value`，或传入空串，都保留原密文。`--note` 传空串清空备注 |
 | 限额 | 每层最多 50 条；值最长 2048 字节（UTF-8）；备注最长 256 字符 |
 | 变量名 | 字母或下划线开头，仅含字母、数字、下划线，最长 128 |
-| 保留键 | `PATH` / `HOME` / `LD_PRELOAD` / `NODE_OPTIONS` / `BASH_ENV` / `PYTHONPATH` 等，以及 `GIT_TOKEN_` / `MYSQL_` / `APP_` / `MAO_` 前缀。任何一层都不能覆盖平台注入的 `GIT_TOKEN_*`、`MAO_TOKEN`、`ECP_TOKEN`、`HOME`、`PATH` |
+| 保留键 | `PATH` / `HOME` / `LD_PRELOAD` / `NODE_OPTIONS` / `BASH_ENV` / `PYTHONPATH` 等，以及 `GIT_TOKEN_` / `MYSQL_` / `APP_` / `MAO_` 前缀。任何一层都不能覆盖平台注入的 `GIT_TOKEN_*`、`MAO_TOKEN`、`ECP_TOKEN`、`COMPANY_SSO_TOKEN`、`HOME`、`PATH` |
 | 工作区路径 | 传服务端上的绝对路径，与任务面板显示的一致。服务端用 `path.resolve` 归一；相对路径按后端进程工作目录解析，不要用。空路径会落到全局工作区根，因此 `workspace list` / `workspace create` 必须显式传 `--workspace` |
 
 注入总开关：

@@ -72,6 +72,27 @@ describe('SessionEnvelopeBuilder env vars', () => {
   });
 });
 
+describe('SessionEnvelopeBuilder company SSO token', () => {
+  it('carries the current token and leaves it unknown when lookup fails', async () => {
+    const root = useTmpDir('mao-envelope-sso-');
+    const present = new SessionEnvelopeBuilder({
+      runtimeResolver: RuntimeDataResolver.forTest(join(root, 'runtime'), join(root, 'users')),
+      companySsoInjector: { injectForUser: async () => 'sso-live' },
+    }, join(root, 'deps'));
+    const missing = new SessionEnvelopeBuilder({
+      runtimeResolver: RuntimeDataResolver.forTest(join(root, 'runtime'), join(root, 'users')),
+      companySsoInjector: { injectForUser: async () => null },
+    }, join(root, 'deps'));
+    const failed = new SessionEnvelopeBuilder({
+      runtimeResolver: RuntimeDataResolver.forTest(join(root, 'runtime'), join(root, 'users')),
+      companySsoInjector: { injectForUser: async () => { throw new Error('db down'); } },
+    }, join(root, 'deps'));
+    expect((await present.build({ userId: 7, sessionId: 9, workspace: null })).companySsoToken).toBe('sso-live');
+    expect((await missing.build({ userId: 7, sessionId: 9, workspace: null })).companySsoToken).toBeNull();
+    expect((await failed.build({ userId: 7, sessionId: 9, workspace: null })).companySsoToken).toBeUndefined();
+  });
+});
+
 describe('buildDepsEnv pip source', () => {
   it('injects the Tencent PyPI mirror over the image default (aliyun throttles HTTP/1.1 downloads)', () => {
     const env = buildDepsEnv('/srv/mao-data/deps', 7);

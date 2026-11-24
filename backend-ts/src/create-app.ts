@@ -25,6 +25,8 @@ import { EcpIdentityRepository } from './auth/ecp-identity.repository.js';
 import { createLarkUatInjector } from './auth/lark-uat-injector.js';
 import { MysqlEcpOauthStateRepository } from './auth/ecp-oauth.repository.js';
 import { MysqlEcpSessionRepository } from './auth/ecp-session.repository.js';
+import { MysqlCompanySsoTokenRepository } from './auth/company-sso-token.repository.js';
+import { createCompanySsoTokenInjector } from './auth/company-sso-token-injector.js';
 import { createEcpTokenProvider } from './auth/ecp-token-provider.js';
 import { createLlmAuthResolver } from './harness/llm/llm-auth.js';
 import { MysqlUserRepository } from './user/user.repository.js';
@@ -332,6 +334,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const ecpOAuthRepo = new MysqlEcpOauthStateRepository(db);
   const ecpIdentityRepo = new EcpIdentityRepository(db);
   const ecpSessionRepo = new MysqlEcpSessionRepository(db, settingsSecret);
+  const companySsoTokenRepo = new MysqlCompanySsoTokenRepository(db, settingsSecret);
   // ECP 换票（登录 / 续期）必须让 LLM 凭证缓存同步失效，而 EcpTokenProvider 装配在 ecpAuth 之后：
   // 用转发器晚绑定，避免把两处构造顺序绑死。
   const ecpSessionRotated: { target: ((userId: number) => void) | null } = { target: null };
@@ -646,6 +649,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     ecpSessionRepo,
     (userId) => runtimeResolver.resolveUserHomeDir(userId),
   );
+  const companySsoInjector = createCompanySsoTokenInjector(companySsoTokenRepo);
   const larkUatInjector = createLarkUatInjector({
     ecpInjector,
     ecpClient: new EcpClient(),
@@ -712,7 +716,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   const containerRuntime = await assembleContainerRuntime({
     cfg, ctx, jwt, sessionRepo, userRepo, settingService, runtimeResolver, gitTokenResolver,
     envVariableService, uploadDir, userSkillsDir, shareDir, mcpClient, activityHeartbeat,
-    ecpInjector, larkUatInjector,
+    ecpInjector, companySsoInjector, larkUatInjector,
   });
   const { cloudRuntimeCfg, containerChannelHolder, channelServer, containerRegistry, containerHostsResolver, runtimeModeResolver, containerAutoUpgradeResolver, activateContainerRuntime, envelopeBuilder, dockerRouter, sendBytesBridge, mcpRuntimeProbe, routingMcpClient, ptyChannelHubs, ptyHubGeneration, containerPtyFactory, bootRuntimeMode, notifyAgentSwitched } = containerRuntime;
   const browserDepsService = new BrowserDepsService({
@@ -732,6 +736,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     shellToken: jwt,
     userLookup: { findById: (id: number) => userRepo.findById(id) as Promise<{ username: string } | null> },
     ecpInjector,
+    companySsoInjector,
     larkUatInjector,
     baseUrlProvider: settingService,
     // §5.13：仅容器用户注入 deps env（npm/pip 安装落到每用户 /deps 挂载），host 用户零变化
@@ -931,7 +936,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       return signalWatcherServiceRef;
     },
     sessionSvc, sessionMap, shellManager, outputManager, backgroundTasks, gitTokenResolver, jwt,
-    userRepo, ecpInjector, larkUatInjector, settingService, runtimeResolver, modelService,
+    userRepo, ecpInjector, companySsoInjector, larkUatInjector, settingService, runtimeResolver, modelService,
     authResolver: llmAuthResolver,
     wechatBridges, feishuMessageService, feishuMessageRepository, getFeishuClient,
     sendBytesBridge, dingtalkMediaHolder, definitionRegistry, holder, subagentMapper,
@@ -1117,7 +1122,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
 
   await registerAllRoutes({
     app, db, cfg, apiPrefix, jwt, agentRuntimeCfg,
-    authService, feishu, ecpAuth, userService, userRepo, permissionService,
+    authService, feishu, ecpAuth, companySsoTokenRepo, userService, userRepo, permissionService,
     gitCredentials, systemGitCredentials, envVariableService, sessionRepo,
     httpToolService, httpApiExecutor, httpToolStatsStore,
     fileService, agentService, experienceService, experienceIndexService, suggestedQuestionService,

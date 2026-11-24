@@ -126,6 +126,10 @@ export interface TerminalEcpInjector {
   injectForUser(userId: number): Promise<string | null>;
 }
 
+export interface TerminalCompanySsoInjector {
+  injectForUser(userId: number): Promise<string | null>;
+}
+
 export interface TerminalLarkUatCredentials {
   uat: string;
   appId: string;
@@ -152,6 +156,7 @@ export interface TerminalManagerDeps {
   shellToken?: TerminalShellTokenIssuer;
   userLookup?: TerminalUserLookup;
   ecpInjector?: TerminalEcpInjector;
+  companySsoInjector?: TerminalCompanySsoInjector;
   larkUatInjector?: TerminalLarkUatInjector;
   /** 站点地址（注入 MAO_BASE_URL）：未注入时不写该变量，行为与改造前一致。 */
   baseUrlProvider?: TerminalBaseUrlProvider;
@@ -475,6 +480,14 @@ export class TerminalManager {
         if (ecpToken) env.ECP_TOKEN = ecpToken;
       } catch (e) {
         harnessLog('warn', `Failed to inject ECP credentials for user ${userId}`, e);
+      }
+    }
+    if (this.deps.companySsoInjector) {
+      try {
+        const ssoToken = await this.deps.companySsoInjector.injectForUser(userId);
+        if (ssoToken) env.COMPANY_SSO_TOKEN = ssoToken;
+      } catch (e) {
+        harnessLog('warn', `Failed to inject COMPANY_SSO_TOKEN for user ${userId}`, e);
       }
     }
     if (this.deps.larkUatInjector) {
