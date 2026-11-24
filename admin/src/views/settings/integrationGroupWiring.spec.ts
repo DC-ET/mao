@@ -79,7 +79,7 @@ function specialKeys(): Set<string> {
 
 describe('内部状态键不得漏进通用分类卡片', () => {
   // 背景（V200 browser_deps.status）：这行是浏览器依赖安装状态机的 JSON 落点
-  // （not_installed/installing/ready/failed），由 /admin/browser-deps 专用端点维护、
+  // （not_installed/installing/ready/failed），由 /admin/skill-deps 专用端点维护、
   // 迁移里 editable=0，人类可读的呈现面在「Skills 管理页」browser-use 行。
   // 它没被排除，于是「运行环境」分类卡片把它渲染成一行只读 JSON——对人零信息量，
   // 还被设置搜索收录成死条目。修进 SPECIAL_KEYS 后该卡片 .field-readonly 回到 2 个

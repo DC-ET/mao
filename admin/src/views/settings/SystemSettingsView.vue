@@ -428,7 +428,7 @@ const CONTAINER_AUTO_UPGRADE_KEY = 'runtime.container.autoUpgrade'
 /** 菜单可见性（V182）：值是 JSON 数组，走 MenuVisibilityPanel 专属面板，不进分类卡片 /「其他」兜底 / 未保存检查。 */
 const ADMIN_MENU_HIDDEN_KEY = 'admin.menu.hidden'
 /** 浏览器依赖安装状态（V200）：值是内部状态机 JSON（not_installed/installing/ready/failed），
- *  由 /admin/browser-deps 专用端点（skill:read/skill:write）维护，迁移里 editable=0。
+ *  由 /admin/skill-deps 专用端点（skill:read/skill:write）维护，迁移里 editable=0。
  *  人类可读的呈现面在「Skills 管理页」browser-use 行（就绪/安装中/失败标签 + 安装依赖按钮），
  *  设置页没有它的专属面板，故整行排除——否则「运行环境」分类卡片会把它渲染成一行只读 JSON，
  *  对人零信息量，还会被设置搜索收录成死条目（搜到但页面上没有对应控件）。 */

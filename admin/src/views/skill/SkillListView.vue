@@ -164,14 +164,20 @@
             <el-tag v-else type="success" size="small">可用</el-tag>
           </template>
         </el-table-column>
-        <!-- 浏览器依赖（browser-use 技能，方案 2026-11-20 v2 D7 按需化）：状态与安装入口 -->
-        <el-table-column label="浏览器依赖" width="130">
+        <!-- 运行依赖（方案 2026-11-23 skill-runtime-deps）：按技能从 status map 数据驱动，未注册依赖的技能留空 -->
+        <el-table-column label="运行依赖" width="160">
           <template #default="{ row }">
-            <template v-if="row.name === 'browser-use' && browserDepsTag">
-              <el-tooltip :content="browserDeps?.detail || ''" placement="top" :disabled="!browserDeps?.detail">
-                <el-tag :type="browserDepsTag.type" size="small">{{ browserDepsTag.text }}</el-tag>
+            <span class="deps-tags">
+              <el-tooltip
+                v-for="item in depsFor(skillDepsStatus, row.name) ?? []"
+                :key="item.id"
+                :content="item.detail || ''"
+                placement="top"
+                :disabled="!item.detail"
+              >
+                <el-tag :type="phaseTagType(item.phase)" size="small">{{ phaseText(item) }}</el-tag>
               </el-tooltip>
-            </template>
+            </span>
           </template>
         </el-table-column>
         <el-table-column label="关联 Agent" width="120" align="right" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
@@ -195,17 +201,29 @@
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="handleView(row)">查看内容</el-button>
             <el-popconfirm
-              v-if="row.name === 'browser-use' && browserDepsTag && browserDepsTag.type !== 'success' && browserDeps?.phase !== 'installing'"
-              title="将在服务器上自动安装浏览器依赖（Chrome/chromium + playwright-cli，可能需要数分钟），确认开始？"
+              v-if="depsActions[row.name]?.installable"
+              :title="installConfirmText(depsActions[row.name]!.installable!)"
               confirm-button-text="安装"
               cancel-button-text="取消"
               width="280"
-              @confirm="handleInstallBrowserDeps"
+              @confirm="handleInstallDeps(row.name, depsActions[row.name]!.installable!)"
             >
               <template #reference>
                 <el-button type="primary" link size="small" :disabled="!canWrite">安装依赖</el-button>
               </template>
             </el-popconfirm>
+            <template v-if="depsActions[row.name]?.config">
+              <el-button
+                v-if="depsActions[row.name]!.config!.enabled"
+                type="primary"
+                link
+                size="small"
+                @click="router.push(depsActions[row.name]!.config!.route)"
+              >{{ depsActions[row.name]!.config!.label }}</el-button>
+              <el-tooltip v-else :content="depsActions[row.name]!.config!.reason || ''" placement="top">
+                <span class="deps-action-disabled">{{ depsActions[row.name]!.config!.label }}</span>
+              </el-tooltip>
+            </template>
             <!-- 内置技能随版本发布、不可删：整块 popconfirm 不渲染（非置灰），避免误导可操作 -->
             <el-popconfirm
               v-if="!row.builtin"
@@ -300,26 +318,45 @@
             </el-tooltip>
             <el-tag v-else type="success" size="small">可用</el-tag>
           </div>
-          <div v-if="activeTab === 'system' && row.name === 'browser-use' && browserDepsTag" class="mobile-card-row">
-            <span class="mobile-card-label">浏览器依赖</span>
-            <el-tooltip :content="browserDeps?.detail || ''" placement="top" :disabled="!browserDeps?.detail">
-              <el-tag :type="browserDepsTag.type" size="small">{{ browserDepsTag.text }}</el-tag>
-            </el-tooltip>
+          <div v-if="activeTab === 'system' && depsFor(skillDepsStatus, row.name)" class="mobile-card-row">
+            <span class="mobile-card-label">运行依赖</span>
+            <span class="deps-tags">
+              <el-tooltip
+                v-for="item in depsFor(skillDepsStatus, row.name)"
+                :key="item.id"
+                :content="item.detail || ''"
+                placement="top"
+                :disabled="!item.detail"
+              >
+                <el-tag :type="phaseTagType(item.phase)" size="small">{{ phaseText(item) }}</el-tag>
+              </el-tooltip>
+            </span>
           </div>
           <div class="mobile-card-actions">
             <el-button type="primary" link @click="handleView(row)">查看</el-button>
             <el-popconfirm
-              v-if="activeTab === 'system' && row.name === 'browser-use' && browserDepsTag && browserDepsTag.type !== 'success' && browserDeps?.phase !== 'installing'"
-              title="将在服务器上自动安装浏览器依赖（Chrome/chromium + playwright-cli，可能需要数分钟），确认开始？"
+              v-if="activeTab === 'system' && depsActions[row.name]?.installable"
+              :title="installConfirmText(depsActions[row.name]!.installable!)"
               confirm-button-text="安装"
               cancel-button-text="取消"
               width="280"
-              @confirm="handleInstallBrowserDeps"
+              @confirm="handleInstallDeps(row.name, depsActions[row.name]!.installable!)"
             >
               <template #reference>
                 <el-button type="primary" link :disabled="!canWrite">安装依赖</el-button>
               </template>
             </el-popconfirm>
+            <template v-if="activeTab === 'system' && depsActions[row.name]?.config">
+              <el-button
+                v-if="depsActions[row.name]!.config!.enabled"
+                type="primary"
+                link
+                @click="router.push(depsActions[row.name]!.config!.route)"
+              >{{ depsActions[row.name]!.config!.label }}</el-button>
+              <el-tooltip v-else :content="depsActions[row.name]!.config!.reason || ''" placement="top">
+                <span class="deps-action-disabled">{{ depsActions[row.name]!.config!.label }}</span>
+              </el-tooltip>
+            </template>
             <!-- 内置技能随版本发布、不可删：与桌面表格一致整块不渲染 -->
             <el-popconfirm
               v-if="!(activeTab === 'system' && row.builtin)"
@@ -372,9 +409,22 @@
 
 <script setup lang="ts">
 import { computed, ref, onActivated, onDeactivated, onMounted, onUnmounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
+import type { SkillDepsItem, SkillDepsStatusMap } from '@mao/contracts'
 import { api } from '../../api'
+import {
+  configAction,
+  depsFor,
+  hasInstalling,
+  installConfirmText,
+  phaseTagType,
+  phaseText,
+  primaryInstallable,
+  type ConfigActionView,
+  type ConfigRouteAccess,
+} from '../../utils/skillDeps'
 import { useAuthStore } from '../../stores/auth'
 import { useBreakpoint } from '../../composables/useBreakpoint'
 import { useAgentRelations } from '../../composables/useAgentRelations'
@@ -383,6 +433,7 @@ import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import RelatedAgentsPopover from '../../components/RelatedAgentsPopover.vue'
 
 const { isMobile } = useBreakpoint()
+const router = useRouter()
 const authStore = useAuthStore()
 const canWrite = computed(() => authStore.hasPermission('skill:write'))
 const { agents, agentsBySkill, load: loadAgentRelations } = useAgentRelations()
@@ -414,59 +465,84 @@ async function loadRoleGrants() {
   }
 }
 
-// ========== 浏览器依赖（browser-use 技能）按需安装 ==========
-// 状态来自 /admin/browser-deps/status（skill:read）；安装（skill:write）触发后轮询直至终态。
+// ========== 运行依赖（方案 2026-11-23 skill-runtime-deps） ==========
+// 状态来自 /admin/skill-deps/status（skill:read，按技能名键控）；安装（skill:write）触发后轮询直至终态。
 // 管理后台没有 WS 通道，只能轮询（同 SessionDetailView 口径）；请求全部 skipErrorToast，
-// 避免旧后端 / 瞬时失败在轮询里刷屏报错。
-const BROWSER_DEPS_POLL_MS = 2500
-const browserDeps = ref<{
-  phase: 'not_installed' | 'installing' | 'ready' | 'failed'
-  mode: 'host' | 'docker'
-  detail: string | null
-  chrome: { present: boolean; kind: 'system' | 'chromium' | null; version: string | null }
-  cli: { present: boolean; version: string | null }
-} | null>(null)
-let browserDepsPollTimer: ReturnType<typeof setInterval> | null = null
+// 避免瞬时失败在轮询里刷屏报错。
+const SKILL_DEPS_POLL_MS = 2500
+const skillDepsStatus = ref<SkillDepsStatusMap>({})
+let skillDepsPollTimer: ReturnType<typeof setInterval> | null = null
+let skillDepsInflight: Promise<void> | null = null
+let skillDepsStale = false
 
-const browserDepsTag = computed(() => {
-  const s = browserDeps.value
-  if (!s) return null
-  if (s.phase === 'ready') {
-    return { type: 'success' as const, text: s.chrome.kind === 'chromium' ? '依赖就绪（chromium）' : '依赖就绪' }
+const depsActions = computed(() => {
+  const result: Record<string, { installable: SkillDepsItem | null; config: ConfigActionView | null }> = {}
+  for (const [name, entry] of Object.entries(skillDepsStatus.value)) {
+    result[name] = {
+      installable: primaryInstallable(entry.items),
+      config: configAction(entry.items, configRouteAccess),
+    }
   }
-  if (s.phase === 'installing') return { type: 'warning' as const, text: '依赖安装中' }
-  if (s.phase === 'failed') return { type: 'danger' as const, text: '依赖安装失败' }
-  return { type: 'info' as const, text: '依赖未安装' }
+  return result
 })
 
-function stopBrowserDepsPoll() {
-  if (browserDepsPollTimer != null) {
-    clearInterval(browserDepsPollTimer)
-    browserDepsPollTimer = null
+/** 「去配置」目标页的可达性：权限码取目标路由 meta（与路由守卫同源），解析不到页面视为不存在。 */
+function configRouteAccess(route: string): ConfigRouteAccess {
+  const resolved = router.resolve(route)
+  const target = resolved.matched[resolved.matched.length - 1]
+  if (target == null || !target.components || resolved.name === 'Forbidden') return 'missing'
+  const permission = resolved.meta.permission as string | undefined
+  return !permission || authStore.hasPermission(permission) ? 'ok' : 'forbidden'
+}
+
+function stopSkillDepsPoll() {
+  if (skillDepsPollTimer != null) {
+    clearInterval(skillDepsPollTimer)
+    skillDepsPollTimer = null
   }
 }
 
-async function fetchBrowserDeps() {
-  try {
-    const { data } = await api.get('/admin/browser-deps/status', { skipErrorToast: true })
-    browserDeps.value = data || null
-    // 安装中 → 维持轮询；终态 → 停轮并刷新列表（就绪态变化影响安装按钮渲染）
-    if (browserDeps.value?.phase === 'installing') {
-      if (browserDepsPollTimer == null) {
-        browserDepsPollTimer = setInterval(() => { void fetchBrowserDeps() }, BROWSER_DEPS_POLL_MS)
+/**
+ * 重入门闩：上一次请求未返回时，轮询 tick 直接跳过（聚合探测可能慢到十几秒，避免请求堆叠）；
+ * 主动刷新（安装后、切 tab）则标记 stale，等当前请求结束再补拉一次，防止拿到安装前的旧状态后停轮。
+ */
+function fetchSkillDeps(fromPoll = false): Promise<void> {
+  if (skillDepsInflight != null) {
+    if (!fromPoll) skillDepsStale = true
+    return skillDepsInflight
+  }
+  skillDepsInflight = (async () => {
+    try {
+      const { data } = await api.get('/admin/skill-deps/status', { skipErrorToast: true })
+      skillDepsStatus.value = data?.skills ?? {}
+      if (hasInstalling(skillDepsStatus.value)) {
+        if (skillDepsPollTimer == null) {
+          skillDepsPollTimer = setInterval(() => { void fetchSkillDeps(true) }, SKILL_DEPS_POLL_MS)
+        }
+      } else {
+        stopSkillDepsPoll()
       }
-    } else {
-      stopBrowserDepsPoll()
+    } catch { /* 静默：瞬时失败，下次轮询或刷新重试 */ }
+  })().finally(() => {
+    skillDepsInflight = null
+    if (skillDepsStale) {
+      skillDepsStale = false
+      void fetchSkillDeps()
     }
-  } catch { /* 静默：旧后端无此端点或瞬时失败 */ }
+  })
+  return skillDepsInflight
 }
 
-async function handleInstallBrowserDeps() {
+async function handleInstallDeps(skillName: string, item: SkillDepsItem) {
   try {
-    await api.post('/admin/browser-deps/install')
-    ElMessage.success('浏览器依赖安装已启动，完成后状态会自动刷新')
+    const { data } = await api.post(`/admin/skill-deps/${encodeURIComponent(skillName)}/install`)
+    if (data?.started) {
+      ElMessage.success(`${item.label}安装已启动，完成后状态会自动刷新`)
+    } else {
+      ElMessage.info('依赖已在安装中或已就绪')
+    }
   } catch { /* 拦截器已提示 */ }
-  await fetchBrowserDeps()
+  await fetchSkillDeps()
 }
 
 const activeTab = ref<'system' | 'personal'>('system')
@@ -518,7 +594,7 @@ async function fetchActiveTab() {
 }
 
 function handleTabChange(tab: string | number) {
-  if (tab === 'system') void fetchBrowserDeps()
+  if (tab === 'system') void fetchSkillDeps()
   void (tab === 'personal' ? fetchPersonalSkills() : fetchSkillDocs())
 }
 
@@ -885,7 +961,7 @@ onMounted(() => {
   void fetchActiveTab()
   void loadAgentRelations()
   void loadRoleGrants()
-  void fetchBrowserDeps()
+  void fetchSkillDeps()
 })
 
 let firstActivation = true
@@ -897,16 +973,16 @@ onActivated(() => {
   void fetchActiveTab()
   void loadAgentRelations()
   void loadRoleGrants()
-  void fetchBrowserDeps()
+  void fetchSkillDeps()
 })
 
 onDeactivated(() => {
   // keepAlive 页面失活：停轮询（回到页面 onActivated 会重新拉取并按需续启）
-  stopBrowserDepsPoll()
+  stopSkillDepsPoll()
 })
 
 onUnmounted(() => {
-  stopBrowserDepsPoll()
+  stopSkillDepsPoll()
 })
 </script>
 
@@ -919,6 +995,19 @@ onUnmounted(() => {
 
 .builtin-tag {
   margin-left: 6px;
+}
+
+.deps-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.deps-action-disabled {
+  margin: 0 12px;
+  font-size: 12px;
+  color: var(--el-text-color-disabled);
+  cursor: not-allowed;
 }
 
 .mobile-card-tags {

@@ -1,6 +1,6 @@
 # Skills「运行依赖」抽象化技术方案
 
-- 状态：已评审（可行，补充见 §10；2026-11-24 二次评审补充见 §11，实施以 §11 为准）；待开发
+- 状态：已实施（2026-11-24，实施口径见 §11 与 §12）
 - 日期：2026-11-23
 - 一句话：把管理后台 Skills 列表里为 browser-use 特设的「浏览器依赖」列，泛化为数据驱动的「运行依赖」列；后端从单技能服务改为 provider 注册表，新增依赖型内置技能（lark-cli、dingtalk-cli、office-use…）时前端零改动。
 - 关联代码（撰写时已核实，均为当前工作区）：
@@ -295,4 +295,14 @@ D15 让 provider 在 `action.permission` 里写前端路由守卫要的权限码
 
 ### 11.7 行号漂移
 
-角色技能授权合入后，正文和文首"关联代码"里的行号已过期，实施时按符号定位，不要信行号。当前值：`create-app.ts` forward 428、AgentService 注入 431、RoleSkillGrantService 注入 658、`builtinSkills` 638、构造 713、赋值 719、路由注入 1122；`app-routes.ts` import 172-173、类型 230、解构 380、注册 738-739；`agent.service.ts` 调用点 127 / 173；`agent.service.spec.ts` ensure 用例 357；`SkillListView.vue` 列 167-176、安装按钮 196-208、移动端 303-322、状态与轮询 417-470。
+角色技能授权合入后，正文和文首"关联代码"里的行号已过期，实施时按符号定位，不要信行号。
+
+## 12. 实施记录（2026-11-24）
+
+与正文不一致处以此为准：
+
+- **错误码**：正文写的 400 / 404 / 409 按仓库 `BusinessException` 惯例落为 HTTP 200 + 业务码：非法技能名与 config 类安装为 `PARAM_INVALID`（2001），未注册技能为 `SKILL_NOT_FOUND`（3004）。
+- **`action.permission` 已去掉**（§11.4）：前端 `configRouteAccess` 用 `router.resolve(route)` 取目标路由 `meta.permission`，解析到 404 兜底重定向（无组件）或 `Forbidden` 页视为「配置页不存在」。
+- **D12 门闩**：轮询 tick 遇到进行中请求直接跳过；安装后 / 切 tab 等主动刷新遇到进行中请求则标记 stale，结束后补拉一次，避免拿到安装前的旧状态后停轮。终态不再刷新技能列表（按钮可见性由 status map 决定）。
+- **D16**：构造期非法名 / 重名抛错、技能目录缺失只 warn；单测 `skill-deps.service.spec.ts` 用仓库真实内置技能目录强断言 browser-use 存在。
+- 代码：`shared/contracts/src/skill-deps.ts`、`backend-ts/src/skill-deps/`（service / routes / providers/browser-deps.provider + 三份 spec）、`admin/src/utils/skillDeps.ts`（+ spec）、`SkillListView.vue`；删除 `browser-deps/browser-deps.routes.ts`。当前值：`create-app.ts` forward 428、AgentService 注入 431、RoleSkillGrantService 注入 658、`builtinSkills` 638、构造 713、赋值 719、路由注入 1122；`app-routes.ts` import 172-173、类型 230、解构 380、注册 738-739；`agent.service.ts` 调用点 127 / 173；`agent.service.spec.ts` ensure 用例 357；`SkillListView.vue` 列 167-176、安装按钮 196-208、移动端 303-322、状态与轮询 417-470。

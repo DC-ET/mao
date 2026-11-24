@@ -93,5 +93,6 @@ export type {
   WsRunnerStopFrame,
   WsBrowserLiveStopFrame,
 } from './ws';
+export type { SkillDepsKind, SkillDepsPhase, SkillDepsItem, SkillDepsStatusMap } from './skill-deps';
 export type { TerminalHostAvailability } from './terminal';
 export { TERMINAL_HOST_AVAILABILITIES } from './terminal';

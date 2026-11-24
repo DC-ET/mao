@@ -8,4 +8,6 @@
 - 没有第二用途的定制技能放这里即可，**无需改白名单**。
 - 目录内不要执行 `npm install` / 不要提交 `node_modules`：技能视图会把整个目录拷给每个用户的会话副本。
 
-当前已内置：`browser-use/`——playwright-cli 浏览器自动化 + 画面直播（技术方案：`docs/plan/2026-11/2026-11-20-browser-live-pip-technical-design.md`；CLOUD 服务器需预装系统 Chrome 与全局 `@playwright/cli`，见 `skills/mao-cli/reference/deploy.md`）。
+当前已内置：`browser-use/`——playwright-cli 浏览器自动化 + 画面直播（技术方案：`docs/plan/2026-11/2026-11-20-browser-live-pip-technical-design.md`；CLOUD 服务器的 Chrome 与全局 `@playwright/cli` 可预装，也可按需自动安装，状态见管理后台 Skills 页「运行依赖」列，详见 `skills/mao-cli/reference/deploy.md`）。
+
+需要服务器侧依赖（二进制或平台配置）的内置技能，按 `docs/plan/2026-11/2026-11-23-skill-runtime-deps-technical-design.md` §9 在 `backend-ts/src/skill-deps/providers/` 注册 provider，管理后台无需改动。

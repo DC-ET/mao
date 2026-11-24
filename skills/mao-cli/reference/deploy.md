@@ -80,7 +80,7 @@ git --version
   playwright-cli --version
   ```
 
-- **按需自动安装（不预装时）**：管理员在 Agent 上勾选 `browser-use` 保存、或在「管理后台 → Skills 管理」对 browser-use 点「安装依赖」时，后端自动在服务器执行安装（npm 全局 CLI → 系统 Chrome deb，失败降级为 npmmirror 镜像源的 chromium 免 root 下载；源可用 `MAO_BROWSER_CHROME_DEB_URL` / `MAO_PLAYWRIGHT_DOWNLOAD_HOST` 覆盖）。**没有任何 Agent 勾选该技能则不会安装任何东西**。就绪状态与安装进度见 Skills 管理页「浏览器依赖」列。安装要求后端进程具备服务器安装权限（默认部署以 root 运行）且能访问下载源。
+- **按需自动安装（不预装时）**：管理员在 Agent 上勾选 `browser-use` 保存、在角色权限里把 `browser-use` 授权给角色并保存、或在「管理后台 → Skills 管理」对 browser-use 点「安装依赖」时，后端自动在服务器执行安装（npm 全局 CLI → 系统 Chrome deb，失败降级为 npmmirror 镜像源的 chromium 免 root 下载；源可用 `MAO_BROWSER_CHROME_DEB_URL` / `MAO_PLAYWRIGHT_DOWNLOAD_HOST` 覆盖）。**没有任何 Agent 或角色启用该技能则不会安装任何东西**。就绪状态与安装进度见 Skills 管理页「运行依赖」列（按技能展示，没有服务器依赖的技能该列为空；接口为 `GET /api/v1/admin/skill-deps/status`、`POST /api/v1/admin/skill-deps/browser-use/install`）。安装要求后端进程具备服务器安装权限（默认部署以 root 运行）且能访问下载源。
 
   未就绪时 Agent 的浏览器命令会得到可解释报错（含「管理员尚未启用浏览器依赖」指引），其余功能不受影响。docker 模式由 `mao-runtime` 镜像内置（见下节）：依赖状态以镜像内容为准（后端用一次性容器探测镜像内 Chrome 与 playwright-cli），镜像已就绪时 Skills 页显示「依赖就绪」、点「安装依赖」不会重建；只有镜像缺依赖（构建时 `INSTALL_CHROME=0`、旧镜像或自建镜像）才触发镜像重建。重建建议在后端环境配 `APT_MIRROR=mirrors.aliyun.com`（与生产镜像构建参数一致可命中层缓存；缺省 `deb.debian.org` 会从 apt 层全量重建，可能需要十几分钟）。
 

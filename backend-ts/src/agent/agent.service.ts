@@ -18,11 +18,11 @@ export interface AgentModelLookup {
 }
 
 /**
- * 浏览器依赖按需安装的触发口（方案 2026-11-20 v2 D7 按需化）：Agent 勾选 browser-use
- * 保存时自动 ensure 服务器浏览器依赖。optional 注入保持既有构造兼容；实现方必须
- * 自吞异常（fire-and-forget），不得影响 Agent 保存。
+ * 技能运行依赖按需安装的触发口（方案 2026-11-23 skill-runtime-deps）：Agent 勾选技能
+ * 保存时把完整技能名单交给 SkillDepsService，由各 provider 自行过滤并 ensure。optional 注入
+ * 保持既有构造兼容；实现方必须自吞异常（fire-and-forget），不得影响 Agent 保存。
  */
-export interface AgentBrowserDepsEnsurer {
+export interface AgentSkillDepsEnsurer {
   ensureForSkills(skillNames: readonly string[] | null | undefined): void;
 }
 
@@ -37,7 +37,7 @@ export class AgentService {
     private readonly experienceService: AgentExperienceService,
     private readonly suggestedQuestionService: AgentSuggestedQuestionService,
     private readonly modelLookup?: AgentModelLookup,
-    private readonly browserDepsEnsurer?: AgentBrowserDepsEnsurer,
+    private readonly skillDepsEnsurer?: AgentSkillDepsEnsurer,
     private readonly skillGrantCleaner?: AgentSkillGrantCleaner,
   ) {}
 
@@ -124,7 +124,7 @@ export class AgentService {
       agent.gitAllowedDomains = JSON.stringify(gitAllowedDomains);
     }
     await this.agentRepo.insert(agent);
-    if (skillNames != null) this.browserDepsEnsurer?.ensureForSkills(skillNames);
+    if (skillNames != null) this.skillDepsEnsurer?.ensureForSkills(skillNames);
 
     if (experiences != null) {
       await this.experienceService.syncExperiences(agent.id!, experiences);
@@ -170,7 +170,7 @@ export class AgentService {
     if (systemPrompt != null) agent.systemPrompt = systemPrompt;
     if (skillNames != null) {
       agent.skillNames = skillNames.length === 0 ? null : JSON.stringify(skillNames);
-      this.browserDepsEnsurer?.ensureForSkills(skillNames);
+      this.skillDepsEnsurer?.ensureForSkills(skillNames);
     }
     if (mcpServerIds != null) {
       agent.mcpServerIds = mcpServerIds.length === 0 ? null : JSON.stringify(mcpServerIds);

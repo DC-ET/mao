@@ -1,4 +1,4 @@
-import type { AgentBrowserDepsEnsurer } from '../agent/agent.service.js';
+import type { AgentSkillDepsEnsurer } from '../agent/agent.service.js';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { isValidSkillName } from '../harness/skill/skill-md.js';
@@ -24,7 +24,7 @@ export class RoleSkillGrantService {
     private readonly roles: Pick<RoleRepository, 'findById'>,
     private readonly agents: SkillGrantAgentLookup,
     private readonly skillLoader: SkillGrantLoader,
-    private readonly browserDepsEnsurer?: AgentBrowserDepsEnsurer,
+    private readonly skillDepsEnsurer?: AgentSkillDepsEnsurer,
   ) {}
 
   async namesFor(userId: number, agentId: number, includeAgentSpecific = true): Promise<string[]> {
@@ -49,7 +49,7 @@ export class RoleSkillGrantService {
     await this.assertAgentsExist(grants);
     await this.repo.replace(roleId, grants);
     const names = [...new Set(grants.map((grant) => grant.skillName))];
-    this.browserDepsEnsurer?.ensureForSkills(names);
+    this.skillDepsEnsurer?.ensureForSkills(names);
   }
 
   deleteBySkillName(skillName: string): Promise<void> {
