@@ -51,3 +51,44 @@ describe('deliveryKey', () => {
     expect(deliveryKey(urlDelivery)).toBe('https://mao.example.com/uploads/7/send-abc.pdf');
   });
 });
+
+// 2026-11-24-send-file-snapshot：send-file 快照 ref。消息只带快照 id，取数拼带属主鉴权的
+// send-download；key 用快照 id（不分派 type 会得到 ref:undefined:send-file:undefined，同一轮
+// 多个快照共用一个 key，图片网格与下载中状态全撞）。
+const snapshotDelivery: SendDelivery = {
+  kind: 'image',
+  ref: { type: 'send-file', id: '2f8a1c11-9c1e-4a1f-8f6e-1d2b3c4d5e6f' },
+  mime: 'image/png',
+  bytes: 123,
+  filename: 'a.png',
+};
+
+describe('resolveDeliveryUrl：send-file 快照', () => {
+  it('拼 send-download，只传 id 与 token', () => {
+    expect(resolveDeliveryUrl(snapshotDelivery, API_BASE, 'jwt-token')).toBe(
+      'https://mao.example.com/api/v1/files/send-download?id=2f8a1c11-9c1e-4a1f-8f6e-1d2b3c4d5e6f&token=jwt-token',
+    );
+  });
+
+  it('无 token 时不带 token 参数', () => {
+    expect(resolveDeliveryUrl(snapshotDelivery, API_BASE, null)).toBe(
+      'https://mao.example.com/api/v1/files/send-download?id=2f8a1c11-9c1e-4a1f-8f6e-1d2b3c4d5e6f',
+    );
+  });
+});
+
+describe('deliveryKey：send-file 快照', () => {
+  it('用快照 id 做 key，同一轮多个快照不撞', () => {
+    const a = { ...snapshotDelivery, ref: { type: 'send-file' as const, id: 'id-a' } };
+    const b = { ...snapshotDelivery, ref: { type: 'send-file' as const, id: 'id-b' } };
+    expect(deliveryKey(a)).toBe('send-file:id-a');
+    expect(deliveryKey(b)).toBe('send-file:id-b');
+    expect(deliveryKey(a)).not.toBe(deliveryKey(b));
+    expect(deliveryKey(a)).not.toContain('undefined');
+  });
+
+  it('与 workspace ref / url 三种 key 互不相同', () => {
+    expect(deliveryKey(snapshotDelivery)).not.toBe(deliveryKey(refDelivery));
+    expect(deliveryKey(snapshotDelivery)).not.toBe(deliveryKey(urlDelivery));
+  });
+});

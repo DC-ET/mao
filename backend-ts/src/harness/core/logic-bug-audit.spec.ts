@@ -184,6 +184,8 @@ describe('Logic Bug Audit 2026-10-29', () => {
         { uploadDir: join(dir, 'uploads'), getUploadBaseUrl: async () => 'https://mao.example.com/api' },
         new WechatSendStrategy(support as never, upload as never, send as never),
         null, null,
+        // 2026-11-24：快照存储（对话页取数只认快照 id），本用例只关心 filename 兜底
+        { save: async (input: { filename: string; mime: string; bytes: Buffer }) => ({ ok: true as const, id: 'snap-1', mime: input.mime, bytes: input.bytes.length }) },
       );
       // BUG-5 原形态：filename 显式空串不兜底，微信上传 API 收到空文件名。
       // 收编后 SendFileTool 的 `asText(args.filename) || basenameOfSource(source)` 保持同一兜底语义。

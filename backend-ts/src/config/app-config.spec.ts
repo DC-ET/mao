@@ -225,6 +225,56 @@ describe('技能视图根配置（SKILL_VIEWS_DIR）', () => {
   });
 });
 
+describe('发送附件快照根配置（FILE_SEND_DIR，2026-11-24-send-file-snapshot D2）', () => {
+  const ENV_KEYS = ['FILE_SEND_DIR', 'FILE_UPLOAD_DIR'];
+
+  function withEnv(env: Record<string, string | undefined>, fn: () => void): void {
+    const prev: Record<string, string | undefined> = {};
+    for (const key of ENV_KEYS) {
+      prev[key] = process.env[key];
+      if (env[key] === undefined) delete process.env[key];
+      else process.env[key] = env[key];
+    }
+    try {
+      resetConfigCache();
+      fn();
+    } finally {
+      for (const key of ENV_KEYS) {
+        if (prev[key] === undefined) delete process.env[key];
+        else process.env[key] = prev[key];
+      }
+      resetConfigCache();
+    }
+  }
+
+  // 设计 D2：默认取 {uploadDir 的父目录}/send-files，与 /uploads/ 平级。
+  // yml 占位符语法表达不出「另一个值的兄弟目录」，写死 cwd 相对路径会让
+  // 「改了 FILE_UPLOAD_DIR 没改它」的部署把快照落到后端 cwd 下（另一块文件系统）。
+  it('未配置 FILE_SEND_DIR 时取 FILE_UPLOAD_DIR 的兄弟目录', () => {
+    withEnv({ FILE_UPLOAD_DIR: '/opt/mao-data/uploads' }, () => {
+      expect(loadConfig().app.file.sendDir).toBe('/opt/mao-data/send-files');
+    });
+  });
+
+  it('FILE_SEND_DIR 显式设置时以它为准', () => {
+    withEnv({ FILE_UPLOAD_DIR: '/opt/mao-data/uploads', FILE_SEND_DIR: '/mnt/disk/snapshots' }, () => {
+      expect(loadConfig().app.file.sendDir).toBe('/mnt/disk/snapshots');
+    });
+  });
+
+  it('两者都缺省时仍是 uploads 的兄弟目录（相对口径）', () => {
+    withEnv({}, () => {
+      expect(loadConfig().app.file.sendDir).toBe('send-files');
+    });
+  });
+
+  it('~ 前缀原样保留，交给 create-app 的 expandHome 展开', () => {
+    withEnv({ FILE_UPLOAD_DIR: '~/mao/uploads' }, () => {
+      expect(loadConfig().app.file.sendDir).toBe('~/mao/send-files');
+    });
+  });
+});
+
 describe('flyway files', () => {
   it('contains the current migration set', () => {
     const tsDir = join(process.cwd(), 'db/migration');

@@ -1,11 +1,12 @@
 import sharp from 'sharp';
 import type { FastifyInstance } from 'fastify';
 import '@fastify/multipart';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { AgentAvatarUploadVO } from '@mao/contracts';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { requirePermission, requireUserId, sendOk } from '../common/http-error.js';
-import type { FileService } from '../file/file.service.js';
+import type { FileEntity, FileService } from '../file/file.service.js';
 
 export const AGENT_AVATAR_MAX_BYTES = 2 * 1024 * 1024;
 const MAX_PIXELS = 4096 * 4096;
@@ -14,10 +15,31 @@ function invalid(message: string): BusinessException {
   return new BusinessException(ErrorCode.PARAM_INVALID, message);
 }
 
-/** Only same-origin upload paths are accepted; never allow active or remote URL schemes. */
+/** 头像对外 URL：按 filePath 相对上传根拼（2026-11-24 D7），与 file.routes 的 toVO 同口径。 */
+function avatarUploadUrl(file: FileEntity, uploadDir: string): string {
+  const rel = file.filePath != null && file.filePath !== ''
+    ? relative(resolve(uploadDir), resolve(file.filePath))
+    : '';
+  if (rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)) {
+    return `/uploads/${rel.split(sep).join('/')}`;
+  }
+  return `/uploads/${file.storedName}`;
+}
+
+/**
+ * 只接受同源上传路径（2026-11-24 D7 起两种形态都合法）：
+ * - 存量：`/uploads/{uuid}.png`（上传根平坦目录，不搬迁）
+ * - 新增：`/uploads/{数字用户 id}/{uuid}.png`（与文生图产物、对象存储 key 同口径）
+ * 仍拒绝任何活动内容或远端 URL scheme。
+ */
+const AGENT_AVATAR_URL_PATTERNS = [
+  /^\/uploads\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.png$/,
+  /^\/uploads\/\d+\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.png$/,
+];
+
 export function validateAgentAvatarUrl(value: unknown): asserts value is string | null | undefined {
   if (value == null) return;
-  if (typeof value !== 'string' || !/^\/uploads\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.png$/.test(value)) {
+  if (typeof value !== 'string' || !AGENT_AVATAR_URL_PATTERNS.some((p) => p.test(value))) {
     throw invalid('头像地址必须为头像上传接口返回的 /uploads/ PNG 地址');
   }
 }
@@ -58,7 +80,7 @@ export async function normalizeAgentAvatar(bytes: Buffer, mime: string): Promise
 
 export function registerAgentAvatarRoutes(
   app: FastifyInstance,
-  fileService: Pick<FileService, 'uploadFile'>,
+  fileService: Pick<FileService, 'uploadFile' | 'getUploadDir'>,
   permissionService: { hasPermission(userId: number, code: string): Promise<boolean> },
 ): void {
   app.post('/v1/agents/avatar', async (request, reply) => {
@@ -81,7 +103,9 @@ export function registerAgentAvatarRoutes(
     if (!bytes) throw invalid('缺少 file 图片');
     const normalized = await normalizeAgentAvatar(bytes, mime);
     const file = await fileService.uploadFile(normalized, 'agent-avatar.png', 'image/png', userId, null);
-    const result: AgentAvatarUploadVO = { avatarUrl: `/uploads/${file.storedName}` };
+    // 2026-11-24 D7：新上传在 {uploadDir}/{userId}/ 下，URL 必须带用户 id 段；
+    // 旧正则只认一段路径，不放宽就存不上。按 filePath 相对上传根拼（与 toVO 同口径）。
+    const result: AgentAvatarUploadVO = { avatarUrl: avatarUploadUrl(file, fileService.getUploadDir()) };
     return sendOk(reply, result);
   });
 }

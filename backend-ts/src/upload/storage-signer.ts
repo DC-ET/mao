@@ -3,12 +3,17 @@ import { createHash, createHmac } from 'node:crypto';
 import type { CosSettings, ObsSettings, OssSettings } from '../settings/types.js';
 
 /**
- * 三朵云的预签名 PUT 直传签名器（技术方案 2026-11-21-object-storage-multi-cloud）。
+ * 三朵云的预签名签名器（技术方案 2026-11-21-object-storage-multi-cloud）。
  * 全部为纯本地 HMAC 计算，无网络调用、无第三方 SDK；算法逐条对照官方 SDK 实现：
  * - oss: ali-oss lib/common/signUtils.js（signatureUrlV4，OSS4-HMAC-SHA256）
  * - cos: cos-nodejs-sdk-v5 sdk/util.js（getAuth，q-sign-algorithm=sha1）
  * - obs: esdk-obs-nodejs lib/utils.js（createV2SignedUrlSync，URL 授权）
  * 签名正确性由 storage-signer.spec.ts 的官方 SDK 对拍向量保证。
+ *
+ * GET（2026-11-24-send-file-snapshot D5 补充）：仅服务端内部代读私有前缀
+ * `send-files/`，预签名 URL 只在下载请求内使用，绝不返回给浏览器。
+ * OSS 的 contentType 参与 CanonicalHeaders，GET 不签（传空）；COS 不签 contentType；
+ * OBS 的 Content-Type 是 stringToSign 的固定一段，GET 传空串。
  */
 
 export interface PresignResult {
@@ -16,7 +21,7 @@ export interface PresignResult {
   publicUrl: string;
 }
 
-export type PresignMethod = 'PUT' | 'DELETE';
+export type PresignMethod = 'PUT' | 'DELETE' | 'GET';
 
 /** RFC 3986 严格 encodeURIComponent（!'()* 一并编码），对齐 ali-oss encodeString。 */
 function encodeRfc3986(str: string): string {

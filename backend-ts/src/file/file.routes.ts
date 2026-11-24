@@ -1,6 +1,7 @@
 import { createReadStream, existsSync, statSync, unlinkSync } from 'node:fs';
 import { Buffer } from 'node:buffer';
-import { resolve, sep } from 'node:path';
+import { resolve, sep, isAbsolute, relative } from 'node:path';
+import type { Readable } from 'node:stream';
 import { lookup as mimeLookup } from 'mime-types';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import '@fastify/multipart';
@@ -17,6 +18,7 @@ import type { RuntimeDataResolver } from '../harness/runtime/runtime-data-resolv
 import type { Session } from '../session/types.js';
 import type { SessionService } from '../session/session.service.js';
 import type { FileEntity, FileService } from './file.service.js';
+import type { SendFileEntity, SendFileDownloadTarget, SendFileService } from './send-file.service.js';
 import type { WorkspaceBrowseService } from './workspace-browse.service.js';
 import type { WorkspaceGitService } from './workspace-git.service.js';
 import type { GitCommitMessageService } from './git-commit-message.service.js';
@@ -40,6 +42,8 @@ export interface FileRouteDeps {
     fetch(sessionId: number, userId: number, relativePath: string, workspace: string | null | undefined): Promise<LocalFileFetchOutcome>;
   };
   pathSandbox: PathSandbox;
+  /** 发送附件快照（技术方案 2026-11-24 D3）：本地 / 云代读在实现里，路由只做鉴权与响应头。 */
+  sendFileService: SendFileService;
   /**
    * LOCAL 会话文件浏览的 WS 代理（技术方案 2026-11-17）：未注入时 LOCAL browse 直接报
    * 服务不可用，绝不回落 WorkspaceBrowseService——LOCAL 的 workspace 是设备上的绝对路径，
@@ -159,11 +163,23 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     const baseUrl = deps.getUploadBaseUrl != null ? await deps.getUploadBaseUrl() : null;
     const isIncoming = file.filePath != null && file.filePath.indexOf(`${sep}incoming${sep}`) >= 0;
     // incoming 文件位于 runtime 目录而非静态 uploads 目录，静态 url 不可达，改用下载端点
-    const url = isIncoming
-      ? `/v1/files/${file.id}/download`
-      : (baseUrl != null && baseUrl.length > 0
-        ? `${baseUrl}/uploads/${file.storedName}`
-        : `/uploads/${file.storedName}`);
+    if (isIncoming) {
+      return {
+        id: file.id,
+        originalName: file.originalName,
+        fileSize: file.fileSize,
+        mimeType: file.mimeType,
+        sessionId: file.sessionId,
+        createdAt: javaLocalDateTimeString(file.createdAt),
+        url: `/v1/files/${file.id}/download`,
+      };
+    }
+    // 2026-11-24 D7：新上传落 `{uploadDir}/{userId}/{uuid}.ext`，存量仍在根上。
+    // URL 按 filePath 相对 uploadDir 拼出，两种形态都正确；仍保留 baseUrl 前缀
+    // （upload.baseUrl 与 storageMode 无关，本地模式也可能配了它）。
+    // 解析不出相对路径（理论上是库里的历史脏数据）时回落 storedName，与旧行为一致。
+    const rel = uploadsRelativePath(file, fileService.getUploadDir());
+    const urlPath = rel != null ? `/uploads/${rel}` : `/uploads/${file.storedName}`;
     return {
       id: file.id,
       originalName: file.originalName,
@@ -171,7 +187,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
       mimeType: file.mimeType,
       sessionId: file.sessionId,
       createdAt: javaLocalDateTimeString(file.createdAt),
-      url,
+      url: baseUrl != null && baseUrl.length > 0 ? `${baseUrl}${urlPath}` : urlPath,
     };
   }
 
@@ -857,6 +873,51 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
     return sendFile(reply, filePath, file.originalName, file.mimeType ?? 'application/octet-stream', file.fileSize, 'inline');
   });
 
+  /**
+   * 发送附件快照下载（技术方案 2026-11-24-send-file-snapshot D3/D5）。
+   *
+   * 消息里只记快照 id，不记磁盘路径、不记云厂商 URL、不记 token；本地读 sendDir，
+   * 云模式由服务端签 GET 后代读，浏览器不接触云地址。鉴权复用现有 JWT
+   * （`Authorization` 头或 query `token`，`<img>` 带不了请求头；query 通道的
+   * `mao_` API Token 由 jwt-hook 统一拒绝）。
+   *
+   * 授权口径：属主本人，**或**发送时所在会话的归属人（二轮评审 §9.3 口径 A）——
+   * 群聊里非归属成员发言时运行身份是发言者，少了后半条会话归属人自己会打不开。
+   * 不设「仅会话归属人」：会话删除后附件仍属于属主本人，授权自动退回仅属主。
+   * 行不存在与不属于你一律 404，不区分。
+   */
+  app.get('/v1/files/send-download', async (request, reply) => {
+    const userId = requireUserId(request);
+    const id = queryOptStr(request, 'id')?.trim();
+    if (id == null || id === '') {
+      throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数: id');
+    }
+    const row = await deps.sendFileService.findById(id);
+    if (row == null || !(await canReadSendFile(row, userId, sessionService))) {
+      return reply.status(404).send();
+    }
+    const target = await deps.sendFileService.openDownload(row);
+    if (!target.ok) {
+      return sendJson(reply, 404, fail(ErrorCode.PARAM_INVALID.code, target.error));
+    }
+    // 图片 inline 供卡片与灯箱直接显示；其余一律 attachment。`.bin` 的 mime 是
+    // octet-stream，天然落在 attachment 分支，不做内联。
+    const kind = SEND_FILE_INLINE_MIMES.has(row.mime) ? 'inline' : 'attachment';
+    reply
+      .header('Content-Disposition', contentDisposition(kind, row.filename))
+      .type(row.mime)
+      .header('X-Content-Type-Options', 'nosniff')
+      // 快照不可变；private 是因为内容是属主鉴权数据，不得进共享缓存
+      .header('Cache-Control', 'private, max-age=604800, immutable');
+    if ('localPath' in target) {
+      reply.header('Content-Length', String(target.size));
+      return reply.send(createReadStream(target.localPath));
+    }
+    const cloud = target as { stream: Readable; size: number | null };
+    if (cloud.size != null) reply.header('Content-Length', String(cloud.size));
+    return reply.send(cloud.stream);
+  });
+
   app.delete('/v1/files/:id', async (request, reply) => {
     const userId = requireUserId(request);
     const file = await fileService.getFile(pathId(request));
@@ -875,6 +936,40 @@ function requireFileOwner(file: FileEntity, userId: number): void {
   }
 }
 
+/** 快照下载允许 inline 的 mime：与落盘时的字节嗅探同表（send_file.mime 就是嗅探结果）。 */
+const SEND_FILE_INLINE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp']);
+
+/**
+ * `file_path` 相对上传根目录的 POSIX 相对路径（2026-11-24 D7）：新上传是
+ * `{userId}/{uuid}.ext`，存量根目录文件是 `{uuid}.ext`，两种都靠这一段拼 URL。
+ * 跑出上传根（跨根脏数据）或为空时返回 null，由调用方回落 `storedName` 旧口径。
+ */
+function uploadsRelativePath(file: FileEntity, uploadDir: string): string | null {
+  if (file.filePath == null || file.filePath === '') return null;
+  const rel = relative(resolve(uploadDir), resolve(file.filePath));
+  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return null;
+  return rel.split(sep).join('/');
+}
+
+/**
+ * 快照下载授权（二轮评审 §9.3 口径 A）：属主本人，或发送时所在会话的归属人。
+ * 会话不存在 / 查询异常一律按不满足处理（回落仅属主），不把内部错误暴露成 500。
+ */
+async function canReadSendFile(
+  row: SendFileEntity,
+  userId: number,
+  sessionService: Pick<SessionService, 'getSession'>,
+): Promise<boolean> {
+  if (row.userId === userId) return true;
+  if (row.sessionId == null) return false;
+  try {
+    const session = await sessionService.getSession(row.sessionId);
+    return session != null && session.userId === userId;
+  } catch {
+    return false;
+  }
+}
+
 function requireQueryLong(request: FastifyRequest, name: string): number {
   const n = Number((request.query as Record<string, unknown> | undefined)?.[name]);
   if (!Number.isFinite(n)) {
@@ -883,8 +978,15 @@ function requireQueryLong(request: FastifyRequest, name: string): number {
   return n;
 }
 
+/**
+ * Content-Disposition 双轨文件名：`filename`（ASCII 兜底，老 IE / 部分下载器用）+
+ * `filename*`（RFC 5987，现代浏览器优先）。兜底段必须同时转义 `"` 与 `\`——
+ * 反斜杠是可打印 ASCII、能活过第一道过滤，出现「abc\」时 `filename="abc\"` 的
+ * 引号被吃掉，整个 quoted-string 不闭合。2026-11-24 起 `send_file` 的 filename
+ * 是模型可控输入，这条从「理论缺陷」变成「可稳定触达」。
+ */
 export function contentDisposition(kind: 'attachment' | 'inline', fileName: string): string {
-  const fallback = fileName.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, '\\"');
+  const fallback = fileName.replace(/[^\x20-\x7E]/g, '_').replace(/[\\"]/g, '\\$&');
   const encoded = encodeURIComponent(fileName);
   return `${kind}; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }

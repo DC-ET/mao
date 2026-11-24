@@ -47,7 +47,7 @@ import {
 } from './impl/scheduled-task-tools.js';
 import { CreateSignalWatcherTool, ListSignalWatchersTool, type SignalWatcherServiceRef } from './impl/signal-watcher-tools.js';
 import { FeishuDownloadFileTool } from './impl/feishu-tools.js';
-import { SendImageTool, SendFileTool, WechatSendStrategy, FeishuSendStrategy, DingtalkSendStrategy, type SendWorkspaceRefOracle } from './impl/send-media-tool.js';
+import { SendImageTool, SendFileTool, WechatSendStrategy, FeishuSendStrategy, DingtalkSendStrategy, type SendFileStore } from './impl/send-media-tool.js';
 import type { LocalDeliveryFetchService } from '../local/delivery-fetch.service.js';
 import type { DingtalkMediaSendSupport } from './impl/dingtalk-tools.js';
 import type { SendBytesSupport } from './impl/send-file-bytes.js';
@@ -113,14 +113,8 @@ export interface DefaultToolRegistryDeps {
   sendBytesSupport?: SendBytesSupport | null;
   /** LOCAL 发送字节委托读取（2026-11-18-unified-send-media §6）；未装配时 LOCAL 本机路径发送直接失败。 */
   localDeliveryFetchService?: LocalDeliveryFetchService | null;
-  /**
-   * 工作区活引用 oracle（2026-11-20-send-media-live-reference D5）：生产装配传
-   * WorkspaceBrowseService（downloadFile 与 workspace-download 同一解析器）；
-   * 未装配（精简单测）时活引用整体关闭，发送全部走会话副本。
-   */
-  workspaceRefOracle?: SendWorkspaceRefOracle | null;
-  /** 会话 Agent 的经验库目录解析（活引用资格判定排除经验挂载来源用）。 */
-  experienceDirForAgent?: ((agentId: number) => string) | null;
+  /** 发送附件快照存储（2026-11-24-send-file-snapshot D3）：本地 / 多云分流与插表在实现里。必填。 */
+  sendFileStore: SendFileStore;
   definitionRegistry: AgentDefinitionRegistry;
   harnessService: HarnessService;
   agentLoop: AgentLoop;
@@ -211,10 +205,9 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
         ? new WechatSendStrategy(deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService) : null,
       deps.feishuMediaSendSupport != null ? new FeishuSendStrategy(deps.feishuMediaSendSupport) : null,
       deps.dingtalkMediaSendSupport != null ? new DingtalkSendStrategy(deps.dingtalkMediaSendSupport) : null,
+      deps.sendFileStore,
       deps.sendBytesSupport,
       deps.localDeliveryFetchService ?? null,
-      deps.workspaceRefOracle ?? null,
-      deps.experienceDirForAgent ?? null,
     ),
     new SendFileTool(
       deps.pathSandbox, deps.sessionService,
@@ -223,10 +216,9 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
         ? new WechatSendStrategy(deps.weixinToolSupport, deps.weixinUploadService, deps.weixinSendService) : null,
       deps.feishuMediaSendSupport != null ? new FeishuSendStrategy(deps.feishuMediaSendSupport) : null,
       deps.dingtalkMediaSendSupport != null ? new DingtalkSendStrategy(deps.dingtalkMediaSendSupport) : null,
+      deps.sendFileStore,
       deps.sendBytesSupport,
       deps.localDeliveryFetchService ?? null,
-      deps.workspaceRefOracle ?? null,
-      deps.experienceDirForAgent ?? null,
     ),
     new FeishuDownloadFileTool(deps.feishuToolSupport, deps.feishuGroupMediaLookup, deps.feishuMediaDownloader, deps.feishuMaxInboundFileBytes, deps.feishuMessageDetailFetcher),
     new SpawnSubagentTool(deps.backgroundSubagentManager, deps.definitionRegistry),

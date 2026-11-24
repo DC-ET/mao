@@ -62,6 +62,10 @@ app:
     secret-key: ${APP_GIT_CREDENTIAL_SECRET:}
   file:
     upload-dir: ${FILE_UPLOAD_DIR:./uploads}
+    # 发送附件快照根目录。此处的 ./send-files 只是「未配置」的标记值：loadConfig 发现它
+    # 仍等于缺省值且 FILE_SEND_DIR 未设置时，会改取 {upload-dir 的父目录}/send-files
+    # （与 /uploads/ 平级，见 src/config/app-config.ts）。要显式指定请设 FILE_SEND_DIR。
+    send-dir: ${FILE_SEND_DIR:./send-files}
   ws:
     outbound-queue-capacity: 10000
   task-notification:

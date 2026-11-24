@@ -257,6 +257,10 @@ MAO_SHARE_DIR=$ROOT_DIR/backend-ts/.e2e-data/share
 # skills 默认 ./skills 会落在后端 cwd（backend-ts/）——检出内、.e2e-data 外；
 # e2e 里上传系统技能会写脏 git 检出，必须一并重定向
 SKILLS_DIR=$ROOT_DIR/backend-ts/.e2e-data/skills
+# send-files 同理（发送附件快照，2026-11-24）：FILE_UPLOAD_DIR 重定向后它默认取
+# {upload-dir 的父目录}/send-files，本已在 .e2e-data 内，但显式写死可避免
+# 「只改 FILE_UPLOAD_DIR 忘了它」的回归；且 .gitignore 里没有这一条
+FILE_SEND_DIR=$ROOT_DIR/backend-ts/.e2e-data/send-files
 EOF
 else
   echo "  已存在，保留"
@@ -272,12 +276,25 @@ else
     echo "SKILLS_DIR=$ROOT_DIR/backend-ts/.e2e-data/skills" >> "$ROOT_DIR/backend-ts/.env.e2e"
     echo "  已补 SKILLS_DIR 重定向"
   fi
+  # 老版本生成的 .env.e2e 缺 FILE_SEND_DIR（发送附件快照方案新增）：补一行重定向，
+  # 否则默认值随 FILE_UPLOAD_DIR 的父目录走，早期版本则是 cwd 相对的 ./send-files，
+  # 一旦 e2e 覆盖发送工具就会把快照写进 backend-ts/ 检出内
+  if ! grep -q "FILE_SEND_DIR" "$ROOT_DIR/backend-ts/.env.e2e"; then
+    echo "FILE_SEND_DIR=$ROOT_DIR/backend-ts/.e2e-data/send-files" >> "$ROOT_DIR/backend-ts/.env.e2e"
+    echo "  已补 FILE_SEND_DIR 重定向"
+  fi
 fi
 
 # .env.e2e 必须不入 git
 if ! grep -qE '^\.env\.e2e$' "$ROOT_DIR/backend-ts/.gitignore" 2>/dev/null; then
   echo ".env.e2e" >> "$ROOT_DIR/backend-ts/.gitignore"
   echo "==> 已将 .env.e2e 加入 backend-ts/.gitignore"
+fi
+# 快照根目录兜底：上面 FILE_SEND_DIR 已显式重定向，这里防的是「手改 .env.e2e 删掉该行」
+# 或更早版本脚本生成的 env，默认值落在 backend-ts/send-files 写脏检出
+if ! grep -qE '^send-files/?$' "$ROOT_DIR/backend-ts/.gitignore" 2>/dev/null; then
+  echo "send-files/" >> "$ROOT_DIR/backend-ts/.gitignore"
+  echo "==> 已将 send-files/ 加入 backend-ts/.gitignore"
 fi
 
 echo ""

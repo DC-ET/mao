@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, rmSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
+import { existsSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import fastifyStatic from '@fastify/static';
 import type { FastifyInstance } from 'fastify';
@@ -38,6 +38,76 @@ export function resolveShareDir(raw: string): string {
     throw new Error(`MAO_SHARE_DIR must be a non-empty absolute path, got '${raw}'`);
   }
   return resolve(expanded);
+}
+
+/**
+ * 归一化到「真实路径 + 尚不存在的一段尾巴」：realpath 消解软链，但 create-app 在
+ * mkdirSync(sendDir) 之前调守卫，目标目录通常还没有，直接 realpathSync 会 ENOENT，
+ * 于是从自身往上找最近的已存在祖先消解，剩下的尾巴原样拼回去。
+ *
+ * 尾巴必须拼回去：sendDir 与 uploadDir 常常「两边都还不存在」（全新部署），
+ * 此时两者会走到同一个已存在祖先，若不区分尾巴就会被判成同一个目录而误拒。
+ */
+function realPathWithTail(p: string): string {
+  let cur = p;
+  const tail: string[] = [];
+  for (;;) {
+    try {
+      return tail.length === 0 ? realpathSync.native(cur) : join(realpathSync.native(cur), ...tail.reverse());
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      // ENOENT/ENOTDIR：继续往上找已存在的祖先；其余错误（EACCES 等）放弃归一化，
+      // 只按词法结果判断——宁可误拒也不要把守卫静默跳过。
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') return p;
+      const parent = dirname(cur);
+      if (parent === cur) return p;
+      tail.push(basename(cur));
+      cur = parent;
+    }
+  }
+}
+
+/**
+ * 大小写不敏感平台上的目录别名：同一目录的两种写法（macOS 默认 APFS、Windows NTFS）。
+ * `Uploads/send` 与 `uploads` 在这些平台上就是同一个目录，词法比较会判成「互不嵌套」。
+ * 代价是大小写敏感卷（macOS 上显式格式化的 APFS 敏感卷）上会误拒一次，但那种配置罕见，
+ * 且报错信息点名了两个路径，运维改起来没有歧义——比漏放快照进公开树安全。
+ */
+function caseFold(p: string): string {
+  return process.platform === 'win32' || process.platform === 'darwin' ? p.toLowerCase() : p;
+}
+
+/**
+ * 发送附件快照根目录（技术方案 2026-11-24-send-file-snapshot D2/§6）：默认取
+ * `{uploadDir 的父目录}/send-files`，生产即 `/opt/mao-data/send-files`，与 `uploads/` 平级。
+ *
+ * 误配防护（二轮评审 §9.2-3）：`registerUploadStatic` 把 uploadDir 同时挂在 `/uploads/`
+ * 与 `/api/uploads/`，jwt-hook 对 `GET/HEAD /uploads/` 整树免鉴权；同时
+ * `{uploadDir}/{userId}` 是按用户 rw 挂进工具容器的。sendDir 一旦落在 uploadDir 之内，
+ * 本该「属主 JWT 才能下」的快照会同时变成免鉴权公开 + 可被容器改写，且不报错。
+ * 启动即拒：必须在 resolve 之前拿原始值判断层级关系，否则相对路径已被静默转绝对。
+ * 两侧都先 expandHome——守卫自身要能独立成立，不能依赖调用方恰好传了展开后的 uploadDir。
+ *
+ * 纯词法 resolve 挡不住两种别名（三/四轮评审补）：`sendDir` 是指向 `uploadDir` 的
+ * 符号链接（`/opt/mao-data/upl -> /opt/mao-data/uploads`），以及大小写不敏感文件系统上
+ * 的书写差异（`Uploads/send` vs `uploads`）。两者都会让快照写进公开 `/uploads/` 树且
+ * 不报错，因此归一化后再比一次：realpath 消解软链，caseFold 消解大小写别名。
+ */
+export function resolveSendDir(raw: string, uploadDir: string): string {
+  const resolved = resolve(expandHome(raw));
+  const resolvedUpload = resolve(expandHome(uploadDir));
+  const realSend = realPathWithTail(resolved);
+  const realUpload = realPathWithTail(resolvedUpload);
+  const rejected =
+    caseFold(resolved) === caseFold(resolvedUpload) || caseFold(resolved).startsWith(caseFold(resolvedUpload) + sep)
+    || caseFold(realSend) === caseFold(realUpload) || caseFold(realSend).startsWith(caseFold(realUpload) + sep);
+  if (rejected) {
+    throw new Error(
+      `FILE_SEND_DIR must not be inside FILE_UPLOAD_DIR (got send='${resolved}', upload='${resolvedUpload}'); `
+      + 'send snapshots are served through an authenticated endpoint and must not land in the public /uploads/ tree',
+    );
+  }
+  return resolved;
 }
 
 export function parseSqlTimeMs(value: string | null | undefined): number | null {

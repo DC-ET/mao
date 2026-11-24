@@ -97,6 +97,7 @@ import { WorkspaceGitService } from './file/workspace-git.service.js';
 import { GitWriteOperationService } from './file/git-write-operation.service.js';
 import { GitCommitMessageService } from './file/git-commit-message.service.js';
 import { UploadTicketService } from './upload/upload-ticket.service.js';
+import { SendFileEntityRepository, SendFileService } from './file/send-file.service.js';
 import { SkillBundleService } from './skill/skill-bundle.service.js';
 import { UserSkillService } from './skill/user-skill.service.js';
 import { SkillDocService } from './skill/skill-doc.service.js';
@@ -181,7 +182,7 @@ import { HttpToolValidatorImpl, MysqlHttpToolLookup } from './http-tool/http-too
 import { HttpToolHeaderCipher } from './http-tool/http-tool-cipher.js';
 import { buildDepsEnv } from './harness/container/session-envelope-builder.js';
 import { ContainerScriptProbe } from './harness/container/container-script-probe.js';
-import { expandHome, resolveShareDir, runtimeSessionCleanup } from './app-utils.js';
+import { expandHome, resolveSendDir, resolveShareDir, runtimeSessionCleanup } from './app-utils.js';
 import { registerAllRoutes } from './app-routes.js';
 import { registerAppHooks } from './app-hooks.js';
 import { assembleContainerRuntime } from './app-container-runtime.js';
@@ -277,6 +278,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   await app.register(multipart, { limits: { fileSize: multipartLimitMb * 1024 * 1024, files: 500 } });
   const uploadDir = resolve(expandHome(cfg.app.file.uploadDir));
   mkdirSync(uploadDir, { recursive: true });
+  // 发送附件快照根（技术方案 2026-11-24-send-file-snapshot D2）：与 uploadDir 平级，
+  // 不挂进 Nginx、不进容器挂载清单。resolveSendDir 对「落在 uploadDir 之内」启动即拒——
+  // 那种配置会让本该鉴权下载的快照变成 /uploads/ 免鉴权公开 + 容器可改写。
+  const sendDir = resolveSendDir(cfg.app.file.sendDir, uploadDir);
+  mkdirSync(sendDir, { recursive: true });
   // 公共共享目录（共享目录方案 §3.1）：与 uploadDir 同口径启动兜底创建，
   // 容器模式 ro 挂载前保证宿主机源目录存在（docker -v 对缺失源虽会自动建空目录，
   // 但属主会是 root，这里以后端运行用户创建，管理员投放时属主一致）。
@@ -640,6 +646,19 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     }),
   );
 
+  // 发送附件快照（技术方案 2026-11-24-send-file-snapshot D3/D5）：本地写 sendDir，
+  // 云模式按 upload.storageMode PUT 到私有前缀 send-files/，下载由服务端代读。
+  const sendFileService = new SendFileService(
+    new SendFileEntityRepository(db),
+    sendDir,
+    () => settingService.getUploadConfig(),
+    async () => ({
+      oss: await settingService.getOssConfig(),
+      cos: await settingService.getCosConfig(),
+      obs: await settingService.getObsConfig(),
+    }),
+  );
+
   const userSkillsDir = cfg.app.harness.userSkillsDir || resolve(process.env.HOME ?? '/tmp', '.mao/data/userskills');
   // 内置技能（技术方案 2026-11-20）：随仓库发版的只读系统技能。名单/bundled 不合法或找不到
   // 仓库技能根时 load 抛错 → createMaoApp 失败 → 进程起不来（D7/D8），蓝绿窗口内旧进程继续接流量。
@@ -947,10 +966,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     wechatBridges, feishuMessageService, feishuMessageRepository, getFeishuClient,
     sendBytesBridge, dingtalkMediaHolder, definitionRegistry, holder, subagentMapper,
     localToolSessions, localDeliveryFetch, visibility, backgroundSubagentManager,
-    // 发送媒体活引用（2026-11-20）：形态 A 取数走工作区下载的同一套严格路径解析，
-    // 「团队经验」挂载目录按 Agent 维度排除
-    workspaceRefOracle: workspaceBrowse,
-    experienceDirForAgent: (agentId: number) => experienceIndexService.dirFor(agentId),
+    sendFileStore: sendFileService,
     messageRepo, compactionSvc, embedPageToolRegistry, mcpToolsRegistry, routingMcpClient,
     httpToolService, httpApiExecutor, llmAdapter, promptEngine, contextManager,
     compactionService, compactionArchiveService, compactionConfig, historyLoader,
@@ -1150,6 +1166,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     localFileFetch,
     remoteFileProxy,
     uploadTicketService,
+    sendFileService,
     skillBundleService, userSkillService, skillDocService,
     scheduledService,
     openRunService, apiTokenService, webhookTriggerService, outboundSubscriptionService,

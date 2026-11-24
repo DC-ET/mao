@@ -853,4 +853,42 @@ describe('openDeliveryFileTab（Agent 发送文件预览页签）', () => {
     expect(persisted?.tabId).toBe(`delivery:${stableKey}`)
     expect(JSON.stringify(persisted)).not.toContain('token')
   })
+
+  // 2026-11-24-send-file-snapshot：快照 ref 的 key 只含快照 id，不含任何路径信息。
+  // 同一轮发多个附件各自独立页签；token 轮换复用页签、只刷新 deliveryUrl。
+  it('send-file 快照：按快照 id 稳定去重，多个快照互不撞，token 轮换不重开', async () => {
+    const tabs = setup()
+    const open = (id: string, token: string) => tabs.openDeliveryFileTab({
+      url: `https://mao.example.com/api/v1/files/send-download?id=${id}&token=${token}`,
+      filename: '图 片.png',
+      key: `send-file:${id}`,
+    })
+
+    open('snap-a', 'old-jwt')
+    await nextTick()
+    expect(tabs.tabs.value.filter(t => t.type === 'file')).toHaveLength(1)
+    expect(tabs.activeTabId.value).toBe('delivery:send-file:snap-a')
+
+    // 同一轮里的第二个快照：独立页签，不与第一个共用
+    open('snap-b', 'old-jwt')
+    await nextTick()
+    const two = tabs.tabs.value.filter(t => t.type === 'file')
+    expect(two).toHaveLength(2)
+    expect(two.map(t => t.id)).toEqual(['delivery:send-file:snap-a', 'delivery:send-file:snap-b'])
+
+    // token 轮换后重开第一个快照：复用页签、刷新取数 URL，不新增
+    open('snap-a', 'new-jwt')
+    await nextTick()
+    const fileTabs = tabs.tabs.value.filter(t => t.type === 'file')
+    expect(fileTabs).toHaveLength(2)
+    const a = fileTabs.find(t => t.id === 'delivery:send-file:snap-a')
+    expect(a?.deliveryUrl).toContain('id=snap-a')
+    expect(a?.deliveryUrl).toContain('token=new-jwt')
+    expect(a?.version).toBe(1)
+
+    // 激活态持久化只写 tab id：不得夹带 token
+    const persisted = getPersistedActiveTab(SESSION_ID)
+    expect(persisted?.tabId).toBe('delivery:send-file:snap-a')
+    expect(JSON.stringify(persisted)).not.toContain('token')
+  })
 })

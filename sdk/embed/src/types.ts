@@ -1,4 +1,4 @@
-import type { DeliveryWorkspaceRef, WsAskUserQuestionItem, WsTaskPhase } from '@mao/contracts';
+import type { DeliveryRef, WsAskUserQuestionItem, WsTaskPhase } from '@mao/contracts';
 import type {
   PageAction, PageActionResult, PageAuthorizationLevel, PageScreenshot, PageSnapshot, ScreenshotRenderer,
 } from './page';
@@ -134,15 +134,17 @@ export interface ToolCallItem {
 }
 
 /**
- * `send_image` / `send_file` 的投递（统一发送媒体方案 2026-11-18 D6）：回复下方投递条。
- * 活引用方案（2026-11-20）后两种形态并存：
- *  - 形态 A：`ref` 指向会话工作区文件，渲染期实时解析取数 URL（token 绝不入消息 JSON）；
- *  - 形态 B/C：`url` 为可直接访问的既有地址（uploads 原地引用 / 会话副本）。
+ * `send_image` / `send_file` 的投递（统一发送媒体方案 2026-11-18 D6；活引用 2026-11-20 §5.2；
+ * 快照 2026-11-24 D3）：回复下方投递条。三种形态并存：
+ *  - `ref.type === 'send-file'`：发送时另存的快照 id（**新发送默认**），渲染期拼
+ *    `/files/send-download?id=…&token=…`（token 绝不入消息 JSON）；
+ *  - `ref.type === 'workspace'`：会话工作区活引用，**仅存量消息**；
+ *  - `url`：既有 uploads 地址（形态 B，存量）。
  */
 export interface SendDelivery {
   kind: 'image' | 'file';
   url?: string;
-  ref?: DeliveryWorkspaceRef;
+  ref?: DeliveryRef;
   mime?: string;
   bytes?: number;
   filename: string;

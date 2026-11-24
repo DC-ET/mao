@@ -410,5 +410,25 @@ describe('no-progress-notice', () => {
       });
       expect(first).toBe(second);
     });
+
+    // 2026-11-24-send-file-snapshot：新发送默认写 send-file ref，id 是随机 UUID。
+    // 四键口径必须继续把整个 delivery 挡在签名外——漏补即漏报（每发一次都算「有进展」），
+    // 误把 delivery 收进来则误杀（同一文件重发被当成无进展）。
+    it('快照（2026-11-24）：不同 send-file ref.id 视为无进展，四键不变', () => {
+      const first = digestOf({
+        success: true, channel: 'chat', channelStatus: 'skipped', filename: 'a.png',
+        delivery: { kind: 'image', mime: 'image/png', bytes: 12, ref: { type: 'send-file', id: '2f8a1c11-9c1e-4a1f-8f6e-1d2b3c4d5e6f' } },
+      });
+      const second = digestOf({
+        success: true, channel: 'chat', channelStatus: 'skipped', filename: 'a.png',
+        delivery: { kind: 'image', mime: 'image/png', bytes: 12, ref: { type: 'send-file', id: '9b7d6c5b-4a3f-4e2d-8c1b-0a9f8e7d6c5b' } },
+      });
+      expect(first).toBe(second);
+      // 反向：语义字段变化仍是进展（防止为了消随机 id 把整条结果都归一掉）
+      expect(second).not.toBe(digestOf({
+        success: true, channel: 'chat', channelStatus: 'sent', filename: 'a.png',
+        delivery: { kind: 'image', mime: 'image/png', bytes: 12, ref: { type: 'send-file', id: '9b7d6c5b-4a3f-4e2d-8c1b-0a9f8e7d6c5b' } },
+      }));
+    });
   });
 });

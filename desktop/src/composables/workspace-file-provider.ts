@@ -705,15 +705,22 @@ async function extractDownloadError(resp: Response): Promise<string> {
   return `下载失败（HTTP ${resp.status}）`
 }
 
+/** 会产「业务错误信封 / 错误 JSON」的投递端点（活引用 + 快照下载）。`/uploads` 静态服务不产信封。 */
+function isEnvelopedDownloadUrl(url: string): boolean {
+  return url.includes('/files/workspace-download?') || url.includes('/files/send-download?')
+}
+
 /**
- * 下载响应是否为业务错误信封（活引用方案 2026-11-20 §5.2 评审补充）：CLOUD
- * workspace-download 的业务错误（如「文件不存在」）经 handleError 映射为
- * HTTP 200 + code 信封，只查 resp.ok 会把信封 JSON 当文件保存 / 当文本渲染。
- * 仅对 workspace-download 判定——`/uploads` 静态服务不产信封，且含数字 code
+ * 下载响应是否为业务错误信封（活引用方案 2026-11-20 §5.2 评审补充；2026-11-24 快照同口径）：
+ * CLOUD workspace-download 的业务错误（如「文件不存在」）经 handleError 映射为
+ * HTTP 200 + code 信封，只查 resp.ok 会把信封 JSON 当文件保存 / 当文本渲染；
+ * send-download 的「行不存在 / 不属于你 / 附件不存在」是真正的 HTTP 404（不产信封），
+ * 但同样要判定，否则安卓壳会把错误 JSON 当文件外跳。
+ * 只对这两个端点判定——`/uploads` 静态服务不产信封，且含数字 code
  * 字段的 JSON 文件不应被误杀。
  */
 async function downloadEnvelopeError(resp: Response, url: string): Promise<string | null> {
-  if (!url.includes('/files/workspace-download?')) return null
+  if (!isEnvelopedDownloadUrl(url)) return null
   if (resp.headers.get('content-disposition')) return null
   if (!(resp.headers.get('content-type') || '').includes('application/json')) return null
   try {
@@ -767,17 +774,23 @@ function bytesToDataUri(bytes: Uint8Array, mime: string): string {
 }
 
 /**
- * 安卓壳 / 微信内置浏览器外跳前的活引用信封预检（2026-11-20）：workspace-download 的业务
- * 错误是 HTTP 200 + code 信封，直接外跳会让用户看到一段报错 JSON。只对 workspace-download
- * 生效；读完响应头即取消 body（不落地整份文件）；预检本身失败（离线 / CORS）不阻断外跳。
+ * 安卓壳 / 微信内置浏览器外跳前的投递信封预检（2026-11-20；2026-11-24 快照同口径）：
+ * workspace-download / send-download 的业务错误（HTTP 200 + code 信封，或 send-download 的
+ * 404 JSON）直接外跳会让用户看到一段报错 JSON。只对这两个端点生效；读完响应头即取消 body
+ * （不落地整份文件）；预检本身失败（离线 / CORS）不阻断外跳。
  */
 async function probeDeliveryEnvelopeError(url: string): Promise<string | null> {
-  if (!url.includes('/files/workspace-download?')) return null
+  if (!isEnvelopedDownloadUrl(url)) return null
   try {
     const resp = await fetch(url)
-    if (!resp.ok) return null
+    const isSnapshot = url.includes('/files/send-download?')
+    // send-download 的「行不存在 / 不属于你 / 附件不存在」是真正的 4xx（workspace-download 的
+    // 业务错误是 HTTP 200 + code 信封）：直接外跳会让系统浏览器显示一段错误 JSON 或空白页，
+    // 这里按下载失败收口。workspace-download 的非 2xx（401 等）仍维持原状外跳。
+    if (!resp.ok && !isSnapshot) return null
     const error = await downloadEnvelopeError(resp, url)
     void resp.body?.cancel().catch(() => {})
+    if (error == null && !resp.ok) return `下载失败（HTTP ${resp.status}）`
     return error
   } catch {
     return null
