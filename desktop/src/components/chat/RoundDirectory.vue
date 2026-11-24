@@ -14,6 +14,7 @@
       @click.stop="toggle"
     >
       <el-icon :size="14"><List /></el-icon>
+      <span class="round-directory-handle-text" aria-hidden="true">目录</span>
     </button>
     <div v-if="open && rows.length > 0" class="round-directory-popover" @click.stop>
       <div class="round-directory-title">轮次目录</div>
@@ -111,17 +112,26 @@ onUnmounted(() => {
 
 .round-directory-handle {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 4px;
   width: 26px;
-  height: 44px;
-  border: 1px solid var(--aw-divider-soft);
+  padding: 8px 0;
+  border: 1px solid var(--aw-primary-line);
   border-right: 0;
   border-radius: var(--aw-radius-xs) 0 0 var(--aw-radius-xs);
   background: var(--aw-surface, #fff);
-  color: var(--aw-ink-muted-48);
+  color: var(--aw-primary);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
+}
+
+.round-directory-handle-text {
+  writing-mode: vertical-rl;
+  font-size: var(--aw-text-micro);
+  letter-spacing: 2px;
+  line-height: 1;
 }
 
 .round-directory-handle:hover,
@@ -207,5 +217,10 @@ onUnmounted(() => {
 
 [data-theme="dark"] .round-directory-popover {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="dark"] .round-directory-handle {
+  border-color: var(--aw-primary-line);
+  color: var(--aw-primary-on-dark);
 }
 </style>

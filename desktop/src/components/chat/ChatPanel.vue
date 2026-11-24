@@ -148,6 +148,12 @@
         </div>
         </div>
 
+        <StickyRoundQuestion
+          v-if="sessionId && !isMobileViewport"
+          :container="messagesContainer"
+          :messages="messages"
+          @locate="onRoundLocate"
+        />
         <!-- 轮次目录：右缘浮动把手（小屏降级隐藏，决策 3 的移动端延伸） -->
         <RoundDirectory
           v-if="sessionId && !isMobileViewport"
@@ -283,6 +289,7 @@ import QuestionPanel from './QuestionPanel.vue'
 import ExecutionErrorBanner from './ExecutionErrorBanner.vue'
 import StarterPrompts from './StarterPrompts.vue'
 import RoundDirectory from './RoundDirectory.vue'
+import StickyRoundQuestion from './StickyRoundQuestion.vue'
 import LocalTargetBanner from './LocalTargetBanner.vue'
 import appIcon from '../../assets/app-icon-small.png'
 

@@ -975,16 +975,19 @@ async function copyMessage() {
   font-size: var(--aw-text-caption);
 }
 
+/* 助手回复无气泡、同为正文色，用户消息只能靠底色 + 描边认出：底色别低于 0.14，
+   低了在白底上近乎白色（石板灰强调色尤甚），长会话里找不到自己的问题 */
 .user-text {
   color: var(--aw-ink);
-  background: var(--aw-primary-hover);
+  background: rgba(var(--aw-accent-rgb), 0.14);
+  border: 1px solid var(--aw-primary-line);
   border-top-right-radius: var(--aw-radius-xs);
   white-space: pre-line;
-  padding: 8px 14px;
+  padding: 7px 13px;
 }
 
 :root[data-theme="dark"] .user-text {
-  background: var(--aw-accent-bg);
+  background: rgba(var(--aw-accent-rgb), 0.2);
 }
 
 .user-text.collapsed .user-text-content {
