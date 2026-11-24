@@ -861,12 +861,30 @@ async function copyMessage() {
 </script>
 
 <style scoped>
+/* 定位高亮：用淡主色，不用芥末黄。助手行整行轻染；用户气泡只圈气泡本身，
+   避免右对齐时左侧一大条空背景（截图里那条丑黄带的根因）。 */
 .message-locate-flash {
-  animation: message-locate-flash 2s ease;
+  animation: message-locate-flash 1.6s ease;
+  border-radius: var(--aw-radius-sm);
 }
 @keyframes message-locate-flash {
-  0%, 40% { background: rgba(255, 193, 7, 0.45); }
+  0%, 40% { background: rgba(var(--aw-accent-rgb), 0.14); }
   100% { background: transparent; }
+}
+.message-bubble.user.message-locate-flash {
+  animation: none;
+  background: transparent;
+}
+.message-bubble.user.message-locate-flash .user-text {
+  animation: message-locate-flash-bubble 1.6s ease;
+}
+@keyframes message-locate-flash-bubble {
+  0%, 40% {
+    box-shadow: 0 0 0 3px rgba(var(--aw-accent-rgb), 0.45);
+  }
+  100% {
+    box-shadow: 0 0 0 3px transparent;
+  }
 }
 .message-bubble {
   display: flex;
@@ -975,25 +993,17 @@ async function copyMessage() {
   font-size: var(--aw-text-caption);
 }
 
-/* 用户消息用实心主色 + 白字：助手回复里的行内代码、步骤条、文件面板全是灰底，
-   灰/浅色系气泡会混进去，长会话里找不到自己的问题。气泡内元素一律改走半透明白。 */
+/* 淡主色底 + 深色字：比实心主色清淡，又比中性灰能和助手回复里的灰底代码块区分开 */
 .user-text {
-  color: #fff;
-  background: var(--aw-primary);
+  color: var(--aw-ink);
+  background: color-mix(in srgb, var(--aw-primary) 14%, var(--aw-canvas));
   border-top-right-radius: var(--aw-radius-xs);
   white-space: pre-line;
   padding: 9px 16px;
 }
 
-.user-text ::selection {
-  background: rgba(255, 255, 255, 0.35);
-  color: #fff;
-}
-
-.user-text :deep(.quick-command-tag),
-.user-text :deep(.file-reference-tag) {
-  background: rgba(255, 255, 255, 0.2);
-  color: #fff;
+:root[data-theme="dark"] .user-text {
+  background: color-mix(in srgb, var(--aw-primary) 22%, var(--aw-canvas));
 }
 
 .user-text.collapsed .user-text-content {
@@ -1015,7 +1025,7 @@ async function copyMessage() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--aw-ink-muted-64);
   font-size: var(--aw-text-fine);
 }
 
@@ -1040,16 +1050,18 @@ async function copyMessage() {
   padding: 2px 0;
   border: none;
   background: none;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--aw-primary);
   font-size: var(--aw-text-fine);
-  text-decoration: underline;
-  text-underline-offset: 3px;
   cursor: pointer;
   line-height: 1.5;
 }
 
 .user-collapse-toggle:hover {
-  color: #fff;
+  opacity: 0.7;
+}
+
+:root[data-theme="dark"] .user-collapse-toggle {
+  color: var(--aw-primary-on-dark);
 }
 
 .assistant-text {
@@ -1372,7 +1384,7 @@ async function copyMessage() {
 }
 
 @keyframes cite-item-flash {
-  0%, 40% { background: rgba(255, 193, 7, 0.35); }
+  0%, 40% { background: rgba(var(--aw-accent-rgb), 0.14); }
   100% { background: transparent; }
 }
 

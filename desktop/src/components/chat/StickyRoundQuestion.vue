@@ -118,14 +118,20 @@ onUnmounted(() => {
   transform: translateY(-1px);
 }
 
-/* 与用户气泡同色，一眼对上「这是我发的」 */
+/* 与用户气泡同系淡主色，一眼对上「这是我发的」 */
 .sticky-label {
   flex-shrink: 0;
   padding: 1px 8px;
   border-radius: var(--aw-radius-pill);
-  background: var(--aw-primary);
-  color: #fff;
+  background: color-mix(in srgb, var(--aw-primary) 14%, var(--aw-canvas));
+  color: var(--aw-primary);
   font-size: var(--aw-text-micro);
+  font-weight: 600;
+}
+
+[data-theme="dark"] .sticky-label {
+  background: color-mix(in srgb, var(--aw-primary) 22%, var(--aw-canvas));
+  color: var(--aw-primary-on-dark);
 }
 
 .sticky-text {
