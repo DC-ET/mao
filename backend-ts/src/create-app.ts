@@ -1122,7 +1122,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
 
   await registerAllRoutes({
     app, db, cfg, apiPrefix, jwt, agentRuntimeCfg,
-    authService, feishu, ecpAuth, companySsoTokenRepo, userService, userRepo, permissionService,
+    authService, feishu, ecpAuth, companySsoTokens: companySsoTokenRepo, userService, userRepo, permissionService,
     gitCredentials, systemGitCredentials, envVariableService, sessionRepo,
     httpToolService, httpApiExecutor, httpToolStatsStore,
     fileService, agentService, experienceService, experienceIndexService, suggestedQuestionService,
