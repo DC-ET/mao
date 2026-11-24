@@ -72,6 +72,7 @@ function buildHarness(memoryInjection: { listForInjection: (...args: never[]) =>
     syncToSession: vi.fn(async () => ({ failed: [] })),
     getUserSkillNames: vi.fn(() => [] as string[]),
     getUserSkillDocuments: vi.fn(() => []),
+    resolveSystemSkillNames: vi.fn(async () => [] as string[]),
   };
   const localSkillRegistry = { get: vi.fn(() => []) };
   const localAgentsMdRegistry = { get: vi.fn(() => null) };

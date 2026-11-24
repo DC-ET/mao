@@ -24,6 +24,7 @@ import type { SystemSettingService } from './settings/settings.service.js';
 import type { UserCommandService } from './command/command.service.js';
 import type { SkillLoader } from './harness/skill/skill-loader.js';
 import type { SkillSyncService } from './harness/skill/skill-sync-service.js';
+import type { RoleSkillGrantService } from './permission/role-skill-grant.service.js';
 import type { UserWeixinPreferenceService } from './preference/weixin-preference.service.js';
 import type { UserTaskPanelPreferenceService } from './preference/task-panel-preference.service.js';
 import type { ToolService } from './tool/tool.service.js';
@@ -233,6 +234,7 @@ export interface RouteDeps {
   commandRepo: MysqlUserCommandRepository;
   skillLoader: SkillLoader;
   skillSync: SkillSyncService;
+  roleSkillGrantService: RoleSkillGrantService;
 
   // preference
   weixinPref: UserWeixinPreferenceService;
@@ -376,7 +378,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     modelService,
     settingService, activateContainerRuntime, runtimeModeResolver, containerHostsResolver, containerAutoUpgradeResolver, containerOps,
     browserDeps,
-    commandService, commandRepo, skillLoader, skillSync,
+    commandService, commandRepo, skillLoader, skillSync, roleSkillGrantService,
     weixinPref, taskPanelPref,
     restToolService,
     auditService,
@@ -443,7 +445,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
         agentLookup: { findByIds: (ids) => agentRepo.findByIds(ids) },
       });
     }
-    registerPermissionRoutes(api, permissionService);
+    registerPermissionRoutes(api, permissionService, roleSkillGrantService);
     registerGitCredentialRoutes(api, gitCredentials);
     registerAdminGitCredentialRoutes(api, { gitCredentialService: gitCredentials, permissionService });
     registerSystemGitCredentialRoutes(api, {
@@ -646,6 +648,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
         listOptions: async () => (await agentRepo.selectList(null, true)).map((a) => ({ id: a.id!, name: a.name })),
       } as never,
       permissionService,
+      roleSkillGrants: roleSkillGrantService,
       userLookup: {
         findByIds: async (ids: number[]) => (await userRepo.findByIds(ids)).map((u) => ({
           id: u.id!,

@@ -5,6 +5,7 @@ const {
   requireNumber,
   getString,
   getNumberList,
+  getFlag,
   pickDefined,
   hasFlag,
 } = require('../args');
@@ -19,6 +20,8 @@ function help() {
   mao role create --name --code [--description]
   mao role update --id --name [--description]
   mao role assign-permissions --id --permission-ids 1,2,3
+  mao role skills --id
+  mao role assign-skills --id --grants name 或 name@agentId，逗号分隔
   mao permission list
 `;
 }
@@ -74,6 +77,19 @@ async function run(ctx, subcommand, _rest, flags) {
       emitResult(result, { raw: ctx.raw });
       return;
     }
+    case 'skills': {
+      const id = requireNumber(flags, 'id', '角色 ID');
+      const result = await get(ctx, `/roles/${id}/skills`);
+      emitResult(result, { raw: ctx.raw });
+      return;
+    }
+    case 'assign-skills': {
+      const id = requireNumber(flags, 'id', '角色 ID');
+      const grants = parseGrantList(getFlag(flags, 'grants'));
+      const result = await put(ctx, `/roles/${id}/skills`, { grants });
+      emitResult(result, { raw: ctx.raw });
+      return;
+    }
     default:
       printError(`未知 role 命令: ${subcommand}`);
       process.exit(1);
@@ -93,4 +109,32 @@ async function runPermission(ctx, subcommand, _rest, flags) {
   emitResult(result, { raw: ctx.raw });
 }
 
-module.exports = { run, help, helpPermission, runPermission };
+/** `--grants` 省略或只有开关没有值时报错；显式空字符串清空。`name` 表示全部 Agent，`name@12` 限定 Agent。 */
+function parseGrantList(raw) {
+  if (raw === undefined || raw === true) {
+    printError('缺少必填参数 --grants。清空授权请传 --grants ""');
+    process.exit(1);
+  }
+  const text = String(raw).trim();
+  if (text === '') return [];
+  const grants = [];
+  for (const part of text.split(',')) {
+    const item = part.trim();
+    if (!item) continue;
+    const at = item.lastIndexOf('@');
+    if (at < 0) {
+      grants.push({ skillName: item, agentId: 0 });
+      continue;
+    }
+    const skillName = item.slice(0, at).trim();
+    const agentRaw = item.slice(at + 1).trim();
+    if (!skillName || !/^\d+$/.test(agentRaw)) {
+      printError(`--grants 项格式应为 name 或 name@agentId，agentId 为非负整数: ${item}`);
+      process.exit(1);
+    }
+    grants.push({ skillName, agentId: Number(agentRaw) });
+  }
+  return grants;
+}
+
+module.exports = { run, help, helpPermission, runPermission, parseGrantList };

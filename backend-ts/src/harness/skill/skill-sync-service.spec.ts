@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import { SkillSyncService } from './skill-sync-service.js';
 import { SkillViewService } from './skill-view.service.js';
@@ -10,6 +11,7 @@ function makeService(root: string, systemFolder: string, userDir = join(root, 'u
   const runtime = RuntimeDataResolver.forTest(join(root, 'runtime'), join(root, 'home'), join(root, 'skill-views'));
   const skillLoader = {
     getAllNames: () => ['java'],
+    hasSkill: (name: string) => name === 'java',
     getSkillFolder: (name: string) => (name === 'java' ? systemFolder : null),
   };
   const viewService = new SkillViewService(join(root, 'skill-views'));
@@ -211,8 +213,8 @@ describe('SkillSyncService', () => {
     expect(existsSync(join(runtimeSkills(7), 'java'))).toBe(true);
 
     // removed 查询同样按身份隔离
-    expect(svc.getRemovedSkillNames({ ...agent, skillNames: '[]' }, 7, 91)).toEqual(['java']);
-    expect(svc.getRemovedSkillNames({ ...agent, skillNames: '[]' }, 8, 91)).toEqual([]);
+    expect(await svc.getRemovedSkillNames({ ...agent, skillNames: '[]' }, 7, 91)).toEqual(['java']);
+    expect(await svc.getRemovedSkillNames({ ...agent, skillNames: '[]' }, 8, 91)).toEqual([]);
   });
 
   it('does not materialize a deleted source that no agent references (no side effects)', async () => {
@@ -224,6 +226,7 @@ describe('SkillSyncService', () => {
     const runtime = RuntimeDataResolver.forTest(join(root, 'runtime'), join(root, 'home'), join(root, 'skill-views'));
     const skillLoader = {
       getAllNames: () => ['java'],
+      hasSkill: (name: string) => name === 'java',
       getSkillFolder: (name: string) => (name === 'java' ? systemFolder : name === 'ghost' ? ghostFolder : null),
     };
     const viewService = new SkillViewService(join(root, 'skill-views'));
@@ -250,10 +253,74 @@ describe('SkillSyncService', () => {
     await svc.syncToSession(agent, 7, 11);
     // 运行身份参与 state key（技术方案 2026-11-04 §5.3）：查询必须带 userId；
     // 该用户的个人技能仍可用（'mine' 不算 removed），只有被 agent 移除的 'java' 返回。
-    expect(svc.getRemovedSkillNames({ ...agent, skillNames: '[]' }, 7, 11)).toEqual(['java']);
+    expect(await svc.getRemovedSkillNames({ ...agent, skillNames: '[]' }, 7, 11)).toEqual(['java']);
     // 无身份时无 state 可查（多发言者下无法判定归属），返回空而不是误报。
-    expect(svc.getRemovedSkillNames({ ...agent, skillNames: '[]' }, null, 11)).toEqual([]);
-    expect(svc.getRemovedSkillNames(null, 7, 11)).toEqual([]);
-    expect(svc.getRemovedSkillNames(agent, 7, null)).toEqual([]);
+    expect(await svc.getRemovedSkillNames({ ...agent, skillNames: '[]' }, null, 11)).toEqual([]);
+    expect(await svc.getRemovedSkillNames(null, 7, 11)).toEqual([]);
+    expect(await svc.getRemovedSkillNames(agent, 7, null)).toEqual([]);
+  });
+
+  it('merges role grants into mount, removal and zip for the given user', async () => {
+    const root = useTmpDir('skills-role-');
+    const javaFolder = makeSystemSkill(root);
+    const bigdata = join(root, 'system', 'bigdata');
+    mkdirSync(bigdata, { recursive: true });
+    writeFileSync(join(bigdata, 'SKILL.md'), '---\nname: bigdata\ndescription: bd\n---\nbody');
+    const runtime = RuntimeDataResolver.forTest(join(root, 'runtime'), join(root, 'home'), join(root, 'skill-views'));
+    const known = new Set(['java', 'bigdata', 'git', 'code-review', 'aaa', 'everywhere', 'only-here']);
+    const skillLoader = {
+      hasSkill: (name: string) => known.has(name),
+      getSkillFolder: (name: string) => {
+        if (name === 'java') return javaFolder;
+        if (name === 'bigdata') return bigdata;
+        return known.has(name) ? javaFolder : null;
+      },
+      getAllNames: () => [...known],
+    };
+    let granted = ['bigdata'];
+    const grants = {
+      namesFor: vi.fn(async (userId: number, agentId: number, includeSpecific = true) => {
+        if (userId !== 7) return [];
+        if (!includeSpecific) return ['everywhere'];
+        return agentId === 4 ? granted : [];
+      }),
+    };
+    const viewService = new SkillViewService(join(root, 'skill-views'));
+    const svc = new SkillSyncService(
+      skillLoader as never, { addAllowedRoot: vi.fn() } as never, runtime, join(root, 'users'), viewService, grants,
+    );
+    const agent = { id: 4, name: 'a', systemPrompt: 'p', skillNames: '["java","missing"]' };
+    const synced = await svc.syncToSession(agent, 7, 1);
+    expect(synced.failed).toEqual([]);
+    expect(existsSync(join(root, 'skill-views', '7', '4', 'bigdata'))).toBe(true);
+    expect(existsSync(join(root, 'skill-views', '7', '4', 'java'))).toBe(true);
+    await svc.syncToSession({ ...agent, id: 5 }, 7, 2);
+    expect(existsSync(join(root, 'skill-views', '7', '5', 'bigdata'))).toBe(false);
+
+    expect(await svc.getRemovedSkillNames(agent, 7, 1)).toEqual([]);
+    granted = [];
+    expect(await svc.getRemovedSkillNames(agent, 7, 1)).toEqual(['bigdata']);
+
+    granted = ['bigdata'];
+    const out = new PassThrough();
+    const chunks: Buffer[] = [];
+    out.on('data', (chunk: Buffer) => chunks.push(chunk));
+    const finished = new Promise<void>((resolve) => out.on('end', () => resolve()));
+    await svc.writeSyncZip(agent, 1, out, 7);
+    await finished;
+    expect(Buffer.concat(chunks).toString('utf8')).toContain('bigdata');
+    expect(grants.namesFor).toHaveBeenCalledWith(7, 4, true);
+
+    expect(await svc.resolveSystemSkillNames({ id: 4, name: 'a', systemPrompt: 'p', skillNames: '["git","code-review"]' }, null))
+      .toEqual(['git', 'code-review']);
+    expect(grants.namesFor).not.toHaveBeenCalledWith(null, expect.anything(), expect.anything());
+    expect(await svc.resolveSystemSkillNames({ name: 'a', systemPrompt: 'p', skillNames: '["git"]' }, 7)).toEqual(['git']);
+
+    granted = ['bigdata', 'git', 'aaa', 'gone'];
+    expect(await svc.resolveSystemSkillNames({ id: 4, name: 'a', systemPrompt: 'p', skillNames: '["git","code-review"]' }, 7))
+      .toEqual(['git', 'code-review', 'aaa', 'bigdata']);
+
+    expect(await svc.resolveSystemSkillNames({ id: 4, name: 'a', systemPrompt: 'p', skillNames: '[]', deleted: 1 }, 7))
+      .toEqual(['everywhere']);
   });
 });

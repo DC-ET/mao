@@ -97,16 +97,19 @@ export function registerQuickCommandRoutes(app: FastifyInstance, deps: QuickComm
   app.get('/v1/quick-commands', async (request, reply) => {
     const userId = requireUserId(request);
     const agentId = queryOptInt(request, 'agentId');
-    let agentSkillNames: string[] = [];
+    // 带了 agentId 就按解析结果严格过滤；空名单表示没有系统技能。没带则列出全部系统技能。
+    let filterSystem = false;
+    let systemNames: string[] = [];
     if (agentId != null) {
-      agentSkillNames = await resolveAgentSkillNames(agentService, agentId);
+      filterSystem = true;
+      systemNames = await resolveAgentSkillNames(agentService, skillSyncService, agentId, userId);
     }
 
     const skills: QuickCommandItem[] = [];
     const seenNames = new Set<string>();
 
     for (const doc of await Promise.resolve(skillLoader.getAllDocuments())) {
-      if (agentSkillNames.length > 0 && !agentSkillNames.includes(doc.name)) {
+      if (filterSystem && !systemNames.includes(doc.name)) {
         continue;
       }
       if (!seenNames.has(doc.name)) {
@@ -149,14 +152,19 @@ export function registerCommandRoutes(
   }
 }
 
-async function resolveAgentSkillNames(agentService: AgentService, agentId: number): Promise<string[]> {
+async function resolveAgentSkillNames(
+  agentService: AgentService,
+  skillSyncService: UserSkillCatalog,
+  agentId: number,
+  userId: number,
+): Promise<string[]> {
   try {
     const agent = await agentService.getAgent(agentId);
-    if (hasText(agent.skillNames)) {
-      return JSON.parse(agent.skillNames!) as string[];
+    if (skillSyncService.resolveSystemSkillNames) {
+      return await skillSyncService.resolveSystemSkillNames(agent, userId);
     }
   } catch {
-    // Failed to resolve skill names for agent.
+    // Agent 不存在或名单解析失败：按空系统名单过滤，不再退回「列出全部」。
   }
   return [];
 }

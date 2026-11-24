@@ -184,6 +184,8 @@ import { registerAllRoutes } from './app-routes.js';
 import { registerAppHooks } from './app-hooks.js';
 import { assembleContainerRuntime } from './app-container-runtime.js';
 import { BrowserDepsService } from './browser-deps/browser-deps.service.js';
+import { RoleSkillGrantRepository } from './permission/role-skill-grant.repository.js';
+import { RoleSkillGrantService } from './permission/role-skill-grant.service.js';
 import { assembleLlmEngine } from './app-llm-engine.js';
 import { assembleNotificationServices } from './app-notification-services.js';
 import { PENDING_ESCALATION_DELAY_MS } from './notification/task/delivery.service.js';
@@ -424,8 +426,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   // 浏览器依赖服务在容器运行时装配（runtimeModeResolver）之后才能构造；agent 保存钩子经
   // 此转发器晚绑定——保存路径不等待装配，装配前保存只丢一次 ensure（下次保存或手动安装兜底）。
   const browserDepsForward: { target: BrowserDepsService | null } = { target: null };
+  const roleSkillGrantCleaner: { deleteByAgentId?: (agentId: number) => Promise<void> } = {};
   const agentService = new AgentService(agentRepo, experienceService, suggestedQuestionService, modelRepo, {
     ensureForSkills: (names) => browserDepsForward.target?.ensureForSkills(names),
+  }, {
+    deleteByAgentId: (id) => roleSkillGrantCleaner.deleteByAgentId?.(id) ?? Promise.resolve(),
   });
   const llmCallService = new LlmCallService(
     new LlmCallRepository(db),
@@ -642,7 +647,19 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     getConfig: () => settingService.getEcpConfig(),
   });
   const skillViewService = new SkillViewService(cfg.app.harness.skillViewsDir);
-  const skillSync = new SkillSyncService(skillLoader, pathSandbox, runtimeResolver, userSkillsDir, skillViewService);
+  const roleSkillGrantRepo = new RoleSkillGrantRepository(db);
+  roleSkillGrantCleaner.deleteByAgentId = (id) => roleSkillGrantRepo.deleteByAgentId(id);
+  const roleSkillGrantService = new RoleSkillGrantService(
+    roleSkillGrantRepo,
+    userRoleRepo,
+    roleRepo,
+    agentRepo,
+    skillLoader,
+    { ensureForSkills: (names) => browserDepsForward.target?.ensureForSkills(names) },
+  );
+  const skillSync = new SkillSyncService(
+    skillLoader, pathSandbox, runtimeResolver, userSkillsDir, skillViewService, roleSkillGrantService,
+  );
   const userSkillService = new UserSkillService(userSkillsDir, skillLoader);
   const skillDocService = new SkillDocService(skillLoader);
   // 资产分发闭环 P3：mao-skill-bundle v1 导出/导入
@@ -1103,7 +1120,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     modelService,
     settingService, activateContainerRuntime, runtimeModeResolver, containerHostsResolver, containerAutoUpgradeResolver, containerOps: containerRegistry,
     browserDeps: browserDepsService,
-    commandService, commandRepo, skillLoader, skillSync,
+    commandService, commandRepo, skillLoader, skillSync, roleSkillGrantService,
     weixinPref, taskPanelPref, onboardingPrefRepo,
     restToolService,
     auditService,

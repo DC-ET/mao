@@ -11,6 +11,13 @@ import type { SkillLoader } from './skill-loader.js';
 import type { SkillViewService } from './skill-view.service.js';
 import { isValidSkillName, parseSkillMdContent, type SkillDocument } from './skill-md.js';
 
+/** 角色授权查询。测试不注入时视为没有授权。includeAgentSpecific=false 只返回「全部 Agent」。 */
+export interface SystemSkillGrantLookup {
+  namesFor(userId: number, agentId: number, includeAgentSpecific?: boolean): Promise<string[]>;
+}
+
+const EMPTY_GRANTS: SystemSkillGrantLookup = { namesFor: async () => [] };
+
 export class SkillSyncService {
   private readonly syncState = new Map<string, Map<string, number>>();
 
@@ -20,6 +27,7 @@ export class SkillSyncService {
     private readonly runtimeDataResolver: RuntimeDataResolver,
     private readonly userSkillsDir: string,
     private readonly skillViewService: SkillViewService,
+    private readonly grants: SystemSkillGrantLookup = EMPTY_GRANTS,
   ) {}
 
   async syncToSession(
@@ -33,7 +41,7 @@ export class SkillSyncService {
     }
     const userId = runtimeUserId;
     const failed = new Set<string>();
-    const systemNames = this.resolveSkillNames(agent);
+    const systemNames = await this.resolveSystemSkillNames(agent, runtimeUserId);
     const userSkillFolders = new Map<string, string>();
     for (const [name, doc] of Object.entries(this.loadUserSkillDocs(userId))) {
       if (doc.folderPath) userSkillFolders.set(name, doc.folderPath);
@@ -120,11 +128,11 @@ export class SkillSyncService {
   }
 
   /** Skills previously synced to this session that are no longer on the agent/user. */
-  getRemovedSkillNames(agent: Agent | null | undefined, userId: number | null, sessionId: number | null): string[] {
+  async getRemovedSkillNames(agent: Agent | null | undefined, userId: number | null, sessionId: number | null): Promise<string[]> {
     if (agent == null || sessionId == null) return [];
     const state = userId == null ? undefined : this.syncState.get(`${agent.id}:${userId}:${sessionId}`);
     if (state == null || state.size === 0) return [];
-    const current = new Set(this.resolveSkillNames(agent));
+    const current = new Set(await this.resolveSystemSkillNames(agent, userId));
     if (userId != null) {
       for (const name of Object.keys(this.loadUserSkillDocs(userId))) current.add(name);
     }
@@ -177,6 +185,26 @@ export class SkillSyncService {
     }
   }
 
+  /**
+   * 一次会话的系统技能：Agent 共用名单（原顺序）∪ 执行身份在该 Agent 上的角色授权（仅新增部分按名字升序）。
+   * 加载器里没有的名字直接丢掉，不计入挂载失败。userId 或 agent.id 为空时不查角色。
+   */
+  async resolveSystemSkillNames(agent: Agent, userId: number | null): Promise<string[]> {
+    const agentNames = this.resolveSkillNames(agent).filter((name) => this.skillLoader.hasSkill(name));
+    if (userId == null || agent.id == null) return agentNames;
+    const includeSpecific = agent.deleted == null || agent.deleted === 0;
+    const roleNames = await this.grants.namesFor(userId, agent.id, includeSpecific);
+    const seen = new Set(agentNames);
+    const extra: string[] = [];
+    for (const name of roleNames) {
+      if (!isValidSkillName(name) || !this.skillLoader.hasSkill(name) || seen.has(name)) continue;
+      seen.add(name);
+      extra.push(name);
+    }
+    extra.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    return [...agentNames, ...extra];
+  }
+
   private getSyncState(agentId: number | undefined, userId: number, sessionId: number): Map<string, number> {
     const key = `${agentId}:${userId}:${sessionId}`;
     let state = this.syncState.get(key);
@@ -188,7 +216,7 @@ export class SkillSyncService {
   }
 
   async writeSyncZip(agent: Agent, sessionId: number | null, out: Writable, userId: number | null): Promise<void> {
-    const systemNames = this.resolveSkillNames(agent);
+    const systemNames = await this.resolveSystemSkillNames(agent, userId);
     const merged = new Map<string, string>();
     for (const name of systemNames) {
       const folder = this.skillLoader.getSkillFolder(name);

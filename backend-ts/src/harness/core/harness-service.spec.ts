@@ -203,6 +203,18 @@ function makeHarness(
     syncToSession: vi.fn(async () => ({ failed: [] })),
     getUserSkillNames: vi.fn(() => ['mine']),
     getUserSkillDocuments: vi.fn(() => [{ name: 'mine', description: 'user skill' }]),
+    resolveSystemSkillNames: vi.fn(async (agent: { skillNames?: string | null; skills?: string | null }) => {
+      const raw = agent?.skillNames ?? agent?.skills;
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        return Array.isArray(parsed)
+          ? parsed.filter((name): name is string => typeof name === 'string' && skillLoader.hasSkill(name))
+          : [];
+      } catch {
+        return [];
+      }
+    }),
     loadAgentServers: vi.fn(async () => []),
     getLocalSessionTools: vi.fn(() => []),
     connectForCloud: vi.fn(async () => ({ tools: [], warnings: [] })),
@@ -442,6 +454,24 @@ describe('HarnessService.buildContext and execute', () => {
     expect(sessionService.getFirstUserStamp).toHaveBeenCalledWith(10);
   });
 
+  it('角色技能接在 Agent 名单后，个人技能文档后写覆盖同名系统技能', async () => {
+    const { service, skillSync, skillLoader } = makeHarness();
+    skillSync.resolveSystemSkillNames.mockResolvedValue(['git', 'code-review', 'bigdata']);
+    skillSync.getUserSkillNames.mockReturnValue(['mine', 'code-review']);
+    skillSync.getUserSkillDocuments.mockReturnValue([
+      { name: 'mine', description: 'mine' },
+      { name: 'code-review', description: '个人覆盖' },
+    ]);
+    skillLoader.getAllDocuments.mockReturnValue([
+      { name: 'git', description: '系统 git' },
+      { name: 'code-review', description: '系统审查' },
+      { name: 'bigdata', description: '系统数仓' },
+    ]);
+    const ctx = await service.buildContext(10);
+    expect(ctx.availableSkillNames).toEqual(['git', 'code-review', 'bigdata', 'mine']);
+    expect(ctx.availableSkillDocs.get('code-review')?.description).toBe('个人覆盖');
+  });
+
   it('buildContext 以运行身份同步技能并持久化（默认 execution）', async () => {
     const { service, skillSync, sessionService } = makeHarness();
     const ctx = await service.buildContext(10, null, null, false, 67);
@@ -488,6 +518,7 @@ describe('HarnessService.buildContext and execute', () => {
         syncToSession: vi.fn(async () => { throw new Error('mkdir EACCES'); }),
         getUserSkillNames: vi.fn(() => ['mine']),
         getUserSkillDocuments: vi.fn(() => [{ name: 'mine', description: 'user skill' }]),
+        resolveSystemSkillNames: vi.fn(async () => [] as string[]),
         loadAgentServers: vi.fn(async () => []),
         getLocalSessionTools: vi.fn(() => []),
         connectForCloud: vi.fn(async () => ({ tools: [], warnings: [] })),
@@ -509,6 +540,7 @@ describe('HarnessService.buildContext and execute', () => {
           syncToSession: vi.fn(async () => ({ failed: [] })),
           getUserSkillNames: vi.fn(() => []),
           getUserSkillDocuments: vi.fn(() => []),
+          resolveSystemSkillNames: vi.fn(async () => [] as string[]),
           loadAgentServers: vi.fn(async () => [{ name: 'srv' }]),
           getLocalSessionTools: vi.fn(() => []),
           connectForCloud: vi.fn(async () => ({ tools: [], warnings: [] })),
@@ -553,6 +585,7 @@ describe('HarnessService.buildContext and execute', () => {
         syncToSession: vi.fn(async () => ({ failed: ['java'] })),
         getUserSkillNames: vi.fn(() => ['mine']),
         getUserSkillDocuments: vi.fn(() => [{ name: 'mine', description: 'user skill' }]),
+        resolveSystemSkillNames: vi.fn(async () => ['java']),
         loadAgentServers: vi.fn(async () => []),
         getLocalSessionTools: vi.fn(() => []),
         connectForCloud: vi.fn(async () => ({ tools: [], warnings: [] })),
@@ -623,6 +656,7 @@ describe('HarnessService.buildContext and execute', () => {
       syncToSession: vi.fn(async () => ({ failed: [] })),
       getUserSkillNames: vi.fn(() => []),
       getUserSkillDocuments: vi.fn(() => []),
+      resolveSystemSkillNames: vi.fn(async () => [] as string[]),
       loadAgentServers: vi.fn(async () => [{ id: 5, name: 'fs', description: '文件系统' }]),
       getLocalSessionTools: vi.fn(() => []),
       getLocalConnectionErrors: vi.fn(() => []),
@@ -662,6 +696,7 @@ describe('HarnessService.buildContext and execute', () => {
       syncToSession: vi.fn(async () => ({ failed: [] })),
       getUserSkillNames: vi.fn(() => []),
       getUserSkillDocuments: vi.fn(() => []),
+      resolveSystemSkillNames: vi.fn(async () => [] as string[]),
       loadAgentServers: vi.fn(async () => []),
       getLocalSessionTools: vi.fn(() => []),
       getLocalConnectionErrors: vi.fn(() => []),
@@ -688,6 +723,7 @@ describe('HarnessService.buildContext and execute', () => {
       syncToSession: vi.fn(async () => ({ failed: [] })),
       getUserSkillNames: vi.fn(() => []),
       getUserSkillDocuments: vi.fn(() => []),
+      resolveSystemSkillNames: vi.fn(async () => [] as string[]),
       loadAgentServers: vi.fn(async () => [{ id: 5, name: 'fs', description: '' }]),
       getLocalSessionTools: vi.fn(() => []),
       getLocalConnectionErrors: vi.fn(() => [{ serverId: 5, serverName: 'fs', reason: '连接超时' }]),

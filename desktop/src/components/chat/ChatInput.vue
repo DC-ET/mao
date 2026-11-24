@@ -237,6 +237,8 @@ const props = withDefaults(defineProps<{
   canContinue?: boolean
   /** centered=新建会话居中态（chip 工具条、更高编辑区）；docked=底部贴靠（默认，会话中） */
   layout?: 'centered' | 'docked'
+  /** 斜杠菜单按这个 Agent 过滤系统技能。空则列出全部。 */
+  quickCommandAgentId?: string | number | null
 }>(), {
   disabled: false,
   loading: false,
@@ -262,6 +264,7 @@ const props = withDefaults(defineProps<{
   draftKey: null,
   canContinue: false,
   layout: 'docked',
+  quickCommandAgentId: null,
   // 视觉能力 tri-state：true=支持 / false=不支持 / undefined=未知（不拦截，交给后端校验）。
   // 必须显式声明，否则 Boolean 类型 props 未传时会被 Vue 强制为 false，导致发送被误拦截。
   modelSupportsVision: undefined,
@@ -644,6 +647,7 @@ const panels = useEditorTagPanels({
     // 新任务选已有云项目时文件枚举回落 project-list（与原内联实现同口径）
     cloudProjectKey: props.workspaceMode === 'existing' ? (props.cloudProjectKey ?? null) : null,
   }),
+  getAgentId: () => props.quickCommandAgentId,
   autoComplete: true,
   // 自动补全面板未浏览时 Enter = 发送：触屏不发送（回落换行），与原 isTouchDevice 分支逐行为一致
   onEnter: () => {

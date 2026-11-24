@@ -542,25 +542,13 @@ export class HarnessService {
     context.tools = sessionTools;
 
     try {
-    let agentSkillNames: string[] | null = null;
-    const skillNamesJson = agent.skillNames ?? agent.skills;
-    if (hasText(skillNamesJson)) {
-      try {
-        agentSkillNames = JSON.parse(skillNamesJson!) as string[];
-      } catch (e) {
-        harnessLog('warn', `Failed to parse skillNames for agent ${agent.id}: ${(e as Error).message}`);
-      }
-    }
+    const systemSkillNames = await this.skillSyncService.resolveSystemSkillNames(agent, runtimeUserId);
     const userSkillNames = this.skillSyncService.getUserSkillNames(runtimeUserId ?? 0);
     const syncableNames = new Set<string>(userSkillNames);
     const mergedSkillNames: string[] = [];
-    if (agentSkillNames != null) {
-      for (const name of agentSkillNames) {
-        if (this.skillLoader.hasSkill(name)) {
-          syncableNames.add(name);
-          mergedSkillNames.push(name);
-        }
-      }
+    for (const name of systemSkillNames) {
+      syncableNames.add(name);
+      mergedSkillNames.push(name);
     }
     for (const userSkill of userSkillNames) {
       if (!mergedSkillNames.includes(userSkill)) mergedSkillNames.push(userSkill);

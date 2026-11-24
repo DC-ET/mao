@@ -43,7 +43,7 @@
           multiple
           filterable
           :loading="optionsLoading"
-          placeholder="请选择关联的 Skill 知识文档（留空则加载全部）"
+          placeholder="请选择所有使用者共用的 Skill"
           style="width: 100%"
         >
           <el-option
@@ -53,6 +53,7 @@
             :value="s.name"
           />
         </el-select>
+        <div class="form-hint">这里是所有使用者的共用技能；岗位专属技能到「角色权限」里按 Agent 追加。</div>
         <div v-if="optionsLoadFailed" class="options-error">
           <span>选项加载失败</span>
           <el-button type="primary" link size="small" :loading="optionsLoading" @click="loadOptions">重试</el-button>

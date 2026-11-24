@@ -21,6 +21,8 @@ export interface SkillRouteDeps {
   agentService: AgentService;
   permissionService: { hasPermission(userId: number, code: string): Promise<boolean> };
   userLookup: UserLookup;
+  /** 系统技能删除成功后摘掉角色授权。未注入时不摘（测试桩）。 */
+  roleSkillGrants?: { deleteBySkillName(skillName: string): Promise<void> };
 }
 
 export function registerUserSkillRoutes(app: FastifyInstance, deps: Pick<SkillRouteDeps, 'userSkillService'>): void {
@@ -163,9 +165,9 @@ export function registerAdminUserSkillRoutes(
 
 export function registerSkillDocRoutes(
   app: FastifyInstance,
-  deps: Pick<SkillRouteDeps, 'skillDocService' | 'agentService' | 'permissionService'>,
+  deps: Pick<SkillRouteDeps, 'skillDocService' | 'agentService' | 'permissionService' | 'roleSkillGrants'>,
 ): void {
-  const { skillDocService, agentService, permissionService } = deps;
+  const { skillDocService, agentService, permissionService, roleSkillGrants } = deps;
 
   app.get('/v1/skill-docs', async (request, reply) => {
     requireUserId(request);
@@ -201,6 +203,11 @@ export function registerSkillDocRoutes(
         }
       } catch (e) {
         console.error(`Failed to clean up skillName '${skillName}' from agents: ${(e as Error).message}`);
+      }
+      try {
+        await roleSkillGrants?.deleteBySkillName(skillName);
+      } catch (e) {
+        console.error(`Failed to clean up skillName '${skillName}' from role grants: ${(e as Error).message}`);
       }
     }
     return sendJson(reply, 200, result.code === 0 ? ok(null) : result);
