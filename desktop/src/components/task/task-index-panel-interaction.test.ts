@@ -661,3 +661,51 @@ describe('TaskIndexPanel 组内排序（任务树活跃优先）', () => {
     app.unmount()
   })
 })
+
+describe('TaskIndexPanel 移动端抽屉', () => {
+  function setViewport(width: number) {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: width })
+    window.dispatchEvent(new Event('resize'))
+  }
+
+  it('拉窄跨过 768px 自动收起左栏；抽屉态隐藏拖拽手柄，选中会话后收起', async () => {
+    const { usePanelLayout } = await import('../../composables/usePanelLayout')
+    const layout = usePanelLayout()
+    layout.leftCollapsed.value = false
+    try {
+      setViewport(375)
+      expect(layout.isMobileViewport.value).toBe(true)
+      expect(layout.leftCollapsed.value).toBe(true)
+
+      // 用户点顶栏按钮展开抽屉
+      layout.leftCollapsed.value = false
+      store.sessions = [row('1')]
+      const { host, app } = mountPanel()
+      await tick()
+      expect(q(host, '.resize-handle')).toBeNull()
+
+      rowEl(host, '1').click()
+      await tick()
+      expect(routerPush).toHaveBeenCalledWith('/tasks/1')
+      expect(layout.leftCollapsed.value).toBe(true)
+      app.unmount()
+    } finally {
+      setViewport(1024)
+      layout.leftCollapsed.value = false
+    }
+  })
+
+  it('桌面宽度下选中会话不收起左栏，拖拽手柄保留', async () => {
+    const { usePanelLayout } = await import('../../composables/usePanelLayout')
+    const layout = usePanelLayout()
+    layout.leftCollapsed.value = false
+    store.sessions = [row('1')]
+    const { host, app } = mountPanel()
+    await tick()
+    expect(q(host, '.resize-handle')).toBeTruthy()
+    rowEl(host, '1').click()
+    await tick()
+    expect(layout.leftCollapsed.value).toBe(false)
+    app.unmount()
+  })
+})

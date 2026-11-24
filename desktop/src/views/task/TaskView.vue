@@ -10,6 +10,12 @@
       @new-task="handleNewTask"
       @new-task-from-group="handleNewTaskFromGroup"
     />
+    <div
+      v-if="isMobileViewport && !panelCollapsed"
+      class="task-index-backdrop"
+      aria-hidden="true"
+      @click="panelCollapsed = true"
+    />
 
     <div class="task-container">
       <!-- 任务索引加载失败：中央错误卡（D6）——门住「静默掉进新建态」，但保留显式出口 -->
@@ -158,7 +164,7 @@ const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 const draftStore = useDraftStore()
 const { loadPrefs } = useTaskPanelPrefs()
-const { leftCollapsed: panelCollapsed, rightCollapsed, toggleRight } = usePanelLayout()
+const { leftCollapsed: panelCollapsed, rightCollapsed, isMobileViewport, toggleRight, closeLeftOnMobile } = usePanelLayout()
 
 const sessionIdParam = computed(() => route.params.sessionId as string)
 const agentId = ref('')
@@ -1565,10 +1571,12 @@ async function navigateToLatestSession(): Promise<string | null> {
 }
 
 async function handleNewTask() {
+  closeLeftOnMobile()
   await navigateToNewTask(getCurrentNewTaskDefaults())
 }
 
 async function handleNewTaskFromGroup(payload: { agentId: string; executionMode: string; workspace?: string; reuseWorkspace?: boolean; cloudProjectKey?: string; permissionLevel?: string; modelId?: number }) {
+  closeLeftOnMobile()
   await navigateToNewTask(payload)
 }
 
@@ -1812,9 +1820,24 @@ onUnmounted(() => {
 
 <style scoped>
 .task-layout {
+  position: relative;
   display: flex;
   height: 100%;
   overflow: hidden;
+}
+
+/* 移动端左侧抽屉的遮罩：层级在抽屉（task-index-panel.css）之下、对话区之上 */
+.task-index-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.32);
+  animation: task-index-backdrop-in 0.2s ease-out;
+}
+
+@keyframes task-index-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .task-container {

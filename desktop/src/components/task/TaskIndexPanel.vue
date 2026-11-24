@@ -189,7 +189,7 @@
       </div>
     </template>
     <div
-      v-if="!collapsed"
+      v-if="!collapsed && !isMobileViewport"
       class="resize-handle"
       @mousedown="onResizeStart"
       @touchstart.prevent="onResizeStart"
@@ -224,6 +224,7 @@ import { useSessionStore, ACTIVE_PHASES, type Session, type TaskPhase } from '..
 import { useTerminal } from '../../composables/useTerminal'
 import { removeSessionTabsFor } from '../../composables/useCenterTabs'
 import { useTaskPanelPrefs } from '../../composables/useTaskPanelPrefs'
+import { usePanelLayout } from '../../composables/usePanelLayout'
 import { useRelativeTime, formatRelativeTime } from '../../composables/useRelativeTime'
 import { cloudGroupKey, cloudProjectKeyForNewTask, isEmbedGroupKey, isGroupRenameable, newTaskWorkspaceFromSession, resolveGroupLabel, SIGNAL_GROUP_KEY } from '../../utils/cloud-project'
 import { isElectronClient } from '../../utils/platform'
@@ -789,7 +790,7 @@ const effectivePanelWidth = ref(280)
 const MIN_WIDTH = 120
 const MAX_WIDTH = 500
 const ACTION_BUTTONS_MIN_WIDTH = 200
-/** 头部标题阈值与窄窗口默认栏宽一致：≥148px 显示「任务」，手机和 ≤768px 窗口一进来就能看到 */
+/** 头部标题阈值：≥148px 显示「任务」，拖得更窄时把宽度让给图标 */
 const HEADER_TITLE_MIN_WIDTH = 148
 
 const showItemActions = computed(() => effectivePanelWidth.value >= ACTION_BUTTONS_MIN_WIDTH)
@@ -803,8 +804,11 @@ function updateEffectivePanelWidth() {
   }
 }
 
+const { isMobileViewport, closeLeftOnMobile } = usePanelLayout()
+
 const panelStyle = computed(() => {
-  if (panelWidth.value !== null) {
+  // 移动端是固定宽度的抽屉，桌面端拖出来的宽度不带过去
+  if (panelWidth.value !== null && !isMobileViewport.value) {
     return { width: `${panelWidth.value}px` }
   }
   return {}
@@ -1132,6 +1136,7 @@ async function selectSession(session: Session) {
   // 活跃会话由 TaskView 在详情及 workspace/executionMode 同步完成后切换，
   // 避免新 sessionId 短暂搭配旧会话的工作区 provider。
   router.push(`/tasks/${session.id}`)
+  closeLeftOnMobile()
 }
 
 function startDelete(e: MouseEvent, sessionId: string) {

@@ -15,6 +15,25 @@
   display: none;
 }
 
+/* 移动端：浮在对话区上方的抽屉，不再与对话区并排挤压宽度。
+   滑入用 left 动画而非 transform（原因见上方 backdrop-filter 注释）。 */
+@media (max-width: 768px) {
+  .task-index-panel {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 41;
+    box-shadow: 4px 0 16px rgba(0, 0, 0, 0.12);
+    animation: task-index-drawer-in 0.2s ease-out;
+  }
+}
+
+@keyframes task-index-drawer-in {
+  from { left: calc(-1 * var(--aw-session-panel-width)); }
+  to { left: 0; }
+}
+
 .task-index-panel .panel-header {
   display: flex;
   align-items: center;
@@ -661,7 +680,7 @@
     height: 72px;
   }
 
-  /* 面板在该断点降到 148px：一行放不下「已选 N + 归档 + 取消」（两个按钮就占掉
+  /* 桌面端可把面板拖到 120px：一行放不下「已选 N + 归档 + 取消」（两个按钮就占掉
      约 92px）。计数改独立一行——否则 .select-count 的 flex:1 + min-width:0
      会被压到 0 宽，文案整个不可见（实测 3px）。 */
   .task-index-panel .select-action-bar {
