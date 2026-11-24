@@ -28,6 +28,7 @@ const CONTRACT_SCENES = [
   'feishu_summarize',
   'connectivity_test',
   'memory_extract',
+  'image_generation',
   'unknown',
 ] as const
 
@@ -56,6 +57,12 @@ describe('BUG-6 回归：场景汉化与筛选选项', () => {
     const values = LLM_CALL_SCENE_OPTIONS.map((o) => o.value)
     expect(values).toContain('proxy_approve')
     expect(values).toContain('memory_extract')
+  })
+
+  it('J3b 图片生成场景必须可筛选且有中文（2026-11-24 图片调用流水）', () => {
+    const values = LLM_CALL_SCENE_OPTIONS.map((o) => o.value)
+    expect(values).toContain('image_generation')
+    expect(llmCallSceneLabel('image_generation')).toBe('图片生成')
   })
 
   it('J4 契约里每个场景都有中文且下拉齐全（漏项即回归）', () => {
