@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { isAndroidCapacitor } from '../utils/capacitor'
 import { safeSetItem } from '../utils/safe-storage'
+import type { AppUpdateStatus } from '../utils/update-click'
 
 const STORAGE_KEY = 'app_version'
 const CHECK_INTERVAL = 60_000
@@ -31,7 +32,7 @@ function getAndroidPlugin(): any {
 const hasUpdate = ref(false)
 const currentVersion = ref<string | null>(localStorage.getItem(STORAGE_KEY))
 const newVersion = ref<string | null>(null)
-const appUpdateStatus = ref<'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'not-available' | 'error' | 'unsupported'>('idle')
+const appUpdateStatus = ref<AppUpdateStatus>('idle')
 const appUpdateAvailable = ref(false)
 const appUpdateDownloaded = ref(false)
 const appUpdateVersion = ref<string | null>(null)

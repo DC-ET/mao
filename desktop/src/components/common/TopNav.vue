@@ -167,6 +167,7 @@ import { usePanelLayout, isMobileDevice } from '../../composables/usePanelLayout
 import { useCenterTabs } from '../../composables/useCenterTabs'
 import { useVersionCheck } from '../../composables/useVersionCheck'
 import { readScreenFillingWindow, reserveMacTrafficLightInset as shouldReserveMacTrafficLightInset } from '../../utils/macTrafficLightInset'
+import { resolveUpdateClickAction, summarizeUpdateError } from '../../utils/update-click'
 import { isElectronClient } from '../../utils/platform'
 import { terminalAvailability as computeTerminalAvailability } from '../../utils/terminal-availability'
 import { getLocalDeviceId } from '../../utils/device-info'
@@ -279,7 +280,6 @@ const {
   stopPolling,
   startAppUpdater,
   stopAppUpdater,
-  checkAppUpdate,
   installAppUpdate,
   ignoreAndroidUpdate,
   isAndroidForcedUpdate,
@@ -300,8 +300,8 @@ const updateTooltip = computed(() => {
     return appUpdateVersion.value ? `发现客户端 ${appUpdateVersion.value}，正在下载` : '发现客户端更新，正在下载'
   }
   if (hasUpdate.value) return '发现页面新版本，点击刷新'
-  if (appUpdateStatus.value === 'checking') return '正在检查客户端更新'
-  if (appUpdateStatus.value === 'error') return appUpdateError.value || '检查客户端更新失败'
+  if (appUpdateStatus.value === 'checking') return '正在检查客户端更新，点击刷新页面'
+  if (appUpdateStatus.value === 'error') return summarizeUpdateError(appUpdateError.value)
   return '刷新页面'
 })
 
@@ -430,38 +430,27 @@ async function confirmInstallUpdate() {
   }
 }
 
-async function handleUpdateClick() {
-  if (appUpdateDownloaded.value) {
-    void confirmInstallUpdate()
-    return
-  }
-  if (appUpdateStatus.value === 'downloading') {
-    ElMessage.info(updateTooltip.value)
-    return
-  }
-  if (appUpdateStatus.value === 'error') {
-    await checkAppUpdate()
-    return
-  }
-  if (appUpdateAvailable.value) {
-    if (isAndroidCapacitor()) {
+function handleUpdateClick() {
+  switch (resolveUpdateClickAction({
+    downloaded: appUpdateDownloaded.value,
+    available: appUpdateAvailable.value,
+    status: appUpdateStatus.value,
+    android: isAndroidCapacitor()
+  })) {
+    case 'install':
+      void confirmInstallUpdate()
+      return
+    case 'android-prompt':
       void confirmAndroidUpdate()
-    } else {
-      ElMessage.info('客户端更新正在下载，请稍候')
-    }
-    return
+      return
+    case 'progress':
+      ElMessage.info(updateTooltip.value)
+      return
+    default:
+      // 刷新页面绝不等待客户端更新检查：更新源故障或检查挂起时也必须能刷新。
+      // 重载后 TopNav 挂载会立即重新检查客户端更新，不会漏掉新版本。
+      reloadApp()
   }
-  if (hasUpdate.value) {
-    reloadApp()
-    return
-  }
-  await checkAppUpdate()
-  // 检查发现客户端更新时保留当前页，让下载/安装流程继续；否则再刷新页面
-  // appUpdateAvailable 在 update-available 时已为 true，覆盖 downloading 态
-  if (appUpdateAvailable.value || appUpdateDownloaded.value) {
-    return
-  }
-  reloadApp()
 }
 
 async function handleCommand(command: string) {
