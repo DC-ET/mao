@@ -66,6 +66,8 @@ export interface Agent {
   compactionContextWindowTokens?: number | null;
   compactionTriggerRatio?: number | null;
   compactionMaxSummaryTokens?: number | null;
+  /** 软删标记（repository SELECT * 会带出）。角色授权按 Agent 生效时用它排除已删 Agent。 */
+  deleted?: number | null;
 }
 
 export interface LlmModel {
