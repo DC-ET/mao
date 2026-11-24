@@ -88,6 +88,11 @@
               <el-table-column label="模型" min-width="110" show-overflow-tooltip>
                 <template #default="{ row }">{{ row.modelName || '未知模型' }}</template>
               </el-table-column>
+              <!-- 类型（技术方案 2026-11-24 §7.2）：图片模型的 token 量级与文本不可比，
+                   单列一栏类型即可分辨，不必拆表分组 -->
+              <el-table-column label="类型" width="64">
+                <template #default="{ row }">{{ modelTypeLabel(row.modelType) }}</template>
+              </el-table-column>
               <el-table-column label="Token" width="90" align="right">
                 <template #default="{ row }">{{ formatNumber(row.totalTokens) }}</template>
               </el-table-column>
@@ -150,7 +155,7 @@ import type { MyUsageSummary, MyUsageTrends, UsageRange } from '@mao/contracts'
 import { api } from '../../../api'
 import BaseChart from '../../../components/BaseChart.vue'
 import { CHART_PALETTE, type ChartOption } from '../../../utils/echarts'
-import { llmCallSceneLabel } from '../../../utils/llmCallLabels'
+import { llmCallSceneLabel, modelTypeLabel } from '../../../utils/llmCallLabels'
 import { useAuthStore } from '../../../stores/auth'
 import {
   AXIS_LABEL_COLOR,

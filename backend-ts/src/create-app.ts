@@ -941,6 +941,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       if (signalWatcherServiceRef == null) throw new Error('signal watcher service not assembled yet');
       return signalWatcherServiceRef;
     },
+    // 图片调用流水（2026-11-24）：llmCallService 早于 harness 装配构造（见 :440），可直接传
+    llmCallService,
     sessionSvc, sessionMap, shellManager, outputManager, backgroundTasks, gitTokenResolver, jwt,
     userRepo, ecpInjector, companySsoInjector, larkUatInjector, settingService, runtimeResolver, modelService,
     authResolver: llmAuthResolver,

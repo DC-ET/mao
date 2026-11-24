@@ -10,7 +10,7 @@ import type { GitTokenResolver } from '../../session/types.js';
 import type { WebSearchConfig } from '../../settings/types.js';
 import type { WebPageConfig } from './impl/open-web-page-tool.js';
 import type { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
-import type { ImageModelLookup } from './impl/generate-image-tool.js';
+import type { ImageCallRecorder, ImageModelLookup } from './impl/generate-image-tool.js';
 import type { LlmAuthResolver } from '../llm/llm-auth.js';
 import type { WeixinMediaToolSupport, WeixinMediaUploadService, WeixinSendService } from './impl/wechat-tools.js';
 import type {
@@ -92,6 +92,11 @@ export interface DefaultToolRegistryDeps {
   webPage: WebPageConfig;
   runtimeDataResolver: RuntimeDataResolver;
   imageModelLookup: ImageModelLookup;
+  /**
+   * 图片调用流水记录器（技术方案 2026-11-24 D7）。可选依赖：未注入（精简单测 /
+   * 精简装配）时 generate_image / edit_image 不记账，行为与改造前完全一致。
+   */
+  imageCallRecorder?: ImageCallRecorder | null;
   /** 图片出口凭证解析器（ecp 模式解析当前用户 ECP Token）；缺省时只用模型配置的固定 Key。 */
   authResolver?: LlmAuthResolver;
   uploadDir: string;
@@ -187,8 +192,8 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
       deps.localToolExecutor,
       deps.sessionMapper,
     ),
-    new GenerateImageTool(deps.imageModelLookup, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => ''), deps.uploadContextPath, deps.authResolver),
-    new EditImageTool(deps.imageModelLookup, deps.pathSandbox, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => ''), deps.sendBytesSupport, deps.uploadContextPath, deps.authResolver),
+    new GenerateImageTool(deps.imageModelLookup, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => ''), deps.uploadContextPath, deps.authResolver, deps.imageCallRecorder ?? null),
+    new EditImageTool(deps.imageModelLookup, deps.pathSandbox, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => ''), deps.sendBytesSupport, deps.uploadContextPath, deps.authResolver, deps.imageCallRecorder ?? null),
     new TaskCreateTool(deps.sessionTodoMapper),
     new TaskListTool(deps.sessionTodoMapper),
     new TaskUpdateTool(deps.sessionTodoMapper),

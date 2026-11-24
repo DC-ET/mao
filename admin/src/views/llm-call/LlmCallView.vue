@@ -531,7 +531,7 @@ async function doExportCsv() {
       rows.push(...records)
       pageNum += 1
     }
-    const header = ['时间', '用户', '模型', '输入 Token', '输出 Token', '成本', '耗时(ms)', '吞吐(tok/s)', '缓存 Token', '缓存写 Token', '状态', '错误信息', '会话 ID', 'Agent ID']
+    const header = ['时间', '用户', '场景', '模型', '输入 Token', '输出 Token', '成本', '耗时(ms)', '吞吐(tok/s)', '缓存 Token', '缓存写 Token', '状态', '错误信息', '会话 ID', 'Agent ID']
     const lines = [header.map(csvCell).join(',')]
     for (const row of rows) {
       // 吞吐与表格列同源同公式：不可解码行（非流式）留空
@@ -539,6 +539,8 @@ async function doExportCsv() {
       lines.push([
         row.createdAt,
         row.displayName || row.username || row.userId || '',
+        // 场景（2026-11-24）：图片生成 / 改图也走 llm_call，导出侧必须能按场景区分
+        llmCallSceneLabel(row.scene),
         row.modelName || row.providerModelId || '',
         row.promptTokens || 0,
         row.completionTokens || 0,

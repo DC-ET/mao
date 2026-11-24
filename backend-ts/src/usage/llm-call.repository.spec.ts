@@ -90,17 +90,29 @@ describe('LlmCallRepository 用户维度聚合', () => {
 
   it('aggregateByModel：GROUP BY model_id 且 userId 注入；model_id 为 NULL 保留 null', async () => {
     const { repo, query } = build([
-      { modelId: 3, modelName: 'GPT', callCount: '5', failCount: '0', cancelledCount: '1', promptTokens: '10', completionTokens: '2', totalTokens: '12', cost: '0.25' },
-      { modelId: null, modelName: 'OLD', callCount: '2', failCount: '0', cancelledCount: '0', promptTokens: '1', completionTokens: '1', totalTokens: '2', cost: null },
+      { modelId: 3, modelName: 'GPT', modelType: 'text', callCount: '5', failCount: '0', cancelledCount: '1', promptTokens: '10', completionTokens: '2', totalTokens: '12', cost: '0.25' },
+      { modelId: null, modelName: 'OLD', modelType: null, callCount: '2', failCount: '0', cancelledCount: '0', promptTokens: '1', completionTokens: '1', totalTokens: '2', cost: null },
     ]);
     const rows = await repo.aggregateByModel(7, WINDOW);
-    expect(rows[0]).toEqual({ modelId: 3, modelName: 'GPT', callCount: 5, failCount: 0, cancelledCount: 1, promptTokens: 10, completionTokens: 2, totalTokens: 12, cost: 0.25 });
+    expect(rows[0]).toEqual({ modelId: 3, modelName: 'GPT', modelType: 'text', callCount: 5, failCount: 0, cancelledCount: 1, promptTokens: 10, completionTokens: 2, totalTokens: 12, cost: 0.25 });
     expect(rows[1].modelId).toBeNull();
+    // 模型行已删 / 历史行：LEFT JOIN 取不到 model_type → null，前端归「未知」
+    expect(rows[1].modelType).toBeNull();
     expect(rows[1].cost).toBe(0);
     const [sql, params] = query.mock.calls[0] as [string, unknown[]];
     expect(sql).toContain('GROUP BY model_id');
     expect(sql).toContain('ORDER BY totalTokens DESC');
     expect(params).toEqual([7, '2026-10-04 00:00:00', '2026-10-11 00:00:00']);
+  });
+
+  it('aggregateByModel：LEFT JOIN llm_model 取 model_type，且用 MAX 聚合避开 ONLY_FULL_GROUP_BY', async () => {
+    const { repo, query } = build([]);
+    await repo.aggregateByModel(7, WINDOW);
+    const [sql] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('LEFT JOIN llm_model m ON m.id = llm_call.model_id');
+    // GROUP BY model_id 下裸选 join 列会撞 MySQL8 默认的 ONLY_FULL_GROUP_BY
+    expect(sql).toContain('MAX(m.model_type) AS modelType');
+    expect(sql).not.toMatch(/^\s*m\.model_type AS/m);
   });
 
   it('aggregateByScene：scene 空归 unknown 分组', async () => {

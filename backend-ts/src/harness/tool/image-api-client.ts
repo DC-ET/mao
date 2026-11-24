@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { applyClientImpersonationHeaders } from '../llm/client-impersonation-headers.js';
 import { ImageFileSupport } from './image-file-support.js';
+import type { ChatUsage } from '../llm/chat-request.js';
 
 /** 图片 API 超时：协议默认 10 分钟。 */
 export const IMAGE_API_TIMEOUT_MS = 600_000;
@@ -81,6 +82,36 @@ export function normalizeImageModelName(name: string | null | undefined): string
   if (lower === 'flare' || lower === 'gpt-image-2.5-flare') return 'gpt-image-2.5-flare';
   if (lower === 'sunburst' || lower === 'gpt-image-2.5-sunburst') return 'gpt-image-2.5-sunburst';
   return raw;
+}
+
+/**
+ * 图片 API 的 usage 归一为流水用的 `ChatUsage`（技术方案 2026-11-24 §6.2）。
+ *
+ * 上游（gpt-image 系）返回 OpenAI 形态的 snake_case：`input_tokens` / `output_tokens` /
+ * `total_tokens`（另有 `input_tokens_details.text_tokens / image_tokens`，无价格消费方，
+ * 刻意不拆，见方案 D4）。非法/脏值一律归 0——宁可低估也不让脏值进统计。
+ *
+ * 返回 null 表示「上游没给 usage」：调用方仍记行，token 全 0（方案 §2.1 目标 3）。
+ * 工具结果 JSON 里的 usage 保持原样透传，归一只服务于落库。
+ */
+export function normalizeImageUsage(raw: unknown): ChatUsage | null {
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  // 至少认出一个 token 字段才认为「有 usage」：空对象按无 usage 处理，避免记一行假账
+  const known = ['input_tokens', 'output_tokens', 'total_tokens'].some((k) => k in obj);
+  if (!known) return null;
+  const promptTokens = asTokenCount(obj.input_tokens);
+  const completionTokens = asTokenCount(obj.output_tokens);
+  const totalRaw = asTokenCount(obj.total_tokens);
+  // total 缺失（0 也视为缺失，由分项推导）时按分项相加；分项也缺则 total 记 0
+  const totalTokens = totalRaw > 0 ? totalRaw : promptTokens + completionTokens;
+  return { promptTokens, completionTokens, totalTokens };
+}
+
+/** 只接受 number 且有限：字符串数字 / NaN / Infinity / 负数一律归 0（防脏值）。 */
+function asTokenCount(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 0;
+  return Math.trunc(value);
 }
 
 export function stripTrailingSlash(baseUrl: string): string {

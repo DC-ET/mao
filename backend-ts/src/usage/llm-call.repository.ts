@@ -304,6 +304,7 @@ export class LlmCallRepository {
     const rows = await this.db.query<Record<string, unknown>>(
       `SELECT model_id AS modelId,
               MAX(model_name) AS modelName,
+              MAX(m.model_type) AS modelType,
               COUNT(*) AS callCount,
               COALESCE(SUM(CASE WHEN success = 0 AND ${NOT_CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS failCount,
               COALESCE(SUM(CASE WHEN ${CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS cancelledCount,
@@ -312,6 +313,7 @@ export class LlmCallRepository {
               COALESCE(SUM(total_tokens), 0) AS totalTokens,
               COALESCE(SUM(cost_micros), 0) / 1000000 AS cost
        FROM llm_call
+       LEFT JOIN llm_model m ON m.id = llm_call.model_id
        WHERE user_id = ? AND ${sql}
        GROUP BY model_id
        ORDER BY totalTokens DESC`,
@@ -320,6 +322,10 @@ export class LlmCallRepository {
     return rows.map((r) => ({
       modelId: r.modelId == null ? null : toNumber(r.modelId),
       modelName: (r.modelName as string | null) ?? null,
+      // 模型类型（技术方案 2026-11-24 §7.2）：LEFT JOIN 取不到（模型行已删 / 历史行）为 null，
+      // 前端归「未知」。用 MAX 聚合而非裸选：GROUP BY model_id 下裸选 join 列会撞
+      // ONLY_FULL_GROUP_BY（MySQL8 默认），model_id 相同则 model_type 必然相同，MAX 无损。
+      modelType: r.modelType == null ? null : String(r.modelType),
       callCount: toNumber(r.callCount),
       failCount: toNumber(r.failCount),
       cancelledCount: toNumber(r.cancelledCount),

@@ -25,6 +25,7 @@ export type LlmCallScene =
   | 'feishu_summarize'
   | 'connectivity_test'
   | 'memory_extract'
+  | 'image_generation'
   | 'unknown';
 
 // ─── 单用户用量（"我的用量" / 管理后台用户用量视图共用，2026-11-10 用户用量方案下沉） ───
@@ -78,6 +79,11 @@ export interface LlmCallSummaryRow {
 export interface LlmCallModelAggRow {
   modelId: number | null;
   modelName: string | null;
+  /**
+   * 模型类型（llm_model.model_type：text / audio / image；模型行已删或历史行为 null）。
+   * 图片模型的 token 量级与文本模型不可比，消费端据此分组，避免混排扭曲榜单。
+   */
+  modelType?: string | null;
   callCount: number;
   failCount: number;
   cancelledCount: number;

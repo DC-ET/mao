@@ -9,12 +9,14 @@ import {
   ImageApiError,
   MAX_EDIT_IMAGE_BYTES,
   callImageEdits,
+  normalizeImageUsage,
   toImageApiError,
   type EditImageFile,
 } from '../image-api-client.js';
 import {
   buildImageApiConfig,
   materializeImageApiResult,
+  type ImageCallRecorder,
   type ImageModelLookup,
 } from './generate-image-tool.js';
 import { loadSendFileBytes, type SendBytesCallContext, type SendBytesSupport } from './send-file-bytes.js';
@@ -77,6 +79,8 @@ export class EditImageTool extends BaseTool {
     private readonly contextPath: string = '/api',
     /** 凭证解析器：ecp 模式在运行期解析当前调用用户的 ECP Token（缺省仅支持固定 API Key）。 */
     private readonly authResolver: LlmAuthResolver = createStaticOnlyAuthResolver(),
+    /** 调用流水记录器（技术方案 2026-11-24）：未注入时零行为，工具行为与改造前完全一致。 */
+    private readonly recorder: ImageCallRecorder | null = null,
   ) { super(); }
 
   getName(): string { return 'edit_image'; }
@@ -173,8 +177,15 @@ export class EditImageTool extends BaseTool {
     sessionId: number | null,
     userId: number | null,
     workspace: string | null,
+    agentId: number | null = null,
   ): Promise<string> {
     let model: Awaited<ReturnType<ImageModelLookup['findFirstActiveImageModel']>> = null;
+    // 记账口径（技术方案 2026-11-24 §6.4 + 评审定案）：只记「真的打到上游」的调用。
+    // 参数/配置类早退错误（prompt 空、路径不合法、无可用模型、读字节失败…）不是模型调用，
+    // 记进来只会用与图片模型无关的噪音污染调用数与成功率。
+    let upstreamAttempted = false;
+    let resolvedModelName = '';
+    const started = Date.now();
     try {
       const args = parseObject(argumentsJson) ?? {};
       const prompt = asText(args.prompt);
@@ -218,6 +229,8 @@ export class EditImageTool extends BaseTool {
       const cfg = buildImageApiConfig(model, asText(args.model));
       if (!cfg.baseUrl) return errorJson('文生图模型未配置 base_url');
       if (!cfg.model) return errorJson('文生图模型未配置 model_id');
+      // 记别名归一后的上游模型名（D10）：否则流水显示的和真实账单对不上。
+      resolvedModelName = cfg.model;
       // 凭证解析：ecp 模式使用当前调用用户的 ECP Token（失败抛错，由外层 catch 统一转 errorJson）。
       // 工具执行不在 LlmCallContext 内，显式传 userId 作为解析身份。
       cfg.apiKey = await this.authResolver.resolveApiKey({
@@ -226,6 +239,7 @@ export class EditImageTool extends BaseTool {
         apiKey: cfg.apiKey,
         authType: model.authType,
       }, userId);
+      upstreamAttempted = true;
 
       const result = await callImageEdits(cfg, {
         prompt,
@@ -241,10 +255,34 @@ export class EditImageTool extends BaseTool {
           : undefined,
       });
       const baseUrl = await this.getBaseUrl();
-      return toJson(materializeImageApiResult(result, this.uploadDir, 'edit', baseUrl, prompt, userId, this.contextPath));
+      const payload = materializeImageApiResult(result, this.uploadDir, 'edit', baseUrl, prompt, userId, this.contextPath);
+      await this.recorder?.record({
+        model,
+        resolvedModelName,
+        usage: normalizeImageUsage(result.usage),
+        success: true,
+        durationMs: Date.now() - started,
+        userId,
+        sessionId,
+        agentId,
+      });
+      return toJson(payload);
     } catch (e) {
       const err = toImageApiError(e, model?.apiKey);
       harnessLog('error', 'EditImageTool failed', err);
+      if (upstreamAttempted) {
+        await this.recorder?.record({
+          model,
+          resolvedModelName,
+          usage: null,
+          success: false,
+          errorMessage: err.message,
+          durationMs: Date.now() - started,
+          userId,
+          sessionId,
+          agentId,
+        });
+      }
       return toJson({
         error: err.message,
         error_code: err.errorCode,

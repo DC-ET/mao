@@ -19,6 +19,7 @@ const SCENE_LABELS: Record<LlmCallScene, string> = {
   feishu_summarize: '飞书摘要',
   connectivity_test: '连通性测试',
   memory_extract: '记忆抽取',
+  image_generation: '图片生成',
   unknown: '未知',
 }
 
@@ -29,6 +30,24 @@ export const LLM_CALL_SCENE_OPTIONS: ReadonlyArray<{ value: LlmCallScene; label:
 export function llmCallSceneLabel(scene?: string | null): string {
   if (!scene) return '未知'
   return SCENE_LABELS[scene as LlmCallScene] ?? scene
+}
+
+/**
+ * 模型类型中文名（llm_model.model_type）。文案与模型管理页的 tab 标签同一套
+ * （ModelListView.vue：文本模型 / 语音模型 / 图片模型）。
+ *
+ * 用于「按模型」汇总的分组（技术方案 2026-11-24 §7.2）：图片模型的 token 量级与
+ * 文本模型不可比，混排会扭曲榜单，故按类型分组展示。NULL（模型行已删 / 历史行）归「未知」。
+ */
+const MODEL_TYPE_LABELS: Record<string, string> = {
+  text: '文本',
+  audio: '语音',
+  image: '图片',
+}
+
+export function modelTypeLabel(modelType?: string | null): string {
+  if (!modelType) return '未知'
+  return MODEL_TYPE_LABELS[modelType] ?? modelType
 }
 
 /**

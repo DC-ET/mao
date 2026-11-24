@@ -1,9 +1,9 @@
 # 图片生成 / 改图调用记入「调用流水」技术方案
 
-- 状态：待实现（结论已定稿，等排期）
+- 状态：已实现（2026-11-24，分支 `feature/image-call-flow`；实现期按代码实况修正了 6 处方案描述，见 §11 修订记录）
 - 日期：2026-11-24
 - 评审：2026-11-24 杨佳毅确认四条口径——①图片生成 / 处理**暂时固定 0 成本计价**（`cost_micros = 0`，非 NULL）；②agentId 经工具执行链**透传**获取（图片调用必属某个会话任务，会话必有归属 Agent）；③④⑤按推荐方案处理（scene 合并为单一 `image_generation`、模型维度聚合按 `model_type` 分组、run trace 零结构改动）；⑥不做公告、不处理历史跳涨（当前仅一人关注该数据，且未设置任何费用预算）。
-- 一句话：`generate_image` / `edit_image` 每次调用（成功与失败）在 `llm_call` 记一行——`scene = image_generation`、成本固定 0、token 按上游 usage 归一；`agentId` 经 `ToolInvocation → dispatcher → callTool → executeWithUser` 透传，归因完整。
+- 一句话：`generate_image` / `edit_image` 每次**打到上游**的调用（成功与失败）在 `llm_call` 记一行——`scene = image_generation`、成本固定 0、token 按上游 usage 归一；`agentId` 经 `ToolInvocation → dispatcher → callTool → executeWithUser` 透传，归因完整。参数 / 配置类早退错误（提示词为空、无可用模型、路径不合法等）**不记行**，见 D11。
 - 关联代码（撰写时已核实，均为当前工作区 `main`，`94d34f6c`）：
   - 工具实现：`backend-ts/src/harness/tool/impl/generate-image-tool.ts`（`executeWithUser` 入口 `:166`，成功返回 `:206`，失败 catch `:207`）、`edit-image-tool.ts`（同构，`:171`/`:244`/`:245`）
   - 图片 API 客户端：`backend-ts/src/harness/tool/image-api-client.ts`（usage 原样透传 `:372-374`，未做任何归一）
@@ -33,7 +33,7 @@
 
 ### 2.1 目标
 
-1. `generate_image` / `edit_image` 每次调用在 `llm_call` 记一行：**成功与失败都记**，`scene = image_generation`。
+1. `generate_image` / `edit_image` 每次**打到上游**的调用在 `llm_call` 记一行：**成功与失败都记**，`scene = image_generation`。参数 / 配置类早退错误不记（D11）。
 2. 归因完整：`user_id` / `session_id` / `agent_id` 按现有口径取值（agentId 经执行链透传，见 D5）。
 3. token 入列：上游 usage 归一为 `prompt_tokens` / `completion_tokens` / `total_tokens`，无 usage 时全 0 但仍记行。
 4. 成本固定 `cost_micros = 0`（显式 0，不是 NULL）：已知零价，SUM 计入但不改变总额，不触发价格解析与兜底缓存。
@@ -59,6 +59,7 @@
 | D4 | token | 归一上游 usage：`input_tokens→prompt`、`output_tokens→completion`、`total` 缺失时相加 | token 型预算与用量统计从此含图片；不做 image/text 输入拆分——没有价格消费方，拆了也没处花 |
 | D5 | agentId | 执行链透传：`dispatchFullOutcome` 的 `routeAgentId`（ToolInvocation.agentId 轮快照，缺省按 sessionId 查库）→ `callTool` → `execute` → `executeWithUser` | 不新增按 session 反查的代码；`routeAgentId` 与容器路由同源，本来就是「这个工具调用属于哪个 Agent」的权威值 |
 | D6 | 失败也记 | `success = 0` + `error_message`（`toImageApiError` 已脱敏） | 失败同样耗时长、占配额；审计与排障需要看到失败率 |
+| D11 | 记账边界 | 只记「真的打到上游」的调用：`upstreamAttempted` 置位后的成功 / catch；此前的早退错误不记 | 参数与配置类错误（prompt 空、无可用模型、路径不合法、未配 base_url）不是模型调用：没有模型行可快照、没有上游耗时，记进来只会用与图片模型无关的噪音污染调用数与成功率。原方案 §8.2 把「无可用模型」列为记行路径，与它实际是早退分支矛盾，实现期定案为此条 |
 | D7 | 记录器注入 | 窄接口端口 `ImageCallRecorder` + 可选依赖，未注入即零行为 | 与 `ImageModelLookup` 同模式；精简单测 / e2e 装配不必接 `LlmCallService` |
 | D8 | 异常隔离 | 记录失败只 warn，绝不影响工具返回 | `LlmCallService.record` 内部已 catch DB 异常；适配器再包一层 try/catch 双保险 |
 | D9 | 一次调用一行 | 不按 `n` 张图拆行 | usage 是整次调用的；拆行会重复计 token 与耗时 |
@@ -74,7 +75,7 @@
 | `user_id` | 工具入参 `userId` | 与 dispatcher 的运行身份口径一致（`runtimeToolUserId`） |
 | `session_id` | 工具入参 `sessionId` | 后台子代理 / 定时任务等无会话场景为 NULL——与 compaction 等旁路调用同样处理，只在流水明细可见，不进会话轨迹窗口 |
 | `agent_id` | 透传的 `routeAgentId` | 轮快照，缺省时 dispatcher 已按 sessionId 查库兜底；仍缺则 NULL，聚合归入「未归属」组（现有 NULL 口径） |
-| `model_id` / `model_name` / `provider` | 图片模型行快照 | `model_type = image` 的 `llm_model` 行 |
+| `model_id` / `model_name` / `provider` | 图片模型行快照 | `model_type = image` 的 `llm_model` 行；catch 路径下 `model` 可能为 null（取模型行自身抛异常），此时三列全 NULL，流水明细模型列显示空（`enrichRecords` 只对 user/agent 补名，不补模型名） |
 | `provider_model_id` | `cfg.model` | 别名归一后的上游模型名（D10） |
 | `protocol` | `model.apiProtocol` | 可能为 NULL → 展示「未知」，可接受 |
 | `prompt_tokens` / `completion_tokens` / `total_tokens` | 归一值；无 usage 全 0 | D4 |
@@ -101,7 +102,10 @@ cost_micros=0  success=1  duration_ms=8231  stream=0
 
 ## 5. 数据模型
 
-**无迁移。** `llm_call.scene` 是 `VARCHAR(64)` 无 CHECK 约束（`V113__llm_call.sql:11`），新场景值直接可写；顺带把该行注释里的枚举清单补上 `image_generation`（纯注释更新，不动结构，不占迁移号）。不加索引：现有 `idx_llm_call_scene_created` 已覆盖场景筛选。
+**无迁移。** `llm_call.scene` 是 `VARCHAR(64)` 无 CHECK 约束（`V113__llm_call.sql:11`），新场景值直接可写。不加索引：现有 `idx_llm_call_scene_created` 已覆盖场景筛选。
+
+> **原方案打算「顺带把 V113 那行注释的枚举清单补上 `image_generation`」——实现期否决了。**
+> `src/db/flyway.ts:282` 有 `Flyway validate failed: checksum mismatch` 校验，改已应用的迁移文件会改 CRC32 校验和；虽然 `validateOnMigrate` 目前硬编码 `false`（`app-config.ts:204`），但任何人打开该开关、或外部跑一次 `flyway:validate` 都会让服务起不来。且那行注释本就已落后 3 个场景（缺 `feedback_experience_draft` / `proxy_approve` / `memory_extract`），说明无人维护——场景枚举的权威在 `llm-call-context.ts` + contracts，不为一条注释冒校验和风险。
 
 不引入 `price_image_input` 等价格列的原因见 D3：固定 0 成本下没有价格消费方；后续做计价时再按当时最大迁移号顺延。
 
@@ -136,7 +140,7 @@ export function normalizeImageUsage(raw: unknown): ChatUsage | null
 ```ts
 export interface ImageCallRecorder {
   record(input: {
-    model: LlmModel;              // 图片模型行快照（id / name / provider / apiProtocol）
+    model: LlmModel | null;       // 图片模型行快照（id / name / provider / apiProtocol）；null = 取模型行自身失败
     resolvedModelName: string;    // 归一后的上游模型名（cfg.model）
     usage: ChatUsage | null;
     success: boolean;
@@ -158,35 +162,40 @@ export function createImageCallRecorder(llmCallService: LlmCallService): ImageCa
 - 在 `LlmCallContext.runAsync({ scene: 'image_generation', userId, sessionId, agentId }, ...)` 内调 `llmCallService.record({ modelConfig: { id, name, provider, apiProtocol, modelId: resolvedModelName }, stream: false, usage, success, errorMessage, durationMs, costMicros: 0 })`。
 - scene 与零成本由适配器统一决定，端口入参不带这两个字段——将来接计价只改适配器（§10.1）。
 - 整个 `record` 包 try/catch，异常只 `harnessLog('warn', ...)`，不外抛（D8）。
+- `LlmCallModelConfig.id` 是 `id?: number`（不接受 null），null 模型行快照要落 `undefined`。
 
 ### 6.4 工具埋点（两工具同款）
 
-构造器末位加可选参数 `recorder: ImageCallRecorder | null = null`（现有 5 个位置参数与全部既有单测的调用形态不变）。
+构造器末位加可选参数 `recorder: ImageCallRecorder | null = null`（generate 现有 5 个位置参数、edit 现有 7 个，全部既有单测的调用形态不变）。
 
-`executeWithUser` 内：
+`executeWithUser` 内（D11 的记账边界用 `upstreamAttempted` 标志表达）：
 
 - 入口 `const started = Date.now()`。
+- 凭证解析之前置 `upstreamAttempted = false`；解析完（即将发上游请求）置 `true`。从此之后的成功与 catch 都记账，之前的早退错误不记。
 - 成功路径：`materializeImageApiResult` 之后、`return` 之前，`await this.recorder?.record({ model, resolvedModelName: cfg.model, usage: normalizeImageUsage(result.usage), success: true, durationMs: Date.now() - started, userId, sessionId, agentId })`。
-- 失败 catch：`err.message`（`toImageApiError` 已做 apiKey 脱敏）同样记一行 `success: false`。
+- 失败 catch：`if (upstreamAttempted)` 才记一行 `success: false` + `err.message`（`toImageApiError` 已做 apiKey 脱敏）。
 - `recorder == null` 时 `?.` 短路，零开销零行为变化（D7）。
+- 记账是工具执行路径上多出来的一次同步 DB 往返（`LlmCallService.record` 内部 await insert）。已知且接受：异常已被 D8 两层 catch 隔离，不会影响工具返回；换来的是失败行不丢。
 
-注意 `userId` 用 `executeWithUser` 的入参（群聊场景即执行身份，与 dispatcher 传给工具的 `runtimeToolUserId` 同源）；`agentId` 用 6.5 透传来的第 5 参。
+注意 `userId` 用 `executeWithUser` 的入参（群聊场景即执行身份，与 dispatcher 传给工具的 `runtimeToolUserId` 同源）；`agentId` 用 6.5 透传来的第 5 参。usage 取 `callImageGenerations` / `callImageEdits` 返回的 `ImageApiResult.usage`（`Record<string, unknown>`），不要绕 `materializeImageApiResult` 的 payload。
 
 ### 6.5 agentId 透传（`tool.ts` + `tool-dispatcher.ts`）
 
-`harness/tool/tool.ts`（沿用文件内「arity 递减链」既有风格，纯增量）：
+> 实现期修正：`Tool.execute` / `BaseTool.execute` **不是重载组**，是单签名 `(argumentsJson, a?, b?, c?: unknown)` + `arguments.length` / `typeof a === 'string'` 运行时分流。所以「加 5 参重载」不成立，必须直接改接口签名，否则 `callTool` 里 `tool.execute(j, sessionId, userId, workspace, agentId)` 直接 tsc 报错。
 
-- `callTool(tool, argumentsJson, sessionId?, userId?, workspace?, agentId?)` 加第 5 参。
-- `execute` 加 5 参重载（`:34-60` 的重载组末尾追加），路由到 `executeWithUser(argumentsJson, sessionId, userId, workspace, agentId)`。
-- `executeWithUser(argumentsJson, sessionId, userId, workspace, agentId?)` 基类签名加可选第 5 参；基类实现忽略该参继续向下链（`executeWithSession` 等不变）。子类按需覆盖 5 参版本，只覆盖 4 参的现有工具不受影响（TS 方法参数少者兼容）。
+`harness/tool/tool.ts`：
+
+- `callTool(tool, argumentsJson, sessionId?, userId?, workspace?, agentId?)` 加第 5 参，在第一个分支转发给 `tool.execute`。
+- `Tool` 接口 `execute` 与 `BaseTool.execute` 各加 `d?: unknown`；`BaseTool.execute` 最后一个分支（原 4 参分支）一并转发 `(d as number | null) ?? null`——4 参调用时 `d` 为 `undefined`，落成 `null`，与「无 agent 归属」同义。
+- `executeWithUser(argumentsJson, sessionId, userId, workspace, agentId = null)` 基类签名加**带缺省值**的第 5 参；基类实现忽略该参继续向下链（`executeWithSession` 等不变）。子类按需覆盖 5 参版本，只覆盖 4 参的现有工具不受影响（TS 方法参数少者兼容）。
 
 `harness/tool/tool-dispatcher.ts`：
 
-- `:320` SERVER_ONLY 分支（两图片工具所在，`:72`）的 `callTool(tool, argumentsJson, sessionId, runtimeToolUserId, workspace)` 追加第 5 参 `routeAgentId`——**必须**。
-- `:451` 通用分支同款透传 `routeAgentId`——一次改齐，未来工具免再 plumbing。
-- `:263` `dispatchCloud` 无会话上下文（sessionId 恒 undefined），不传。
+- SERVER_ONLY 分支（两图片工具所在）的 `callTool(tool, argumentsJson, sessionId, runtimeToolUserId, workspace)` 追加第 5 参 `routeAgentId`——**必须**。
+- 通用分支同款透传 `routeAgentId`——一次改齐，未来工具免再 plumbing。
+- `dispatchCloud` 无会话上下文（sessionId 恒 undefined），不传。
 
-`routeAgentId` 是 `dispatchFullOutcome` 的入参，语义为「ToolInvocation.agentId 按轮快照；缺省时按 sessionId 查库兜底」（参数注释原文），直接复用，不新增任何查询。
+`routeAgentId` 是 `dispatchFullOutcome` 的入参，语义为「ToolInvocation.agentId 按轮快照；缺省时按 sessionId 查库兜底」（参数注释原文），直接复用，不新增任何查询。链路已核实完整：`harness-service.ts:396` 设 `context.agentId` → `agent-loop.ts:826` 传 `invocation.agentId` → `tool-dispatcher.ts:223` 传 `routeAgentId`。
 
 ### 6.6 装配
 
@@ -201,18 +210,28 @@ export function createImageCallRecorder(llmCallService: LlmCallService): ImageCa
 
 两端 `llmCallLabels.ts` 各一行 `image_generation: '图片生成'`（6.1）。以下展示面自动生效，无需其他改动：
 
-- 调用流水明细列表、场景筛选下拉、场景饼图（`LlmCallView.vue`，`llmCallSceneLabel`）；
-- 桌面「我的用量」与 admin 用户用量抽屉的场景分布；
-- 导出 CSV 的 scene 列；
+- 调用流水明细列表（`LlmCallView.vue` 的 el-tag 与详情项）、场景筛选下拉（`LLM_CALL_SCENE_OPTIONS` 从汉化表派生）；
+- 桌面「我的用量」的场景饼图（`UsageOverviewTab.vue` 的 `sceneSlices`）、admin 用户用量抽屉的「按场景」表（`UserUsageTab.vue`）、admin 分析页模型 tab 的场景环图（`ModelTab.vue` 经 `sceneLabel` → `llmCallSceneLabel`）与失败 Top5 的场景切片（`SessionTab.vue`）；
 - run trace：图片行落入 `sideCalls`（`run-trace.service.ts:256`），展示为「旁路调用」一条，复用场景文案；`findCall` 只认 agent scene（`run-trace-record.service.ts:116`），工具记录不会错挂到图片行——**零改动**。
+
+> **原方案此处列了两处不存在的展示面，实现期更正：**
+> ① 「场景饼图（`LlmCallView.vue`）」——该文件里没有任何饼图 / 环图，只有 tag 与详情项；场景分布图实际在 desktop `UsageOverviewTab.vue` 与 admin `ModelTab.vue` / `UserUsageTab.vue`，如上。
+> ② 「导出 CSV 的 scene 列」——原 CSV 表头根本没有 scene 列（`LlmCallView.vue` 的 `doExportCsv`），图片行导出来只能靠模型名猜，闭环是断的。本期顺手补了一列「场景」（取 `llmCallSceneLabel(row.scene)`，与表格同源），不再只靠前端自动生效。
 
 ### 7.2 模型维度按类型分组（消除榜单污染）
 
-图片模型的 token 量级与文本模型不可比（图片输入 token 天然巨大），混排会扭曲「模型 token 榜单」：
+图片模型的 token 量级与文本模型不可比，混排会扭曲「模型 token 榜单」：
 
 1. 契约 `shared/contracts/src/usage.ts:78` `LlmCallModelAggRow` 加 `modelType?: string | null`。
-2. `llm-call.repository.ts:302-318` `aggregateByModel`：`LEFT JOIN llm_model m ON m.id = llm_call.model_id`，select `m.model_type AS modelType`（LEFT JOIN：模型行已删也能展示，type 为 NULL 归「未知」）。
-3. 消费端按 `modelType` 分组渲染：`admin/src/views/user/components/UserUsageTab.vue`、`admin/src/views/analytics/tabs/SessionTab.vue`、`desktop/src/components/usage/UsageOverviewTab.vue`——三处各加一个类型图例 / 分组表头（text / audio / image → 文本 / 语音 / 图片，复用 `model_type` 既有中文档位）。
+2. `llm-call.repository.ts` `aggregateByModel`：`LEFT JOIN llm_model m ON m.id = llm_call.model_id`，select `MAX(m.model_type) AS modelType`（LEFT JOIN：模型行已删也能展示，type 为 NULL 归「未知」）。
+   **必须用 `MAX()` 聚合**，不能裸选 `m.model_type`：该查询是 `GROUP BY model_id`，裸选 join 列会撞 MySQL8 默认的 `ONLY_FULL_GROUP_BY`（1055）；`model_id` 相同则 `model_type` 必然相同，`MAX` 无损。
+3. 消费端加一栏「类型」：`admin/src/views/user/components/UserUsageTab.vue` 的「按模型」表加 `modelTypeLabel(row.modelType)` 列（text / audio / image → 文本 / 语音 / 图片，文案与 `ModelListView.vue` 的 tab 同一套）。
+
+> **原方案的 §7.2 有三处偏差，实现期更正：**
+> ① 消费端清单列了 `admin/src/views/analytics/tabs/SessionTab.vue`——它的 `byModel` 是 admin-analytics 的 `FailTopItem[]`（失败 Top5），**不是** `LlmCallModelAggRow`，改它没有意义。
+> ② 列了 `desktop/src/components/usage/UsageOverviewTab.vue`——它的「按模型」饼图**按调用次数占比**（不是 token 量级），§7.2 的理由在这份消费端上不成立，故不改。
+> ③ 漏了真正的大头：admin 分析页「模型」tab（`selectLlmCallStatsByModel` + `ModelTab.vue`）是全项目最大的模型维度 `llm_call` 聚合面，有「调用 Token / 成本 / 占比」列与模型 token 环图。本期未动它（图片模型会作为独立行出现在榜单里，token 混计入总账）——如后续认为需要在该页按类型分组或剔除 image 行，单独立项。
+> 另外，原方案「图片输入 token 天然巨大」的前提偏弱：按示例行，gpt-image 单次约 input 1.8k / output 4k，与一次文本调用同量级。故本期只做最小闭环（契约 + 查询 + 一栏类型列），未做分组表头 / 图例。
 
 ## 8. 测试
 
@@ -220,15 +239,18 @@ export function createImageCallRecorder(llmCallService: LlmCallService): ImageCa
 
 1. `image-api-client` 相关 spec（或新 `image-usage.spec.ts`）：`normalizeImageUsage` 全用例（6.2 列名清单）。
 2. `generate-image-tool.spec.ts` / `edit-image-tool.spec.ts`：
-   - 成功：recorder 被调一次；参数含 `resolvedModelName = cfg.model`（别名场景）、归一后 usage、`success: true`、`durationMs > 0`、`agentId` 等于透传值；
-   - 失败（上游 5xx、无可用模型两种路径）：`success: false` 且 `errorMessage` 非空、不含 apiKey；
-   - 上游无 usage：`usage: null` 仍记行；
+   - 成功：recorder 被调一次；参数含 `resolvedModelName = cfg.model`（别名场景）、归一后 usage、`success: true`、`durationMs >= 0`、`agentId` 等于透传值；
+   - 失败（上游 4xx/5xx、ecp 鉴权解析失败、落盘失败——均在 catch 内且 `upstreamAttempted` 已置位）：`success: false` 且 `errorMessage` 非空、不含 apiKey；
+   - 早退错误不记行：prompt 空 / size 非法 / 无可用模型 / 改图路径不存在，`calls` 长度为 0（D11）；
    - recorder 未注入（现有用例即覆盖）：行为不变。
-3. `image-call-recorder` 适配器 spec（mock `LlmCallService`）：scene / user / session / agent 透传正确、`costMicros === 0`、`stream === false`；`record` 抛异常时只 warn 不外抛。
-4. `llm-call-context.spec.ts`：穷尽断言自动覆盖新成员；如该 spec 枚举成员则补 `IMAGE_GENERATION`。
-5. 后端全量：`cd backend-ts && npm test`（落盘日志后 grep 摘要）。
-6. 前端构建验证：desktop / admin 各跑 `npm run build`（汉化表漏项会在此暴露，不依赖 `npx vue-tsc --noEmit`）。
-7. 手工验收（本地或测试环境）：后台配好 image 模型 → 桌面发一句话让 Agent 生成 / 改图 → 管理后台调用流水出现 `scene=图片生成`、`cost=0`、`agent_id` 为该会话 Agent、`duration_ms` 为秒级；再触发一次失败（临时停用模型）确认失败行可读。
+3. `image-call-recorder` 适配器 spec（mock `LlmCallService`）：scene / user / session / agent 透传正确、`costMicros === 0`、`stream === false`；`record` 抛异常时只 warn 不外抛；模型行为 null 时快照列落 null。
+4. `tool-arity.spec.ts`（新增）：`BaseTool.execute` 的 1/2/3/4/5 参路由逐条断言，含「只覆盖 4 参的旧工具继续收到 4 个参数」与 `callTool` 5 参转发——`BaseTool.execute` 最后一个分支一改就影响全部子类，这是唯一的安全网。
+5. `tool-dispatcher.spec.ts`：`routeAgentId` 透传到 SERVER_ONLY 与通用分支两个 `callTool`；原有 3 处 `toHaveBeenCalledWith('{}', 7, 67, 'ws')` 断言同步补第 5 参 `null`。
+6. `llm-call.repository.spec.ts`：`aggregateByModel` 断言 `LEFT JOIN llm_model` 与 `MAX(m.model_type)`；modelType 为 null 的行归「未知」。
+7. `llm-call-context.spec.ts`：穷尽断言自动覆盖新成员；如该 spec 枚举成员则补 `IMAGE_GENERATION`。
+8. 后端全量：`cd backend-ts && npm run build && npm test`（落盘日志后 grep 摘要）。
+9. 前端构建验证：desktop / admin 各跑 `npm run build`（汉化表漏项会在此暴露，不依赖 `npx vue-tsc --noEmit`）。
+10. 手工验收（本地或测试环境）：后台配好 image 模型 → 桌面发一句话让 Agent 生成 / 改图 → 管理后台调用流水出现 `scene=图片生成`、`cost=0`、`agent_id` 为该会话 Agent、`duration_ms` 为秒级；再触发一次失败（临时停用模型）确认失败行可读。
 
 ## 9. 发布物
 
@@ -249,11 +271,28 @@ export function createImageCallRecorder(llmCallService: LlmCallService): ImageCa
 - **调用流水新增「图片生成」场景**：明细、筛选与场景饼图支持按图片生成 / 改图查看；模型维度用量按模型类型（文本 / 语音 / 图片）分组展示。
 ```
 
-3. 文档同步：无需改 README / DEPLOY / skills（均不涉及场景枚举）；本方案即细案存档。
+3. 文档同步：无需改 README / DEPLOY / skills（均不涉及场景枚举）；本方案即细案存档，实现期的 8 处更正见 §11。
 
 ## 10. 后续项（不在本期）
 
-1. **图片 token 分项计价**：`llm_model` 加 `price_image_input`（按当时最大迁移号顺延，当前为 `V208`）→ `CostPrice` / `computeCostMicros` 加第五分项 → `PromptTokensDetails` 加 `imageTokens` → `ModelFormDialog.vue:138` 价格 tab 对 image 放开（只渲染输入 / 图片输入 / 输出三项）→ 模型解析链（`deps.ts:345`、`chat-request.ts:162`）带新价。届时 `image-call-recorder.ts` 删掉 `costMicros: 0` 改走解析即可，埋点与行结构不变。前置条件：运维把 image 模型价格配齐，否则回到「有 token 无价 → NULL → 预算盲区」。
+1. **图片 token 分项计价**：`llm_model` 加 `price_image_input`（按当时最大迁移号顺延，撰写时为 `V208`、实现期核实实际最大为 **`V207`**，即下一个号从 V208 起）→ `CostPrice` / `computeCostMicros` 加第五分项 → `PromptTokensDetails` 加 `imageTokens` → `ModelFormDialog.vue`（实际路径 `admin/src/views/model/ModelFormDialog.vue`，非 `.../components/`）价格 tab 对 image 放开（只渲染输入 / 图片输入 / 输出三项）→ 模型解析链（`deps.ts:345`、`chat-request.ts:162`）带新价。届时 `image-call-recorder.ts` 删掉 `costMicros: 0` 改走解析即可，埋点与行结构不变。前置条件：运维把 image 模型价格配齐，否则回到「有 token 无价 → NULL → 预算盲区」。
 2. scene 拆分 `image_generate` / `image_edit`（若审计确需按工具分）。
 3. run trace 旁路调用的耗时统计剔除图片秒级行（观察真实分布后再决定，避免过早优化）。
-4. §7.2 若评审认为当前一人关注可缩范围，可整体移至后续项——核心记录（§6）不依赖它。
+4. §7.2 本期只做了最小闭环（契约 + 查询 + `UserUsageTab` 一栏类型列）。若后续认为 admin 分析页「模型」tab（`selectLlmCallStatsByModel` + `ModelTab.vue`）也需要按类型分组或剔除 image 行，单独立项——那是全项目最大的模型维度 `llm_call` 聚合面。
+
+## 11. 实现期修订记录（2026-11-24）
+
+评审后按代码实况更正 / 补充的 8 处，均已反映在上文对应小节：
+
+| # | 位置 | 原文 | 实况 / 定案 |
+|---|---|---|---|
+| R1 | §6.4 / D11 | 失败路径只描述「catch」，但 §8.2 又把「无可用模型」列为记行路径 | 两工具有大量 `return errorJson(...)` 早退分支，**不在 catch 内**，按原埋点根本记不到。定案 D11：只记 `upstreamAttempted` 置位后的成功 / catch，早退错误不记行 |
+| R2 | §6.3 端口 | `model: LlmModel` | catch 路径下 `model` 可能为 null（`findFirstActiveImageModel()` 自身抛异常），改 `LlmModel \| null`，适配器快照列落 null |
+| R3 | §6.5 | 「`execute` 加 5 参重载（重载组末尾追加）」 | `Tool.execute` / `BaseTool.execute` 是**单签名 + 运行时分流**，没有重载组。必须同时改 `Tool` 接口签名（加 `d?: unknown`）、`BaseTool.execute` 实现与 `executeWithUser` 基类签名，否则 `callTool` 编译不过 |
+| R4 | §7.1 | 「场景饼图（`LlmCallView.vue`）」 | 该文件无任何饼图；场景分布图在 `UsageOverviewTab.vue` / `ModelTab.vue` / `UserUsageTab.vue` |
+| R5 | §7.1 | 「导出 CSV 的 scene 列」 | 原 CSV 无 scene 列，导出闭环断裂。本期补一列「场景」 |
+| R6 | §7.2 | 三个消费端 | `SessionTab.vue` 的 `byModel` 是 `FailTopItem[]` 不是 `LlmCallModelAggRow`；`UsageOverviewTab.vue` 饼图按调用次数不按 token，理由不成立；真正的大头 `ModelTab.vue` 原方案漏了 |
+| R7 | §5 | 「顺带更新 V113 注释枚举」 | 否决：`flyway.ts:282` 有 checksum 校验，改已应用迁移有起不来服务的风险（`validateOnMigrate` 虽硬编码 false），且该注释本就落后 3 个场景 |
+| R8 | §10.1 | 「当前最大迁移号 V208」 | 实际最大为 `V207` |
+
+另有两处小的执行细节写入了正文：`aggregateByModel` 取 `model_type` 必须用 `MAX()` 聚合避开 `ONLY_FULL_GROUP_BY`（§7.2）；usage 取 `ImageApiResult.usage` 而非 `materializeImageApiResult` 的 payload（§6.4）。

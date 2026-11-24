@@ -74,6 +74,8 @@ import type { RoutingMcpClientManager } from './harness/container/routing-mcp-cl
 import type { Db } from './db/db.js';
 
 import { createDefaultToolRegistry } from './harness/tool/tool-registry.js';
+import { createImageCallRecorder } from './usage/image-call-recorder.js';
+import type { LlmCallService } from './usage/llm-call.service.js';
 import { ToolDispatcher } from './harness/tool/tool-dispatcher.js';
 import { createMcpReadOnlyLookup } from './harness/mcp/workingset/mcp-read-only-lookup.js';
 import { CompactionSignalBus } from './harness/core/compaction-signal-bus.js';
@@ -177,6 +179,11 @@ export interface HarnessEngineDeps {
   wsRegistry: any;
   /** 团队经验库索引服务（技术方案 2026-10-24）：write_file/edit_file 落盘回调刷新索引。可选注入。 */
   experienceIndexService?: ExperienceIndexService | null;
+  /**
+   * 调用流水服务（技术方案 2026-11-24）：注入后 generate_image / edit_image 的每次调用
+   * （含失败）记入 llm_call。可选依赖：未注入（精简装配 / 单测）时图片工具不记账。
+   */
+  llmCallService?: LlmCallService | null;
   /** 团队经验库挂载服务：buildContext 每轮幂等补挂（存量会话兜底）。可选注入。 */
   experienceMountService?: { syncForSession(workspace: string, agentId: number, enabled: boolean, refreshIndex?: boolean): void } | null;
 }
@@ -221,6 +228,8 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
       : undefined,
     getUploadBaseUrl: async () => (await d.settingService.getUploadConfig()).baseUrl,
     uploadContextPath: apiPrefix,
+    // 图片调用流水（2026-11-24）：接了 llmCallService 才开记账，否则两工具拿 null 记录器
+    imageCallRecorder: d.llmCallService != null ? createImageCallRecorder(d.llmCallService) : null,
     weixinToolSupport: d.wechatBridges.toolSupport,
     weixinUploadService: d.wechatBridges.uploadService,
     weixinSendService: d.wechatBridges.sendService,

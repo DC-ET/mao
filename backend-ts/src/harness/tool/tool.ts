@@ -6,6 +6,7 @@ import type { ToolDescriptor } from './tool-descriptor.js';
  * execute(args, workspace)
  * execute(args, sessionId, workspace)
  * execute(args, sessionId, userId, workspace)
+ * execute(args, sessionId, userId, workspace, agentId)
  */
 export interface Tool {
   getName(): string;
@@ -15,7 +16,13 @@ export interface Tool {
   getToolPrompt?(): string | null;
   /** 可选：静态描述元数据（来源/执行器）。缺省时由调用方按 builtin/server 兜底。 */
   getDescriptor?(): ToolDescriptor;
-  execute(argumentsJson: string, a?: unknown, b?: unknown, c?: unknown): string | Promise<string>;
+  execute(
+    argumentsJson: string,
+    a?: unknown,
+    b?: unknown,
+    c?: unknown,
+    d?: unknown,
+  ): string | Promise<string>;
 }
 
 export abstract class BaseTool implements Tool {
@@ -31,7 +38,13 @@ export abstract class BaseTool implements Tool {
     return { name: this.getName(), source: 'builtin', executor: 'server' };
   }
 
-  execute(argumentsJson: string, a?: unknown, b?: unknown, c?: unknown): string | Promise<string> {
+  execute(
+    argumentsJson: string,
+    a?: unknown,
+    b?: unknown,
+    c?: unknown,
+    d?: unknown,
+  ): string | Promise<string> {
     const argc = arguments.length;
     if (argc <= 1) {
       return this.executeWithUser(argumentsJson, null, null, null);
@@ -47,23 +60,30 @@ export abstract class BaseTool implements Tool {
         (b as string | null) ?? null,
       );
     }
+    // 4 参（sessionId, userId, workspace）与 5 参（+ agentId）同路：少传一个位置参数时
+    // d 为 undefined，落成 null，与「无 agent 归属」同义。
     return this.executeWithUser(
       argumentsJson,
       (a as number | null) ?? null,
       (b as number | null) ?? null,
       (c as string | null) ?? null,
+      (d as number | null) ?? null,
     );
   }
 
   /**
-   * Java Tool defaults chain down in arity (4→3→2→1) to avoid StackOverflow.
+   * Java Tool defaults chain down in arity (5→4→3→2→1) to avoid StackOverflow.
    * Subclasses override the highest arity they need; lower arities fall through.
+   *
+   * agentId（技术方案 2026-11-24 D5）：ToolInvocation.agentId 按轮快照，经 dispatcher 的
+   * routeAgentId 透传，供图片调用流水归因；不需要的工具忽略该参即可（基类实现即如此）。
    */
   protected executeWithUser(
     argumentsJson: string,
     sessionId: number | null,
     _userId: number | null,
     workspace: string | null,
+    _agentId: number | null = null,
   ): string | Promise<string> {
     return this.executeWithSession(argumentsJson, sessionId, workspace);
   }
@@ -91,9 +111,16 @@ export async function callTool(
   sessionId?: number | null,
   userId?: number | null,
   workspace?: string | null,
+  agentId?: number | null,
 ): Promise<string> {
   if (sessionId !== undefined || userId !== undefined) {
-    return await tool.execute(argumentsJson, sessionId ?? null, userId ?? null, workspace ?? null);
+    return await tool.execute(
+      argumentsJson,
+      sessionId ?? null,
+      userId ?? null,
+      workspace ?? null,
+      agentId ?? null,
+    );
   }
   if (workspace !== undefined) {
     return await tool.execute(argumentsJson, workspace);

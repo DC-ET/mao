@@ -316,8 +316,9 @@ export class ToolDispatcher {
       if (tool) {
         // 产物/缓存类工具按运行身份寻址（§5.5）：dump_user_messages、open_web_page、
         // generate_image、edit_image、send_image / send_file 均在 SERVER_ONLY 分支。
+        // agentId 透传（技术方案 2026-11-24 D5）：图片调用流水靠它归因到 Agent。
         const raw = await this.dispatchWithRoundAgent(toolName, runtimeUserId, sessionId, routeAgentId,
-          () => callTool(tool, argumentsJson, sessionId, runtimeToolUserId, workspace));
+          () => callTool(tool, argumentsJson, sessionId, runtimeToolUserId, workspace, routeAgentId));
         return { raw, llmVerdict: null };
       }
       throw new IllegalArgumentException('Unknown tool: ' + toolName);
@@ -447,8 +448,10 @@ export class ToolDispatcher {
     if (tool) {
       // shell 与执行期资源类工具（发送等）按运行身份读字节；其余保持会话归属（§5.5）。
       const toolUserId = (toolName === 'shell' || RUNTIME_SCOPED_TOOLS.has(toolName)) ? runtimeUserId : userId;
+      // agentId 透传（技术方案 2026-11-24 D5）：与上面 SERVER_ONLY 分支同款，一次改齐，
+      // 未来工具免再 plumbing。
       const raw = await this.dispatchWithRoundAgent(toolName, runtimeUserId, sessionId, routeAgentId,
-        () => callTool(tool, argumentsJson, sessionId, toolUserId, workspace));
+        () => callTool(tool, argumentsJson, sessionId, toolUserId, workspace, routeAgentId));
       return { raw, llmVerdict: null };
     }
     throw new IllegalArgumentException('Unknown tool: ' + toolName);

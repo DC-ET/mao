@@ -1353,7 +1353,7 @@ describe('ToolDispatcher runtime identity routing', () => {
     const { dispatcher, feishuSend } = build();
     feishuSend.execute.mockResolvedValue('ok');
     await dispatcher.dispatchInvocation(invocation('send_image') as never);
-    expect(feishuSend.execute).toHaveBeenCalledWith('{}', 7, 67, 'ws');
+    expect(feishuSend.execute).toHaveBeenCalledWith('{}', 7, 67, 'ws', null);
   });
 
   it('generate_image（SERVER_ONLY 分支）按运行身份落盘；task_create 保持归属身份', async () => {
@@ -1361,9 +1361,24 @@ describe('ToolDispatcher runtime identity routing', () => {
     generate.execute.mockResolvedValue('ok');
     task.execute.mockResolvedValue('ok');
     await dispatcher.dispatchInvocation(invocation('generate_image') as never);
-    expect(generate.execute).toHaveBeenCalledWith('{}', 7, 67, 'ws');
+    // 第 5 参 agentId（技术方案 2026-11-24 D5）：invocation 未带 → null
+    expect(generate.execute).toHaveBeenCalledWith('{}', 7, 67, 'ws', null);
     await dispatcher.dispatchInvocation(invocation('task_create') as never);
-    expect(task.execute).toHaveBeenCalledWith('{}', 7, 17, 'ws');
+    expect(task.execute).toHaveBeenCalledWith('{}', 7, 17, 'ws', null);
+  });
+
+  it('agentId 按轮快照透传到 SERVER_ONLY 工具（图片流水归因用）', async () => {
+    const { dispatcher, generate } = build();
+    generate.execute.mockResolvedValue('ok');
+    await dispatcher.dispatchInvocation(invocation('generate_image', { agentId: 5 }) as never);
+    expect(generate.execute).toHaveBeenCalledWith('{}', 7, 67, 'ws', 5);
+  });
+
+  it('agentId 透传到通用分支的工具（一次改齐，未来工具免再 plumbing）', async () => {
+    const { dispatcher, task } = build();
+    task.execute.mockResolvedValue('ok');
+    await dispatcher.dispatchInvocation(invocation('task_create', { agentId: 9 }) as never);
+    expect(task.execute).toHaveBeenCalledWith('{}', 7, 17, 'ws', 9);
   });
 
   it('docker 分支按运行身份路由容器', async () => {
@@ -1398,6 +1413,6 @@ describe('ToolDispatcher runtime identity routing', () => {
     const inv = invocation('send_image');
     delete (inv as Record<string, unknown>).runtimeUserId;
     await dispatcher.dispatchInvocation(inv as never);
-    expect(feishuSend.execute).toHaveBeenCalledWith('{}', 7, 67, 'ws');
+    expect(feishuSend.execute).toHaveBeenCalledWith('{}', 7, 67, 'ws', null);
   });
 });

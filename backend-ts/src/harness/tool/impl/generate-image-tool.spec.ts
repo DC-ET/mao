@@ -567,3 +567,129 @@ describe('EditImageTool', () => {
     expect(JSON.parse(await tool.execute(JSON.stringify({ prompt: 'x', image: 'input.png', output_format: 'jpeg', output_compression: 200 }), 1, null, null)).error).toContain('output_compression');
   });
 });
+
+describe('图片调用流水埋点（技术方案 2026-11-24）', () => {
+  /** 记录器 spy：捕获每次 record 入参，供断言。 */
+  function spyRecorder() {
+    const calls: Array<Record<string, unknown>> = [];
+    return { calls, recorder: { record: async (input: Record<string, unknown>) => { calls.push(input); } } };
+  }
+
+  function makeGenTool(recorder: unknown = null) {
+    const dir = useTmpDir('img-rec-');
+    const tool = new GenerateImageTool({
+      findFirstActiveImageModel: async () => model() as never,
+    }, dir, async () => 'https://mao.example/api', '/api', undefined, recorder as never);
+    return { tool, dir };
+  }
+
+  function makeEditTool(recorder: unknown = null) {
+    const ws = useTmpDir('edit-rec-ws-');
+    const out = useTmpDir('edit-rec-out-');
+    mkdirSync(join(ws, 'chat-files'), { recursive: true });
+    writeFileSync(join(ws, 'input.png'), PNG_BYTES);
+    const tool = new EditImageTool(
+      { findFirstActiveImageModel: async () => model() as never },
+      new PathSandbox(ws),
+      out,
+      async () => 'https://mao.example/api',
+      null,
+      '/api',
+      undefined,
+      recorder as never,
+    );
+    return { tool, out, ws };
+  }
+
+  it('generate: records one row per successful call with normalized usage', async () => {
+    const { calls, recorder } = spyRecorder();
+    const { tool } = makeGenTool(recorder);
+    const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'a cat' }), 11, 7, 'ws', 3));
+    expect(result.error).toBeUndefined();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      resolvedModelName: 'gpt-image-2.5-flare',
+      usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
+      success: true,
+      userId: 7,
+      sessionId: 11,
+      agentId: 3,
+    });
+    expect(calls[0].durationMs).toBeGreaterThanOrEqual(0);
+    expect(calls[0].errorMessage).toBeUndefined();
+  });
+
+  it('generate: resolves the model alias into providerModelId (D10)', async () => {
+    const { calls, recorder } = spyRecorder();
+    const { tool } = makeGenTool(recorder);
+    await tool.execute(JSON.stringify({ prompt: 'a cat', model: 'sunburst' }), 11, 7, 'ws', 3);
+    expect(calls[0].resolvedModelName).toBe('gpt-image-2.5-sunburst');
+  });
+
+  it('generate: records a failure row when the upstream returns 5xx', async () => {
+    mode = 'client-error';
+    const { calls, recorder } = spyRecorder();
+    const { tool } = makeGenTool(recorder);
+    const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'a cat' }), 11, 7, 'ws', 3));
+    expect(result.error).toBeTruthy();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].success).toBe(false);
+    expect(calls[0].errorMessage).toBeTruthy();
+    // 脱敏：错误摘要里不得出现 apiKey
+    expect(calls[0].errorMessage).not.toContain('k');
+    expect(calls[0].usage).toBeNull();
+  });
+
+  it('generate: does not record param/config errors that never reached the upstream', async () => {
+    const { calls, recorder } = spyRecorder();
+    const { tool } = makeGenTool(recorder);
+    // 参数非法 / 无可用模型：早退分支，不是模型调用
+    expect(JSON.parse(await tool.execute('{}', 11, 7, 'ws', 3)).error).toContain('prompt');
+    expect(JSON.parse(await tool.execute(JSON.stringify({ prompt: 'x', size: '1x1' }), 11, 7, 'ws', 3)).error).toContain('size');
+    const noModel = new GenerateImageTool({ findFirstActiveImageModel: async () => null } as never, useTmpDir('img-nomodel-'), async () => '', '/api', undefined, recorder);
+    expect(JSON.parse(await noModel.execute(JSON.stringify({ prompt: 'x' }), 11, 7, 'ws', 3)).error).toContain('文生图');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('edit: records one row per successful call', async () => {
+    const { calls, recorder } = spyRecorder();
+    const { tool, ws } = makeEditTool(recorder);
+    const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'x', image_paths: ['input.png'] }), 11, 7, ws, 3));
+    expect(result.error).toBeUndefined();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      resolvedModelName: 'gpt-image-2.5-flare',
+      success: true,
+      userId: 7,
+      sessionId: 11,
+      agentId: 3,
+    });
+  });
+
+  it('edit: records a failure row when the upstream returns 5xx', async () => {
+    mode = 'client-error';
+    const { calls, recorder } = spyRecorder();
+    const { tool, ws } = makeEditTool(recorder);
+    const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'x', image_paths: ['input.png'] }), 11, 7, ws, 3));
+    expect(result.error).toBeTruthy();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].success).toBe(false);
+    expect(calls[0].errorMessage).not.toContain('k');
+  });
+
+  it('edit: a local read failure before the upstream call is not recorded', async () => {
+    const { calls, recorder } = spyRecorder();
+    const { tool, ws } = makeEditTool(recorder);
+    // 路径不存在 → loadLocalImage 抛错，早于上游调用
+    const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'x', image_paths: ['nope.png'] }), 11, 7, ws, 3));
+    expect(result.error).toBeTruthy();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('no recorder injected: tool behaves exactly as before', async () => {
+    const { tool } = makeGenTool(null);
+    const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'a cat' }), 11, 7, 'ws', 3));
+    expect(result.error).toBeUndefined();
+    expect(result.images).toHaveLength(1);
+  });
+});
