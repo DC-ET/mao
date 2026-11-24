@@ -395,9 +395,11 @@ describe('resolveModelId', () => {
     expect(await resolveModelId(modelRest(), 'GLM-5.3-FLASH（FREE）')).toBe(69);
   });
 
-  it('resolves a numeric spec as an id and reports a missing one', async () => {
+  it('resolves a numeric spec as an id without requiring the model in the client-visible list', async () => {
+    // 技术方案 2026-11-24 D10：显式 id 不受客户端可见性限制（可能是某 Agent 的隐藏默认模型），
+    // 能不能用由服务端判定；脚本里写死的 id 不应因一次后台配置而报错。
     expect(await resolveModelId(modelRest(), '5')).toBe(5);
-    await expect(resolveModelId(modelRest(), '999')).rejects.toThrow(/找不到模型 id=999/);
+    expect(await resolveModelId(modelRest(), '999')).toBe(999);
   });
 
   it('reports an unknown name instead of silently falling back', async () => {

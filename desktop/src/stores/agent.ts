@@ -11,6 +11,8 @@ export interface Agent {
   executionMode: string
   isDefault?: boolean
   enabled?: boolean
+  /** Agent 默认模型 ID（技术方案 2026-11-24 §8.2）：新建会话未手选模型时的优先回退。 */
+  defaultModelId?: number | null
 }
 
 export const useAgentStore = defineStore('agent', () => {
@@ -51,7 +53,8 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
   function getAgentById(id: string) {
-    return agents.value.find(a => a.id === id) || null
+    // AgentVO.id 后端是 number，调用方传的是 string：统一按字符串比较，避免永远命中不了
+    return agents.value.find(a => String(a.id) === String(id)) || null
   }
 
   return {

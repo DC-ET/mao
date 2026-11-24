@@ -616,3 +616,129 @@ describe('ModelService', () => {
     expect(created.authType).toBe('ecp');
   });
 });
+
+describe('ModelService 客户端可选（技术方案 2026-11-24）', () => {
+  function makeRepo(): LlmModelRepository {
+    return {
+      selectPage: vi.fn(),
+      listProviders: vi.fn(),
+      listActiveText: vi.fn(async () => []),
+      findFirstActiveByType: vi.fn(),
+      findDefault: vi.fn(),
+      findById: vi.fn(),
+      insert: vi.fn(async (m) => {
+        m.id = m.id ?? 1;
+        return m.id;
+      }),
+      updateById: vi.fn(),
+      deleteById: vi.fn(),
+      clearDefaultFlag: vi.fn(),
+      countActiveTextExcept: vi.fn(async () => 1),
+      countEnabledWithApiKey: vi.fn(async () => 1),
+    };
+  }
+
+  function visibleModel(overrides: Partial<LlmModel> = {}): LlmModel {
+    return {
+      id: 1,
+      name: 'chat',
+      provider: 'openai',
+      baseUrl: 'https://api.example.test',
+      apiKey: 'key',
+      modelId: 'gpt-x',
+      status: 1,
+      isDefault: 0,
+      clientVisible: 1,
+      ...overrides,
+    };
+  }
+
+  it('listActiveModels 透传 clientVisibleOnly', async () => {
+    const repo = makeRepo();
+    const service = new ModelService(repo, { reassignModelId: vi.fn() }, { chat: vi.fn() });
+    await service.listActiveModels(true);
+    expect(repo.listActiveText).toHaveBeenCalledWith(true);
+    await service.listActiveModels();
+    expect(repo.listActiveText).toHaveBeenLastCalledWith(false);
+  });
+
+  it('createModel：缺省可见；显式 0 落 0；boolean false 也落 0', async () => {
+    const repo = makeRepo();
+    const service = new ModelService(repo, { reassignModelId: vi.fn() }, { chat: vi.fn() });
+
+    const created = await service.createModel(
+      'n', 'openai', 'https://x', 'k', 'm', 0, 0, null, 'text', 'none', '', '',
+      null, null, null, null, null, 'api_key',
+    );
+    expect(created.clientVisible).toBe(1);
+    expect(vi.mocked(repo.insert).mock.calls[0][0].clientVisible).toBe(1);
+
+    const hidden = await service.createModel(
+      'n', 'openai', 'https://x', 'k', 'm', 0, 0, null, 'text', 'none', '', '',
+      null, null, null, null, null, 'api_key', 0,
+    );
+    expect(hidden.clientVisible).toBe(0);
+
+    const hiddenBool = await service.createModel(
+      'n', 'openai', 'https://x', 'k', 'm', 0, 0, null, 'text', 'none', '', '',
+      null, null, null, null, null, 'api_key', false,
+    );
+    expect(hiddenBool.clientVisible).toBe(0);
+  });
+
+  it('createModel：默认模型不允许关闭客户端可选', async () => {
+    const repo = makeRepo();
+    const service = new ModelService(repo, { reassignModelId: vi.fn() }, { chat: vi.fn() });
+    await expect(service.createModel(
+      'n', 'openai', 'https://x', 'k', 'm', 0, 1, null, 'text', 'none', '', '',
+      null, null, null, null, null, 'api_key', 0,
+    )).rejects.toBeInstanceOf(BusinessException);
+    expect(repo.insert).not.toHaveBeenCalled();
+  });
+
+  it('createModel：isDefault 传布尔 true 同样触发「默认模型必须可见」', async () => {
+    const repo = makeRepo();
+    const service = new ModelService(repo, { reassignModelId: vi.fn() }, { chat: vi.fn() });
+    await expect(service.createModel(
+      'n', 'openai', 'https://x', 'k', 'm', 0, true as unknown as number, null, 'text', 'none', '', '',
+      null, null, null, null, null, 'api_key', 0,
+    )).rejects.toBeInstanceOf(BusinessException);
+    // 布尔 false + 不可见：合法
+    const created = await service.createModel(
+      'n', 'openai', 'https://x', 'k', 'm', 0, false as unknown as number, null, 'text', 'none', '', '',
+      null, null, null, null, null, 'api_key', 0,
+    );
+    expect(created.isDefault).toBe(0);
+    expect(created.clientVisible).toBe(0);
+  });
+
+  it('updateModel：不传 clientVisible 保持原值', async () => {
+    const repo = makeRepo();
+    const service = new ModelService(repo, { reassignModelId: vi.fn() }, { chat: vi.fn() });
+    vi.mocked(repo.findById).mockResolvedValue(visibleModel({ clientVisible: 0 }));
+    await service.updateModel(1, 'n2', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+    expect(vi.mocked(repo.updateById).mock.calls[0][0].clientVisible).toBe(0);
+  });
+
+  it('updateModel：把默认模型设为不可见被拒；先取消默认再隐藏可以', async () => {
+    const repo = makeRepo();
+    const service = new ModelService(repo, { reassignModelId: vi.fn() }, { chat: vi.fn() });
+    vi.mocked(repo.findById).mockResolvedValue(visibleModel({ isDefault: 1, clientVisible: 1 }));
+    // 参数顺序：id, name, provider, baseUrl, apiKey, modelId, supportsVision, isDefault,
+    // contextWindowTokens, modelType, clientImpersonation, apiProtocol, effort,
+    // priceInput, priceCacheRead, priceCacheWrite, priceOutput, maxRequestBodyBytes, authType, clientVisible
+    const args = (isDefault: number | null, clientVisible: number | null) => [
+      1, null, null, null, null, null, null, isDefault, null, null,
+      null, null, null, null, null, null, null, null, null, clientVisible,
+    ] as const;
+
+    await expect(service.updateModel(...args(null, 0))).rejects.toBeInstanceOf(BusinessException);
+    expect(repo.updateById).not.toHaveBeenCalled();
+
+    // 同一次请求取消默认 + 关闭可见：最终状态合法，放行
+    await service.updateModel(...args(0, 0));
+    const saved = vi.mocked(repo.updateById).mock.calls[0][0];
+    expect(saved.isDefault).toBe(0);
+    expect(saved.clientVisible).toBe(0);
+  });
+});

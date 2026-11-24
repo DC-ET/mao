@@ -231,6 +231,8 @@ export interface LlmModelRef {
   supportsVision?: number | null;
   isDefault?: number | null;
   status?: number | null;
+  /** 客户端可选：0-仅管理端可配置；缺省或 1 为客户端可选（技术方案 2026-11-24）。 */
+  clientVisible?: number | null;
 }
 
 export interface UserRef {

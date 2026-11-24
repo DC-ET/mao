@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
+import { ErrorCode } from '../common/error-code.js';
 import { handleError } from '../common/http-error.js';
 import { registerModelRoutes } from './model.routes.js';
 import type { ModelService } from './model.service.js';
@@ -107,5 +108,62 @@ describe('model routes（凭证方式）', () => {
     expect(res.statusCode).toBe(200);
     // createModel(name, provider, baseUrl, apiKey, ...)：路由层必须把缺失 apiKey 兜底为空串（列 NOT NULL）。
     expect(vi.mocked(modelService.createModel).mock.calls[0][3]).toBe('');
+  });
+});
+
+describe('model routes（客户端可选）', () => {
+  function buildVisibilityApp(clientVisible: number | null | undefined) {
+    const model = modelFixture(clientVisible == null ? {} : { clientVisible });
+    const modelService = {
+      listActiveModels: vi.fn(async () => [model]),
+      listModels: vi.fn(async () => ({ records: [model], total: 1, page: 1, size: 10 })),
+      getModel: vi.fn(async () => model),
+      createModel: vi.fn(async () => model),
+      updateModel: vi.fn(async () => model),
+    } as unknown as ModelService;
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    app.addHook('preHandler', (request, _reply, done) => {
+      (request as unknown as { userId: number }).userId = 9;
+      done();
+    });
+    registerModelRoutes(app, {
+      modelService,
+      permissionService: { hasPermission: vi.fn(async () => true) },
+    });
+    return { app, modelService };
+  }
+
+  it('GET /models/active：不带 scope 取全量，scope=client 只看可见', async () => {
+    const { app, modelService } = buildVisibilityApp(1);
+    expect((await app.inject({ method: 'GET', url: '/v1/models/active' })).statusCode).toBe(200);
+    expect(modelService.listActiveModels).toHaveBeenLastCalledWith(false);
+
+    expect((await app.inject({ method: 'GET', url: '/v1/models/active?scope=client' })).statusCode).toBe(200);
+    expect(modelService.listActiveModels).toHaveBeenLastCalledWith(true);
+  });
+
+  it('GET /models/active：非法 scope 返回参数错误（Mao 约定 HTTP 200 + 业务 code）', async () => {
+    const { app } = buildVisibilityApp(1);
+    const res = await app.inject({ method: 'GET', url: '/v1/models/active?scope=admin' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().code).toBe(ErrorCode.PARAM_INVALID.code);
+    expect(res.json().message).toContain("scope 仅支持 'client'");
+  });
+
+  it('GET /models：clientVisible 作为筛选参数透传', async () => {
+    const { app, modelService } = buildVisibilityApp(0);
+    const res = await app.inject({ method: 'GET', url: '/v1/models?page=1&size=10&clientVisible=0' });
+    expect(res.statusCode).toBe(200);
+    expect(modelService.listModels).toHaveBeenCalledWith(
+      1, 10, undefined, undefined, undefined, undefined, undefined, undefined, 0,
+    );
+  });
+
+  it('VO 输出 clientVisible：0 → false，缺省 → true', async () => {
+    const hidden = await buildVisibilityApp(0).app.inject({ method: 'GET', url: '/v1/models/1' });
+    expect((hidden.json().data as Record<string, unknown>).clientVisible).toBe(false);
+    const visible = await buildVisibilityApp(undefined).app.inject({ method: 'GET', url: '/v1/models/1' });
+    expect((visible.json().data as Record<string, unknown>).clientVisible).toBe(true);
   });
 });

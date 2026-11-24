@@ -33,6 +33,11 @@ export interface LlmModel {
   status?: number | null;
   supportsVision?: number | null;
   isDefault?: number | null;
+  /**
+   * 客户端可选：1=客户端模型选择器可选 0=仅管理端可配置。
+   * 只影响列表过滤，运行时不看这一列（Agent 默认模型/机器人/已绑定会话照旧可用）。
+   */
+  clientVisible?: number | null;
   deleted?: number;
   createdAt?: string | null;
   updatedAt?: string | null;
@@ -59,7 +64,8 @@ export interface LlmModelRepository {
     filter: ModelListFilter,
   ): Promise<{ records: LlmModel[]; total: number }>;
   listProviders(): Promise<string[]>;
-  listActiveText(): Promise<LlmModel[]>;
+  /** clientVisibleOnly=true 时只返回客户端可选（client_visible = 1）的启用 text 模型。 */
+  listActiveText(clientVisibleOnly?: boolean): Promise<LlmModel[]>;
   findFirstActiveByType(modelType: string): Promise<LlmModel | null>;
   findDefault(): Promise<LlmModel | null>;
   findById(id: number): Promise<LlmModel | null>;

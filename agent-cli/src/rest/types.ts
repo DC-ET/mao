@@ -129,4 +129,6 @@ export interface SafeModelVO {
   supportsVision?: boolean;
   isDefault?: boolean;
   status?: number | null;
+  /** 客户端可选（技术方案 2026-11-24）：false = 仅管理端可配置。 */
+  clientVisible?: boolean;
 }

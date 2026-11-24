@@ -35,7 +35,9 @@
 
 ### 返回结果
 
-数组，元素常见字段：`id`、`name`、`provider`、`modelId`、`supportsVision`、`isDefault`、`contextWindowTokens`、`status`。
+数组，元素常见字段：`id`、`name`、`provider`、`modelId`、`supportsVision`、`isDefault`、`contextWindowTokens`、`status`、`clientVisible`。
+
+这是**管理端口径的全量列表**（启用中的文本模型，不论客户端是否可选）。客户端模型选择器走 `GET /models/active?scope=client`，只列 `clientVisible = true`；`mao chat` 已按客户端口径取数。
 
 ### 示例
 
@@ -120,6 +122,7 @@ mao model providers
 | `--status` | 否 | 整数 | — | 状态 | `status` |
 | `--supports-vision` | 否 | 整数 | — | 是否支持视觉 `0/1` | `supportsVision` |
 | `--is-default` | 否 | 整数 | — | 是否默认 `0/1` | `isDefault` |
+| `--client-visible` | 否 | 整数 | — | 客户端可选 `0/1`（`0` = 仅管理端） | `clientVisible` |
 
 `GET /models`
 
@@ -148,6 +151,7 @@ mao model list --provider openai --status 1
 | `--context-window-tokens` | 否 | 整数 | 上下文窗口 token 数 | `contextWindowTokens` |
 | `--supports-vision` | 否 | `0`/`1` | 是否支持视觉 | `supportsVision` |
 | `--is-default` | 否 | `0`/`1` | 是否默认模型 | `isDefault` |
+| `--client-visible` | 否 | `0`/`1` | 客户端可选（缺省 `1`）。`0` = 仅管理端可配置：客户端新建会话与切换模型不展示，但 Agent 默认模型、机器人/渠道与已绑定会话仍可用。默认模型必须保持可见 | `clientVisible` |
 | `--price-input` | 否 | 数字 | 每百万**非缓存输入** token 价格（成本单位）；留空表示该类不计成本 | `priceInput` |
 | `--price-cache-read` | 否 | 数字 | 每百万**缓存命中**输入 token 价格（OpenAI `cached_tokens` / Anthropic `cache_read_input_tokens`）；留空表示该类不计成本 | `priceCacheRead` |
 | `--price-cache-write` | 否 | 数字 | 每百万**缓存写入** token 价格（Anthropic `cache_creation_input_tokens`，OpenAI 系无此概念）；留空表示该类不计成本 | `priceCacheWrite` |
@@ -202,6 +206,7 @@ mao model create \
 | `--context-window-tokens` | 否 | 整数 | 上下文窗口 | `contextWindowTokens` |
 | `--supports-vision` | 否 | `0`/`1` | 视觉 | `supportsVision` |
 | `--is-default` | 否 | `0`/`1` | 默认 | `isDefault` |
+| `--client-visible` | 否 | `0`/`1` | 客户端可选（不传=保持原值）；`0` = 仅管理端 | `clientVisible` |
 | `--price-input` | 否 | 数字 | 每百万非缓存输入 token 价格（成本单位） | `priceInput` |
 | `--price-cache-read` | 否 | 数字 | 每百万缓存命中输入 token 价格（成本单位） | `priceCacheRead` |
 | `--price-cache-write` | 否 | 数字 | 每百万缓存写入 token 价格（成本单位） | `priceCacheWrite` |

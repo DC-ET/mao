@@ -47,6 +47,11 @@ export interface ModelVO {
   supportsVision?: boolean;
   isDefault?: boolean;
   status?: number | null;
+  /**
+   * 客户端可选：true=桌面/Web/安卓/mao chat 的模型选择器可选；false=仅管理端可配置。
+   * 只影响选择器候选，不影响运行时解析（Agent 默认模型/机器人/浮窗/已绑定会话照旧可用）。
+   */
+  clientVisible?: boolean;
   createdAt?: string | null;
 }
 
@@ -64,4 +69,6 @@ export interface ModelListFilter {
   supportsVision?: number | null;
   isDefault?: number | null;
   modelType?: string | null;
+  /** 客户端可选筛选：1=可选 0=仅管理端；null/undefined=不筛。 */
+  clientVisible?: number | null;
 }

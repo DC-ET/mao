@@ -23,6 +23,7 @@ function makeService(agent: AgentRef | null) {
     { listBySession: vi.fn(async () => []) } as unknown as MessageRepository,
     { listBySession: vi.fn(async () => []) } as unknown as FileChangeRepository,
     agentLookup,
+    { findById: vi.fn(async () => null) } as never,
     {} as PathSandbox,
     {} as EnvironmentInfoProvider,
     {} as never,

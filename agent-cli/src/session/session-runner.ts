@@ -849,13 +849,11 @@ function normalizeModelKey(raw: string | null | undefined): string {
  */
 export async function resolveModelId(rest: RestClient, spec?: string, fallbackId?: number): Promise<number | undefined> {
   if (!spec && fallbackId == null) return undefined;
-  const models = await rest.listActiveModels();
+  // 显式 id 不查列表、不受客户端可见性限制（技术方案 2026-11-24 D10）：
+  // 该模型可能被后台配成某 Agent 的默认模型（服务端会放行），脚本里写死的 id 不应因一次配置报错。
+  if (spec && /^\d+$/.test(spec)) return Number(spec);
+  const models = await rest.listActiveModels({ clientVisibleOnly: true });
   if (spec) {
-    if (/^\d+$/.test(spec)) {
-      const found = models.find((m) => Number(m.id) === Number(spec));
-      if (!found) throw new CliError(`找不到模型 id=${spec}`);
-      return found.id;
-    }
     const want = normalizeModelKey(spec);
     const byName = models.filter((m) => normalizeModelKey(m.name) === want);
     const nameHits = byName.length > 0

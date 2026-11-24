@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { BusinessException } from '../../common/business-exception.js';
+import { ErrorCode } from '../../common/error-code.js';
 import { StreamingWsHandler, createScheduledLiveExecution, type WsHandlerDeps } from './streaming-ws-handler.js';
 import type { WsEvent } from './ws-event.js';
 import type { Session } from '../../domain/types.js';
@@ -51,7 +53,7 @@ describe('StreamingWsHandler', () => {
   const harnessService = { prepareMessage: vi.fn(), executeFromEvent: vi.fn(), executePrepared: vi.fn(), executeSideFirstMessage: vi.fn(), forkParentMessages: vi.fn(), requestCompaction: vi.fn(async () => true) };
   const sessionService = {
     getSession: vi.fn(), saveMessage: vi.fn(), updatePhase: vi.fn(), markPhaseIfIn: vi.fn(async () => true), updateField: vi.fn(),
-    updateModelId: vi.fn(), getMessages: vi.fn(), editMessageAndTruncate: vi.fn(), save: vi.fn(),
+    updateModelId: vi.fn(), assertModelSelectableByClient: vi.fn(async () => {}), getMessages: vi.fn(), editMessageAndTruncate: vi.fn(), save: vi.fn(),
     findOwnedMessage: vi.fn(async () => null),
     listSubagentSessions: vi.fn(async () => []),
     cleanupIncompleteTail: vi.fn(async () => 0), updateContextTokens: vi.fn(),
@@ -1016,6 +1018,24 @@ describe('StreamingWsHandler', () => {
     });
     expect(createdCallOrder).toBeLessThan(titleService.scheduleForFirstUserMessage.mock.invocationCallOrder[0]);
     expect(harnessService.executeSideFirstMessage).toHaveBeenCalled();
+  });
+
+  it('createSideSessionRejectsHiddenModelThatIsNotAgentDefault', async () => {
+    vi.clearAllMocks();
+    registry.getUserId.mockReturnValue(7);
+    const parent = session('CLOUD', 'IDLE');
+    parent.workspace = '/repo';
+    sessionService.getSession.mockResolvedValue(parent);
+    vi.mocked(sessionService.assertModelSelectableByClient).mockRejectedValueOnce(
+      new BusinessException(ErrorCode.PARAM_INVALID, '该模型不对客户端开放'),
+    );
+    await handler.handleTextMessage(ws, JSON.stringify({
+      type: 'create_side_session', sessionId: 11, data: { content: 'side work', contextMode: 'summary', modelId: 99 },
+    }));
+    await executor.runAll();
+    // 拒绝发生在建会话之前：不落库，只回 error 事件（技术方案 2026-11-24 §6.3）
+    expect(sessionService.save).not.toHaveBeenCalled();
+    expect(registry.send).toHaveBeenCalledWith(7, expect.objectContaining({ type: 'error' }));
   });
 
   it('createSideSessionRejectsImagesWhenModelLacksVision', async () => {
@@ -2673,7 +2693,7 @@ describe('StreamingWsHandler tool_approval.alwaysAllow（V135）', () => {
   const harnessService = { prepareMessage: vi.fn(), executeFromEvent: vi.fn(), executePrepared: vi.fn(), executeSideFirstMessage: vi.fn(), forkParentMessages: vi.fn() };
   const sessionService = {
     getSession: vi.fn(), saveMessage: vi.fn(), updatePhase: vi.fn(), markPhaseIfIn: vi.fn(async () => true), updateField: vi.fn(),
-    updateModelId: vi.fn(), getMessages: vi.fn(), editMessageAndTruncate: vi.fn(), save: vi.fn(),
+    updateModelId: vi.fn(), assertModelSelectableByClient: vi.fn(async () => {}), getMessages: vi.fn(), editMessageAndTruncate: vi.fn(), save: vi.fn(),
     findOwnedMessage: vi.fn(async () => null), listSubagentSessions: vi.fn(async () => []),
     cleanupIncompleteTail: vi.fn(async () => 0), updateContextTokens: vi.fn(),
     getLastUserMessage: vi.fn(async () => null), deleteMessageById: vi.fn(async () => undefined),

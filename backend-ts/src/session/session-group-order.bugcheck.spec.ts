@@ -72,6 +72,7 @@ function makeService() {
     messageRepo,
     fileChangeRepo,
     agentLookup,
+    { findById: vi.fn(async () => null) } as never,
     {} as PathSandbox,
     {} as EnvironmentInfoProvider,
     {} as UserCommandLookup,

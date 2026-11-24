@@ -581,6 +581,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       requireDefaultAgent: () => agentService.requireDefaultAgent() as never,
       listOptions: async () => (await agentRepo.selectList(null, true)).map((a) => ({ id: a.id!, name: a.name })),
     },
+    {
+      findById: (id) => modelRepo.findById(id) as never,
+      findByIds: (ids) => modelRepo.findByIds(ids) as never,
+      findDefault: () => modelRepo.findDefault() as never,
+    },
     pathSandbox, envInfo, commandService, gitOps, sessionCompactionService, sessionCompactionEventService, todoRepo,
     runtimeSessionCleanup(runtimeRoot),
     (sessionId) => {

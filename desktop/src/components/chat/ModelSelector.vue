@@ -8,6 +8,14 @@
     <div class="model-selector">
       <div v-if="loadingModels" class="model-loading">加载中...</div>
       <template v-else>
+        <!-- 当前模型不在可见列表（历史会话沿用隐藏模型，或 Agent 默认模型是隐藏模型）：
+             只读展示，避免用户看到「下拉里没有自己正在用的模型」。技术方案 2026-11-24 §8.1。 -->
+        <div v-if="currentModelOutsideList" class="model-option current readonly">
+          <div class="model-option-info">
+            <span class="model-option-name">{{ displayName }}</span>
+          </div>
+          <el-tag size="small" type="warning">仅管理端</el-tag>
+        </div>
         <div
           v-for="m in models"
           :key="m.id"
@@ -52,11 +60,19 @@ const emit = defineEmits<{
 
 const popoverRef = ref()
 const models = ref<ModelItem[]>([])
-const loadingModels = ref(false)
+const loadingModels = ref(true)
+/** 本组件至少成功拉过一次列表：失败时不要用空列表推断「当前模型仅管理端」。 */
+const loadedOk = ref(false)
 
 // Use composable to resolve model name from ID
 const modelIdRef = toRef(props, 'modelId')
 const { modelName: displayName } = useModelName(modelIdRef)
+
+/** 当前模型不在候选列表：只在加载完成后判断，避免请求期间闪一条假「仅管理端」。 */
+const currentModelOutsideList = computed(() => {
+  if (!loadedOk.value || loadingModels.value || props.modelId == null) return false
+  return !models.value.some(m => m.id === props.modelId)
+})
 
 const label = computed(() => {
   const name = displayName.value || ''
@@ -69,10 +85,14 @@ const label = computed(() => {
 async function loadModels() {
   loadingModels.value = true
   try {
-    const { data } = await api.get('/models/active')
+    // scope=client：只列客户端可选模型（技术方案 2026-11-24 §8.1）。
+    // 不带 scope 的全量列表留给管理后台（Agent 默认模型/机器人配置）。
+    const { data } = await api.get('/models/active', { params: { scope: 'client' } })
     models.value = data || []
+    loadedOk.value = true
   } catch {
-    // ignore
+    // 失败保持 loadedOk=false：宁可只显示真实候选，也不误标「仅管理端」
+    loadedOk.value = false
   } finally {
     loadingModels.value = false
   }
@@ -141,6 +161,15 @@ function handleSelect(id: number) {
 
 .model-option.active {
   background: var(--aw-primary-hover);
+}
+
+.model-option.current.readonly {
+  cursor: default;
+  opacity: 0.85;
+}
+
+.model-option.current.readonly:hover {
+  background: transparent;
 }
 
 .model-option-info {

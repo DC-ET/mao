@@ -290,6 +290,8 @@ import appIcon from '../../assets/app-icon-small.png'
 const agentId = inject<Ref<string>>('agentId')!
 const executionMode = inject<Ref<string>>('executionMode')!
 const newTaskModelId = inject<Ref<number | undefined>>('newTaskModelId')!
+const newTaskModelTouched = inject<Ref<boolean>>('newTaskModelTouched')!
+const syncNewTaskAgentModel = inject<(agentId: string | null) => Promise<void>>('syncNewTaskAgentModel')!
 const permissionLevel = inject<Ref<string>>('permissionLevel')!
 const isNewTaskMode = inject<Ref<boolean>>('isNewTaskMode')!
 const newTaskAgentId = inject<Ref<string | null>>('newTaskAgentId')!
@@ -871,18 +873,27 @@ function handleRetry() {
 async function handleModelSwitch(modelId: number) {
   // Keep new-task draft in sync so "新建会话" inherits the model just selected mid-chat
   const prevModelId = newTaskModelId.value
+  const prevTouched = newTaskModelTouched.value
   newTaskModelId.value = modelId
   if (!isNewTaskMode.value && sessionStore.activeSessionId) {
     try {
       await sessionStore.updateSessionModel(sessionStore.activeSessionId, modelId)
+      // 用户手选了模型：新建态不再跟随 Agent 默认模型（技术方案 2026-11-24 §8.2）。
+      // 只在切换成功后置位：失败回滚后不能留下「已手选」的假状态。
+      newTaskModelTouched.value = true
     } catch {
       newTaskModelId.value = prevModelId
+      newTaskModelTouched.value = prevTouched
       ElMessage.error('模型切换失败，请重试')
     }
+    return
   }
+  // 新建态直接选模型：没有服务端调用，立即视为手选
+  newTaskModelTouched.value = true
 }
 
 function handleModelSelect(modelId: number, _modelIdStr: string) {
+  newTaskModelTouched.value = true
   newTaskModelId.value = modelId
 }
 
@@ -945,11 +956,12 @@ function handleNewTaskGitBranchChange(branch: string) {
   newTaskGitBranch.value = branch
 }
 
-function handleNewTaskAgentChange(id: string | null) {
+async function handleNewTaskAgentChange(id: string | null) {
   newTaskAgentId.value = id
-  if (id) {
-    agentStore.fetchAgent(id)
-  }
+  if (!id) return
+  // 详情用于头像/描述；模型按「未手选则跟随 Agent 默认」重算（技术方案 2026-11-24 §8.2）
+  void agentStore.fetchAgent(id)
+  await syncNewTaskAgentModel(id)
 }
 </script>
 

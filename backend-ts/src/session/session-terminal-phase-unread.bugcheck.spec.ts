@@ -43,6 +43,7 @@ function serviceWithSession(session: Session): {
     {} as never,
     {} as never,
     {} as never,
+    {} as never,
   );
   return { service, lastFields: () => captured };
 }
@@ -134,6 +135,7 @@ function terminalHarness(session: Session): {
   };
   const real = new SessionService(
     sessionRepo as never,
+    {} as never,
     {} as never,
     {} as never,
     {} as never,

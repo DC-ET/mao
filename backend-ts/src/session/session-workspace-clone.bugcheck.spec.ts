@@ -36,6 +36,7 @@ function makeService(root: string, cloneResult: { success: boolean; error: strin
       requireDefaultAgent: vi.fn(async () => ({ id: 9, name: 'A' })),
       findById: vi.fn(async () => ({ id: 9, name: 'A', enabled: 1 })),
     } as never,
+    { findById: vi.fn(async () => null) } as never,
     { getWorkspaceRoot: () => root } as never,
     { detect: vi.fn(async () => ({ isGit: false, platform: 'linux', shell: 'bash', osVersion: 'Linux' })) } as never,
     { listAvailableForUser: vi.fn() } as never,

@@ -77,6 +77,7 @@ function makeService() {
     messageRepo as never,
     fileChangeRepo as never,
     agentLookup as never,
+    { findById: vi.fn(async (id: number) => ({ id, name: 'm', status: 1, clientVisible: 1 })) } as never,
     pathSandbox as never,
     env as never,
     { listAvailableForUser: vi.fn() } as never,

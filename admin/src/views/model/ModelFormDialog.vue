@@ -73,6 +73,12 @@
             <el-switch v-model="form.isDefault" />
             <span class="form-hint-inline">新会话默认使用此模型</span>
           </el-form-item>
+          <el-form-item label="客户端可选">
+            <el-switch v-model="form.clientVisible" :disabled="form.isDefault" />
+            <span class="form-hint-inline">
+              关闭后，客户端「新建会话」与「切换模型」不再展示该模型；Agent 默认模型、机器人、浮窗与已绑定会话不受影响。默认模型必须保持客户端可选。
+            </span>
+          </el-form-item>
         </el-tab-pane>
         <el-tab-pane label="接入配置" name="access">
           <el-form-item label="客户端标识">
@@ -299,7 +305,8 @@ const form = reactive({
   priceCacheWrite: undefined as number | undefined | null,
   priceOutput: undefined as number | undefined | null,
   supportsVision: false,
-  isDefault: false
+  isDefault: false,
+  clientVisible: true
 })
 
 const rules = computed<FormRules>(() => ({
@@ -333,12 +340,22 @@ function resetForm() {
     priceCacheWrite: null,
     priceOutput: null,
     supportsVision: false,
-    isDefault: false
+    isDefault: false,
+    clientVisible: true
   })
 }
 
 watch(() => form.modelType, (type) => {
   if (type !== 'text' && activeTab.value === 'price') activeTab.value = 'basic'
+})
+
+// 默认模型必须对客户端可见（后端 §6.3 D4）：勾上默认时自动打开可见性，
+// 与 Agent 表单「默认 Agent 必须客户端可见」的同款回弹（AgentFormDialog.vue:706-712）。
+watch(() => form.isDefault, (isDefault) => {
+  if (isDefault && !form.clientVisible) {
+    form.clientVisible = true
+    ElMessage.warning('默认模型必须对客户端可见，已自动打开「客户端可选」')
+  }
 })
 
 watch(() => props.visible, (val) => {
@@ -369,7 +386,9 @@ watch(() => props.visible, (val) => {
       priceCacheWrite: props.modelData.priceCacheWrite ?? null,
       priceOutput: props.modelData.priceOutput ?? null,
       supportsVision: !!props.modelData.supportsVision,
-      isDefault: !!props.modelData.isDefault
+      isDefault: !!props.modelData.isDefault,
+      // 缺省/null 一律按可见（与后端 toVO 的 !== 0 归一一致）
+      clientVisible: props.modelData.clientVisible !== false
     })
   } else {
     resetForm()

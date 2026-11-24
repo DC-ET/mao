@@ -54,7 +54,9 @@
 
 四项价格与供应商计费口径对应：**缓存读** = 命中已有前缀缓存（OpenAI `cached_tokens` / Anthropic `cache_read_input_tokens`），**缓存写** = 本次新建缓存（Anthropic `cache_creation_input_tokens`，OpenAI 系无此概念可留空），**输入价格** = 既非缓存读也非缓存写的普通输入。某类 token 实际产生了但对应价格留空，该次调用成本整行留空（不计入聚合），避免低估；只填输入/输出两项即可覆盖无缓存的调用。可直接照抄官方价目表，不必再自行折算折扣。调用流水的「缓存写」列为 0 表示该协议无缓存写。
 
-CLI：`mao model list|create|update|delete|set-status|test`（价格用 `--price-input` / `--price-cache-read` / `--price-cache-write` / `--price-output`，见 [model.md](model.md)）。
+「客户端可选」关闭后（`clientVisible = false`）该模型只在管理端可见：客户端新建会话与切换模型的候选列表不展示它，但 Agent 默认模型、机器人/渠道配置、网页浮窗与已绑定会话照常可用；默认模型必须保持可见。列表可按「客户端可选」筛选。
+
+CLI：`mao model list|create|update|delete|set-status|test`（价格用 `--price-input` / `--price-cache-read` / `--price-cache-write` / `--price-output`，可见性用 `--client-visible 0|1`，见 [model.md](model.md)）。
 
 ## Agent 管理
 

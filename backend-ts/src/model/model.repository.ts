@@ -38,6 +38,10 @@ export class MysqlLlmModelRepository implements LlmModelRepository {
       where.push('model_type = ?');
       params.push(filter.modelType!.trim());
     }
+    if (filter.clientVisible != null) {
+      where.push('client_visible = ?');
+      params.push(filter.clientVisible);
+    }
     const whereSql = where.join(' AND ');
     const countRow = await this.db.queryOne<{ cnt: number }>(
       `SELECT COUNT(*) AS cnt FROM llm_model WHERE ${whereSql}`,
@@ -60,9 +64,10 @@ export class MysqlLlmModelRepository implements LlmModelRepository {
     return rows.map((row) => row.provider).filter((provider): provider is string => provider != null);
   }
 
-  listActiveText(): Promise<LlmModel[]> {
+  listActiveText(clientVisibleOnly = false): Promise<LlmModel[]> {
+    const visibleOnly = clientVisibleOnly ? ' AND client_visible = 1' : '';
     return this.db.query<LlmModel>(
-      `SELECT * FROM llm_model WHERE status = 1 AND model_type = 'text' AND ${notDeleted()} ORDER BY name ASC`,
+      `SELECT * FROM llm_model WHERE status = 1 AND model_type = 'text'${visibleOnly} AND ${notDeleted()} ORDER BY name ASC`,
     );
   }
 
@@ -121,6 +126,7 @@ export class MysqlLlmModelRepository implements LlmModelRepository {
       status: model.status ?? 1,
       supportsVision: model.supportsVision ?? 0,
       isDefault: model.isDefault ?? 0,
+      clientVisible: model.clientVisible ?? 1,
       deleted: 0,
     });
     model.id = id;
@@ -151,6 +157,7 @@ export class MysqlLlmModelRepository implements LlmModelRepository {
       status: model.status,
       supportsVision: model.supportsVision,
       isDefault: model.isDefault,
+      clientVisible: model.clientVisible ?? 1,
     });
   }
 

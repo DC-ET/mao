@@ -266,6 +266,8 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
       body.permissionLevel, body.isGit, body.platform, body.shell, body.osVersion,
       parseEntityId(body.modelId), body.cloudProjectKey, body.workspaceMode, body.gitCloneUrl, body.gitBranch,
       body.source as SessionSource | null, targetDeviceId, targetDeviceName,
+      // 客户端选择模型的可选性校验只在这里开启；内部通道（飞书/钉钉等）共用 createSession 但不受限。
+      { enforceClientModel: true },
     );
     const vos = await enrichSessions([session]);
     return sendOk(reply, vos[0]);
@@ -515,10 +517,12 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     if (body.projectKey != null) await sessionService.updateProjectKey(id, body.projectKey);
     if (body.permissionLevel != null) await sessionService.updatePermissionLevel(id, body.permissionLevel);
     if (body.memoryInjectionDisabled != null) await sessionService.updateMemoryInjectionDisabled(id, body.memoryInjectionDisabled);
-    const modelId = parseEntityId(body.modelId);
-    if (modelId != null) await sessionService.updateModelId(id, modelId);
+    // 先切 Agent 再切模型：模型可见性按「切换后的 Agent」的默认模型放行（技术方案 2026-11-24 §6.3）。
+    // 反过来会用旧 Agent 的默认模型判定，留下「隐藏模型 ≠ 当前 Agent 默认模型」的会话。
     const agentId = parseEntityId(body.agentId);
     if (agentId != null) await sessionService.updateSessionAgent(id, agentId);
+    const modelId = parseEntityId(body.modelId);
+    if (modelId != null) await sessionService.updateModelId(id, modelId);
     const updated = await sessionService.getSession(id);
     const vos = await enrichSessions([updated]);
     return sendOk(reply, vos[0]);

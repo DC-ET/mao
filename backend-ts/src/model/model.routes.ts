@@ -1,5 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { ClientImpersonation } from '@mao/contracts';
+import { BusinessException } from '../common/business-exception.js';
+import { ErrorCode } from '../common/error-code.js';
 import { requirePermission, requireUserId, sendOk } from '../common/http-error.js';
 import { bodyOf, pathId, queryInt, queryOptInt, queryOptStr } from '../common/request.js';
 import { parsePriceColumn } from '../usage/cost-micros.js';
@@ -33,7 +35,9 @@ interface CreateModelRequest {
   priceCacheWrite?: number | null;
   priceOutput?: number | null;
   supportsVision?: number;
-  isDefault?: number;
+  isDefault?: number | boolean;
+  /** 客户端可选：缺省/未传=创建可见、更新保持原值；false/0=仅管理端可配置。 */
+  clientVisible?: number | boolean | null;
 }
 
 interface UpdateStatusRequest {
@@ -66,6 +70,7 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
       queryOptInt(request, 'supportsVision'),
       queryOptInt(request, 'isDefault'),
       queryOptStr(request, 'modelType'),
+      queryOptInt(request, 'clientVisible'),
     );
     return sendOk(reply, {
       records: result.records.map((m) => toVO(m, reveal)),
@@ -76,8 +81,14 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
   });
 
   app.get('/v1/models/active', async (request, reply) => {
+    // scope=client：客户端模型选择器用，只看 client_visible = 1；
+    // 不带 scope 保持全量（管理后台 Agent 默认模型/机器人配置必须能选到隐藏模型）。
+    const scope = queryOptStr(request, 'scope');
+    if (scope != null && scope !== 'client') {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, "scope 仅支持 'client'");
+    }
     const reveal = await revealApiKey(request);
-    const list = (await modelService.listActiveModels()).map((m) => toVO(m, reveal));
+    const list = (await modelService.listActiveModels(scope === 'client')).map((m) => toVO(m, reveal));
     return sendOk(reply, list);
   });
 
@@ -126,6 +137,7 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
       body.priceOutput,
       body.maxRequestBodyBytes,
       body.authType,
+      body.clientVisible,
     );
     return sendOk(reply, toVO(model, true));
   });
@@ -153,6 +165,7 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
       body.priceOutput,
       body.maxRequestBodyBytes,
       body.authType,
+      body.clientVisible,
     );
     return sendOk(reply, toVO(model, true));
   });
@@ -208,6 +221,7 @@ function toVO(entity: LlmModel, revealApiKey: boolean): ModelVO {
     supportsVision: entity.supportsVision != null && entity.supportsVision === 1,
     isDefault: entity.isDefault != null && entity.isDefault === 1,
     status: entity.status,
+    clientVisible: entity.clientVisible !== 0,
     createdAt: entity.createdAt ?? null,
   };
 }

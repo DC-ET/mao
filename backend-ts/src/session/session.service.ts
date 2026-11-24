@@ -52,6 +52,7 @@ import type {
   MessageSearchGroup,
   MessageSearchHit,
   MessageSearchResult,
+  LlmModelLookup,
   LocalWorkspaceSummaryRow,
   Session,
   SessionGroupBucket,
@@ -90,6 +91,8 @@ export class SessionService {
     private readonly messageRepo: MessageRepository,
     private readonly fileChangeRepo: FileChangeRepository,
     private readonly agentLookup: AgentLookup,
+    /** 模型查询：客户端选模型的合法性校验（技术方案 2026-11-24 §6.3）。 */
+    private readonly modelLookup: LlmModelLookup,
     private readonly pathSandbox: PathSandbox,
     private readonly environmentInfoProvider: EnvironmentInfoProvider,
     _userCommandService: UserCommandLookup,
@@ -131,6 +134,12 @@ export class SessionService {
     source?: SessionSource | null,
     targetDeviceId?: string | null,
     targetDeviceName?: string | null,
+    /**
+     * 客户端入口加固（技术方案 2026-11-24 §6.3）：只有 HTTP 客户端路由传 true。
+     * 飞书/钉钉等内部通道用同一方法建会话、并把「机器人配置的模型」作为显式 modelId，
+     * 它们不受客户端可见性限制（需求要求关掉可见性后渠道照常可用）。
+     */
+    opts?: { enforceClientModel?: boolean },
   ): Promise<Session> {
     let resolvedAgentId = parseEntityId(agentId);
     if (resolvedAgentId == null) {
@@ -142,6 +151,10 @@ export class SessionService {
     }
     if (agent.enabled === 0) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '该 Agent 已停用');
+    }
+    const resolvedModelId = parseEntityId(modelId);
+    if (resolvedModelId != null && opts?.enforceClientModel === true) {
+      await this.assertModelSelectableByClient(resolvedModelId, agent.defaultModelId);
     }
 
     const resolvedExecutionMode = executionMode != null ? executionMode : 'CLOUD';
@@ -166,7 +179,7 @@ export class SessionService {
       platform: platform ?? null,
       shellPath: shellPath ?? null,
       osVersion: osVersion ?? null,
-      modelId: parseEntityId(modelId),
+      modelId: resolvedModelId,
       phase: 'IDLE',
       elapsedMs: 0,
       sessionType: 'NORMAL',
@@ -1633,8 +1646,31 @@ export class SessionService {
   }
 
   async updateModelId(sessionId: number, modelId: number): Promise<void> {
-    await this.getSession(sessionId);
+    const session = await this.getSession(sessionId);
+    const agent = session.agentId != null ? await this.agentLookup.findById(session.agentId) : null;
+    await this.assertModelSelectableByClient(modelId, agent?.defaultModelId);
     await this.sessionRepo.updateFields(sessionId, { modelId });
+  }
+
+  /**
+   * 客户端选模型的合法性（技术方案 2026-11-24 §6.3）：存在、启用；
+   * client_visible = 0 的模型只放行「该会话 Agent 的默认模型」——后台配好的默认模型允许使用，
+   * 用户自己挑的隐藏模型拒绝。运行时解析不看可见性，这里只守客户端请求参数。
+   */
+  async assertModelSelectableByClient(
+    modelId: number,
+    agentDefaultModelId: number | null | undefined,
+  ): Promise<void> {
+    const model = await this.modelLookup.findById(modelId);
+    if (model == null) {
+      throw new BusinessException(ErrorCode.MODEL_NOT_FOUND);
+    }
+    if (model.status !== 1) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '该模型已停用');
+    }
+    if (model.clientVisible === 0 && model.id !== agentDefaultModelId) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, '该模型不对客户端开放');
+    }
   }
 
   /** 会话绑定 Agent 的目标校验（切换 / 重开共用）：存在 + 启用 + 客户端可选，口径与新建会话一致。 */

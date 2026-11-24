@@ -58,6 +58,12 @@
               <el-option label="非默认" :value="0" />
             </el-select>
           </el-form-item>
+          <el-form-item label="客户端可选">
+            <el-select v-model="state.filters.clientVisible" clearable placeholder="全部" style="width: 130px" @change="handleSearch">
+              <el-option label="客户端可选" :value="1" />
+              <el-option label="仅管理端" :value="0" />
+            </el-select>
+          </el-form-item>
         </FilterPanel>
       </el-form>
 
@@ -72,6 +78,7 @@
               <span>{{ row.name }}</span>
               <el-tag v-if="row.authType === 'ecp'" type="success" size="small" title="调用时使用当前用户的 ECP Token">ECP</el-tag>
               <el-tag v-if="row.isDefault" type="warning" size="small">默认</el-tag>
+              <el-tag v-if="row.clientVisible === false" type="warning" size="small" title="仅管理端可见：客户端新建会话与切换模型不展示">仅管理端</el-tag>
               <el-icon v-if="row.supportsVision" class="name-badge is-vision" title="支持视觉"><Picture /></el-icon>
               <el-icon v-if="row.status === 1" class="name-badge is-enabled" title="已启用"><CircleCheckFilled /></el-icon>
               <el-icon v-else class="name-badge is-disabled" title="已停用"><CircleCloseFilled /></el-icon>
@@ -121,7 +128,7 @@
       <div v-else class="mobile-card-list" v-loading="loading">
         <el-card v-for="row in state.models" :key="row.id" shadow="hover">
           <div class="mobile-card-head">
-            <span class="mobile-card-title">{{ row.name }}<el-tag v-if="row.authType === 'ecp'" type="success" size="small" style="margin-left: 6px">ECP</el-tag><el-tag v-if="row.isDefault" type="warning" size="small" style="margin-left: 6px">默认</el-tag></span>
+            <span class="mobile-card-title">{{ row.name }}<el-tag v-if="row.authType === 'ecp'" type="success" size="small" style="margin-left: 6px">ECP</el-tag><el-tag v-if="row.isDefault" type="warning" size="small" style="margin-left: 6px">默认</el-tag><el-tag v-if="row.clientVisible === false" type="warning" size="small" style="margin-left: 6px">仅管理端</el-tag></span>
             <el-tag :type="row.status === 1 ? 'success' : 'danger'" size="small">
               {{ row.status === 1 ? '启用' : '禁用' }}
             </el-tag>
@@ -268,6 +275,7 @@ interface TabState {
     status?: number
     supportsVision?: number
     isDefault?: number
+    clientVisible?: number
   }
 }
 
@@ -283,7 +291,8 @@ function createTabState(): TabState {
       provider: '',
       status: undefined,
       supportsVision: undefined,
-      isDefault: undefined
+      isDefault: undefined,
+      clientVisible: undefined
     }
   })
 }
@@ -343,6 +352,7 @@ async function fetchModels() {
     if (filters.status !== undefined) params.status = filters.status
     if (filters.supportsVision !== undefined) params.supportsVision = filters.supportsVision
     if (filters.isDefault !== undefined) params.isDefault = filters.isDefault
+    if (filters.clientVisible !== undefined) params.clientVisible = filters.clientVisible
 
     const { data } = await api.get('/models', { params })
     if (seq !== fetchModelsSeq) return
@@ -414,7 +424,8 @@ function handleReset() {
     provider: '',
     status: undefined,
     supportsVision: undefined,
-    isDefault: undefined
+    isDefault: undefined,
+    clientVisible: undefined
   })
   handleSearch()
 }

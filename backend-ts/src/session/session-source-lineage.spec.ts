@@ -140,6 +140,7 @@ describe('admin 会话来源（技术方案 §4.1-6/7、§4.1-8）', () => {
       { selectMessagesForSearch: vi.fn(), selectHitMessages: vi.fn(async () => []) } as unknown as MessageRepository,
       { listBySession: vi.fn(async () => []) } as unknown as FileChangeRepository,
       { findById: vi.fn(async () => null), findByIds: vi.fn(async () => []) } as unknown as AgentLookup,
+      { findById: vi.fn(async () => null) } as never,
       {} as PathSandbox,
       {} as EnvironmentInfoProvider,
       {} as never,

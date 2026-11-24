@@ -51,6 +51,39 @@ function normalizeAuthTypeInput(value: string | null | undefined): ModelAuthType
   return trimmed as ModelAuthType;
 }
 
+/**
+ * 0/1 标志归一：0/false → 0，1/true/非零数 → 1；null/undefined = 未提供（返回 null）。
+ * 前端表单可能直接提交布尔（JSON true/false），严格 `=== 1` 比较会漏判。
+ */
+function normalizeFlag01(value: number | boolean | null | undefined): number | null {
+  if (value == null) return null;
+  if (value === 0 || value === false) return 0;
+  return 1;
+}
+
+/**
+ * 客户端可选归一：0/false → 0，其余显式值（1/true/非零数）→ 1；null/undefined = 未提供（返回 null）。
+ * 接受 boolean 是因为前端表单直接提交布尔，类型层声明 number 不代表运行时只有 number。
+ */
+function normalizeClientVisible(value: number | boolean | null | undefined): number | null {
+  if (value == null) return null;
+  if (value === 0 || value === false) return 0;
+  return 1;
+}
+
+/**
+ * 默认模型必须对客户端可见（与「默认 Agent 必须客户端可见」同口径）。
+ * 否则客户端新建态从 /v1/models/default 拿到的模型不在候选列表里，用户看到一个选不回来的名字。
+ */
+function requireDefaultModelVisible(isDefault: number, clientVisible: number): void {
+  if (isDefault === 1 && clientVisible === 0) {
+    throw new BusinessException(
+      ErrorCode.PARAM_INVALID.code,
+      '默认模型必须对客户端可见，请先取消默认或打开「客户端可选」',
+    );
+  }
+}
+
 const API_PROTOCOL_VALUES = ['', 'openai-compatible', 'anthropic', 'openai-responses'] as const;
 
 /** 校验并归一 API 协议：openai-compatible 与空串都归一为 ''（OpenAI 兼容）；null/undefined 表示未提供。 */
@@ -163,8 +196,12 @@ export class ModelService {
     supportsVision?: number | null,
     isDefault?: number | null,
     modelType?: string | null,
+    /** 客户端可选筛选：1=可选 0=仅管理端；null/undefined=不筛。 */
+    clientVisible?: number | null,
   ): Promise<{ records: LlmModel[]; total: number; page: number; size: number }> {
-    const filter: ModelListFilter = { keyword, provider, status, supportsVision, isDefault, modelType };
+    const filter: ModelListFilter = {
+      keyword, provider, status, supportsVision, isDefault, modelType, clientVisible,
+    };
     const result = await this.modelRepo.selectPage(page, size, filter);
     return { records: result.records, total: result.total, page, size };
   }
@@ -177,8 +214,9 @@ export class ModelService {
       .filter((provider) => provider.length > 0);
   }
 
-  listActiveModels(): Promise<LlmModel[]> {
-    return this.modelRepo.listActiveText();
+  /** clientVisibleOnly=true 只返回客户端可选模型（客户端选择器用）；缺省保持全量。 */
+  listActiveModels(clientVisibleOnly = false): Promise<LlmModel[]> {
+    return this.modelRepo.listActiveText(clientVisibleOnly);
   }
 
   findFirstActiveAudioModel(): Promise<LlmModel | null> {
@@ -208,7 +246,8 @@ export class ModelService {
     apiKey: string | null | undefined,
     modelId: string,
     supportsVision: number | null | undefined,
-    isDefault: number | null | undefined,
+    /** 默认模型标记：1/true=是 0/false=否；布尔同样接受（前端表单可能直接提交布尔）。 */
+    isDefault: number | boolean | null | undefined,
     contextWindowTokens: number | null | undefined,
     modelType: string | null | undefined,
     clientImpersonation: string | null | undefined,
@@ -221,8 +260,13 @@ export class ModelService {
     maxRequestBodyBytes?: number | null,
     /** 凭证方式：api_key（默认）/ ecp（当前用户 ECP Token）。 */
     authType?: string | null,
+    /** 客户端可选：缺省 1（可见）；0/false=仅管理端可配置。 */
+    clientVisible?: number | boolean | null,
   ): Promise<LlmModel> {
     const authTypeValue = normalizeAuthTypeInput(authType) ?? 'api_key';
+    const clientVisibleValue = normalizeClientVisible(clientVisible) ?? 1;
+    const isDefaultValue = normalizeFlag01(isDefault) ?? 0;
+    requireDefaultModelVisible(isDefaultValue, clientVisibleValue);
     if (authTypeValue === 'ecp') await this.requireEcpEnabled();
     // api_key 模式必须有固定 Key：避免直连 API 创建出必然 401 的空 Key 模型（前端/CLI 均有必填校验）。
     if (authTypeValue === 'api_key' && !hasText(apiKey)) {
@@ -244,7 +288,8 @@ export class ModelService {
       clientImpersonation: normalizeClientImpersonation(clientImpersonation) ?? 'none',
       authType: authTypeValue,
       supportsVision: supportsVision != null ? supportsVision : 0,
-      isDefault: isDefault != null ? isDefault : 0,
+      isDefault: isDefaultValue,
+      clientVisible: clientVisibleValue,
       contextWindowTokens,
       maxRequestBodyBytes: normalizeMaxRequestBodyBytes(maxRequestBodyBytes) ?? null,
       priceInput: normalizePrice(priceInput, 'priceInput'),
@@ -265,7 +310,8 @@ export class ModelService {
     apiKey: string | null | undefined,
     modelId: string | null | undefined,
     supportsVision: number | null | undefined,
-    isDefault: number | null | undefined,
+    /** 默认模型标记：1/true=是 0/false=否；布尔同样接受（前端表单可能直接提交布尔）。 */
+    isDefault: number | boolean | null | undefined,
     contextWindowTokens: number | null | undefined,
     modelType: string | null | undefined,
     clientImpersonation: string | null | undefined,
@@ -278,8 +324,15 @@ export class ModelService {
     maxRequestBodyBytes?: number | null,
     /** 凭证方式：未提供=保持原值；api_key / ecp 显式切换。 */
     authType?: string | null,
+    /** 客户端可选：未提供=保持原值；0/false=仅管理端可配置。 */
+    clientVisible?: number | boolean | null,
   ): Promise<LlmModel> {
     const model = await this.getModel(id);
+    const nextClientVisible = normalizeClientVisible(clientVisible) ?? (model.clientVisible ?? 1);
+    const isDefaultValue = normalizeFlag01(isDefault);
+    const nextIsDefault = isDefaultValue ?? (model.isDefault ?? 0);
+    // 先按「最终状态」校验，避免 clearDefaultFlag() 之后才发现组合非法（默认标记已被别的模型抢走）。
+    requireDefaultModelVisible(nextIsDefault, nextClientVisible);
     if (name != null) model.name = name;
     if (provider != null) model.provider = provider;
     const apiProtocolValue = normalizeApiProtocol(apiProtocol);
@@ -311,11 +364,12 @@ export class ModelService {
     if (priceCacheRead !== undefined) model.priceCacheRead = normalizePrice(priceCacheRead, 'priceCacheRead');
     if (priceCacheWrite !== undefined) model.priceCacheWrite = normalizePrice(priceCacheWrite, 'priceCacheWrite');
     if (priceOutput !== undefined) model.priceOutput = normalizePrice(priceOutput, 'priceOutput');
-    if (isDefault != null) {
-      if (isDefault === 1) {
+    model.clientVisible = nextClientVisible;
+    if (isDefaultValue != null) {
+      if (isDefaultValue === 1) {
         await this.modelRepo.clearDefaultFlag();
       }
-      model.isDefault = isDefault;
+      model.isDefault = isDefaultValue;
     }
     await this.modelRepo.updateById(model);
     return model;

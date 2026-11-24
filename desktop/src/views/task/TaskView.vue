@@ -150,6 +150,7 @@ import CenterTabContainer from '../../components/center/CenterTabContainer.vue'
 import OnboardingOverlay from '../../components/onboarding/OnboardingOverlay.vue'
 import ReadinessPending from '../../components/onboarding/ReadinessPending.vue'
 import { useReadinessStore } from '../../stores/readiness'
+import { decideNewTaskModel } from '../../utils/new-task-model'
 
 const route = useRoute()
 const router = useRouter()
@@ -186,6 +187,11 @@ const newTaskCloudProjects = ref<Array<{ name: string; path: string; isGit: bool
 // 镜像 newTaskCloudProjects 的 provide → ChatPanel → ChatInput 链路
 const newTaskLocalWorkspaces = ref<LocalWorkspaceSummary[]>([])
 const newTaskModelId = ref<number | undefined>()
+/**
+ * 用户是否在新建态手选过模型（技术方案 2026-11-24 §8.2）：
+ * 未手选时模型跟随选中 Agent 的默认模型；手选后切 Agent 不覆盖。
+ */
+const newTaskModelTouched = ref(false)
 const lastViewedSession = ref<{ agentId: string; executionMode: string; workspace?: string; cloudProjectKey?: string; permissionLevel?: string; modelId?: number } | null>(null)
 // 任务索引加载失败（静默失败可见化）：门住 isNewTaskMode 不再静默掉进「新建任务」态（D6）
 const indexError = ref(false)
@@ -206,6 +212,8 @@ provide('agentId', agentId)
 provide('executionMode', executionMode)
 provide('workspace', workspace)
 provide('newTaskModelId', newTaskModelId)
+provide('newTaskModelTouched', newTaskModelTouched)
+provide('syncNewTaskAgentModel', syncNewTaskAgentModel)
 provide('permissionLevel', permissionLevel)
 provide('isNewTaskMode', isNewTaskMode)
 provide('newTaskAgentId', newTaskAgentId)
@@ -1277,15 +1285,16 @@ async function resolveNewTaskDefaults(defaults?: NewTaskDefaults | null): Promis
 
 async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
   const generation = ++newTaskModeGeneration
+  newTaskModelTouched.value = false
+  visibleModelIds = null
   // 显式进入新建任务（入口按钮 / 显式路由 / 错误卡出口）：清掉可能残留的索引错误门，
   // 否则过期的门会把用户挡在「任务列表加载失败」卡前（B3，与 D6「显式动作不挡」对齐）
   indexError.value = false
   // Apply known defaults synchronously BEFORE any await so the input model selector
   // does not briefly show a stale newTaskModelId from a previous draft/session.
   const earlyMode = defaults?.executionMode ? normalizeNewTaskMode(defaults.executionMode) : newTaskMode.value
-  if (defaults?.modelId) {
-    newTaskModelId.value = defaults.modelId
-  }
+  // 同步乐观预填（有则显示、无则清空），随后 syncNewTaskModel 会按可见性/Agent 默认模型校正。
+  newTaskModelId.value = defaults?.modelId
   if (defaults?.agentId) {
     newTaskAgentId.value = String(defaults.agentId)
   }
@@ -1345,7 +1354,6 @@ async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
     }
   })
   permissionLevel.value = resolved.permissionLevel || 'READ_ONLY'
-  newTaskModelId.value = resolved.modelId
 
   initialLoading.value = false
   executionMode.value = mode
@@ -1359,10 +1367,7 @@ async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
   chatSending.value = false
   chatPendingApprovals.value = []
 
-  if (!newTaskModelId.value) {
-    await loadDefaultModel()
-    if (generation !== newTaskModeGeneration) return
-  }
+  await syncNewTaskModel(resolved.agentId ?? null, defaults?.modelId)
   if (generation !== newTaskModeGeneration) return
   await nextTick()
   chatFocusInput.value?.()
@@ -1600,10 +1605,66 @@ function handleNewSideTask(
 
 provide('openSideTask', handleNewSideTask)
 
-async function loadDefaultModel() {
+/** 客户端可见模型 id 缓存：进入新建态时失效，后台改配置后下次进入即刷新。 */
+let visibleModelIds: Set<number> | null = null
+
+async function fetchVisibleModelIds(): Promise<Set<number>> {
+  if (visibleModelIds != null) return visibleModelIds
+  try {
+    const { data } = await api.get('/models/active', { params: { scope: 'client' } })
+    visibleModelIds = new Set(((data || []) as Array<{ id: number }>).map(m => m.id))
+  } catch {
+    // 拉不到就不拦预填：服务端会兜底校验，前端只需避免制造必然失败的默认值。
+    // 不写缓存：一次网络抖动不该让本次新建态后续每次切 Agent 都判定「显式模型不可用」。
+    return new Set()
+  }
+  return visibleModelIds
+}
+
+/**
+ * 新建态模型三级预填（技术方案 2026-11-24 §8.2）：用户手选 > Agent 默认模型 > 全局默认。
+ * explicitModelId（路由带入 / 上次会话）需仍在可用集合里（客户端可见，或等于该 Agent 默认模型）才采用。
+ */
+let modelSyncSeq = 0
+
+async function syncNewTaskModel(agentId: string | null, explicitModelId?: number) {
+  if (newTaskModelTouched.value) return
+  // 竞态保护：连续进入新建态 / 快速切 Agent 时，只让最后一次请求写结果；
+  // 旧请求晚到会把「新 Agent + 旧 Agent 的隐藏默认模型」写进会话，发送时被服务端拒绝。
+  const seq = ++modelSyncSeq
+  const generation = newTaskModeGeneration
+  const stillCurrent = () => seq === modelSyncSeq && generation === newTaskModeGeneration
+  const agent = agentId
+    ? (agentStore.getAgentById(agentId) ?? await agentStore.fetchAgent(agentId))
+    : null
+  if (!stillCurrent()) return
+  const agentModelId = agent?.defaultModelId ?? null
+  const visible = explicitModelId != null ? await fetchVisibleModelIds() : new Set<number>()
+  if (!stillCurrent()) return
+  const decision = decideNewTaskModel({
+    touched: newTaskModelTouched.value,
+    explicitModelId,
+    agentModelId,
+    visibleModelIds: visible,
+  })
+  if (decision.action === 'keep') return
+  if (decision.action === 'set') {
+    newTaskModelId.value = decision.modelId
+    return
+  }
+  newTaskModelId.value = undefined
+  await loadDefaultModel(stillCurrent)
+}
+
+/** 切换 Agent 后重算模型（ChatPanel 调用）：未手选过就跟随新 Agent 的默认模型。 */
+async function syncNewTaskAgentModel(agentId: string | null): Promise<void> {
+  await syncNewTaskModel(agentId)
+}
+
+async function loadDefaultModel(stillCurrent?: () => boolean) {
   try {
     const { data } = await api.get('/models/default')
-    if (data) {
+    if (data && (stillCurrent == null || stillCurrent())) {
       newTaskModelId.value = data.id
     }
   } catch {
@@ -1703,11 +1764,10 @@ watch(getRouteWatchState, async (state, prev) => {
         newTaskGitCloneUrl.value = ''
         newTaskCloudProjectKey.value = previous.cloudProjectKey || ''
         permissionLevel.value = previous.permissionLevel || 'READ_ONLY'
-        if (previous.modelId) {
-          newTaskModelId.value = previous.modelId
-        } else {
-          loadDefaultModel()
-        }
+        newTaskModelTouched.value = false
+        visibleModelIds = null
+        newTaskModelId.value = previous.modelId
+        void syncNewTaskModel(previous.agentId ?? null, previous.modelId)
         // 浏览器新建本地任务（技术方案 2026-11-17）：预填 LOCAL 时拉取已有本地工作区，
         // 供下拉 / 守卫与发送时设备沿用解析（Electron 走目录选择，不需要）
         if (!isElectronClient() && newTaskMode.value === 'LOCAL') {

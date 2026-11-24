@@ -72,8 +72,14 @@ export class RestClient {
     return this.request<AgentVO[]>('GET', '/v1/agents', { query: { keyword } });
   }
 
-  async listActiveModels(): Promise<SafeModelVO[]> {
-    const list = await this.request<Array<SafeModelVO & { apiKey?: string }>>('GET', '/v1/models/active');
+  /**
+   * 启用中的文本模型。clientVisibleOnly=true 时只取客户端可选（scope=client）：
+   * 客户端选择器与按名解析用它；按 id 显式指定不受可见性限制（技术方案 2026-11-24 §9）。
+   */
+  async listActiveModels(options?: { clientVisibleOnly?: boolean }): Promise<SafeModelVO[]> {
+    const list = await this.request<Array<SafeModelVO & { apiKey?: string }>>('GET', '/v1/models/active', {
+      query: options?.clientVisibleOnly ? { scope: 'client' } : undefined,
+    });
     return stripModelSecrets(list ?? []);
   }
 

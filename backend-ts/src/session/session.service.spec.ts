@@ -5,7 +5,7 @@ import { whereFilter, type SqlRow } from '../testing/sql-where.js';
 import { SessionService, buildSnippet } from './session.service.js';
 import { CLOUD_TEMP } from './util/session-group-key.js';
 import type { FileChangeRepository, MessageRepository, SessionRepository } from './session.repository.js';
-import type { AgentLookup, Message, Session, UserCommandLookup } from './types.js';
+import type { AgentLookup, LlmModelLookup, Message, Session, UserCommandLookup } from './types.js';
 import type { PathSandbox } from '../harness/safety/path-sandbox.js';
 import type { EnvironmentInfoProvider } from '../harness/core/environment-info.js';
 import type { GitOperationService } from './git-operation.service.js';
@@ -96,8 +96,14 @@ function makeService() {
     selectValidBoundaryMessage: vi.fn(),
   } as unknown as MessageRepository;
   const agentLookup = {
+    findById: vi.fn(async () => null),
     findByIds: vi.fn().mockResolvedValue([]),
   } as unknown as AgentLookup;
+  const modelLookup = {
+    findById: vi.fn(async () => null),
+    findByIds: vi.fn(async () => []),
+    findDefault: vi.fn(async () => null),
+  } as unknown as LlmModelLookup;
   const fileChangeRepo = {
     listBySession: vi.fn(async () => []),
     insert: vi.fn(),
@@ -109,6 +115,7 @@ function makeService() {
     messageRepo,
     fileChangeRepo,
     agentLookup,
+    modelLookup,
     {} as PathSandbox,
     { detect: vi.fn(async () => ({ isGit: false, platform: 'linux', shell: '/bin/bash', osVersion: 'Linux' })) } as unknown as EnvironmentInfoProvider,
     {} as UserCommandLookup,
@@ -116,7 +123,7 @@ function makeService() {
     sessionCompactionService,
     sessionCompactionEventService,
   );
-  return { service, sessionRepo, messageRepo, fileChangeRepo, agentLookup, txDb };
+  return { service, sessionRepo, messageRepo, fileChangeRepo, agentLookup, modelLookup, txDb };
 }
 
 describe('SessionService archive', () => {
@@ -1167,5 +1174,95 @@ describe('SessionService getRecentUserMessages', () => {
     const { service, messageRepo } = makeService();
     vi.mocked(messageRepo.selectRecentUserMessages).mockResolvedValue([]);
     expect(await service.getRecentUserMessages(20, 1)).toEqual([]);
+  });
+});
+
+describe('SessionService 客户端模型可选（技术方案 2026-11-24 §6.3）', () => {
+  const AGENT_ID = 5;
+  const AGENT_DEFAULT_MODEL = 30;
+  const HIDDEN_MODEL = 31;
+  const DISABLED_MODEL = 32;
+
+  function setAgent(overrides: Partial<{ defaultModelId: number | null }> = {}) {
+    return { id: AGENT_ID, name: 'A', enabled: 1, ...overrides };
+  }
+
+  function setModels(
+    lookup: ReturnType<typeof makeService>['modelLookup'],
+  ) {
+    vi.mocked(lookup.findById).mockImplementation(async (id: number) => {
+      if (id === AGENT_DEFAULT_MODEL) return { id, name: 'default', status: 1, clientVisible: 0 } as never;
+      if (id === HIDDEN_MODEL) return { id, name: 'hidden', status: 1, clientVisible: 0 } as never;
+      if (id === DISABLED_MODEL) return { id, name: 'off', status: 0, clientVisible: 1 } as never;
+      return null;
+    });
+  }
+
+  it('createSession：不可见且非 Agent 默认模型 → 拒绝', async () => {
+    const { service, agentLookup, modelLookup } = makeService();
+    vi.mocked(agentLookup.findById).mockResolvedValue(setAgent({ defaultModelId: AGENT_DEFAULT_MODEL }) as never);
+    setModels(modelLookup);
+    await expect(service.createSession(
+      7, AGENT_ID, 't', 'LOCAL', '/tmp/ws', null, null, null, null, null, HIDDEN_MODEL,
+      null, null, null, null, null, null, null, { enforceClientModel: true },
+    )).rejects.toBeInstanceOf(BusinessException);
+  });
+
+  it('createSession：Agent 默认模型即使是隐形的也放行', async () => {
+    const { service, sessionRepo, agentLookup, modelLookup } = makeService();
+    vi.mocked(agentLookup.findById).mockResolvedValue(setAgent({ defaultModelId: AGENT_DEFAULT_MODEL }) as never);
+    setModels(modelLookup);
+    const created = await service.createSession(
+      7, AGENT_ID, 't', 'LOCAL', '/tmp/ws', null, null, null, null, null, AGENT_DEFAULT_MODEL,
+      null, null, null, null, null, null, null, { enforceClientModel: true },
+    );
+    expect(created.modelId).toBe(AGENT_DEFAULT_MODEL);
+    expect(sessionRepo.insert).toHaveBeenCalled();
+  });
+
+  it('createSession：停用模型与不存在模型都拒绝', async () => {
+    const { service, agentLookup, modelLookup } = makeService();
+    vi.mocked(agentLookup.findById).mockResolvedValue(setAgent() as never);
+    setModels(modelLookup);
+    await expect(service.createSession(
+      7, AGENT_ID, 't', 'LOCAL', '/tmp/ws', null, null, null, null, null, DISABLED_MODEL,
+      null, null, null, null, null, null, null, { enforceClientModel: true },
+    )).rejects.toBeInstanceOf(BusinessException);
+    await expect(service.createSession(
+      7, AGENT_ID, 't', 'LOCAL', '/tmp/ws', null, null, null, null, null, 999,
+      null, null, null, null, null, null, null, { enforceClientModel: true },
+    )).rejects.toBeInstanceOf(BusinessException);
+  });
+
+  it('createSession：内部通道（飞书/钉钉等）不传 enforceClientModel 时隐藏/停用模型都放行', async () => {
+    const { service, agentLookup, modelLookup } = makeService();
+    vi.mocked(agentLookup.findById).mockResolvedValue(setAgent() as never);
+    setModels(modelLookup);
+    // 机器人配置了「仅管理端」模型：需求要求关掉可见性后渠道照常可用
+    const created = await service.createSession(
+      7, AGENT_ID, 't', 'LOCAL', '/tmp/ws', null, null, null, null, null, HIDDEN_MODEL,
+    );
+    expect(created.modelId).toBe(HIDDEN_MODEL);
+    expect(modelLookup.findById).not.toHaveBeenCalled();
+  });
+
+  it('createSession：不传 modelId 不查模型', async () => {
+    const { service, agentLookup, modelLookup } = makeService();
+    vi.mocked(agentLookup.findById).mockResolvedValue(setAgent() as never);
+    await service.createSession(7, AGENT_ID, 't', 'LOCAL', '/tmp/ws');
+    expect(modelLookup.findById).not.toHaveBeenCalled();
+  });
+
+  it('updateModelId：不可见非默认拒绝；Agent 默认模型放行', async () => {
+    const { service, sessionRepo, agentLookup, modelLookup } = makeService();
+    vi.mocked(sessionRepo.findById).mockResolvedValue({ id: 11, userId: 7, agentId: AGENT_ID, status: 'ACTIVE' } as never);
+    vi.mocked(agentLookup.findById).mockResolvedValue(setAgent({ defaultModelId: AGENT_DEFAULT_MODEL }) as never);
+    setModels(modelLookup);
+
+    await expect(service.updateModelId(11, HIDDEN_MODEL)).rejects.toBeInstanceOf(BusinessException);
+    expect(sessionRepo.updateFields).not.toHaveBeenCalledWith(11, { modelId: HIDDEN_MODEL });
+
+    await service.updateModelId(11, AGENT_DEFAULT_MODEL);
+    expect(sessionRepo.updateFields).toHaveBeenCalledWith(11, { modelId: AGENT_DEFAULT_MODEL });
   });
 });

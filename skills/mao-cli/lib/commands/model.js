@@ -16,11 +16,11 @@ const { outputResult } = require('../output');
 const HELP = `用法:
   mao model list-active
   mao model default
-  mao model list [--page] [--size] [--keyword] [--provider] [--status] [--supports-vision] [--is-default]
+  mao model list [--page] [--size] [--keyword] [--provider] [--status] [--supports-vision] [--is-default] [--client-visible 0|1]
   mao model get --id <id>
   mao model providers
-  mao model create --name --provider --base-url [--api-key] --model-id [--auth-type api_key|ecp] [--context-window-tokens] [--supports-vision 0|1] [--is-default 0|1] [--price-input <n>] [--price-cache-read <n>] [--price-cache-write <n>] [--price-output <n>]
-  mao model update --id [--name] [--provider] [--base-url] [--api-key] [--model-id] [--auth-type api_key|ecp] [--context-window-tokens] [--supports-vision] [--is-default] [--price-input <n>] [--price-cache-read <n>] [--price-cache-write <n>] [--price-output <n>]
+  mao model create --name --provider --base-url [--api-key] --model-id [--auth-type api_key|ecp] [--context-window-tokens] [--supports-vision 0|1] [--is-default 0|1] [--client-visible 0|1] [--price-input <n>] [--price-cache-read <n>] [--price-cache-write <n>] [--price-output <n>]
+  mao model update --id [--name] [--provider] [--base-url] [--api-key] [--model-id] [--auth-type api_key|ecp] [--context-window-tokens] [--supports-vision] [--is-default] [--client-visible 0|1] [--price-input <n>] [--price-cache-read <n>] [--price-cache-write <n>] [--price-output <n>]
   mao model delete --id
   mao model set-status --id --status
   mao model test --id
@@ -59,6 +59,7 @@ function modelBody(flags, { requireAll = false } = {}) {
       contextWindowTokens: getNumber(flags, 'context-window-tokens'),
       supportsVision: getBool01(flags, 'supports-vision'),
       isDefault: getBool01(flags, 'is-default'),
+      clientVisible: getBool01(flags, 'client-visible'),
       priceInput: modelPrice(flags, 'price-input', '输入价格'),
       priceCacheRead: modelPrice(flags, 'price-cache-read', '缓存读价格'),
       priceCacheWrite: modelPrice(flags, 'price-cache-write', '缓存写价格'),
@@ -75,6 +76,7 @@ function modelBody(flags, { requireAll = false } = {}) {
     contextWindowTokens: getNumber(flags, 'context-window-tokens'),
     supportsVision: getBool01(flags, 'supports-vision'),
     isDefault: getBool01(flags, 'is-default'),
+    clientVisible: getBool01(flags, 'client-visible'),
     priceInput: modelPrice(flags, 'price-input', '输入价格'),
     priceCacheRead: modelPrice(flags, 'price-cache-read', '缓存读价格'),
     priceCacheWrite: modelPrice(flags, 'price-cache-write', '缓存写价格'),
@@ -119,6 +121,7 @@ async function handle(ctx) {
           status: getNumber(flags, 'status'),
           supportsVision: getNumber(flags, 'supports-vision'),
           isDefault: getNumber(flags, 'is-default'),
+          clientVisible: getNumber(flags, 'client-visible'),
         }),
       });
       outputResult(result, globals);

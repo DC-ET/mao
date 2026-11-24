@@ -33,6 +33,7 @@ function serviceWithSession(session: Session): {
     {} as never,
     {} as never,
     {} as never,
+    {} as never,
   );
   return { service, lastFields: () => captured };
 }

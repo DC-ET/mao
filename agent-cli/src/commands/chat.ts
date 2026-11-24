@@ -73,7 +73,7 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
   let modelNames: string[] = [];
   let modelsCache: SafeModelVO[] = [];
   try {
-    modelsCache = await rest.listActiveModels();
+    modelsCache = await rest.listActiveModels({ clientVisibleOnly: true });
     // 只放显示名：同一厂商串常对应多条配置，混进补全会让用户选到无法唯一定位的候选。
     // 同时 trim，库里有带尾随空格的显示名，补全填进去会与解析侧的归一化不一致。
     modelNames = [...new Set(modelsCache.map((m) => (m.name ?? '').trim()).filter((n) => n !== ''))];
@@ -401,7 +401,7 @@ export async function cmdChat(ctx: ChatContext): Promise<number> {
         const id = await resolveModelId(rest, spec);
         if (id == null) throw new CliError(`找不到模型 ${spec}`);
         try {
-          const models = await rest.listActiveModels();
+          const models = await rest.listActiveModels({ clientVisibleOnly: true });
           const found = models.find((m) => Number(m.id) === Number(id));
           inkRenderer!.setMeta({
             modelName: found?.name || spec,
