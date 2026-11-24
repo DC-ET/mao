@@ -14,13 +14,21 @@ export class UserCommandService {
     return this.commandRepo.listByUserId(userId);
   }
 
+  async listVisibleSystemForUser(userId: number): Promise<UserCommand[]> {
+    await this.warnIllegalVisibilities();
+    return this.commandRepo.listVisibleSystemForUser(userId);
+  }
+
   async listAvailableForUser(userId: number): Promise<UserCommand[]> {
     const merged = new Map<string, UserCommand>();
-    for (const cmd of await this.listByUserId(SYSTEM_USER_ID)) {
+    for (const cmd of await this.listVisibleSystemForUser(userId)) {
       merged.set(cmd.name, cmd);
     }
-    for (const cmd of await this.listByUserId(userId)) {
-      merged.set(cmd.name, cmd);
+    // userId <= 0 没有个人层。再并一次 user_id=0 会把刚才滤掉的系统指令加回去。
+    if (userId > 0) {
+      for (const cmd of await this.listByUserId(userId)) {
+        merged.set(cmd.name, cmd);
+      }
     }
     return [...merged.values()];
   }
@@ -34,11 +42,25 @@ export class UserCommandService {
   }
 
   async getByUserIdAndName(userId: number, name: string): Promise<UserCommand | null> {
-    const personal = await this.commandRepo.findByUserIdAndName(userId, name);
-    if (personal != null || userId === SYSTEM_USER_ID) {
-      return personal;
+    if (userId > 0) {
+      const personal = await this.commandRepo.findByUserIdAndName(userId, name);
+      if (personal != null) return personal;
     }
-    return this.commandRepo.findByUserIdAndName(SYSTEM_USER_ID, name);
+    const system = await this.commandRepo.findByUserIdAndName(SYSTEM_USER_ID, name);
+    if (system?.id == null) return null;
+    if (!isKnownVisibility(system.visibility)) {
+      console.warn(`[user-command] ignore illegal visibility=${String(system.visibility)} id=${system.id}`);
+      return null;
+    }
+    if (!(await this.commandRepo.isVisibleToUser(system.id, userId))) return null;
+    return system;
+  }
+
+  private async warnIllegalVisibilities(): Promise<void> {
+    const illegal = await this.commandRepo.listIllegalSystemVisibilities();
+    for (const row of illegal) {
+      console.warn(`[user-command] ignore illegal visibility=${String(row.visibility)} id=${row.id}`);
+    }
   }
 
   async create(userId: number, name: string, content: string): Promise<UserCommand> {
@@ -94,4 +116,8 @@ export class UserCommandService {
       throw new BusinessException(ErrorCode.COMMAND_NAME_INVALID);
     }
   }
+}
+
+function isKnownVisibility(value: string | null | undefined): boolean {
+  return value == null || value === 'all' || value === 'roles';
 }

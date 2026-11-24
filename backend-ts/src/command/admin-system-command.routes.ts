@@ -5,8 +5,14 @@ import { hasText } from '../common/case.js';
 import { requireRequestPermission, sendJson, sendOk } from '../common/http-error.js';
 import { bodyOf, pathId, pathParam, queryOptInt, queryOptStr } from '../common/request.js';
 import { fail } from '../common/result.js';
+import type { CommandVisibility } from '@mao/contracts';
 import { SYSTEM_USER_ID } from './command.service.js';
-import type { AdminUserCommandVO, UserCommand, UserCommandRepository } from './types.js';
+import type { AdminUserCommandVO, CommandRoleGrant, CommandRoleOption, UserCommand, UserCommandRepository } from './types.js';
+
+const ROLE_IDS_REQUIRED = '指定角色时至少选择一个角色';
+const VISIBILITY_INVALID = '可见范围只能是 all 或 roles';
+const ROLE_ID_INVALID = '角色 ID 必须是正整数';
+const ROLE_UNKNOWN = '存在未知或已删除的角色';
 
 const NAME_PATTERN = /^[a-zA-Z0-9\u4e00-\u9fa5_-]+$/;
 
@@ -18,17 +24,22 @@ export interface AdminSystemCommandRouteDeps {
   };
 }
 
-interface CreateSystemCommandRequest {
+interface VisibilityBody {
+  visibility?: unknown;
+  roleIds?: unknown;
+}
+
+interface CreateSystemCommandRequest extends VisibilityBody {
   name?: string;
   content?: string;
 }
 
-interface UpdateSystemCommandRequest {
+interface UpdateSystemCommandRequest extends VisibilityBody {
   name?: string;
   content?: string;
 }
 
-interface PromotePersonalCommandRequest {
+interface PromotePersonalCommandRequest extends VisibilityBody {
   name?: string;
   content?: string;
 }
@@ -40,7 +51,14 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
   app.get('/v1/admin/system-commands', async (request, reply) => {
     await requireRequestPermission(permissionService, request, 'command:read');
     const commands = await commandRepo.listByUserId(SYSTEM_USER_ID);
-    return sendOk(reply, commands.map(toAdminVO));
+    return sendOk(reply, await toSystemAdminVOList(commandRepo, commands));
+  });
+
+  // 角色下拉。必须写在 /:id 之前，否则 role-options 会被当成 id。
+  app.get('/v1/admin/system-commands/role-options', async (request, reply) => {
+    await requireRequestPermission(permissionService, request, 'command:read');
+    const roles = await commandRepo.listActiveRoles();
+    return sendOk(reply, roles.map(toRoleOption));
   });
 
   // 详情：查询单条系统指令
@@ -50,7 +68,8 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
     if (command == null) {
       return sendJson(reply, 200, fail(404, '指令不存在'));
     }
-    return sendOk(reply, toAdminVO(command));
+    const [vo] = await toSystemAdminVOList(commandRepo, [command]);
+    return sendOk(reply, vo);
   });
 
   // 新增：创建系统指令
@@ -70,9 +89,11 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
       throw new BusinessException(ErrorCode.COMMAND_NAME_DUPLICATE);
     }
 
+    const scope = await resolveVisibility(commandRepo, body, true);
     const command: UserCommand = { userId: SYSTEM_USER_ID, name: body.name!, content: body.content! };
-    await commandRepo.insert(command);
-    return sendOk(reply, toAdminVO(command));
+    await commandRepo.insertWithVisibility(command, scope.visibility, scope.roleIds);
+    const [vo] = await toSystemAdminVOList(commandRepo, [command]);
+    return sendOk(reply, vo);
   });
 
   // 编辑：更新系统指令
@@ -98,8 +119,14 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
     }
 
     command.content = body.content!;
-    await commandRepo.updateById(command);
-    return sendOk(reply, toAdminVO(command));
+    if (body.visibility === undefined) {
+      await commandRepo.updateById(command);
+    } else {
+      const scope = await resolveVisibility(commandRepo, body, false);
+      await commandRepo.updateWithVisibility(command, scope.visibility, scope.roleIds);
+    }
+    const [vo] = await toSystemAdminVOList(commandRepo, [command]);
+    return sendOk(reply, vo);
   });
 
   // 删除：删除系统指令
@@ -180,9 +207,11 @@ export function registerAdminSystemCommandRoutes(app: FastifyInstance, deps: Adm
       throw new BusinessException(ErrorCode.COMMAND_NAME_DUPLICATE);
     }
 
+    const scope = await resolveVisibility(commandRepo, body, true);
     const command: UserCommand = { userId: SYSTEM_USER_ID, name, content };
-    await commandRepo.insert(command);
-    return sendOk(reply, toAdminVO(command));
+    await commandRepo.insertWithVisibility(command, scope.visibility, scope.roleIds);
+    const [vo] = await toSystemAdminVOList(commandRepo, [command]);
+    return sendOk(reply, vo);
   });
 
   // 删除：删除指定用户的个人指令
@@ -213,9 +242,93 @@ function toAdminVO(command: UserCommand): AdminUserCommandVO {
     userId: command.userId,
     name: command.name,
     content: command.content,
+    visibility: 'all',
+    roleIds: [],
+    roleNames: [],
     createdAt: command.createdAt ?? null,
     updatedAt: command.updatedAt ?? null,
   };
+}
+
+function toRoleOption(role: CommandRoleOption): CommandRoleOption {
+  return { id: role.id, name: role.name, code: role.code };
+}
+
+/** 未传 visibility：创建缺省 all；更新则保持原值（调用方不要写角色行）。 */
+async function resolveVisibility(
+  commandRepo: UserCommandRepository,
+  body: VisibilityBody,
+  create: boolean,
+): Promise<{ visibility: CommandVisibility; roleIds: number[] }> {
+  if (body.visibility === undefined) {
+    if (create) return { visibility: 'all', roleIds: [] };
+    throw new Error('resolveVisibility requires visibility on update');
+  }
+  if (body.visibility !== 'all' && body.visibility !== 'roles') {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, VISIBILITY_INVALID);
+  }
+  if (body.visibility === 'all') {
+    return { visibility: 'all', roleIds: [] };
+  }
+  const roleIds = parseRoleIds(body.roleIds);
+  if (roleIds.length === 0) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, ROLE_IDS_REQUIRED);
+  }
+  const found = await commandRepo.findActiveRolesByIds(roleIds);
+  if (found.length !== roleIds.length) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, ROLE_UNKNOWN);
+  }
+  return { visibility: 'roles', roleIds: sortRoleIds(found) };
+}
+
+function parseRoleIds(raw: unknown): number[] {
+  if (raw == null) return [];
+  if (!Array.isArray(raw)) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, ROLE_ID_INVALID);
+  }
+  const ids: number[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'number' || !Number.isInteger(item) || item <= 0) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, ROLE_ID_INVALID);
+    }
+    if (!ids.includes(item)) ids.push(item);
+  }
+  return ids;
+}
+
+function sortRoleIds(roles: CommandRoleOption[]): number[] {
+  return [...roles]
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN') || a.id - b.id)
+    .map((role) => role.id);
+}
+
+function storedVisibility(command: UserCommand): CommandVisibility {
+  if (command.visibility == null || command.visibility === 'all') return 'all';
+  return 'roles';
+}
+
+async function toSystemAdminVOList(
+  commandRepo: UserCommandRepository,
+  commands: UserCommand[],
+): Promise<AdminUserCommandVO[]> {
+  const ids = commands.flatMap((command) => (command.id == null ? [] : [command.id]));
+  const grants = await commandRepo.listActiveRoleGrants(ids);
+  const byCommand = new Map<number, CommandRoleGrant[]>();
+  for (const grant of grants) {
+    const list = byCommand.get(grant.commandId) ?? [];
+    list.push(grant);
+    byCommand.set(grant.commandId, list);
+  }
+  return commands.map((command) => {
+    const visibility = storedVisibility(command);
+    const rows = visibility === 'roles' && command.id != null ? (byCommand.get(command.id) ?? []) : [];
+    return {
+      ...toAdminVO(command),
+      visibility,
+      roleIds: rows.map((row) => row.roleId),
+      roleNames: rows.map((row) => row.roleName),
+    };
+  });
 }
 
 async function toAdminUserVOList(

@@ -16,6 +16,15 @@ function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 15));
 }
 
+/** 全量回归和桌面构建并行时，固定 15ms 不够删除走到 activity.record。 */
+async function until(pred: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + 3000;
+  while (!pred()) {
+    if (Date.now() > deadline) throw new Error(what);
+    await tick();
+  }
+}
+
 function setup() {
   const root = useTmpDir('mao-ws-write-');
   const sandbox = new PathSandbox(root);
@@ -303,7 +312,7 @@ describe('workspace write service', () => {
     symlinkSync(join(workspace, 'src'), join(workspace, 'link'));
     blockRecord = true;
     const deleting = service.delete(1, workspace, 'src');
-    await tick();
+    await until(() => typeof releaseRecord === 'function', 'delete did not reach activity.record');
     let wrote = false;
     const pending = withFileLock(join(workspace, 'link', 'a.txt'), async () => { wrote = true; });
     await tick();

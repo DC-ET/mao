@@ -5,7 +5,7 @@
         <div class="card-header">
           <div>
             <div class="card-title">指令管理</div>
-            <div class="card-hint">管理全局系统指令，以及各用户的个人快捷指令。</div>
+            <div class="card-hint">管理系统指令的内容，以及全局或按角色可见。</div>
           </div>
           <el-button v-if="canWrite && activeTab === 'system'" type="primary" @click="openCreate">新增指令</el-button>
         </div>
@@ -38,7 +38,7 @@
         type="info"
         :closable="false"
         show-icon
-        title="个人指令由用户在桌面端创建与编辑。此处可查看、删除，或将其复制为系统指令供全体用户使用；原个人指令保留。"
+        title="个人指令由用户在桌面端创建与编辑。此处可查看、删除，或将其复制为系统指令；默认全局可用，可改为指定角色。原个人指令保留。"
         style="margin-bottom: 12px"
       />
 
@@ -54,6 +54,9 @@
         </template>
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="name" label="指令名称" width="160" show-overflow-tooltip />
+        <el-table-column label="可见范围" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ visibilityLabel(row) }}</template>
+        </el-table-column>
         <el-table-column label="指令内容" min-width="280">
           <template #default="{ row }">
             <el-tooltip :content="row.content" placement="top" :show-after="200">
@@ -142,6 +145,10 @@
             <span class="mobile-card-label">用户</span>
             <span>{{ userLabel(row) }}</span>
           </div>
+          <div v-else class="mobile-card-row">
+            <span class="mobile-card-label">可见范围</span>
+            <span>{{ visibilityLabel(row) }}</span>
+          </div>
           <div class="mobile-card-content">{{ row.content }}</div>
           <div class="mobile-card-actions">
             <el-button type="primary" link size="small" @click="openDetail(row)">查看</el-button>
@@ -209,6 +216,26 @@
             placeholder="指令内容（提示词模板）"
           />
         </el-form-item>
+        <el-form-item label="可见范围">
+          <el-radio-group v-model="form.visibility" @change="(value: string) => { if (value === 'all') form.roleIds = [] }">
+            <el-radio value="all">全局可用</el-radio>
+            <el-radio value="roles">指定角色</el-radio>
+          </el-radio-group>
+          <div class="form-hint">指定角色后，不在这些角色里的用户不会在桌面看到这条指令，也无法用 #{名称}# 展开它。</div>
+        </el-form-item>
+        <el-form-item v-if="form.visibility === 'roles'" label="角色" prop="roleIds">
+          <el-select
+            v-model="form.roleIds"
+            multiple
+            filterable
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="至少选择一个角色"
+            style="width: 100%"
+          >
+            <el-option v-for="role in roleOptions" :key="role.id" :label="role.name" :value="role.id" />
+          </el-select>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="formVisible = false">取消</el-button>
@@ -223,7 +250,8 @@
       width="700px"
     >
       <div class="command-detail">
-        <p><strong>用户：</strong>{{ activeTab === 'personal' ? userLabel(detailRow) : '系统（全局）' }}</p>
+        <p v-if="activeTab === 'personal'"><strong>用户：</strong>{{ userLabel(detailRow) }}</p>
+        <p v-else><strong>可见范围：</strong>{{ detailVisibility(detailRow) }}</p>
         <p><strong>更新时间：</strong>{{ formatDateTime(detailRow.updatedAt || detailRow.createdAt) }}</p>
         <el-divider />
         <div class="command-body">
@@ -242,7 +270,7 @@
       title="添加到系统指令"
       width="560px"
     >
-      <el-form ref="promoteFormRef" :model="promoteForm" :rules="formRules" label-width="90px">
+      <el-form ref="promoteFormRef" :model="promoteForm" :rules="promoteRules" label-width="90px">
         <el-form-item label="来源用户">
           <span>{{ promoteSource ? userLabel(promoteSource) : '' }}</span>
         </el-form-item>
@@ -251,7 +279,7 @@
             v-model="promoteForm.name"
             placeholder="字母、数字、中文、下划线、连字符"
           />
-          <div class="form-hint">复制为全局系统指令，全体用户可用。原个人指令保留。名称不能与已有系统指令重复。</div>
+          <div class="form-hint">复制为系统指令。默认全局可用，可改为指定角色。原个人指令保留。名称不能与已有系统指令重复。</div>
         </el-form-item>
         <el-form-item label="指令内容" prop="content">
           <el-input
@@ -260,6 +288,25 @@
             :rows="8"
             placeholder="指令内容（提示词模板）"
           />
+        </el-form-item>
+        <el-form-item label="可见范围">
+          <el-radio-group v-model="promoteForm.visibility" @change="(value: string) => { if (value === 'all') promoteForm.roleIds = [] }">
+            <el-radio value="all">全局可用</el-radio>
+            <el-radio value="roles">指定角色</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="promoteForm.visibility === 'roles'" label="角色" prop="roleIds">
+          <el-select
+            v-model="promoteForm.roleIds"
+            multiple
+            filterable
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="至少选择一个角色"
+            style="width: 100%"
+          >
+            <el-option v-for="role in roleOptions" :key="role.id" :label="role.name" :value="role.id" />
+          </el-select>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -280,6 +327,8 @@ import { useAuthStore } from '../../stores/auth'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 import ResponsivePagination from '../../components/ResponsivePagination.vue'
 import { formatDateTime, formatDateTimeColumn } from '../../utils/datetime'
+import { COMMAND_VISIBILITY_LABELS } from '../../utils/commandVisibilityLabels'
+import type { CommandVisibility } from '@mao/contracts'
 
 const { isMobile } = useBreakpoint()
 const authStore = useAuthStore()
@@ -292,10 +341,19 @@ interface CommandRow {
   userId?: number
   name?: string
   content?: string
+  visibility?: CommandVisibility
+  roleIds?: number[]
+  roleNames?: string[]
   username?: string | null
   displayName?: string | null
   createdAt?: string | null
   updatedAt?: string | null
+}
+
+interface RoleOption {
+  id: number
+  name: string
+  code: string
 }
 
 interface TabState {
@@ -354,28 +412,57 @@ const promoting = ref(false)
 const promoteFormRef = ref<FormInstance>()
 const promoteSource = ref<CommandRow | null>(null)
 
+const roleOptions = ref<RoleOption[]>([])
+
 const form = reactive({
   name: '',
   content: '',
+  visibility: 'all' as CommandVisibility,
+  roleIds: [] as number[],
 })
 
 const promoteForm = reactive({
   name: '',
   content: '',
+  visibility: 'all' as CommandVisibility,
+  roleIds: [] as number[],
 })
 
 const NAME_PATTERN = /^[a-zA-Z0-9一-龥_-]+$/
 
-const formRules: FormRules = {
-  name: [
-    { required: true, message: '请输入指令名称', trigger: 'blur' },
-    {
-      pattern: NAME_PATTERN,
-      message: '名称只能包含字母、数字、中文、下划线和连字符',
-      trigger: 'blur',
+const nameRules = [
+  { required: true, message: '请输入指令名称', trigger: 'blur' },
+  {
+    pattern: NAME_PATTERN,
+    message: '名称只能包含字母、数字、中文、下划线和连字符',
+    trigger: 'blur',
+  },
+]
+const contentRules = [{ required: true, message: '请输入指令内容', trigger: 'blur' }]
+
+function roleIdsRule(visibilityOf: () => CommandVisibility): FormRules['roleIds'] {
+  return [{
+    validator: (_rule, value: number[], callback) => {
+      if (visibilityOf() === 'roles' && (!value || value.length === 0)) {
+        callback(new Error('请至少选择一个角色'))
+        return
+      }
+      callback()
     },
-  ],
-  content: [{ required: true, message: '请输入指令内容', trigger: 'blur' }],
+    trigger: 'change',
+  }]
+}
+
+const formRules: FormRules = {
+  name: nameRules,
+  content: contentRules,
+  roleIds: roleIdsRule(() => form.visibility),
+}
+
+const promoteRules: FormRules = {
+  name: nameRules,
+  content: contentRules,
+  roleIds: roleIdsRule(() => promoteForm.visibility),
 }
 
 function applyFilter() {
@@ -386,7 +473,8 @@ function applyFilter() {
   } else {
     s.filtered = s.rows.filter((row) => {
       const userPart = `${row.username || ''} ${row.displayName || ''} ${row.userId ?? ''}`
-      return `${row.name || ''} ${row.content || ''} ${userPart}`.toLowerCase().includes(kw)
+      const rolePart = (row.roleNames || []).join(' ')
+      return `${row.name || ''} ${row.content || ''} ${userPart} ${rolePart}`.toLowerCase().includes(kw)
     })
   }
   const maxPage = Math.max(1, Math.ceil(s.filtered.length / s.pageSize))
@@ -485,6 +573,31 @@ function userLabel(row: CommandRow) {
   return row.displayName || row.username || `用户#${row.userId}`
 }
 
+function visibilityLabel(row: CommandRow) {
+  if (row.visibility === 'roles') {
+    const names = (row.roleNames || []).filter(Boolean)
+    return names.length > 0 ? names.join('、') : COMMAND_VISIBILITY_LABELS.roles
+  }
+  return COMMAND_VISIBILITY_LABELS.all
+}
+
+function detailVisibility(row: CommandRow) {
+  if (row.visibility !== 'roles') return COMMAND_VISIBILITY_LABELS.all
+  const names = (row.roleNames || []).filter(Boolean)
+  return names.length > 0 ? `${COMMAND_VISIBILITY_LABELS.roles}：${names.join('、')}` : COMMAND_VISIBILITY_LABELS.roles
+}
+
+async function ensureRoleOptions() {
+  if (roleOptions.value.length > 0) return
+  const { data } = await api.get('/admin/system-commands/role-options')
+  roleOptions.value = data || []
+}
+
+function visibilityPayload(visibility: CommandVisibility, roleIds: number[]) {
+  if (visibility === 'roles') return { visibility, roleIds }
+  return { visibility: 'all' as const }
+}
+
 function openDetail(row: CommandRow) {
   detailRow.value = row
   detailVisible.value = true
@@ -494,6 +607,9 @@ function openPromote(row: CommandRow) {
   promoteSource.value = row
   promoteForm.name = row.name || ''
   promoteForm.content = row.content || ''
+  promoteForm.visibility = 'all'
+  promoteForm.roleIds = []
+  void ensureRoleOptions()
   promoteVisible.value = true
 }
 
@@ -515,6 +631,7 @@ async function handlePromote() {
     await api.post(`/admin/user-commands/${source.userId}/${source.id}/promote`, {
       name: promoteForm.name.trim(),
       content: promoteForm.content,
+      ...visibilityPayload(promoteForm.visibility, promoteForm.roleIds),
     })
     ElMessage.success('已添加到系统指令')
     promoteVisible.value = false
@@ -530,6 +647,9 @@ function openCreate() {
   editingId.value = null
   form.name = ''
   form.content = ''
+  form.visibility = 'all'
+  form.roleIds = []
+  void ensureRoleOptions()
   formVisible.value = true
 }
 
@@ -538,6 +658,9 @@ function openEdit(row: CommandRow) {
   editingId.value = row.id ?? null
   form.name = row.name || ''
   form.content = row.content || ''
+  form.visibility = row.visibility === 'roles' ? 'roles' : 'all'
+  form.roleIds = row.visibility === 'roles' ? [...(row.roleIds || [])] : []
+  void ensureRoleOptions()
   formVisible.value = true
 }
 
@@ -548,6 +671,7 @@ async function handleSubmit() {
   const payload = {
     name: form.name.trim(),
     content: form.content,
+    ...visibilityPayload(form.visibility, form.roleIds),
   }
 
   submitting.value = true
