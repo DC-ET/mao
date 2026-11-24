@@ -118,11 +118,12 @@ onUnmounted(() => {
   gap: 4px;
   width: 26px;
   padding: 8px 0;
-  border: 1px solid var(--aw-primary-line);
+  border: 1px solid var(--aw-divider-soft);
   border-right: 0;
-  border-radius: var(--aw-radius-xs) 0 0 var(--aw-radius-xs);
+  border-radius: var(--aw-radius-sm) 0 0 var(--aw-radius-sm);
   background: var(--aw-surface, #fff);
-  color: var(--aw-primary);
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.04);
+  color: var(--aw-ink-muted-64);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
@@ -217,10 +218,5 @@ onUnmounted(() => {
 
 [data-theme="dark"] .round-directory-popover {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-}
-
-[data-theme="dark"] .round-directory-handle {
-  border-color: var(--aw-primary-line);
-  color: var(--aw-primary-on-dark);
 }
 </style>

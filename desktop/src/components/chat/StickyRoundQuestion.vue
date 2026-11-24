@@ -95,31 +95,32 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: min(75%, 560px);
-  padding: 5px 10px;
-  border: 1px solid var(--aw-primary-line);
-  border-radius: var(--aw-radius-sm);
-  /* 底色与用户气泡同源；先垫不透明面色，避免透出下面滚动的正文 */
-  background: linear-gradient(rgba(var(--aw-accent-rgb), 0.14), rgba(var(--aw-accent-rgb), 0.14)), var(--aw-surface, #fff);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+  max-width: min(60%, 480px);
+  padding: 6px 12px 6px 14px;
+  border: 1px solid color-mix(in srgb, var(--aw-ink) 8%, transparent);
+  border-radius: var(--aw-radius-pill);
+  /* 毛玻璃：下面滚动的正文只透出模糊色块，不和摘要文字打架 */
+  background: color-mix(in srgb, var(--aw-canvas) 78%, transparent);
+  backdrop-filter: saturate(180%) blur(16px);
+  -webkit-backdrop-filter: saturate(180%) blur(16px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
   color: var(--aw-ink);
   font: inherit;
   font-size: var(--aw-text-fine);
   line-height: 1.5;
   text-align: left;
   cursor: pointer;
-  transition: box-shadow 0.15s, border-color 0.15s;
+  transition: box-shadow 0.2s, transform 0.2s;
 }
 
 .sticky-round-question:hover {
-  border-color: var(--aw-primary);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.04);
+  transform: translateY(-1px);
 }
 
 .sticky-label {
   flex-shrink: 0;
-  color: var(--aw-primary);
-  font-weight: 600;
+  color: var(--aw-ink-muted-48);
 }
 
 .sticky-text {
@@ -136,15 +137,12 @@ onUnmounted(() => {
 }
 
 .sticky-round-question:hover .sticky-icon {
-  color: var(--aw-primary);
+  color: var(--aw-ink);
 }
 
 [data-theme="dark"] .sticky-round-question {
-  background: linear-gradient(rgba(var(--aw-accent-rgb), 0.2), rgba(var(--aw-accent-rgb), 0.2)), #2a2a2a;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
-}
-
-[data-theme="dark"] .sticky-label {
-  color: var(--aw-primary-on-dark);
+  background: color-mix(in srgb, var(--aw-surface) 80%, transparent);
+  border-color: color-mix(in srgb, var(--aw-ink) 12%, transparent);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 </style>
