@@ -10,11 +10,10 @@
      避免把输入框与发送按钮顶出可视区被键盘盖住 */
   flex: 0 1 auto;
   min-height: 0;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: box-shadow 0.2s;
 }
 
 .chat-input-card:focus-within {
-  border-color: var(--aw-primary);
   box-shadow: 0 0 0 2px var(--aw-primary-hover);
 }
 
