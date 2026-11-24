@@ -235,7 +235,17 @@ export function registerSkillSyncRoutes(app: FastifyInstance, deps: Pick<SkillRo
       .type('application/zip')
       .header('Content-Disposition', 'attachment; filename="skills.zip"');
     reply.send(stream);
-    await writing;
+    try {
+      await writing;
+    } catch (e) {
+      // 客户端中途断开（同步被 abort / 超时）不是服务端错误：此时流已销毁，
+      // 继续抛只会多一条「响应已发送」的 500 日志。压缩失败等真实错误照常抛。
+      if (isClientAbort(e, request)) {
+        request.log.info({ err: e }, 'skill sync package download aborted by client');
+        return;
+      }
+      throw e;
+    }
   });
 }
 
@@ -247,6 +257,12 @@ export function registerSkillRoutes(app: FastifyInstance, deps: SkillRouteDeps):
 }
 
 const MAX_ASSIGN_USERS = 100;
+
+/** 客户端把下载连接断掉（abort / 超时）：错误码是 premature close，或请求连接已销毁。 */
+export function isClientAbort(e: unknown, request: Pick<FastifyRequest, 'raw'>): boolean {
+  const code = (e as NodeJS.ErrnoException | null)?.code;
+  return code === 'ERR_STREAM_PREMATURE_CLOSE' || request.raw.destroyed;
+}
 
 export function parseAssignUserIds(values: string[]): { ok: true; ids: number[] } | { ok: false; message: string } {
   const ids: number[] = [];

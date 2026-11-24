@@ -231,7 +231,13 @@ export class SkillSyncService {
       ? this.getSyncState(agent.id, userId, sessionId)
       : new Map<string, number>();
     const archive = archiver('zip', { zlib: { level: 5 } });
+    // 客户端可能在读完响应头就断开（同步请求被 abort / 超时），此时 out 已被销毁：
+    // pipeline 会立刻 reject，而 finalize() 在目的端销毁后可能永不 settle。若按
+    // 「await finalize() → await done」的顺序写，done 的拒绝在此期间没有任何 handler，
+    // Node 判为 unhandledRejection 直接终止进程（2026-11-25 线上 sync-package 崩溃）。
+    // 先挂兜底 catch 消掉未处理窗口，再并发等待，避免被挂起的 finalize 卡住。
     const done = pipeline(archive, out);
+    done.catch(() => undefined);
     for (const [skillName, sourceFolder] of merged) {
       state.set(skillName, getLastModified(sourceFolder));
       archive.directory(sourceFolder, skillName);
@@ -240,8 +246,8 @@ export class SkillSyncService {
     archive.append(JSON.stringify({ syncedAt: new Date().toISOString(), agentId: agent.id, skills: skillList }, null, 2), {
       name: '.sync-manifest.json',
     });
-    await archive.finalize();
-    await done;
+    const finalizing = archive.finalize();
+    await Promise.all([finalizing, done]);
   }
 }
 

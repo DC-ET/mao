@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -322,5 +323,31 @@ describe('SkillSyncService', () => {
 
     expect(await svc.resolveSystemSkillNames({ id: 4, name: 'a', systemPrompt: 'p', skillNames: '[]', deleted: 1 }, 7))
       .toEqual(['everywhere']);
+  });
+
+  it('aborted mid-download rejects without an unhandled rejection', async () => {
+    const root = useTmpDir('skills-abort-');
+    const systemFolder = makeSystemSkill(root);
+    // 随机内容保证 zip 输出跨多个 chunk，能在流式传输中途断开（复现线上进度中段 abort）
+    writeFileSync(join(systemFolder, 'big.bin'), randomBytes(2 * 1024 * 1024));
+    const { svc } = makeService(root, systemFolder);
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const out = new PassThrough();
+      const firstChunk = new Promise<void>((resolve) => { out.once('data', () => resolve()); });
+      const writing = svc.writeSyncZip({ id: 2, name: 'a', systemPrompt: 'p', skillNames: '["java"]' }, 1, out, 7);
+      // 客户端读到一半断开：目的端销毁，pipeline 在 finalize 完成前就 reject。
+      // 修复前 done 的拒绝无人接收，Node 判 unhandledRejection 直接终止进程（线上事故）。
+      await firstChunk;
+      out.destroy();
+      await expect(writing).rejects.toThrow();
+      // 给微任务一个窗口，让潜在 unhandledRejection 浮出来
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+    expect(unhandled).toEqual([]);
   });
 });

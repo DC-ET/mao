@@ -6,7 +6,7 @@ import { noSystemSkillNames } from '../testing/system-skill-names.js';
 import { describe, expect, it, vi } from 'vitest';
 import { useTmpDir } from '../testing/tmp-dir.js';
 import { handleError } from '../common/http-error.js';
-import { parseAssignUserIds, registerSkillRoutes } from './skill.routes.js';
+import { isClientAbort, parseAssignUserIds, registerSkillRoutes } from './skill.routes.js';
 import { UserSkillService } from './user-skill.service.js';
 import { SkillDocService } from './skill-doc.service.js';
 import { SkillLoader } from '../harness/skill/skill-loader.js';
@@ -492,5 +492,14 @@ describe('skill routes', () => {
     expect(removeSkillNameFromAll).toHaveBeenCalledWith('demo');
     expect(deleteBySkillName).toHaveBeenCalledWith('demo');
     await app.close();
+  });
+
+  it('客户端中断下载按 abort 识别，不当作服务端错误', () => {
+    const request = (destroyed: boolean) => ({ raw: { destroyed } }) as never;
+    const premature = Object.assign(new Error('Premature close'), { code: 'ERR_STREAM_PREMATURE_CLOSE' });
+    expect(isClientAbort(premature, request(false))).toBe(true);
+    expect(isClientAbort(premature, request(true))).toBe(true);
+    expect(isClientAbort(new Error('zlib error'), request(false))).toBe(false);
+    expect(isClientAbort(new Error('zlib error'), request(true))).toBe(true);
   });
 });

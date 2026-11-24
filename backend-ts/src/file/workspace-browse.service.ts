@@ -683,6 +683,8 @@ async function writeZip(items: ZipSourceItem[], zipPath: string): Promise<void> 
     const output = createWriteStream(zipPath);
     const archive = archiver('zip', { zlib: { level: 5 } });
     output.on('close', () => resolveP());
+    // 写盘失败（磁盘满等）不挂 error 监听会变成未捕获的 'error' 事件把进程带崩
+    output.on('error', reject);
     archive.on('error', reject);
     archive.pipe(output);
     const entries: { name: string; path: string }[] = [];
@@ -714,6 +716,8 @@ async function writeZip(items: ZipSourceItem[], zipPath: string): Promise<void> 
         archive.file(e.path, { name: e.name });
       }
     }
-    void archive.finalize();
+    // finalize() 的拒绝与 archive 'error' 同源；这里接住，避免重复拒绝无人处理
+    // 变成 unhandledRejection 终止进程（与 skill-sync writeSyncZip 同类问题）
+    void archive.finalize().catch(() => undefined);
   });
 }
