@@ -9,6 +9,16 @@ import type { UserCommand, UserCommandRepository } from './types.js';
 function createRepo(overrides: Partial<UserCommandRepository> = {}): UserCommandRepository {
   return {
     listByUserId: vi.fn(async () => []),
+    listVisibleSystemForUser: vi.fn(async () => []),
+    listIllegalSystemVisibilities: vi.fn(async () => []),
+    isVisibleToUser: vi.fn(async () => false),
+    listActiveRoles: vi.fn(async () => []),
+    findActiveRolesByIds: vi.fn(async (ids: number[]) => ids.map((id) => ({
+      id,
+      name: `角色${id}`,
+      code: `R${id}`,
+    }))),
+    listActiveRoleGrants: vi.fn(async () => []),
     listPersonalAll: vi.fn(async () => []),
     listPersonalFiltered: vi.fn(async () => []),
     listPersonalPaged: vi.fn(async () => ({ records: [], total: 0 })),
@@ -18,7 +28,13 @@ function createRepo(overrides: Partial<UserCommandRepository> = {}): UserCommand
       c.id = 100;
       return 100;
     }),
+    insertWithVisibility: vi.fn(async (c, visibility) => {
+      c.id = 100;
+      c.visibility = visibility;
+      return 100;
+    }),
     updateById: vi.fn(async () => undefined),
+    updateWithVisibility: vi.fn(async () => undefined),
     deleteById: vi.fn(async () => undefined),
     ...overrides,
   };
@@ -98,7 +114,13 @@ describe('admin system/user command routes', () => {
     })).body);
     expect(created.code).toBe(0);
     expect(created.data.id).toBe(100);
-    expect(commandRepo.insert).toHaveBeenCalledWith(expect.objectContaining({ userId: 0, name: 'plan' }));
+    expect(created.data.visibility).toBe('all');
+    expect(created.data.roleIds).toEqual([]);
+    expect(commandRepo.insertWithVisibility).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 0, name: 'plan' }),
+      'all',
+      [],
+    );
 
     const badName = JSON.parse((await app.inject({
       method: 'POST',
@@ -183,11 +205,15 @@ describe('admin system/user command routes', () => {
       name: 'my_cmd',
       content: '个人指令内容',
     });
-    expect(commandRepo.insert).toHaveBeenCalledWith(expect.objectContaining({
-      userId: 0,
-      name: 'my_cmd',
-      content: '个人指令内容',
-    }));
+    expect(commandRepo.insertWithVisibility).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 0,
+        name: 'my_cmd',
+        content: '个人指令内容',
+      }),
+      'all',
+      [],
+    );
     expect(commandRepo.deleteById).not.toHaveBeenCalled();
 
     const renamed = JSON.parse((await app.inject({
@@ -196,11 +222,15 @@ describe('admin system/user command routes', () => {
       payload: { name: ' shared_cmd ', content: '调整后的内容' },
     })).body);
     expect(renamed.code).toBe(0);
-    expect(commandRepo.insert).toHaveBeenCalledWith(expect.objectContaining({
-      userId: 0,
-      name: 'shared_cmd',
-      content: '调整后的内容',
-    }));
+    expect(commandRepo.insertWithVisibility).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 0,
+        name: 'shared_cmd',
+        content: '调整后的内容',
+      }),
+      'all',
+      [],
+    );
 
     await app.close();
   });
@@ -225,7 +255,7 @@ describe('admin system/user command routes', () => {
       payload: {},
     })).body);
     expect(duplicate.code).toBe(3012);
-    expect(commandRepo.insert).not.toHaveBeenCalled();
+    expect(commandRepo.insertWithVisibility).not.toHaveBeenCalled();
 
     const missing = JSON.parse((await app.inject({
       method: 'POST',
@@ -254,7 +284,7 @@ describe('admin system/user command routes', () => {
       payload: { name: 'fresh_name', content: '   ' },
     })).body);
     expect(emptyContent.code).toBeGreaterThan(0);
-    expect(commandRepo.insert).not.toHaveBeenCalled();
+    expect(commandRepo.insertWithVisibility).not.toHaveBeenCalled();
 
     await app.close();
   });
@@ -358,5 +388,128 @@ describe('admin system/user command routes', () => {
     const [sql, params] = query.mock.calls[0];
     expect(String(sql)).toContain('LIKE ?');
     expect(params).toContain('%100\\%\\_off%');
+  });
+
+  it('rejectsRolesWithoutIdsUnknownRolesAndIllegalVisibilityWithoutWriting', async () => {
+    const system: UserCommand[] = [{ id: 1, userId: 0, name: 'review', content: '审查', visibility: 'roles' }];
+    const { app, commandRepo } = await createApp({ commands: { system } });
+
+    const empty = JSON.parse((await app.inject({
+      method: 'POST',
+      url: '/v1/admin/system-commands',
+      payload: { name: 'warehouse', content: '检查', visibility: 'roles', roleIds: [] },
+    })).body);
+    expect(empty.code).toBe(2001);
+    expect(empty.message).toContain('至少选择一个角色');
+
+    vi.mocked(commandRepo.findActiveRolesByIds).mockResolvedValueOnce([]);
+    const unknown = JSON.parse((await app.inject({
+      method: 'POST',
+      url: '/v1/admin/system-commands',
+      payload: { name: 'warehouse', content: '检查', visibility: 'roles', roleIds: [8] },
+    })).body);
+    expect(unknown.code).toBe(2001);
+    expect(unknown.message).toContain('未知或已删除');
+
+    const bad = JSON.parse((await app.inject({
+      method: 'POST',
+      url: '/v1/admin/system-commands',
+      payload: { name: 'warehouse', content: '检查', visibility: 'public', roleIds: [2] },
+    })).body);
+    expect(bad.code).toBe(2001);
+    expect(commandRepo.insertWithVisibility).not.toHaveBeenCalled();
+    expect(commandRepo.updateById).not.toHaveBeenCalled();
+    expect(commandRepo.updateWithVisibility).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it('clearsRoleRowsWhenVisibilityBecomesAllAndIgnoresRoleIdsWhenOmitted', async () => {
+    const system: UserCommand[] = [{ id: 1, userId: 0, name: 'review', content: '审查', visibility: 'roles' }];
+    const { app, commandRepo } = await createApp({ commands: { system } });
+
+    const kept = JSON.parse((await app.inject({
+      method: 'PUT',
+      url: '/v1/admin/system-commands/1',
+      payload: { content: '审查 v2', roleIds: [3] },
+    })).body);
+    expect(kept.code).toBe(0);
+    expect(commandRepo.updateById).toHaveBeenCalledTimes(1);
+    expect(commandRepo.updateWithVisibility).not.toHaveBeenCalled();
+
+    const cleared = JSON.parse((await app.inject({
+      method: 'PUT',
+      url: '/v1/admin/system-commands/1',
+      payload: { content: '审查 v3', visibility: 'all', roleIds: [3] },
+    })).body);
+    expect(cleared.code).toBe(0);
+    expect(commandRepo.updateWithVisibility).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1, content: '审查 v3' }),
+      'all',
+      [],
+    );
+
+    await app.close();
+  });
+
+  it('promotesWithRolesAndDeletesCommandRoleRowsWithTheCommand', async () => {
+    const personal: UserCommand[] = [{ id: 21, userId: 7, name: 'my_cmd', content: '个人' }];
+    const { app, commandRepo } = await createApp({ commands: { personal } });
+
+    const promoted = JSON.parse((await app.inject({
+      method: 'POST',
+      url: '/v1/admin/user-commands/7/21/promote',
+      payload: { visibility: 'roles', roleIds: [4, 3] },
+    })).body);
+    expect(promoted.code).toBe(0);
+    expect(promoted.data.visibility).toBe('roles');
+    expect(commandRepo.insertWithVisibility).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 0, name: 'my_cmd' }),
+      'roles',
+      [3, 4],
+    );
+
+    vi.mocked(commandRepo.findByIdAndUserId).mockResolvedValueOnce({ id: 9, userId: 0, name: 'review', content: 'x' });
+    const deleted = JSON.parse((await app.inject({
+      method: 'DELETE',
+      url: '/v1/admin/system-commands/9',
+    })).body);
+    expect(deleted.code).toBe(0);
+    expect(commandRepo.deleteById).toHaveBeenCalledWith(9);
+
+    await app.close();
+  });
+
+  it('listsRoleOptionsForCommandReadersWithoutPermissionIds', async () => {
+    const commandRepo = createRepo({
+      listActiveRoles: vi.fn(async () => [{ id: 2, name: '普通用户', code: 'USER' }]),
+    });
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    app.addHook('preHandler', (req, _r, done) => {
+      req.userId = 9;
+      done();
+    });
+    registerAdminSystemCommandRoutes(app, {
+      commandRepo,
+      permissionService: { hasPermission: vi.fn(async (_userId, code) => code === 'command:read') },
+    });
+
+    const res = JSON.parse((await app.inject({
+      method: 'GET',
+      url: '/v1/admin/system-commands/role-options',
+    })).body);
+    expect(res.code).toBe(0);
+    expect(res.data).toEqual([{ id: 2, name: '普通用户', code: 'USER' }]);
+    expect(JSON.stringify(res.data)).not.toContain('permissionIds');
+
+    const denied = JSON.parse((await app.inject({
+      method: 'POST',
+      url: '/v1/admin/system-commands',
+      payload: { name: 'x', content: 'y' },
+    })).body);
+    expect(denied.code).toBe(1002);
+
+    await app.close();
   });
 });

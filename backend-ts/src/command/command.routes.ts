@@ -6,7 +6,7 @@ import { fail } from '../common/result.js';
 import { requireUserId, sendJson, sendOk } from '../common/http-error.js';
 import { bodyOf, pathId, queryOptInt } from '../common/request.js';
 import type { AgentService } from '../agent/agent.service.js';
-import { SYSTEM_USER_ID, type UserCommandService } from './command.service.js';
+import type { UserCommandService } from './command.service.js';
 import type {
   QuickCommandItem,
   QuickCommandsVO,
@@ -46,8 +46,9 @@ export function registerUserCommandRoutes(app: FastifyInstance, deps: UserComman
     return sendOk(reply, commands);
   });
 
-  app.get('/v1/user-commands/system', async (_request, reply) => {
-    const commands = (await userCommandService.listByUserId(SYSTEM_USER_ID)).map(toVO);
+  app.get('/v1/user-commands/system', async (request, reply) => {
+    const userId = requireUserId(request);
+    const commands = (await userCommandService.listVisibleSystemForUser(userId)).map(toVO);
     return sendOk(reply, commands);
   });
 

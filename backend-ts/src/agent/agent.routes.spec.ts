@@ -293,6 +293,7 @@ describe('CRUD routes', () => {
       update: vi.fn(async () => ({ id: 1, name: 'c', content: 'y' })),
       delete: vi.fn(),
       listAvailableForUser: vi.fn(async () => [{ name: 'c', content: 'x' }]),
+      listVisibleSystemForUser: vi.fn(async () => [{ id: 1, name: 'c', content: 'x' }]),
     };
     const userService = {
       updateOwnProfile: vi.fn(),

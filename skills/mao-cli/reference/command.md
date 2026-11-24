@@ -140,9 +140,9 @@ mao command delete --id 5
 
 管理端指令页对应 API。查看需 `command:read`，写入需 `command:write`：
 
-- 系统指令：`/v1/admin/system-commands`（`user_id=0`，全体用户可见；用户视角经 `GET /v1/user-commands/system`）
+- 系统指令：`/v1/admin/system-commands`（`user_id=0`，默认全局，可按角色限制；用户视角经 `GET /v1/user-commands/system`，只返回当前用户可见的指令）
 - 个人指令：`/v1/admin/user-commands`（跨用户 `user_id>0`，可查看与删除；支持可选 `pageNum`/`pageSize`/`keyword`/`userId` 服务端分页与过滤，总数经 `x-total-count` 响应头返回，不传参数时返回全量数组）
-- 复制为系统指令：`POST /v1/admin/user-commands/:userId/:id/promote`（把该个人指令复制为 `user_id=0` 的系统指令，原个人指令保留；可选 body `name`/`content` 覆盖后再写入，名称与已有系统指令重复时返回「指令名称已存在」）
+- 复制为系统指令：`POST /v1/admin/user-commands/:userId/:id/promote`（把该个人指令复制为 `user_id=0` 的系统指令，原个人指令保留；可选 body `name`/`content` 覆盖后再写入，名称与已有系统指令重复时返回「指令名称已存在」。可选 `visibility`（`all` 或 `roles`）和 `roleIds`；缺省全局。`roles` 至少要有一个未删除的角色）
 
 ### 命令
 
@@ -150,17 +150,19 @@ mao command delete --id 5
 |------|------|
 | 系统指令列表 | `system-command list` |
 | 系统指令详情 | `system-command get --id` |
-| 新建系统指令 | `system-command create --name --content` |
-| 更新系统指令 | `system-command update --id --content [--name]` |
+| 新建系统指令 | `system-command create --name --content [--visibility all\|roles] [--role-ids id,id]` |
+| 更新系统指令 | `system-command update --id --content [--name] [--visibility all\|roles] [--role-ids id,id]` |
 | 删除系统指令 | `system-command delete --id` |
 | 个人指令列表（跨用户） | `system-command list-personal` |
 | 个人指令详情 | `system-command get-personal --user-id --id` |
 | 删除个人指令 | `system-command delete-personal --user-id --id` |
-| 个人指令复制为系统指令 | `system-command promote-personal --user-id --id [--name] [--content]` |
+| 个人指令复制为系统指令 | `system-command promote-personal --user-id --id [--name] [--content] [--visibility all\|roles] [--role-ids id,id]` |
 
 ```bash
 mao system-command list --json
 mao system-command create --name '代码审查' --content '对当前工作区做代码审查'
+mao system-command create --name '数仓检查' --content '按数仓规范检查' --visibility roles --role-ids 3,4
+mao system-command update --id 12 --content '按数仓规范检查' --visibility all
 mao system-command list-personal --json
 mao system-command delete-personal --user-id 7 --id 21
 mao system-command promote-personal --user-id 7 --id 21

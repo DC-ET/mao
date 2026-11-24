@@ -112,6 +112,16 @@ describe('SessionTitleService', () => {
     expect(ctx.llm.chat.mock.calls[0][0].messages[1]).toEqual({ role: 'user', content: '修复登录错误' });
   });
 
+  it('leaves unavailable command markers in the title prompt', async () => {
+    const ctx = makeService();
+    ctx.userCommands.listAvailableForUser.mockResolvedValue([]);
+    await ctx.service.generateAndApply(11, 21, '${review}$ #{fix}# @{secret.ts}@');
+    expect(ctx.userCommands.listAvailableForUser).toHaveBeenCalledWith(7);
+    const prompt = ctx.llm.chat.mock.calls[0][0].messages[1].content as string;
+    expect(prompt).toContain('#{fix}#');
+    expect(prompt).not.toContain('修复登录错误');
+  });
+
   it('continues with raw command markers when command lookup fails', async () => {
     const ctx = makeService();
     ctx.userCommands.listAvailableForUser.mockRejectedValue(new Error('database unavailable'));
