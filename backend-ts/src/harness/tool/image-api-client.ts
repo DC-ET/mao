@@ -69,6 +69,13 @@ export class ImageApiError extends Error {
     message: string,
     readonly errorCode: string,
     readonly httpStatus?: number | null,
+    /**
+     * 上游返回 200 之后才失败时，已从响应体解析到的 usage；未取到为 null。
+     * `normalizeResponse` 里图片下载超时 / 异步任务 / 空数据都在计费之后发生，
+     * 不带这个字段，工具侧只能记 usage=null 的失败行，真实 token 消耗被吞
+     * （B2 的同款问题，只是发生在更里一层）。
+     */
+    readonly usage?: ChatUsage | null,
   ) {
     super(message);
     this.name = 'ImageApiError';
@@ -341,15 +348,27 @@ async function normalizeResponse(
   outputFormat: string | null | undefined,
   namePrefix: string,
 ): Promise<ImageApiResult> {
+  // 上游已返回 200：这一轮的 token 已经产生并计费。此后任何抛错（异步任务、
+  // 空数据、url 下载失败）都把已解析到的 usage 挂到 ImageApiError 上，工具侧
+  // 才能记成「失败但 token 已消耗」，而不是 usage=null 的纯失败行。
+  const usage = normalizeImageUsage(body.usage);
+  const fail = (message: string, code: string): ImageApiError =>
+    new ImageApiError(message, code, null, usage);
+  /** 计费后抛错：原样保留 code / httpStatus，只把 usage 挂上去（下载失败走这条）。 */
+  const withUsage = (e: unknown): never => {
+    if (e instanceof ImageApiError) throw new ImageApiError(e.message, e.errorCode, e.httpStatus, usage);
+    throw fail(e instanceof Error ? e.message : String(e), 'unknown');
+  };
+
   const data = body.data;
   if (!Array.isArray(data) || data.length === 0) {
     const topTask = body.task_id ?? (!Array.isArray(data) && data != null && typeof data === 'object'
       ? (data as RawImageItem).task_id
       : null);
     if (topTask != null) {
-      throw new ImageApiError('上游返回异步任务（task_id），本工具不轮询', 'async_task_unsupported', null);
+      throw fail('上游返回异步任务（task_id），本工具不轮询', 'async_task_unsupported');
     }
-    throw new ImageApiError('上游未返回图片数据', 'empty_data', null);
+    throw fail('上游未返回图片数据', 'empty_data');
   }
 
   const images: ImageApiImage[] = [];
@@ -359,10 +378,10 @@ async function normalizeResponse(
   for (let i = 0; i < data.length; i++) {
     const item = data[i] as RawImageItem;
     if (item == null || typeof item !== 'object') {
-      throw new ImageApiError('上游未返回图片数据', 'empty_data', null);
+      throw fail('上游未返回图片数据', 'empty_data');
     }
     if (item.task_id != null && item.b64_json == null && item.url == null) {
-      throw new ImageApiError('上游返回异步任务（task_id），本工具不轮询', 'async_task_unsupported', null);
+      throw fail('上游返回异步任务（task_id），本工具不轮询', 'async_task_unsupported');
     }
     const meta: Record<string, unknown> = {};
     if (item.generation_id != null) meta.generation_id = item.generation_id;
@@ -383,14 +402,16 @@ async function normalizeResponse(
       images.push({ bytes, mime, source: 'b64_json', fileName: `${namePrefix}-${i}${ext}` });
     } else if (rawUrl) {
       const abs = resolveUrl(cfg.baseUrl, rawUrl);
-      const downloaded = await downloadUrl(abs, cfg.apiKey, cfg.baseUrl);
+      // 下载失败同样发生在计费之后：把 usage 带到错误上再抛，工具侧才记得出
+      // 「失败但 token 已消耗」，而不是 usage=null 的纯失败行（P2）。
+      const downloaded = await downloadUrl(abs, cfg.apiKey, cfg.baseUrl).catch(withUsage);
       const mime = ImageFileSupport.detectMimeFromBytes(downloaded.bytes)
         ?? (downloaded.mime.startsWith('image/') ? downloaded.mime : null)
         ?? 'image/png';
       const ext = extensionForOutput(outputFormat, mime, 'url', i);
       images.push({ bytes: downloaded.bytes, mime, source: 'url', fileName: `${namePrefix}-${i}${ext}` });
     } else {
-      throw new ImageApiError('上游未返回图片数据', 'empty_data', null);
+      throw fail('上游未返回图片数据', 'empty_data');
     }
   }
 

@@ -172,10 +172,18 @@ export function createImageCallRecorder(llmCallService: LlmCallService): ImageCa
 
 - 入口 `const started = Date.now()`。
 - 凭证解析之前置 `upstreamAttempted = false`；解析完（即将发上游请求）置 `true`。从此之后的成功与 catch 都记账，之前的早退错误不记。
-- 成功路径：`materializeImageApiResult` 之后、`return` 之前，`await this.recorder?.record({ model, resolvedModelName: cfg.model, usage: normalizeImageUsage(result.usage), success: true, durationMs: Date.now() - started, userId, sessionId, agentId })`。
-- 失败 catch：`if (upstreamAttempted)` 才记一行 `success: false` + `err.message`（`toImageApiError` 已做 apiKey 脱敏）。
+- 成功路径：**本地收尾（`getBaseUrl` + `materializeImageApiResult`）包在 `try { ... } finally { recordOnce(成功行) }` 里**，`return` 仍在 try 内。
+  - 为什么不能简单写成「materialize 之后 record」：磁盘满 / `uploadDir` 不可写时收尾抛错，控制流进 catch，那一行会被记成 `success: false, usage: null`——上游 token 明明已经产生，真实消耗被吞、成功率失真（review 定案 B2）。
+  - 为什么不能简单写成「record 之后再 materialize」：那样 `duration_ms` 就不再含落盘耗时，与 §6.3 的口径（「含上游 HTTP、图片下载、落盘」）不符。
+  - `finally` 两个都要：一行成功、口径不变。`recordOnce` 幂等（`recorded` 标志），外层 catch 的失败记账因此只会空转，不会补出第二行（D9）。
+- 失败 catch：`if (upstreamAttempted)` 才记一行 `success: false` + `err.message`（`toImageApiError` 已做 apiKey 脱敏），usage 取 `err.usage ?? null`（见下 P2）。
 - `recorder == null` 时 `?.` 短路，零开销零行为变化（D7）。
-- 记账是工具执行路径上多出来的一次同步 DB 往返（`LlmCallService.record` 内部 await insert）。已知且接受：异常已被 D8 两层 catch 隔离，不会影响工具返回；换来的是失败行不丢。
+- `recordOnce` 内部先置 `recorded = true` 再 `await`，且 `record()` 外包一层 try/catch 只 `harnessLog('warn')`：它在成功路径的 `finally` 里被 await，不兜住就会把一次成功的出图变成 `errorJson`，违背 D8「记账失败绝不影响工具返回」。
+- 记账是工具执行路径上多出来的一次同步 DB 往返（`LlmCallService.record` 内部 await insert）。已知且接受：换来的是失败行不丢。
+
+**P2（review 定案）：上游 200 之后才失败的 usage 也不能丢。** `normalizeResponse` 在拿到 200 响应体之后才会去下载 `data[].url`，下载超时 / 异步任务（`task_id`）/ 空数据这三类抛错都发生在计费之后——不把 usage 带出来，工具侧照样只能记 `usage: null` 的失败行，与 B2 同款只是更深一层。做法：`ImageApiError` 加第 4 个可选参 `usage?: ChatUsage | null`；`normalizeResponse` 入口先 `normalizeImageUsage(body.usage)`，之后所有抛错（含 `downloadUrl` 抛出的，用 `.catch(withUsage)` 原样保留 code / httpStatus 只挂 usage）都带上它；工具侧 catch 用 `err.usage ?? null`。`toImageApiError` 对已是 `ImageApiError` 的实例原样返回，所以这个字段能穿到工具侧。
+
+**`duration_ms` 的口径**（§6.3）是「`executeWithUser` 入口计时到记录点，含上游 HTTP、图片下载、落盘」。注意 `edit_image` 的这个数还含入参图片的字节加载（最多 10 × 20MB，docker 桥接可能要几秒）——它是「整次工具调用的墙钟时间」，不是纯模型延迟。不影响跨场景指标：图片行 `first_token_ms` 为 NULL，自动被解码速率聚合排除。
 
 注意 `userId` 用 `executeWithUser` 的入参（群聊场景即执行身份，与 dispatcher 传给工具的 `runtimeToolUserId` 同源）；`agentId` 用 6.5 透传来的第 5 参。usage 取 `callImageGenerations` / `callImageEdits` 返回的 `ImageApiResult.usage`（`Record<string, unknown>`），不要绕 `materializeImageApiResult` 的 payload。
 
@@ -225,6 +233,7 @@ export function createImageCallRecorder(llmCallService: LlmCallService): ImageCa
 1. 契约 `shared/contracts/src/usage.ts:78` `LlmCallModelAggRow` 加 `modelType?: string | null`。
 2. `llm-call.repository.ts` `aggregateByModel`：`LEFT JOIN llm_model m ON m.id = llm_call.model_id`，select `MAX(m.model_type) AS modelType`（LEFT JOIN：模型行已删也能展示，type 为 NULL 归「未知」）。
    **必须用 `MAX()` 聚合**，不能裸选 `m.model_type`：该查询是 `GROUP BY model_id`，裸选 join 列会撞 MySQL8 默认的 `ONLY_FULL_GROUP_BY`（1055）；`model_id` 相同则 `model_type` 必然相同，`MAX` 无损。
+   **JOIN 之后所有 `llm_call` 列引用都必须带 `llm_call.` 前缀**（`SELECT` / `GROUP BY` / `aggWhere` 的窗口与场景条件一个不落）：`llm_model` 同样有 `model_id` 与 `created_at` 两列，裸写即 MySQL 1052 "Column ... is ambiguous"，会把 `/llm-calls/me/summary` 与 `/admin/users/:id/usage/summary` 全量打挂（review 定案 A1，已对真实 MySQL 复现）。做法是给私有 `aggWhere(filter, qualifier = '')` 加第二个参数，其余不 JOIN 的聚合传空串维持原样。单测 mock 了 `db.query`，抓不到这类错误——故另加 SQL 形态断言（任何非 `llm_call.` 前缀的 `model_id` / `created_at` 引用即失败），并已人工对真实 MySQL 校验过改写后的 SQL。
 3. 消费端加一栏「类型」：`admin/src/views/user/components/UserUsageTab.vue` 的「按模型」表加 `modelTypeLabel(row.modelType)` 列（text / audio / image → 文本 / 语音 / 图片，文案与 `ModelListView.vue` 的 tab 同一套）。
 
 > **原方案的 §7.2 有三处偏差，实现期更正：**
@@ -294,5 +303,19 @@ export function createImageCallRecorder(llmCallService: LlmCallService): ImageCa
 | R6 | §7.2 | 三个消费端 | `SessionTab.vue` 的 `byModel` 是 `FailTopItem[]` 不是 `LlmCallModelAggRow`；`UsageOverviewTab.vue` 饼图按调用次数不按 token，理由不成立；真正的大头 `ModelTab.vue` 原方案漏了 |
 | R7 | §5 | 「顺带更新 V113 注释枚举」 | 否决：`flyway.ts:282` 有 checksum 校验，改已应用迁移有起不来服务的风险（`validateOnMigrate` 虽硬编码 false），且该注释本就落后 3 个场景 |
 | R8 | §10.1 | 「当前最大迁移号 V208」 | 实际最大为 `V207` |
+
+代码 review 后又更正 / 补充的 3 处（R9–R11）：
+| # | 位置 | 问题 | 定案 |
+|---|---|---|---|
+| R9 | §7.2 | `aggregateByModel` 加 `LEFT JOIN llm_model` 后，`SELECT` / `GROUP BY` 里的 `model_id` 与 `aggWhere` 里的 `created_at` 全部歧义（MySQL 1052），两个 summary 接口对所有用户 500。单测 mock `db.query` 抓不到，已对真实 MySQL 复现 | `aggWhere` 加 `qualifier` 参数，`aggregateByModel` 传 `'llm_call.'`，所有 `llm_call` 列引用带前缀；补 SQL 形态歧义回归断言 |
+| R10 | §6.4 | 「materialize 之后 record」：本地收尾抛错时，上游已成功的调用被记成 `success: false, usage: null`，真实 token 消耗被吞 | 本地收尾包 `try { ... } finally { recordOnce(成功行) }`；`recordOnce` 幂等保证一次调用一行（D9）。不能改成「先 record 再 materialize」——那会让 `duration_ms` 丢掉落盘耗时，违背 §6.3 口径 |
+| R11 | §8 | apiKey 脱敏断言用 1 字符 mock key + `not.toContain('k')`：既会因任何含 k 的英文文案误报，又证明不了真实长度的 key 能被替换 | mock key 改为 `sk-image-secret-12345`；mock 上游的 `client-error` 模式把 `Authorization` 回显进错误体，脱敏逻辑真正被跑到 |
+
+第三轮 review（确认 R9–R11 修复）又更正 / 补充 3 处（R12–R14）：
+| # | 位置 | 问题 | 定案 |
+|---|---|---|---|
+| R12 | §6.4 | B2 的同款问题还有更深一层：`normalizeResponse` 拿到 200 后才下载 `data[].url`，下载超时 / `task_id` / 空数据都发生在计费之后，照样记出 `usage: null` 的失败行 | `ImageApiError` 加可选 `usage` 参，`normalizeResponse` 入口先归一 `body.usage`，此后所有抛错（含 `downloadUrl` 的）都带上；工具侧 catch 改 `err.usage ?? null` |
+| R13 | §6.4 / D8 | `recordOnce` 在成功路径的 `finally` 里被 await，记账自身抛错会把成功的出图变成 `errorJson`——适配器虽已双保险吞掉，但 D8 的承诺在工具层是裸的 | `recordOnce` 内置 try/catch 只 `harnessLog('warn')`，D8 在工具层也成立 |
+| R14 | §7.2 | 注释称「模型行已删 → model_type 为 null」，但 JOIN 未过滤 `m.deleted`，软删模型仍带出历史类型 | 行为（展示历史类型比「未知」有用）保留，改注释说明不过滤 `deleted` 是刻意的 |
 
 另有两处小的执行细节写入了正文：`aggregateByModel` 取 `model_type` 必须用 `MAX()` 聚合避开 `ONLY_FULL_GROUP_BY`（§7.2）；usage 取 `ImageApiResult.usage` 而非 `materializeImageApiResult` 的 payload（§6.4）。

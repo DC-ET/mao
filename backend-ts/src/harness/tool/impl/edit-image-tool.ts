@@ -184,6 +184,21 @@ export class EditImageTool extends BaseTool {
     // 参数/配置类早退错误（prompt 空、路径不合法、无可用模型、读字节失败…）不是模型调用，
     // 记进来只会用与图片模型无关的噪音污染调用数与成功率。
     let upstreamAttempted = false;
+    // D9：一次调用一行。recordOnce 幂等，防止「上游成功但本地收尾抛错」时
+    // 成功行与 catch 里的失败行重复记两行。
+    let recorded = false;
+    const recordOnce = async (input: Parameters<ImageCallRecorder['record']>[0]): Promise<void> => {
+      if (recorded) return;
+      // 先置位再 await：记账自身抛错也不会再进第二次，更不会写成第二行。
+      recorded = true;
+      try {
+        await this.recorder?.record(input);
+      } catch (e) {
+        // D8：记账失败绝不影响工具返回。recordOnce 在成功路径的 finally 里被
+        // await，这里不兜住就会把一次成功的改图变成 errorJson。
+        harnessLog('warn', 'EditImageTool record call failed', e);
+      }
+    };
     let resolvedModelName = '';
     const started = Date.now();
     try {
@@ -254,27 +269,37 @@ export class EditImageTool extends BaseTool {
           ? outputCompression
           : undefined,
       });
-      const baseUrl = await this.getBaseUrl();
-      const payload = materializeImageApiResult(result, this.uploadDir, 'edit', baseUrl, prompt, userId, this.contextPath);
-      await this.recorder?.record({
-        model,
-        resolvedModelName,
-        usage: normalizeImageUsage(result.usage),
-        success: true,
-        durationMs: Date.now() - started,
-        userId,
-        sessionId,
-        agentId,
-      });
-      return toJson(payload);
+      // B2：上游已返回、token 已产生，本地收尾（getBaseUrl / 落盘）的成败不能
+      // 改变这一行的成败——磁盘满、uploadDir 不可写时若改成失败行，真实消耗会被
+      // 吞掉、成功率失真。用 finally 保证「打到上游就记一行成功」；duration_ms
+      // 仍按方案 §6.3 的口径算到落盘之后，「一次调用一行」由 recordOnce 幂等
+      // 保证（外层 catch 再进来只会空转，不会补第二行）。
+      try {
+        const baseUrl = await this.getBaseUrl();
+        const payload = materializeImageApiResult(result, this.uploadDir, 'edit', baseUrl, prompt, userId, this.contextPath);
+        return toJson(payload);
+      } finally {
+        await recordOnce({
+          model,
+          resolvedModelName,
+          usage: normalizeImageUsage(result.usage),
+          success: true,
+          durationMs: Date.now() - started,
+          userId,
+          sessionId,
+          agentId,
+        });
+      }
     } catch (e) {
       const err = toImageApiError(e, model?.apiKey);
       harnessLog('error', 'EditImageTool failed', err);
       if (upstreamAttempted) {
-        await this.recorder?.record({
+        await recordOnce({
           model,
           resolvedModelName,
-          usage: null,
+          // 上游 200 之后才失败（url 下载超时、异步任务、空数据）时 token 已计费：
+          // 从 err.usage 取回，别记成 usage=null 的纯失败行把消耗吞掉（P2）。
+          usage: err.usage ?? null,
           success: false,
           errorMessage: err.message,
           durationMs: Date.now() - started,

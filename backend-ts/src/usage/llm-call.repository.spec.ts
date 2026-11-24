@@ -100,9 +100,30 @@ describe('LlmCallRepository 用户维度聚合', () => {
     expect(rows[1].modelType).toBeNull();
     expect(rows[1].cost).toBe(0);
     const [sql, params] = query.mock.calls[0] as [string, unknown[]];
-    expect(sql).toContain('GROUP BY model_id');
+    expect(sql).toContain('GROUP BY llm_call.model_id');
     expect(sql).toContain('ORDER BY totalTokens DESC');
     expect(params).toEqual([7, '2026-10-04 00:00:00', '2026-10-11 00:00:00']);
+  });
+
+  it('aggregateByModel：JOIN 后所有 llm_call 列引用必须带表前缀（MySQL 1052 歧义回归）', async () => {
+    // llm_model 与 llm_call 共有 model_id / created_at 两列。JOIN 之后裸写这两列
+    // （SELECT、GROUP BY、aggWhere 的窗口条件）会撞 MySQL 1052 "Column ... is
+    // ambiguous"，把 /llm-calls/me/summary 与 /admin/users/:id/usage/summary
+    // 全量打挂。单测 mock 了 db.query，只能靠 SQL 形态断言兜住——已对真实
+    // MySQL 复现过 1052，改这里前先确认。
+    const { repo, query } = build([]);
+    await repo.aggregateByModel(7, WINDOW);
+    const [sql] = query.mock.calls[0] as [string];
+    // 取 FROM 之后的全部 SQL（SELECT 列表 + WHERE + GROUP BY + ORDER BY）
+    const afterFrom = sql.slice(sql.indexOf('FROM llm_call'));
+    // 任何「非 llm_call. 前缀」的 model_id / created_at 引用都是歧义
+    expect(afterFrom).not.toMatch(/(?<!llm_call\.)\bmodel_id\b/);
+    expect(afterFrom).not.toMatch(/(?<!llm_call\.)\bcreated_at\b/);
+    // 正向锚点：关键列确实带了前缀
+    expect(sql).toContain('SELECT llm_call.model_id AS modelId');
+    expect(sql).toContain('WHERE llm_call.user_id = ?');
+    expect(sql).toContain('AND llm_call.created_at >= ?');
+    expect(sql).toContain('GROUP BY llm_call.model_id');
   });
 
   it('aggregateByModel：LEFT JOIN llm_model 取 model_type，且用 MAX 聚合避开 ONLY_FULL_GROUP_BY', async () => {

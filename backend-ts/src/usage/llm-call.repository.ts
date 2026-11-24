@@ -120,24 +120,33 @@ const DECODE_AGGS = `COALESCE(SUM(CASE WHEN first_token_ms IS NOT NULL AND first
 export class LlmCallRepository {
   constructor(private readonly db: Db) {}
 
-  /** 聚合 WHERE：半开窗口 + 场景 + 成败（userId 由各聚合方法强制注入，不走这里）。 */
-  private aggWhere(filter: LlmCallAggFilter & { scene?: string | null; success?: boolean | null }): { sql: string; params: unknown[] } {
+  /**
+   * 聚合 WHERE：半开窗口 + 场景 + 成败（userId 由各聚合方法强制注入，不走这里）。
+   *
+   * `qualifier` 给需要 JOIN 的聚合用（如 aggregateByModel 的 LEFT JOIN llm_model）：
+   * llm_model 也有 `model_id` / `created_at` 列，裸列名会撞 MySQL 的 1052
+   * "Column ... is ambiguous"。其余聚合不 JOIN，传空串即维持原样。
+   */
+  private aggWhere(
+    filter: LlmCallAggFilter & { scene?: string | null; success?: boolean | null },
+    qualifier = '',
+  ): { sql: string; params: unknown[] } {
     const clauses: string[] = [];
     const params: unknown[] = [];
     if (filter.startAt != null) {
-      clauses.push('created_at >= ?');
+      clauses.push(`${qualifier}created_at >= ?`);
       params.push(filter.startAt);
     }
     if (filter.endAtExclusive != null) {
-      clauses.push('created_at < ?');
+      clauses.push(`${qualifier}created_at < ?`);
       params.push(filter.endAtExclusive);
     }
     if (filter.scene != null && filter.scene.trim() !== '') {
-      clauses.push('scene = ?');
+      clauses.push(`${qualifier}scene = ?`);
       params.push(filter.scene.trim());
     }
     if (filter.success != null) {
-      clauses.push('success = ?');
+      clauses.push(`${qualifier}success = ?`);
       params.push(filter.success ? 1 : 0);
     }
     return { sql: clauses.length > 0 ? clauses.join(' AND ') : '1=1', params };
@@ -298,32 +307,41 @@ export class LlmCallRepository {
     };
   }
 
-  /** 按模型汇总（model_id 为 NULL 的历史行归并为 id=null 一组，按 token 降序）。 */
+  /**
+   * 按模型汇总（model_id 为 NULL 的历史行归并为 id=null 一组，按 token 降序）。
+   *
+   * LEFT JOIN llm_model 取 model_type（技术方案 2026-11-24 §7.2）后，**所有 llm_call 的
+   * 列引用都必须带 `llm_call.` 前缀**：llm_model 同样有 `model_id` 与 `created_at` 列，
+   * 裸列名会撞 MySQL 1052 "Column ... is ambiguous"——已对真实 MySQL 复现，
+   * 单测 mock 了 db.query 所以抓不到（故新增下面的 SQL 形态断言 + 集成校验）。
+   */
   async aggregateByModel(userId: number, filter: LlmCallAggFilter): Promise<LlmCallModelAggRow[]> {
-    const { sql, params } = this.aggWhere(filter);
+    const { sql, params } = this.aggWhere(filter, 'llm_call.');
     const rows = await this.db.query<Record<string, unknown>>(
-      `SELECT model_id AS modelId,
-              MAX(model_name) AS modelName,
+      `SELECT llm_call.model_id AS modelId,
+              MAX(llm_call.model_name) AS modelName,
               MAX(m.model_type) AS modelType,
               COUNT(*) AS callCount,
-              COALESCE(SUM(CASE WHEN success = 0 AND ${NOT_CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS failCount,
+              COALESCE(SUM(CASE WHEN llm_call.success = 0 AND ${NOT_CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS failCount,
               COALESCE(SUM(CASE WHEN ${CANCELLED_SQL} THEN 1 ELSE 0 END), 0) AS cancelledCount,
-              COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
-              COALESCE(SUM(completion_tokens), 0) AS completionTokens,
-              COALESCE(SUM(total_tokens), 0) AS totalTokens,
-              COALESCE(SUM(cost_micros), 0) / 1000000 AS cost
+              COALESCE(SUM(llm_call.prompt_tokens), 0) AS promptTokens,
+              COALESCE(SUM(llm_call.completion_tokens), 0) AS completionTokens,
+              COALESCE(SUM(llm_call.total_tokens), 0) AS totalTokens,
+              COALESCE(SUM(llm_call.cost_micros), 0) / 1000000 AS cost
        FROM llm_call
        LEFT JOIN llm_model m ON m.id = llm_call.model_id
-       WHERE user_id = ? AND ${sql}
-       GROUP BY model_id
+       WHERE llm_call.user_id = ? AND ${sql}
+       GROUP BY llm_call.model_id
        ORDER BY totalTokens DESC`,
       [userId, ...params],
     );
     return rows.map((r) => ({
       modelId: r.modelId == null ? null : toNumber(r.modelId),
       modelName: (r.modelName as string | null) ?? null,
-      // 模型类型（技术方案 2026-11-24 §7.2）：LEFT JOIN 取不到（模型行已删 / 历史行）为 null，
-      // 前端归「未知」。用 MAX 聚合而非裸选：GROUP BY model_id 下裸选 join 列会撞
+      // 模型类型（技术方案 2026-11-24 §7.2）：LEFT JOIN 取不到为 null，前端归「未知」。
+      // 取不到只发生在物理删行 / 历史行——本 JOIN 刻意不过滤 `m.deleted`，所以软删的模型
+      // 仍会带出历史 model_type（展示历史类型比显示「未知」更有用）。
+      // 用 MAX 聚合而非裸选：GROUP BY model_id 下裸选 join 列会撞
       // ONLY_FULL_GROUP_BY（MySQL8 默认），model_id 相同则 model_type 必然相同，MAX 无损。
       modelType: r.modelType == null ? null : String(r.modelType),
       callCount: toNumber(r.callCount),

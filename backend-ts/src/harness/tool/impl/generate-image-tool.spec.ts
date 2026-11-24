@@ -13,7 +13,7 @@ import { normalizeImageModelName, buildAuthorizationHeader, stripTrailingSlash }
 
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]);
 
-type Mode = 'ok' | 'url-only' | 'rate-limit' | 'task' | 'empty' | 'non-json' | 'edit-ok' | 'client-error';
+type Mode = 'ok' | 'url-only' | 'rate-limit' | 'task' | 'empty' | 'non-json' | 'edit-ok' | 'client-error' | 'url-download-fail';
 
 let server: http.Server;
 let port = 0;
@@ -34,8 +34,24 @@ function handleGenerateOrEdit(req: http.IncomingMessage, res: http.ServerRespons
   }
   if (mode === 'client-error') {
     clientErrorHits++;
+    // 错误体里回显 Authorization（反代错误页 / 调试网关常见）：只有这样
+    // 「错误摘要不含 apiKey」才是真断言。早先错误体是 'bad prompt'，本来就不含
+    // key，断言恒真——脱敏逻辑整个坏掉也测不出来。
     res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: { message: 'bad prompt', code: 'invalid_request' } }));
+    res.end(JSON.stringify({ error: { message: `bad prompt: ${String(req.headers.authorization ?? '')}`, code: 'invalid_request' } }));
+    return;
+  }
+  if (mode === 'url-download-fail') {
+    // 上游 200 且已返回 usage，但图片 URL 下载失败：token 已经计费，流水必须记
+    // 「失败 + usage 非空」，而不是 usage=null 的纯失败行（P2）。
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      created: 1,
+      model: 'gpt-image-2.5-flare',
+      size: '1024x1024',
+      data: [{ url: 'http://127.0.0.1:1/missing.png' }],
+      usage: { input_tokens: 7, output_tokens: 11, total_tokens: 18 },
+    }));
     return;
   }
   if (mode === 'non-json') {
@@ -131,7 +147,7 @@ const model = (extra?: Record<string, unknown> | null) => {
   return {
     modelId: 'gpt-image-2.5-flare',
     baseUrl: `http://127.0.0.1:${port}`,
-    apiKey: 'k',
+    apiKey: 'sk-image-secret-12345',
     ...extra,
   };
 };
@@ -256,7 +272,7 @@ describe('GenerateImageTool', () => {
     expect(lastBody).not.toHaveProperty('background');
     expect(lastBody).not.toHaveProperty('image');
     expect(lastBody).not.toHaveProperty('mask');
-    expect(lastHeaders.authorization).toBe('Bearer k');
+    expect(lastHeaders.authorization).toBe('Bearer sk-image-secret-12345');
     expect(lastHeaders['accept-encoding']).toBe('identity');
 
     const files = readdirSync(dir);
@@ -626,7 +642,7 @@ describe('图片调用流水埋点（技术方案 2026-11-24）', () => {
     expect(calls[0].resolvedModelName).toBe('gpt-image-2.5-sunburst');
   });
 
-  it('generate: records a failure row when the upstream returns 5xx', async () => {
+  it('generate: records a failure row when the upstream returns 5xx, with the api key redacted', async () => {
     mode = 'client-error';
     const { calls, recorder } = spyRecorder();
     const { tool } = makeGenTool(recorder);
@@ -635,8 +651,13 @@ describe('图片调用流水埋点（技术方案 2026-11-24）', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].success).toBe(false);
     expect(calls[0].errorMessage).toBeTruthy();
-    // 脱敏：错误摘要里不得出现 apiKey
-    expect(calls[0].errorMessage).not.toContain('k');
+    // 脱敏：mock 上游把 Authorization 回显进错误体，摘要里必须换成 [redacted]。
+    // 早先错误体是 'bad prompt'（本就不含 key）、mock key 又是 1 字符 'k'，
+    // 断言恒真——脱敏逻辑整个坏掉也测不出来。
+    expect(result.error).toContain('[redacted]');
+    expect(result.error).not.toContain('sk-image-secret-12345');
+    expect(calls[0].errorMessage).toContain('[redacted]');
+    expect(calls[0].errorMessage).not.toContain('sk-image-secret-12345');
     expect(calls[0].usage).toBeNull();
   });
 
@@ -666,7 +687,7 @@ describe('图片调用流水埋点（技术方案 2026-11-24）', () => {
     });
   });
 
-  it('edit: records a failure row when the upstream returns 5xx', async () => {
+  it('edit: records a failure row when the upstream returns 5xx, with the api key redacted', async () => {
     mode = 'client-error';
     const { calls, recorder } = spyRecorder();
     const { tool, ws } = makeEditTool(recorder);
@@ -674,7 +695,10 @@ describe('图片调用流水埋点（技术方案 2026-11-24）', () => {
     expect(result.error).toBeTruthy();
     expect(calls).toHaveLength(1);
     expect(calls[0].success).toBe(false);
-    expect(calls[0].errorMessage).not.toContain('k');
+    // mock 上游回显 Authorization → 摘要必须抹成 [redacted]（见 client-error 模式注释）
+    expect(result.error).toContain('[redacted]');
+    expect(result.error).not.toContain('sk-image-secret-12345');
+    expect(calls[0].errorMessage).not.toContain('sk-image-secret-12345');
   });
 
   it('edit: a local read failure before the upstream call is not recorded', async () => {
@@ -691,5 +715,115 @@ describe('图片调用流水埋点（技术方案 2026-11-24）', () => {
     const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'a cat' }), 11, 7, 'ws', 3));
     expect(result.error).toBeUndefined();
     expect(result.images).toHaveLength(1);
+  });
+
+  it('generate: upstream success + local bookkeeping failure still records the consumed tokens (B2)', async () => {
+    // 落盘/拼 URL 在记账之后抛错（磁盘满、uploadDir 不可写）时，上游 token 已经产生。
+    // 记账若留在收尾之后，这一行会退化成 usage=null 的失败行——真实消耗被吞，
+    // 成功率与用量同时失真。要求：一行、success=true、usage 归一值。
+    const { calls, recorder } = spyRecorder();
+    const dir = useTmpDir('img-rec-b2-');
+    const tool = new GenerateImageTool({
+      findFirstActiveImageModel: async () => model() as never,
+    }, dir, async () => { throw new Error('boom: base url unavailable'); }, '/api', undefined, recorder as never);
+    const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'a cat' }), 11, 7, 'ws', 3));
+    expect(result.error).toBeTruthy();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      success: true,
+      usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
+    });
+    expect(calls[0].errorMessage).toBeUndefined();
+  });
+
+  it('generate: never records two rows for one call (D9)', async () => {
+    // 同一行调用不能被记成「成功行 + 失败行」两条：用量翻倍、成功率错乱。
+    const { calls, recorder } = spyRecorder();
+    const dir = useTmpDir('img-rec-d9-');
+    const tool = new GenerateImageTool({
+      findFirstActiveImageModel: async () => model() as never,
+    }, dir, async () => { throw new Error('boom'); }, '/api', undefined, recorder as never);
+    await tool.execute(JSON.stringify({ prompt: 'a cat' }), 11, 7, 'ws', 3);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].success).toBe(true);
+  });
+
+  it('generate: upstream 200 then download failure keeps the billed tokens (P2)', async () => {
+    // 上游返回 200 + usage，但图片 URL 下载失败（CDN 限流 / 超时）。token 已经
+    // 计费，流水必须记「失败 + usage 非空」；记成 usage=null 就是又一次把真实
+    // 消耗吞掉——B2 的同款问题，只是发生在 callImageGenerations 里更里一层。
+    mode = 'url-download-fail';
+    const { calls, recorder } = spyRecorder();
+    const { tool } = makeGenTool(recorder);
+    const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'a cat' }), 11, 7, 'ws', 3));
+    expect(result.error).toBeTruthy();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      success: false,
+      usage: { promptTokens: 7, completionTokens: 11, totalTokens: 18 },
+    });
+  });
+
+  it('generate: a throwing recorder never breaks the tool result (D8)', async () => {
+    // recordOnce 在成功路径的 finally 里被 await：记账自身抛错若不被兜住，
+    // 一次成功的出图会变成 errorJson。D8 要求「记账失败绝不影响工具返回」。
+    const dir = useTmpDir('img-rec-d8-');
+    const tool = new GenerateImageTool({
+      findFirstActiveImageModel: async () => model() as never,
+    }, dir, async () => 'https://mao.example/api', '/api', undefined, {
+      record: async () => { throw new Error('db down'); },
+    } as never);
+    const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'a cat' }), 11, 7, 'ws', 3));
+    expect(result.error).toBeUndefined();
+    expect(result.images).toHaveLength(1);
+  });
+
+  it('edit: upstream success + local bookkeeping failure still records the consumed tokens (B2)', async () => {
+    const { calls, recorder } = spyRecorder();
+    const ws = useTmpDir('edit-rec-b2-ws-');
+    const out = useTmpDir('edit-rec-b2-out-');
+    mkdirSync(join(ws, 'chat-files'), { recursive: true });
+    writeFileSync(join(ws, 'input.png'), PNG_BYTES);
+    const tool = new EditImageTool(
+      { findFirstActiveImageModel: async () => model() as never },
+      new PathSandbox(ws),
+      out,
+      async () => { throw new Error('boom'); },
+      null,
+      '/api',
+      undefined,
+      recorder as never,
+    );
+    const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'x', image_paths: ['input.png'] }), 11, 7, ws, 3));
+    expect(result.error).toBeTruthy();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ success: true });
+    expect(calls[0].usage).toMatchObject({ totalTokens: 3 });
+  });
+
+  it('edit: upstream 200 then download failure keeps the billed tokens (P2)', async () => {
+    mode = 'url-download-fail';
+    const { calls, recorder } = spyRecorder();
+    const ws = useTmpDir('edit-rec-p2-ws-');
+    const out = useTmpDir('edit-rec-p2-out-');
+    mkdirSync(join(ws, 'chat-files'), { recursive: true });
+    writeFileSync(join(ws, 'input.png'), PNG_BYTES);
+    const tool = new EditImageTool(
+      { findFirstActiveImageModel: async () => model() as never },
+      new PathSandbox(ws),
+      out,
+      async () => 'https://mao.example/api',
+      null,
+      '/api',
+      undefined,
+      recorder as never,
+    );
+    const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'x', image_paths: ['input.png'] }), 11, 7, ws, 3));
+    expect(result.error).toBeTruthy();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      success: false,
+      usage: { promptTokens: 7, completionTokens: 11, totalTokens: 18 },
+    });
   });
 });
