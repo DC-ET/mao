@@ -1089,6 +1089,35 @@ describe('EmbedController', () => {
     expect(h.events).toContainEqual({ type: 'phase', phase: 'RUNNING', sessionId: SESSION_ID });
     h.ctl.destroy();
   });
+
+  // 2026-11-24-send-file-snapshot：取数闭包读 state.authToken（reactive），send-file 快照
+  // 只拼 id + 渲染期 token；token 轮换后同一闭包立即吐新地址（模板调用点即响应式依赖）。
+  it('resolveDeliveryUrl 闭包：send-file 快照拼 send-download，token 轮换即刷新', async () => {
+    const h = await makeHarness();
+    await boot(h);
+    const snapshot = {
+      kind: 'image' as const,
+      ref: { type: 'send-file' as const, id: 'snap-1' },
+      mime: 'image/png',
+      bytes: 1,
+      filename: 'a.png',
+    };
+    const resolve = h.ui.resolveDeliveryUrl;
+    // boot 后 authToken 已由 getToken 解析填充
+    await vi.waitFor(() => expect(h.ui.authToken).toBe('fake.jwt.token'));
+    expect(resolve(snapshot)).toBe('https://mao.example.com/api/v1/files/send-download?id=snap-1&token=fake.jwt.token');
+    // token 轮换：同一个闭包读到新的 state.authToken
+    h.ui.authToken = 'rotated.jwt.token';
+    await nextTick();
+    expect(resolve(snapshot)).toBe('https://mao.example.com/api/v1/files/send-download?id=snap-1&token=rotated.jwt.token');
+    expect(resolve(snapshot)).not.toContain('sessionId');
+    expect(resolve(snapshot)).not.toContain('path=');
+    // 无 token 时不带 token 参数（401 由端点给出）
+    h.ui.authToken = null;
+    await nextTick();
+    expect(resolve(snapshot)).toBe('https://mao.example.com/api/v1/files/send-download?id=snap-1');
+    h.ctl.destroy();
+  });
 });
 
 describe('EmbedController 页面操作开关（init page.enabled）', () => {

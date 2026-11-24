@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { closeSync, mkdirSync, openSync, readSync, statSync, writeFileSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import path from 'node:path';
 import { lookup as mimeLookup } from 'mime-types';
-import type { DeliveryWorkspaceRef } from '@mao/contracts';
+import type { DeliveryRef } from '@mao/contracts';
 import { BaseTool } from '../tool.js';
 import { asText, errorJson, parseObject, toJson } from '../json.js';
 import { ImageFileSupport } from '../image-file-support.js';
@@ -14,7 +14,6 @@ import {
 import { toStaticUploadBase } from './generate-image-tool.js';
 import { isUnder, SecurityException, type PathSandbox } from '../../safety/path-sandbox.js';
 import { StrictPathResolver } from '../../safety/strict-path.js';
-import { experienceDirForSession, isExperienceMountRelative } from '../../experience/experience-mount-path.js';
 import { BusinessException } from '../../../common/business-exception.js';
 import { ErrorCode } from '../../../common/error-code.js';
 import { WEIXIN_PROJECT_KEY } from '../../../domain/types.js';
@@ -29,10 +28,12 @@ import { DINGTALK_FILE_EXTENSIONS } from '../../../dingtalk/send.service.js';
 import { harnessLog } from '../../log.js';
 
 /**
- * 统一发送图片 / 文件（技术方案 2026-11-18-unified-send-media）：
- * `send_image` / `send_file` 收编六个通道发送工具。每次发送都写会话副本
- * （`uploads/{userId}/send-*`，网页 / 桌面 / 安卓打开同一会话可见），
- * 会话绑定了微信 / 飞书 / 钉钉再用同一份字节额外推送，两侧独立成败（D8）。
+ * 统一发送图片 / 文件（技术方案 2026-11-18-unified-send-media + 2026-11-24-send-file-snapshot）：
+ * `send_image` / `send_file` 收编六个通道发送工具。除本人 uploads 的既有文件走原地引用
+ * （形态 B）外，其余来源一律在发送时落一份**快照**（本地 `FILE_SEND_DIR/{userId}/` 或云私有
+ * 前缀 `send-files/`），消息只记快照 id，对话页经带属主鉴权的下载接口取字节——
+ * 之后工作区怎么删、怎么改都不影响已经发出的附件。
+ * 会话绑定了微信 / 飞书 / 钉钉再用内存里同一份字节额外推送，两侧独立成败（D8）。
  * 六个旧类的发送逻辑移进下面的策略，类本身已删除。
  */
 
@@ -49,8 +50,6 @@ export interface SendMediaSession {
   workspace?: string | null;
   projectKey?: string | null;
   parentSessionId?: number | null;
-  /** 团队经验挂载解析用（活引用资格判定把经验目录来源排除在 ref 外）。 */
-  agentId?: number | null;
 }
 
 export interface SendMediaSessionLookup {
@@ -62,6 +61,21 @@ export interface SendCopyDeps {
   uploadDir: string;
   getUploadBaseUrl: () => Promise<string>;
   uploadContextPath?: string;
+}
+
+/**
+ * 快照存储（技术方案 2026-11-24-send-file-snapshot D3）：由 file 域的 SendFileService 实现，
+ * 工具只依赖接口——本地 / 多云分流、插表与补偿删除都在实现里，工具不碰存储凭据。
+ */
+export interface SendFileStore {
+  save(input: {
+    userId: number;
+    sessionId: number | null;
+    filename: string;
+    mime: string;
+    ext: string;
+    bytes: Buffer;
+  }): Promise<{ ok: true; id: string; mime: string; bytes: number } | { ok: false; error: string }>;
 }
 
 export interface ChannelPushInput {
@@ -166,61 +180,6 @@ export function mimeForSendCopy(ext: string, bytes: Buffer, declared?: string | 
   const declaredMime = declared?.split(';')[0].trim().toLowerCase() ?? '';
   if (/^[a-z0-9][a-z0-9.+-]*\/[a-z0-9][a-z0-9.+-]*$/.test(declaredMime)) return declaredMime;
   return EXTENSION_MIME_FALLBACK[ext] ?? 'application/octet-stream';
-}
-
-export type SendCopyOutcome =
-  | { ok: true; url: string; mime: string; bytes: number }
-  | { ok: false; error: string };
-
-/** 会话副本：写 `uploads/{userId}/send-{uuid}{ext}`，URL 口径与文生图相同（D7）。 */
-export async function saveSendCopy(
-  deps: SendCopyDeps,
-  kind: 'image' | 'file',
-  bytes: Buffer,
-  source: string,
-  userId: number | null,
-  contentType?: string | null,
-): Promise<SendCopyOutcome> {
-  const ext = deriveSendCopyExtension(source, contentType);
-  if (kind === 'image') {
-    const imageMime = sniffImageMime(bytes);
-    if (imageMime == null || !COPY_IMAGE_MIMES.has(imageMime)) {
-      return { ok: false, error: '不支持的图片格式（副本支持 PNG/JPG/JPEG/GIF/WebP/BMP）' };
-    }
-  }
-  const uidSegment = userId != null ? `${String(userId)}/` : '';
-  const dir = userId != null ? path.join(deps.uploadDir, String(userId)) : deps.uploadDir;
-  let origin: string;
-  try {
-    const baseUrl = await deps.getUploadBaseUrl();
-    origin = toStaticUploadBase(baseUrl, deps.uploadContextPath ?? '/api');
-  } catch (e) {
-    harnessLog('warn', 'send copy baseUrl resolve failed', e);
-    origin = '';
-  }
-  if (origin === '') {
-    // §5.1-3：origin 为空视为副本失败；通道推送仍照常尝试
-    return { ok: false, error: '对话页没有可打开的附件地址，保存失败' };
-  }
-  // 文件类副本回落 .bin（未知 / 可执行扩展名）时 mime 收敛为 octet-stream：
-  // delivery.mime 不暴露 text/html / image/svg+xml，避免客户端按 mime 内联预览时绕开扩展名限制
-  const mime = kind === 'file' && ext === '.bin'
-    ? 'application/octet-stream'
-    : mimeForSendCopy(ext, bytes, contentType);
-  try {
-    mkdirSync(dir, { recursive: true });
-    const fileName = `send-${randomUUID()}${ext}`;
-    writeFileSync(path.join(dir, fileName), bytes);
-    return {
-      ok: true,
-      url: `${origin}/uploads/${uidSegment}${fileName}`,
-      mime,
-      bytes: bytes.length,
-    };
-  } catch (e) {
-    harnessLog('warn', 'send copy write failed', e);
-    return { ok: false, error: `附件写入失败：${e instanceof Error ? e.message : String(e)}` };
-  }
 }
 
 // ─────────────────────────── 通道检测（D2） ───────────────────────────
@@ -373,42 +332,56 @@ function fileMessageParamChecked(filename: string): string | null {
 
 // ─────────────────────────── 结果合并（D8） ───────────────────────────
 
+/**
+ * 快照结果合并（D8 + 2026-11-24 D3）：快照成功即 `success`，通道推送失败只算通道侧失败
+ * （沿用今天「副本成功 + 推送失败」的形状，`success=true` + 通道侧 error）。
+ * 快照失败但推送成功仍是 `success=true` + 「对话页保存失败」——与今天副本链路口径一致，
+ * 不因为「快照是主路径」就改成功位，否则已绑通道的会话结果语义会漂移。
+ */
 export function combineSendResult(
   kind: 'image' | 'file',
   filename: string,
   channel: SendChannel,
-  copy: SendCopyOutcome,
+  snapshot: SendSnapshotOutcome,
   push: ChannelPushResult,
 ): string {
   const channelLabel = channel === 'chat' ? null : CHANNEL_LABELS[channel];
   const channelStatus: 'skipped' | 'sent' | 'failed' = channel === 'chat' ? 'skipped' : (push.ok ? 'sent' : 'failed');
-  const delivery = copy.ok ? { kind, url: copy.url, mime: copy.mime, bytes: copy.bytes } : null;
+  // 消息只记快照 id：不写磁盘路径、不写云厂商 URL、不写 token
+  const delivery = snapshot.ok
+    ? { kind, filename, mime: snapshot.mime, bytes: snapshot.bytes, ref: { type: 'send-file' as const, id: snapshot.id } }
+    : null;
   let success: boolean;
   let error: string | null;
   if (channel === 'chat') {
-    // 无外部通道：唯一一侧是会话副本，push 不参与（D8 单侧）
-    success = copy.ok;
-    error = copy.ok ? null : `对话页保存失败：${copy.error}`;
-  } else if (copy.ok && push.ok) {
+    // 无外部通道：唯一一侧是快照，push 不参与（D8 单侧）
+    success = snapshot.ok;
+    error = snapshot.ok ? null : `对话页保存失败：${snapshot.error}`;
+  } else if (snapshot.ok && push.ok) {
     success = true;
     error = null;
-  } else if (copy.ok) {
+  } else if (snapshot.ok) {
     success = true;
     error = `已放入当前对话，${channelLabel}发送失败：${push.error}`;
   } else if (push.ok) {
     success = true;
-    error = `已发到${channelLabel}，对话页保存失败：${copy.error}`;
+    error = `已发到${channelLabel}，对话页保存失败：${snapshot.error}`;
   } else {
     success = false;
     error = channelLabel
-      ? `${channelLabel}发送失败：${push.error}；对话页保存失败：${copy.error}`
-      : `对话页保存失败：${copy.error}`;
+      ? `${channelLabel}发送失败：${push.error}；对话页保存失败：${snapshot.error}`
+      : `对话页保存失败：${snapshot.error}`;
   }
   const result: Record<string, unknown> = { success, channel, channelStatus, filename };
   if (delivery != null) result.delivery = delivery;
   if (error != null) result.error = error;
   return toJson(result);
 }
+
+/** 快照落盘结果：成功带 id（消息只记它），失败带原因（通道推送仍照常尝试）。 */
+export type SendSnapshotOutcome =
+  | { ok: true; id: string; mime: string; bytes: number }
+  | { ok: false; error: string };
 
 /** 来源 basename：路径 / URL 尾段；空回落来源本身（§4.1 filename 回落链）。 */
 export function basenameOfSource(source: string): string {
@@ -421,14 +394,18 @@ export function basenameOfSource(source: string): string {
   return source.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || source;
 }
 
-/** 活引用 delivery 载荷（与 @mao/contracts 的 SendDelivery 对齐；副本链路的 delivery 同构）。 */
+/**
+ * 投递载荷：形态 B 带 url（原地引用），快照带 ref（send-file）。
+ * `ref` 类型取自 `@mao/contracts` 的 `DeliveryRef`——`'workspace'` 只服务存量消息，
+ * 新发送不再写出。均带 filename（Agent 自定义文件名时不丢）。
+ */
 export interface SendRefDelivery {
   kind: 'image' | 'file';
   filename: string;
   mime: string;
   bytes?: number;
   url?: string;
-  ref?: DeliveryWorkspaceRef;
+  ref?: DeliveryRef;
 }
 
 /**
@@ -452,46 +429,18 @@ export function combineSendRefResult(
   return toJson(result);
 }
 
-// ─────────────────────────── 活引用资格判定（2026-11-20-send-media-live-reference §5.1） ───────────────────────────
+// ─────────────────────────── 原地引用资格判定（2026-11-20-send-media-live-reference §5.1；2026-11-24 收缩为形态 B） ───────────────────────────
 
-/**
- * 工作区活引用 oracle（D5）：与 `GET /v1/files/workspace-download` 同一个
- * `WorkspaceBrowseService.downloadFile`——同一 resolvePath、同一套存在性 / 普通文件 /
- * 符号链接检查，不读字节。缺省（未装配）时活引用整体关闭，全部走会话副本。
- */
-export interface SendWorkspaceRefOracle {
-  downloadFile(
-    sessionWorkspace: string,
-    relativePath: string | null | undefined,
-    experienceDir?: string | null,
-  ): { path: string; size: number; fileName: string };
-}
+/** 命中原地引用时的装配结果：uploads 既有文件（形态 B），消息带 url 不落快照。 */
+export type SendLiveRef = { form: 'uploads'; url: string; mime: string; bytes: number | null };
 
-/** 命中活引用时的装配结果：工作区 ref（形态 A）或 uploads 原地引用（形态 B）。 */
-export type SendLiveRef =
-  | { form: 'workspace'; ref: DeliveryWorkspaceRef; absPath: string; mime: string; bytes: number }
-  | { form: 'uploads'; url: string; mime: string; bytes: number | null };
-
-/** 判定结果：命中 ref、硬性失败（现状文案直接报错）或回落副本链路。 */
+/** 判定结果：命中原地引用，或回落快照链路。 */
 export type SendRefDecision =
   | { action: 'ref'; live: SendLiveRef }
-  | { action: 'error'; error: string }
   | { action: 'copy' };
 
-/** send_image 原地引用允许的扩展名（今天 http 来源要过 COPY_IMAGE_MIMES 字节嗅探；引用化不读字节，以扩展名近似把关）。 */
+/** send_image 原地引用允许的扩展名（引用化不读字节，以扩展名近似把关）。 */
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']);
-
-/** 读文件头 count 字节（图片嗅探用；不读全量）。 */
-function readHeadBytes(filePath: string, count: number): Buffer {
-  const fd = openSync(filePath, 'r');
-  try {
-    const buf = Buffer.alloc(count);
-    const read = readSync(fd, buf, 0, count, 0);
-    return buf.subarray(0, read);
-  } finally {
-    closeSync(fd);
-  }
-}
 
 /**
  * uploads 静态 URL 是否指向发送者本人的目录（形态 B URL 形态）：URL 路径中
@@ -537,7 +486,7 @@ function toWorkspaceRelative(workspace: string, absPath: string): string | null 
 
 // ─────────────────────────── 两个新工具 ───────────────────────────
 
-const SEND_TOOL_BASE_PROMPT = '网页、桌面、安卓打开这条会话时，附件出现在该轮回复下方。这条会话若绑定了微信、飞书或钉钉，同一份内容再发给对应的用户或群。支持本地文件路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp）或 http(s) URL。发送会话工作区内的文件时不做副本，附件直接引用工作区里的这份文件：之后修改或删除源文件，会话里看到的附件会跟着变化或失效；要交付「定稿快照」就先复制一份再发。发送你自己 uploads 目录里已有的文件（如生成图）同样直接引用。结果含 error 时，向用户说明原因。结果里已有 delivery，或 channelStatus 为 sent 的那一侧已经完成，不要把同一份内容再发一次。';
+const SEND_TOOL_BASE_PROMPT = '网页、桌面、安卓打开这条会话时，附件出现在该轮回复下方。这条会话若绑定了微信、飞书或钉钉，同一份内容再发给对应的用户或群。支持本地文件路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp）或 http(s) URL。发给用户的工作区文件会在发送时另存一份快照，之后修改或删除源文件不影响已经发出的附件。发送你自己 uploads 目录里已有的文件（如生成图）仍直接引用，删除原文件后附件会失效。结果含 error 时，向用户说明原因。结果里已有 delivery，或 channelStatus 为 sent 的那一侧已经完成，不要把同一份内容再发一次。';
 
 /** LOCAL 读本机文件的执行端拉取（D10）：缺省 null（未装配时 LOCAL 本机路径直接失败）。 */
 export interface SendDeliveryFetcher {
@@ -558,10 +507,9 @@ abstract class SendMediaToolBase extends BaseTool {
     protected readonly wechat: WechatSendStrategy | null,
     protected readonly feishu: FeishuSendStrategy | null,
     protected readonly dingtalk: DingtalkSendStrategy | null,
+    protected readonly sendFileStore: SendFileStore,
     protected readonly sendBytesSupport?: SendBytesSupport | null,
     protected readonly deliveryFetch?: SendDeliveryFetcher | null,
-    protected readonly workspaceRefOracle?: SendWorkspaceRefOracle | null,
-    protected readonly experienceDirForAgent?: ((agentId: number) => string) | null,
   ) { super(); }
 
   protected abstract kind(): 'image' | 'file';
@@ -604,123 +552,82 @@ abstract class SendMediaToolBase extends BaseTool {
   }
 
   /**
-   * 活引用资格判定（2026-11-20-send-media-live-reference §5.1 三步，顺序执行，命中即走引用分支）：
-   * 1. 工作区活引用（形态 A，仅 CLOUD、非 http(s)）：downloadFile 同一解析器预检（D5），
-   *    且归一化相对路径不以经验挂载开头（经验目录来源不做引用）→ ref；send_image 追加
-   *    读 16 字节嗅探（不读全量），不合格按现状文案报错。
-   * 2. uploads 原地引用（形态 B）：本人 uploads 的 http(s) URL（段精确匹配）或经 extraRoots
-   *    解析后落在本人 uploads 目录内的路径；扩展名可用才命中（可执行内容照旧回落净化），
-   *    send_image 追加图片扩展名检查（引用化不读字节，无法字节嗅探）。
-   * 3. 都不命中 → 回落会话副本链路。
-   * 上限语义（评审补充）：形态 A 用 stat size、形态 B 路径形态用 stat 套用既有上限，
-   * 超限回落副本链路（loadBytes 报与今天一致的「文件过大」）；形态 A 空文件按现状文案报错；
-   * 形态 B URL 形态不 stat、bytes 省略。downloadFile 抛错一律回落——错误文案由 loadBytes
-   * 与今天完全同路径地给出，不在资格判定里另造一套。
+   * 原地引用资格判定（2026-11-20-send-media-live-reference §5.1；2026-11-24 起只剩形态 B）：
+   *
+   * 形态 A（工作区活引用）已废止——「发送」表示把这一份交给用户，把附件生命周期绑在
+   * 源文件上和这个语义相反，Agent 的收尾清理会让卡片失效。工作区来源现在一律进快照。
+   * 存量消息里的 `ref.type === 'workspace'` 仍由前端照常渲染，本工具不再写出。
+   *
+   * 形态 B（本人 uploads 既有文件）：URL 形态要求绝对 http(s) 且 `uploads` 段下一跳严格
+   * 等于发送者 userId，且 host 与本站上传 origin 一致；路径形态经 StrictPathResolver 解析后
+   * 落在 `{uploadDir}/{userId}` 内且是普通文件。两者都要求扩展名可用（可执行内容照旧回落
+   * 净化），send_image 追加图片扩展名检查（引用化不读字节，无法字节嗅探）。
+   * 都不命中 → 回落快照链路。
+   *
+   * 上限语义：路径形态用 stat 套用既有上限，超限回落快照（loadBytes 报与今天一致的「文件过大」）；
+   * URL 形态不 stat、bytes 省略。downloadFile 抛错一律回落——错误文案由 loadBytes 给出，
+   * 资格判定不另造一套。
    */
   protected async decideLiveRef(
     source: string,
-    session: SendMediaSession | null,
     ctx: { userId: number | null; sessionId: number | null; workspace: string | null },
   ): Promise<SendRefDecision> {
     const kind = this.kind();
     const isHttp = /^https?:\/\//i.test(source);
+    if (ctx.userId == null) return { action: 'copy' };
 
-    // ── 1. 工作区活引用（形态 A）──
-    if (!isHttp
-      && session != null
-      && session.executionMode !== 'LOCAL'
-      && session.workspace != null && session.workspace.trim() !== ''
-      && ctx.sessionId != null
-      && this.workspaceRefOracle != null) {
-      const experienceDir = experienceDirForSession(session, this.experienceDirForAgent ?? undefined);
+    let absPath: string | null = null;
+    let size: number | null = null;
+    let extSource: string | null = null;
+    if (isOwnUploadsUrl(source, ctx.userId)) {
+      // URL 形态：不 stat、bytes 省略（§4.1 评审补充）；扩展名取 URL 路径。
+      // host 还必须与本站上传 origin 一致（评审补充）：路径段像不等于就是本站文件，
+      // 外域一律回落快照，不把外域地址原样塞进 delivery.url。
+      const origin = await this.resolveUploadOrigin();
+      if (isSameUploadOrigin(source, origin)) extSource = source;
+    } else if (!isHttp) {
       try {
-        const resolved = this.workspaceRefOracle.downloadFile(session.workspace, source, experienceDir);
-        const rel = toWorkspaceRelative(session.workspace, resolved.path);
-        // 经验挂载命中（含绝对路径经挂载解析）→ 不进 ref，回落副本链路（§2.2）
-        if (rel != null && !isExperienceMountRelative(rel)) {
-          if (resolved.size === 0) return { action: 'error', error: this.emptyBytesError() };
-          if (resolved.size > this.maxBytes()) return { action: 'copy' };
-          if (kind === 'image') {
-            const sniffed = sniffImageMime(readHeadBytes(resolved.path, 16));
-            if (sniffed == null || !COPY_IMAGE_MIMES.has(sniffed)) {
-              return { action: 'error', error: '不支持的图片格式（副本支持 PNG/JPG/JPEG/GIF/WebP/BMP）' };
-            }
-          }
-          return {
-            action: 'ref',
-            live: {
-              form: 'workspace',
-              ref: { type: 'workspace', sessionId: ctx.sessionId, path: rel },
-              absPath: resolved.path,
-              mime: mimeForExtension(path.extname(resolved.path)),
-              bytes: resolved.size,
-            },
-          };
+        const primaryRoot = ctx.workspace != null && ctx.workspace !== ''
+          ? ctx.workspace
+          : this.pathSandbox.getEffectiveWorkspaceRoot(null);
+        const resolved = new StrictPathResolver(primaryRoot, this.sendBytesSupport?.extraRoots(ctx.userId) ?? []).resolve(source);
+        const uploadsDir = path.join(this.copyDeps.uploadDir, String(ctx.userId));
+        if (isUnder(resolved, uploadsDir) && statSync(resolved).isFile()) {
+          absPath = resolved;
+          size = statSync(resolved).size;
+          extSource = source;
         }
       } catch {
-        // 文件不存在 / 不是普通文件 / 路径拒绝：继续形态 B / 回落副本链路，
-        // 错误文案由 loadBytes 与今天同路径给出，资格判定不另造一套
+        // 越界 / 不存在：回落快照链路（他人 uploads 等错误文案仍由 loadBytes 给出）
       }
     }
-
-    // ── 2. uploads 原地引用（形态 B）──
-    if (ctx.userId != null) {
-      let absPath: string | null = null;
-      let size: number | null = null;
-      let extSource: string | null = null;
-      if (isOwnUploadsUrl(source, ctx.userId)) {
-        // URL 形态：不 stat、bytes 省略（§4.1 评审补充）；扩展名取 URL 路径。
-        // host 还必须与本站上传 origin 一致（评审补充）：路径段像不等于就是本站文件，
-        // 外域一律回落副本链路，不把外域地址原样塞进 delivery.url。
-        const origin = await this.resolveUploadOrigin();
-        if (isSameUploadOrigin(source, origin)) extSource = source;
-      } else if (!isHttp) {
-        try {
-          const primaryRoot = ctx.workspace != null && ctx.workspace !== ''
-            ? ctx.workspace
-            : this.pathSandbox.getEffectiveWorkspaceRoot(null);
-          const resolved = new StrictPathResolver(primaryRoot, this.sendBytesSupport?.extraRoots(ctx.userId) ?? []).resolve(source);
-          const uploadsDir = path.join(this.copyDeps.uploadDir, String(ctx.userId));
-          if (isUnder(resolved, uploadsDir) && statSync(resolved).isFile()) {
-            absPath = resolved;
-            size = statSync(resolved).size;
-            extSource = source;
-          }
-        } catch {
-          // 越界 / 不存在：回落副本链路（他人 uploads 等错误文案仍由 loadBytes 给出）
-        }
-      }
-      if (extSource != null) {
-        const ext = deriveSendCopyExtension(extSource);
-        if (ext !== '.bin') {
-          if (kind === 'image' && !IMAGE_EXTENSIONS.has(ext.slice(1).toLowerCase())) {
-            return { action: 'copy' };
-          }
-          if (size != null && size > this.maxBytes()) return { action: 'copy' };
-          if (absPath == null) {
-            // URL 形态：delivery.url 原样指向既有文件（评审补充：不下载不重写）
-            return { action: 'ref', live: { form: 'uploads', url: source, mime: mimeForExtension(ext), bytes: null } };
-          }
-          // 路径形态：URL 由 toStaticUploadBase 口径拼出；origin 解析失败回落副本链路
-          const origin = await this.resolveUploadOrigin();
-          // 相对 uploads 根（而非 basename）拼 URL：{uploadDir}/{userId} 按用户挂进容器，
-          // Agent 能在里面建子目录，取 basename 会拼出错误 URL 甚至让不同文件撞同一个地址
-          const relPath = toWorkspaceRelative(path.join(this.copyDeps.uploadDir, String(ctx.userId)), absPath);
-          if (origin !== '' && relPath != null) {
-            return {
-              action: 'ref',
-              live: {
-                form: 'uploads',
-                url: `${origin}/uploads/${String(ctx.userId)}/${relPath.split('/').map(encodeURIComponent).join('/')}`,
-                mime: mimeForExtension(ext),
-                bytes: size,
-              },
-            };
-          }
-        }
-      }
+    if (extSource == null) return { action: 'copy' };
+    const ext = deriveSendCopyExtension(extSource);
+    if (ext === '.bin') return { action: 'copy' };
+    if (kind === 'image' && !IMAGE_EXTENSIONS.has(ext.slice(1).toLowerCase())) {
+      return { action: 'copy' };
     }
-
+    if (size != null && size > this.maxBytes()) return { action: 'copy' };
+    if (absPath == null) {
+      // URL 形态：delivery.url 原样指向既有文件（评审补充：不下载不重写）
+      return { action: 'ref', live: { form: 'uploads', url: source, mime: mimeForExtension(ext), bytes: null } };
+    }
+    // 路径形态：URL 由 toStaticUploadBase 口径拼出；origin 解析失败回落快照链路
+    const origin = await this.resolveUploadOrigin();
+    // 相对 uploads 根（而非 basename）拼 URL：{uploadDir}/{userId} 按用户挂进容器，
+    // Agent 能在里面建子目录，取 basename 会拼出错误 URL 甚至让不同文件撞同一个地址
+    const relPath = toWorkspaceRelative(path.join(this.copyDeps.uploadDir, String(ctx.userId)), absPath);
+    if (origin !== '' && relPath != null) {
+      return {
+        action: 'ref',
+        live: {
+          form: 'uploads',
+          url: `${origin}/uploads/${String(ctx.userId)}/${relPath.split('/').map(encodeURIComponent).join('/')}`,
+          mime: mimeForExtension(ext),
+          bytes: size,
+        },
+      };
+    }
     return { action: 'copy' };
   }
 
@@ -734,11 +641,8 @@ abstract class SendMediaToolBase extends BaseTool {
     }
   }
 
-  /** ref 形态 delivery 组装：形态 A 带 ref、形态 B 带 url，均带 filename（与形态 A 对齐，Agent 自定义文件名时不丢）。 */
+  /** 原地引用 delivery 组装：形态 B 带 url，均带 filename（Agent 自定义文件名时不丢）。 */
   private buildRefDelivery(live: SendLiveRef, filename: string): SendRefDelivery {
-    if (live.form === 'workspace') {
-      return { kind: this.kind(), filename, mime: live.mime, bytes: live.bytes, ref: live.ref };
-    }
     const delivery: SendRefDelivery = { kind: this.kind(), url: live.url, mime: live.mime, filename };
     if (live.bytes != null) delivery.bytes = live.bytes;
     return delivery;
@@ -765,12 +669,11 @@ abstract class SendMediaToolBase extends BaseTool {
         if (session == null) return errorJson('当前会话不存在，无法发送');
       }
       const channel = detectSendChannel(session);
-      const decision = await this.decideLiveRef(source, session, { userId, sessionId, workspace });
-      if (decision.action === 'error') return errorJson(decision.error);
       const filename = asText(args.filename) || basenameOfSource(source);
+      const decision = await this.decideLiveRef(source, { userId, sessionId, workspace });
       if (decision.action === 'ref') {
-        // 活引用分支：chat-only 不读全量字节；绑通道仍读全量推送（推送需要），
-        // loadBytes 失败只算通道侧失败（§4.2 评审补充），两侧不写副本
+        // 原地引用分支（形态 B）：chat-only 不读全量字节；绑通道仍读全量推送（推送需要），
+        // loadBytes 失败只算通道侧失败（§4.2 评审补充），两侧都不落快照
         const delivery = this.buildRefDelivery(decision.live, filename);
         let push: ChannelPushResult = { ok: true, error: null };
         const strategy = this.strategyFor(channel);
@@ -786,6 +689,10 @@ abstract class SendMediaToolBase extends BaseTool {
         }
         return combineSendRefResult(filename, channel, delivery, push);
       }
+      // 快照分支（2026-11-24 D1）：没有属主就没有人能下载，按失败处理，不落盘
+      if (userId == null) {
+        return errorJson('对话页没有可打开的附件地址，保存失败');
+      }
       let loaded: { bytes: Buffer; contentType: string | null };
       try {
         loaded = await this.loadBytes(source, { userId, sessionId, workspace }, this.maxBytes(), session?.executionMode ?? null);
@@ -795,7 +702,20 @@ abstract class SendMediaToolBase extends BaseTool {
       }
       const bytes = loaded.bytes;
       if (bytes.length === 0) return errorJson(this.emptyBytesError());
-      const copy = await saveSendCopy(this.copyDeps, kind, bytes, source, userId, loaded.contentType);
+      const ext = deriveSendCopyExtension(source, loaded.contentType);
+      // 图片一律以字节嗅探为准（扩展名 / content-type 都不能把非图片伪装成图片）；
+      // 文件类回落 .bin 时 mime 收敛为 octet-stream，避免客户端按 mime 内联预览绕开扩展名限制
+      let mime: string;
+      if (kind === 'image') {
+        const imageMime = sniffImageMime(bytes);
+        if (imageMime == null || !COPY_IMAGE_MIMES.has(imageMime)) {
+          return errorJson('不支持的图片格式（快照支持 PNG/JPG/JPEG/GIF/WebP/BMP）');
+        }
+        mime = imageMime;
+      } else {
+        mime = ext === '.bin' ? 'application/octet-stream' : mimeForSendCopy(ext, bytes, loaded.contentType);
+      }
+      const snapshot = await this.sendFileStore.save({ userId, sessionId, filename, mime, ext, bytes });
       const strategy = this.strategyFor(channel);
       let push: ChannelPushResult = { ok: true, error: null };
       if (strategy != null) {
@@ -807,7 +727,7 @@ abstract class SendMediaToolBase extends BaseTool {
           push = { ok: false, error: e instanceof Error ? e.message : String(e) };
         }
       }
-      return combineSendResult(kind, filename, channel, copy, push);
+      return combineSendResult(kind, filename, channel, snapshot, push);
     } catch (e) {
       harnessLog('warn', `send_${kind} failed`, e);
       return errorJson(e instanceof Error ? e.message : String(e));
@@ -823,12 +743,11 @@ export class SendImageTool extends SendMediaToolBase {
     wechat: WechatSendStrategy | null,
     feishu: FeishuSendStrategy | null,
     dingtalk: DingtalkSendStrategy | null,
+    sendFileStore: SendFileStore,
     sendBytesSupport?: SendBytesSupport | null,
     deliveryFetch?: SendDeliveryFetcher | null,
-    workspaceRefOracle?: SendWorkspaceRefOracle | null,
-    experienceDirForAgent?: ((agentId: number) => string) | null,
   ) {
-    super(pathSandbox, sessionLookup, copyDeps, wechat, feishu, dingtalk, sendBytesSupport, deliveryFetch, workspaceRefOracle, experienceDirForAgent);
+    super(pathSandbox, sessionLookup, copyDeps, wechat, feishu, dingtalk, sendFileStore, sendBytesSupport, deliveryFetch);
   }
 
   getName(): string { return 'send_image'; }
@@ -874,12 +793,11 @@ export class SendFileTool extends SendMediaToolBase {
     wechat: WechatSendStrategy | null,
     feishu: FeishuSendStrategy | null,
     dingtalk: DingtalkSendStrategy | null,
+    sendFileStore: SendFileStore,
     sendBytesSupport?: SendBytesSupport | null,
     deliveryFetch?: SendDeliveryFetcher | null,
-    workspaceRefOracle?: SendWorkspaceRefOracle | null,
-    experienceDirForAgent?: ((agentId: number) => string) | null,
   ) {
-    super(pathSandbox, sessionLookup, copyDeps, wechat, feishu, dingtalk, sendBytesSupport, deliveryFetch, workspaceRefOracle, experienceDirForAgent);
+    super(pathSandbox, sessionLookup, copyDeps, wechat, feishu, dingtalk, sendFileStore, sendBytesSupport, deliveryFetch);
   }
 
   getName(): string { return 'send_file'; }

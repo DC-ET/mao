@@ -65,8 +65,12 @@ describe('Agent avatar validation', () => {
   });
 
   it('restricts avatar URLs to local UUID PNG paths', () => {
-    for (const value of [undefined, null, avatarUrl]) expect(() => validateAgentAvatarUrl(value)).not.toThrow();
-    for (const value of ['', 'https://evil/a.png', '//evil/a.png', 'data:image/svg+xml,test', '/uploads/../a.png', avatarUrl + '?x', avatarUrl.replace('.png', '.svg'), 5, {}]) {
+    // 两种形态都合法：存量平坦目录 + D7 起按 userId 分目录（与上传产物 URL 同口径）
+    const perUser = '/uploads/7/12345678-1234-1234-1234-123456789abc.png';
+    for (const value of [undefined, null, avatarUrl, perUser]) expect(() => validateAgentAvatarUrl(value)).not.toThrow();
+    for (const value of ['', 'https://evil/a.png', '//evil/a.png', 'data:image/svg+xml,test', '/uploads/../a.png', avatarUrl + '?x', avatarUrl.replace('.png', '.svg'), 5, {},
+      '/uploads/abc/12345678-1234-1234-1234-123456789abc.png', '/uploads/7/../12345678-1234-1234-1234-123456789abc.png',
+      '/uploads/7/12345678-1234-1234-1234-123456789abc.svg', '/uploads/7/12345678-1234-1234-1234-123456789abc.png?x']) {
       expect(() => validateAgentAvatarUrl(value)).toThrow();
     }
   });
@@ -78,9 +82,13 @@ describe('Agent avatar upload route', () => {
     app.setErrorHandler(handleError);
     await app.register(multipart);
     app.addHook('preHandler', async (request) => { request.userId = userId; });
-    const uploadFile = vi.fn(async () => ({ storedName: avatarUrl.slice('/uploads/'.length) })) as never;
+    const uploadFile = vi.fn(async () => ({
+      storedName: avatarUrl.slice('/uploads/'.length),
+      filePath: '/tmp/mao-uploads/12345678-1234-1234-1234-123456789abc.png',
+    })) as never;
     const permission = { hasPermission: vi.fn(async () => allowed) };
-    registerAgentAvatarRoutes(app, { uploadFile }, permission);
+    // D7：上传根按 userId 分目录，URL 由 filePath 相对上传根拼出（与 file.routes 的 toVO 同口径）
+    registerAgentAvatarRoutes(app, { uploadFile, getUploadDir: () => '/tmp/mao-uploads' }, permission);
     return { app, uploadFile, permission };
   }
 

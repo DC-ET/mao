@@ -115,3 +115,58 @@ describe('useRounds：round.deliveries', () => {
     ]);
   });
 });
+
+// 2026-11-24-send-file-snapshot：send-file 快照 ref（新发送默认形态）。parseDeliveryRef 不认
+// send-file 会让整条 delivery 被丢弃（extractDelivery 要求 url 或 ref 至少一个），卡片不渲染。
+describe('useRounds：send-file 快照 ref', () => {
+  it('按快照 id 收集，无 url', () => {
+    const image = call('t1', 'send_image', JSON.stringify({
+      success: true, filename: 'a.png', delivery: { kind: 'image', filename: 'a.png', mime: 'image/png', bytes: 12, ref: { type: 'send-file', id: 'id-1' } },
+    }));
+    const file = call('t2', 'send_file', JSON.stringify({
+      success: true, filename: 'r.pdf', delivery: { kind: 'file', mime: 'application/pdf', ref: { type: 'send-file', id: 'id-2' } },
+    }));
+    const messages = ref<ChatMessage[]>([
+      message('u1', 'user', { content: '发两件' }),
+      message('a1', 'assistant', {
+        content: '已发送',
+        toolCalls: [image, file],
+        segments: [{ type: 'tool-group', toolCalls: [image, file] }, { type: 'text', content: '已发送' }],
+      }),
+    ]);
+    const { rounds } = useRounds(messages, ref(null));
+    expect(rounds.value[0]!.deliveries).toEqual([
+      { kind: 'image', ref: { type: 'send-file', id: 'id-1' }, mime: 'image/png', bytes: 12, filename: 'a.png' },
+      { kind: 'file', ref: { type: 'send-file', id: 'id-2' }, mime: 'application/pdf', bytes: undefined, filename: 'r.pdf' },
+    ]);
+  });
+
+  it('filename 缺失回落 attachment（快照无路径尾段可取）', () => {
+    const file = call('t1', 'send_file', JSON.stringify({
+      success: true, delivery: { kind: 'file', mime: 'application/pdf', ref: { type: 'send-file', id: 'id-3' } },
+    }));
+    const messages = ref<ChatMessage[]>([
+      message('u1', 'user', { content: '发' }),
+      message('a1', 'assistant', { content: 'x', toolCalls: [file], segments: [{ type: 'tool-group', toolCalls: [file] }] }),
+    ]);
+    const { rounds } = useRounds(messages, ref(null));
+    expect(rounds.value[0]!.deliveries[0]!.filename).toBe('attachment');
+  });
+
+  it('send-file ref 残缺不收；存量 workspace ref 仍收', () => {
+    const broken = call('t1', 'send_image', JSON.stringify({
+      delivery: { kind: 'image', ref: { type: 'send-file' } },
+    }));
+    const workspace = call('t2', 'send_image', JSON.stringify({
+      delivery: { kind: 'image', mime: 'image/png', ref: { type: 'workspace', sessionId: 42, path: 'a.png' } },
+    }));
+    const messages = ref<ChatMessage[]>([
+      message('u1', 'user', { content: '发' }),
+      message('a1', 'assistant', { content: 'x', toolCalls: [broken, workspace], segments: [{ type: 'tool-group', toolCalls: [broken, workspace] }] }),
+    ]);
+    const { rounds } = useRounds(messages, ref(null));
+    expect(rounds.value[0]!.deliveries).toEqual([
+      { kind: 'image', ref: { type: 'workspace', sessionId: 42, path: 'a.png' }, mime: 'image/png', bytes: undefined, filename: 'a.png' },
+    ]);
+  });
+});

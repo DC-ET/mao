@@ -1,5 +1,5 @@
 import { ref, computed, type Ref } from 'vue'
-import type { DeliveryWorkspaceRef } from '@mao/contracts'
+import type { DeliveryRef } from '@mao/contracts'
 import { normalizeMessageRole, type ChatMessage, type FileChange, type SendDelivery, type ToolCall } from '../types/chat'
 import { parseDateTime } from '../utils/datetime'
 import { formatRelativeTime } from './useRelativeTime'
@@ -106,8 +106,9 @@ function buildRound(user: ChatMessage, steps: ChatMessage[], reply: ChatMessage 
 const SEND_MEDIA_TOOL_NAMES = new Set(['send_image', 'send_file'])
 
 /**
- * 从一轮消息的工具调用里按调用顺序收 send_image / send_file 的会话副本 / 活引用（D6；2026-11-20 §5.2）。
- * 结果 JSON 能解析且 delivery 含 url（形态 B/C）或 ref（形态 A 活引用）才收（副本写失败无 delivery，不画）；
+ * 从一轮消息的工具调用里按调用顺序收 send_image / send_file 的投递（D6；2026-11-20 §5.2；
+ * 2026-11-24 快照）。结果 JSON 能解析且 delivery 含 url（形态 B，存量）或 ref（workspace 活引用
+ * 仅存量 / send-file 快照 id）才收（保存失败无 delivery，不画）；
  * toolCall.result 由实时 tool_call_result 与刷新回放两条路回填，收集逻辑共用。
  */
 export function collectRoundDeliveries(messages: ChatMessage[]): SendDelivery[] {
@@ -121,14 +122,25 @@ export function collectRoundDeliveries(messages: ChatMessage[]): SendDelivery[] 
   return result
 }
 
-/** 解析 delivery.ref（形态 A）：type/sessionId/path 三键齐备才认，否则视为存量 url 形态。 */
-function parseDeliveryRef(raw: unknown): DeliveryWorkspaceRef | null {
+/**
+ * 解析 delivery.ref（2026-11-24 send-file 补充）：按 type 分派。
+ * - `workspace`：sessionId + path 齐备才认（存量形态 A）；
+ * - `send-file`：快照 id（新发送默认形态）。
+ * 其余形状一律返回 null（回落 url 形态）。注意：返回 null 会让整条 delivery 被
+ * `extractDelivery` 丢弃，所以这里必须认识 `send-file`，否则新快照卡片根本不渲染。
+ */
+function parseDeliveryRef(raw: unknown): DeliveryRef | null {
   if (!raw || typeof raw !== 'object') return null
   const r = raw as Record<string, unknown>
-  if (r.type !== 'workspace' || typeof r.sessionId !== 'number' || typeof r.path !== 'string' || r.path === '') {
-    return null
+  if (r.type === 'workspace') {
+    if (typeof r.sessionId !== 'number' || typeof r.path !== 'string' || r.path === '') return null
+    return { type: 'workspace', sessionId: r.sessionId, path: r.path }
   }
-  return { type: 'workspace', sessionId: r.sessionId, path: r.path }
+  if (r.type === 'send-file') {
+    if (typeof r.id !== 'string' || r.id === '') return null
+    return { type: 'send-file', id: r.id }
+  }
+  return null
 }
 
 function extractDelivery(call: ToolCall): SendDelivery | null {
@@ -142,12 +154,15 @@ function extractDelivery(call: ToolCall): SendDelivery | null {
     const ref = parseDeliveryRef(delivery.ref)
     if (url == null && ref == null) return null
     const kind = delivery.kind === 'file' ? 'file' : 'image'
+    // filename 回落链：结果级 → delivery 级 → 来源尾段（形态 A 取 ref.path basename）
+    const sourceBasename = ref != null
+      ? (ref.type === 'workspace' ? ref.path.split('/').pop() : null)
+      : url?.split('/').pop()
     const filename = typeof parsed.filename === 'string' && parsed.filename.trim() !== ''
       ? parsed.filename
       : typeof delivery.filename === 'string' && delivery.filename.trim() !== ''
         ? delivery.filename
-        // 形态 A 无 url：回落 ref.path basename（评审补充 §5.2）
-        : (ref ? ref.path.split('/').pop() : url?.split('/').pop()) || 'attachment'
+        : sourceBasename || 'attachment'
     return {
       kind,
       ...(url != null ? { url } : {}),

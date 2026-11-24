@@ -8,7 +8,7 @@
  * segment 序列扁平化处理，规则一致。
  */
 import { computed, reactive, type Ref } from 'vue';
-import type { DeliveryWorkspaceRef } from '@mao/contracts';
+import type { DeliveryRef } from '@mao/contracts';
 import type { ChatMessage, MessageSegment, SendDelivery, ToolCallItem } from '../types';
 import { formatRoundDuration } from './elapsed';
 
@@ -54,8 +54,9 @@ export interface RoundView {
 const SEND_MEDIA_TOOL_NAMES = new Set(['send_image', 'send_file']);
 
 /**
- * 从一轮的助手消息里按调用顺序收 `delivery`（统一发送媒体方案 D6）：结果 JSON 能解析且含
- * `delivery.url` 或 `delivery.ref`（活引用形态 A，2026-11-20）才收；
+ * 从一轮的助手消息里按调用顺序收 `delivery`（统一发送媒体方案 D6；2026-11-24 快照）：
+ * 结果 JSON 能解析且含 `delivery.url`（形态 B，存量）或 `delivery.ref`
+ * （`workspace` 活引用仅存量 / `send-file` 快照 id）才收；
  * message.toolCalls 与 segments 可能同时持有同一调用，按 toolCallId 去重。
  */
 function collectDeliveries(messages: ChatMessage[]): SendDelivery[] {
@@ -76,14 +77,24 @@ function collectDeliveries(messages: ChatMessage[]): SendDelivery[] {
   return deliveries;
 }
 
-/** 解析 delivery.ref（活引用形态 A，2026-11-20）：type/sessionId/path 三键齐备才认，否则视为存量 url 形态。 */
-function parseDeliveryRef(raw: unknown): DeliveryWorkspaceRef | null {
+/**
+ * 解析 delivery.ref（2026-11-24 send-file 补充）：按 type 分派。
+ * - `workspace`：sessionId + path 齐备才认（存量形态 A）；
+ * - `send-file`：快照 id（新发送默认形态）。
+ * 其余形状一律返回 null（回落 url 形态）。与桌面端 useMessageRounds 同口径。
+ */
+function parseDeliveryRef(raw: unknown): DeliveryRef | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
-  if (r.type !== 'workspace' || typeof r.sessionId !== 'number' || typeof r.path !== 'string' || r.path === '') {
-    return null;
+  if (r.type === 'workspace') {
+    if (typeof r.sessionId !== 'number' || typeof r.path !== 'string' || r.path === '') return null;
+    return { type: 'workspace', sessionId: r.sessionId, path: r.path };
   }
-  return { type: 'workspace', sessionId: r.sessionId, path: r.path };
+  if (r.type === 'send-file') {
+    if (typeof r.id !== 'string' || r.id === '') return null;
+    return { type: 'send-file', id: r.id };
+  }
+  return null;
 }
 
 function extractDelivery(call: ToolCallItem): SendDelivery | null {
@@ -95,12 +106,14 @@ function extractDelivery(call: ToolCallItem): SendDelivery | null {
     const url = typeof delivery.url === 'string' && delivery.url !== '' ? delivery.url : null;
     const ref = parseDeliveryRef(delivery.ref);
     if (url == null && ref == null) return null;
+    const sourceBasename = ref != null
+      ? (ref.type === 'workspace' ? ref.path.split('/').pop() : null)
+      : url?.split('/').pop();
     const filename = typeof parsed.filename === 'string' && parsed.filename.trim() !== ''
       ? parsed.filename
       : typeof delivery.filename === 'string' && delivery.filename.trim() !== ''
         ? delivery.filename
-        // 形态 A 无 url：回落 ref.path basename（评审补充 §5.2）
-        : (ref ? ref.path.split('/').pop() : url?.split('/').pop()) || 'attachment';
+        : sourceBasename || 'attachment';
     return {
       kind: delivery.kind === 'file' ? 'file' : 'image',
       ...(url != null ? { url } : {}),

@@ -151,6 +151,7 @@ import type { TerminalHostHandler } from './harness/terminal/terminal-host-handl
 import { WorkspaceWriteService } from './file/workspace-write.service.js';
 import { WorkspaceOverviewService } from './file/workspace-overview.service.js';
 import { registerFileRoutes } from './file/file.routes.js';
+import type { SendFileService } from './file/send-file.service.js';
 import { registerUploadTicketRoutes } from './upload/upload-ticket.routes.js';
 import { registerSkillBundleRoutes } from './skill/skill-bundle.routes.js';
 import { registerSkillRoutes } from './skill/skill.routes.js';
@@ -290,6 +291,8 @@ export interface RouteDeps {
 
   // upload
   uploadTicketService: UploadTicketService;
+  /** 发送附件快照（技术方案 2026-11-24 D3）：下载端点 + 发送工具写入口共用。 */
+  sendFileService: SendFileService;
 
   // skill
   skillBundleService: SkillBundleService;
@@ -377,6 +380,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     httpToolService, httpApiExecutor, httpToolStatsStore,
     httpToolValidator,
     fileService, agentService, experienceService, experienceIndexService, suggestedQuestionService,
+    sendFileService,
     mcpValidator,
     modelService,
     settingService, activateContainerRuntime, runtimeModeResolver, containerHostsResolver, containerAutoUpgradeResolver, containerOps,
@@ -638,6 +642,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       experienceDirForAgent,
       getUploadBaseUrl: async () => (await settingService.getUploadConfig()).baseUrl,
       runtimeDataResolver: runtimeResolver,
+      sendFileService,
     });
     registerUploadTicketRoutes(api, { uploadTicketService });
     registerSkillBundleRoutes(api, { skillBundleService, permissionService });

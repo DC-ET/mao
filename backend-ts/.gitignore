@@ -9,3 +9,6 @@ config/application-local.yml
 .env.e2e
 .e2e-data/
 skill-views/
+# 发送附件快照根（2026-11-24-send-file-snapshot）：FILE_SEND_DIR 未配置且 yml 缺省值
+# 未被覆盖时会落在后端 cwd 下，e2e/本地直跑都会把快照写进检出内
+send-files/

@@ -48,7 +48,7 @@
 首次创建数据目录：
 
 ```bash
-mkdir -p /opt/mao-data/{workspace,skills,userskills,uploads,users,runtime}
+mkdir -p /opt/mao-data/{workspace,skills,userskills,uploads,send-files,users,runtime}
 ```
 
 ## 一、服务器环境
@@ -139,6 +139,7 @@ SETTINGS_SECRET=${SETTINGS_SECRET}
 UPLOAD_STORAGE_MODE=local
 UPLOAD_BASE_URL=https://mao.example.com/api
 FILE_UPLOAD_DIR=/opt/mao-data/uploads
+FILE_SEND_DIR=/opt/mao-data/send-files
 WORKSPACE_ROOT=/opt/mao-data/workspace
 MAO_RUNTIME_DIR=/opt/mao-data/runtime
 MAO_USER_HOME_DIR=/opt/mao-data/users
@@ -239,6 +240,10 @@ server {
         add_header Cache-Control "public, immutable";
         add_header Access-Control-Allow-Origin "*" always;
     }
+
+    # 发送附件快照（FILE_SEND_DIR，默认 /opt/mao-data/send-files）不要加 alias：
+    # 它只经 /api/v1/files/send-download 按属主鉴权下发，落成公开静态路径会让
+    # 「只有本人能下」失效（快照与 /uploads/ 平级但不同树，照抄上面的 location 是错的）。
 
     # 文件服务返回的图片类 file.url 形如 {baseUrl}/uploads/x.png = /api/uploads/x.png，
     # 必须用 ^~ 前缀 location 压过下面的扩展名正则 location，否则会被 desktop/dist 吞掉变 404。
@@ -433,7 +438,8 @@ FROM message WHERE deleted = 0;
    **镜像依赖集必须覆盖 `runtime-agent` 的 import 闭包**（当前为 `sharp` / `node-pty` / `@modelcontextprotocol/sdk` / `minimatch` / `yaml`）：容器只挂载宿主机 `dist`（代码），第三方包全部来自镜像的 `node_modules`。backend-ts 新增进入该闭包的 npm 包后，必须同步加进 `Dockerfile.runtime` 并重建镜像，否则容器内 agent 启动即 `ERR_MODULE_NOT_FOUND` 退出，表现为每个用户的任务等满 15 秒后报「容器运行时通道连接超时」（0.0.379 前的 `yaml` 缺失即此形态）。0.0.379 起预检会用当前 dist 在镜像里实际加载一次 agent，漏依赖会直接拒绝切换并提示重建镜像。
 3. **数据目录**：`/opt/mao-data/runtime/channels`（socket 根）与 `/opt/mao-data/deps`（持久依赖）需存在且后端进程可写（首次启动预检会校验，不满足直接启动失败，不静默降级）。
 4. **上传目录**：图片产物（`generate_image` / `edit_image`）落 `{FILE_UPLOAD_DIR}/{userId}/`（宿主机按用户隔离、同名挂入容器），外网经 Nginx `^~ /uploads/` 与 `^~ /api/uploads/` 两个前缀访问；按用户隔离后请确认 Nginx 配置含这两个 location（见上文 Nginx 片段），否则图片类 `file.url` 会被扩展名正则 location 吞掉变 404。
-5. **share 目录（按 Agent 隔离，0.0.489 起）**：`/opt/mao-data/share`（`MAO_SHARE_DIR` 可覆盖）由后端启动自动创建。目录结构 = `agent-experience/<agentId>/`（各 Agent 团队经验库）+ `agents/<agentId>/`（各 Agent 私有区：投放品、脚本、产物）。**容器内每个 Agent 只挂载自己的这两条子路径**（rw 同名挂载），其他 Agent 目录在容器文件系统层面不存在。管理员投放：把文件放到目标 Agent 的 `agents/<目标AgentId>/`，目录级挂载即时生效（无需重启/重建容器）；多 Agent 需同一文件时逐个复制（无公共投放区）。建议属主与后端运行用户一致、权限 755（`settings.xml` 等含凭据文件建议 600）。目录不计入用户配额、占满磁盘影响全体服务，建议纳入 `df` 监控；经验库由 Agent 自动写入，建议每日快照兜底（示例：`0 3 * * * tar -czf /opt/mao-data/backup/share-$(date +%F).tgz -C /opt/mao-data share && find /opt/mao-data/backup -name 'share-*.tgz' -mtime +14 -delete`）。存量容器升级后随挂载指纹漂移一次性自动重建。
+5. **发送附件快照目录**：`/opt/mao-data/send-files`（`FILE_SEND_DIR`）由后端启动自动创建，需存在且后端进程可写。快照只经 `/api/v1/files/send-download` 属主鉴权下发：**不要**给它加 Nginx `alias`（见上文 Nginx 片段注释），也不要挂进工具容器（挂载清单变化会让存量容器按指纹重建，且可写挂载会让 Agent 删掉刚发出的附件）。目录不计入用户配额、只增不减，建议纳入 `df` 监控并定期清理。`FILE_SEND_DIR` 不得配在 `FILE_UPLOAD_DIR` 之内，误配启动即拒。
+6. **share 目录（按 Agent 隔离，0.0.489 起）**：`/opt/mao-data/share`（`MAO_SHARE_DIR` 可覆盖）由后端启动自动创建。目录结构 = `agent-experience/<agentId>/`（各 Agent 团队经验库）+ `agents/<agentId>/`（各 Agent 私有区：投放品、脚本、产物）。**容器内每个 Agent 只挂载自己的这两条子路径**（rw 同名挂载），其他 Agent 目录在容器文件系统层面不存在。管理员投放：把文件放到目标 Agent 的 `agents/<目标AgentId>/`，目录级挂载即时生效（无需重启/重建容器）；多 Agent 需同一文件时逐个复制（无公共投放区）。建议属主与后端运行用户一致、权限 755（`settings.xml` 等含凭据文件建议 600）。目录不计入用户配额、占满磁盘影响全体服务，建议纳入 `df` 监控；经验库由 Agent 自动写入，建议每日快照兜底（示例：`0 3 * * * tar -czf /opt/mao-data/backup/share-$(date +%F).tgz -C /opt/mao-data share && find /opt/mao-data/backup -name 'share-*.tgz' -mtime +14 -delete`）。存量容器升级后随挂载指纹漂移一次性自动重建。
 
 ### 配置（环境变量，见 config.md）
 

@@ -65,4 +65,55 @@ describe('resolveDeliveryUrlWithToken', () => {
   it('形态 B/C：不经 auth-storage，原样返回 url', () => {
     expect(resolveDeliveryUrlWithToken(urlDelivery)).toBe(urlDelivery.url)
   })
+
+  it('send-file 快照：token 同样取自 auth-storage 的 getToken（渲染期读取）', () => {
+    expect(resolveDeliveryUrlWithToken(snapshotDelivery)).toBe(
+      'http://localhost:9080/api/v1/files/send-download?id=2f8a1c11-9c1e-4a1f-8f6e-1d2b3c4d5e6f&token=from-storage',
+    )
+  })
+})
+
+// 2026-11-24-send-file-snapshot：send-file 快照 ref（新发送默认形态）。消息只带快照 id，
+// 取数拼带属主鉴权的 send-download，只传 id 不传路径；key 用快照 id 做稳定身份。
+const snapshotDelivery: SendDelivery = {
+  kind: 'image',
+  ref: { type: 'send-file', id: '2f8a1c11-9c1e-4a1f-8f6e-1d2b3c4d5e6f' },
+  mime: 'image/png',
+  bytes: 123,
+  filename: '图 片.png',
+}
+
+describe('resolveDeliveryUrl：send-file 快照', () => {
+  it('拼 send-download，只传 id 与 token', () => {
+    expect(resolveDeliveryUrl(snapshotDelivery, 'jwt-token')).toBe(
+      'http://localhost:9080/api/v1/files/send-download?id=2f8a1c11-9c1e-4a1f-8f6e-1d2b3c4d5e6f&token=jwt-token',
+    )
+  })
+
+  it('无 token 时不带 token 参数', () => {
+    const url = resolveDeliveryUrl(snapshotDelivery, null)
+    expect(url).toBe('http://localhost:9080/api/v1/files/send-download?id=2f8a1c11-9c1e-4a1f-8f6e-1d2b3c4d5e6f')
+  })
+
+  it('与 workspace ref 分派不混：同 id 不会拼出 sessionId/path', () => {
+    expect(resolveDeliveryUrl(snapshotDelivery, 't')).not.toContain('sessionId')
+    expect(resolveDeliveryUrl(snapshotDelivery, 't')).not.toContain('path=')
+  })
+})
+
+describe('deliveryKey：send-file 快照', () => {
+  it('用快照 id 做 key，同一轮多个快照不撞', () => {
+    const a = { ...snapshotDelivery, ref: { type: 'send-file' as const, id: 'id-a' } }
+    const b = { ...snapshotDelivery, ref: { type: 'send-file' as const, id: 'id-b' } }
+    expect(deliveryKey(a)).toBe('send-file:id-a')
+    expect(deliveryKey(b)).toBe('send-file:id-b')
+    // 回归：不分派 type 会得到 ref:undefined:send-file:undefined，N 个快照共用一个 key
+    expect(deliveryKey(a)).not.toBe(deliveryKey(b))
+    expect(deliveryKey(a)).not.toContain('undefined')
+  })
+
+  it('与 workspace ref / url 三种 key 互不相同的空间', () => {
+    expect(deliveryKey(snapshotDelivery)).not.toBe(deliveryKey(refDelivery))
+    expect(deliveryKey(snapshotDelivery)).not.toBe(deliveryKey(urlDelivery))
+  })
 })

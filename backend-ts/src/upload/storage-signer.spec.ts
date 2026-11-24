@@ -15,6 +15,22 @@ const OSS_EXPECTED_SIGNATURE_WITH_CONTENT_TYPE = '79f7dd38a257987932a950615f5970
 const COS_EXPECTED_SIGNATURE = '2cbb8235a0b73d371040a7a8a23e6275f769a3a1';
 const OBS_EXPECTED_SIGNATURE = 'YJwHYN0P397kQGi4%2BLiN6Hm5IhE%3D';
 
+/**
+ * GET 预签名向量（2026-11-24-send-file-snapshot D5，send-files 私有前缀服务端代读）。
+ * 与 PUT 向量同源：方法串是三朵云签名材料的组成部分（OSS CanonicalRequest 首行 /
+ * COS FormatString 首行 / OBS stringToSign 首行），因此 GET 也必须逐字符对拍，
+ * 只断言「与 PUT 不同」无法发现签名值整体算错——那会让每一 次云模式快照下载 403。
+ * 期望 URL 同样由 /tmp 下官方 SDK（ali-oss signatureUrlV4('GET') /
+ * cos-nodejs-sdk-v5 getAuth({Method:'GET'}) / esdk-obs-nodejs createSignedUrlSync({Method:'GET'})）
+ * 在相同固定时钟与凭证下真实生成后抄录。
+ */
+const OSS_EXPECTED_SIGNATURE_GET = 'ce5704237e0a33ca3b2db94b8a75c97e4b70c0c54c33b2abb41e87c6230e3668';
+const OSS_EXPECTED_SIGNATURE_GET_SEND = '8ede9ab106fc1b1a1f010eeede40972bfb8fac7680d85d87a07b7711e5c5fe58';
+const COS_EXPECTED_SIGNATURE_GET = '170ac56c1aef59fdc6fd9128247e64b919f6b302';
+const COS_EXPECTED_SIGNATURE_GET_SEND = 'fa848d5dee17352e3ee0c5cfdf7d5a8526032ea6';
+const OBS_EXPECTED_SIGNATURE_GET = 'oF20PthUf6hgd4Gs2zyky34MfEE%3D';
+const OBS_EXPECTED_SIGNATURE_GET_SEND = 'ANMgUKgoyTis1mjRXBGXaxDLvoM%3D';
+
 describe('signOssRequest（V4 预签名，对拍 ali-oss signatureUrlV4）', () => {
   it('matchesOfficialSdkVector', () => {
     const result = signOssRequest(
@@ -105,5 +121,104 @@ describe('signObsRequest（对拍 esdk-obs-nodejs createSignedUrlSync）', () =>
       'PUT', 'k', 600, FIXED_MS, 'image/png',
     );
     expect(result.uploadUrl.startsWith('https://b.obs.cn-north-4.myhuaweicloud.com/')).toBe(true);
+  });
+});
+
+/**
+ * GET 预签名（2026-11-24-send-file-snapshot D5）：只服务端内部代读私有前缀 `send-files/`，
+ * 预签名 URL 只在下载请求内使用，绝不返回给浏览器。与 PUT/DELETE 的差异点：
+ * - OSS：GET 不签 Content-Type（服务端 GET 不带该头，签了会 SignatureDoesNotMatch）；
+ * - COS：方法串小写进 FormatString；
+ * - OBS：GET 的 Content-Type 段必须是空串（PUT 签实际值）。
+ * 签名值本身同样逐字符对拍官方 SDK（向量见文件头 GET_* 常量）——方法串是三朵云签名材料的
+ * 组成部分，只断言「与 PUT 不同」无法发现签名整体算错。
+ */
+describe('GET 预签名（send-file 快照服务端代读）', () => {
+  const OSS_CFG = { region: 'oss-cn-hangzhou', accessKeyId: 'ak', accessKeySecret: 'sk', bucket: 'b' };
+  const COS_CFG = { region: 'ap-guangzhou', secretId: 'sid', secretKey: 'sk', bucket: 'b' };
+  const OBS_CFG = { endpoint: 'obs.cn-north-4.myhuaweicloud.com', accessKeyId: 'ak', accessKeySecret: 'sk', bucket: 'b' };
+  const SEND_KEY = 'send-files/7/2f8a1c11-9c1e-4a1f-8f6e-1d2b3c4d5e6f.png';
+
+  it('OSS：GET 与 DELETE 同形（都不签 Content-Type），与带 Content-Type 的 PUT 不同', () => {
+    const get = signOssRequest(OSS_CFG, 'GET', SEND_KEY, 120, FIXED_MS);
+    const del = signOssRequest(OSS_CFG, 'DELETE', SEND_KEY, 120, FIXED_MS);
+    // 方法串不同 → 签名不同，但 Content-Type 都不参与（GET 不带该头）
+    expect(get.uploadUrl).not.toBe(del.uploadUrl);
+    const putWithCt = signOssRequest(OSS_CFG, 'PUT', SEND_KEY, 120, FIXED_MS, 'image/png');
+    expect(putWithCt.uploadUrl).not.toBe(get.uploadUrl);
+    // GET 送空 contentType 与不送同形（服务端 GET 不带头）
+    expect(signOssRequest(OSS_CFG, 'GET', SEND_KEY, 120, FIXED_MS, '').uploadUrl).toBe(get.uploadUrl);
+    expect(get.publicUrl).toBe(`https://b.oss-cn-hangzhou.aliyuncs.com/${encodeURIComponent('send-files')}/7/2f8a1c11-9c1e-4a1f-8f6e-1d2b3c4d5e6f.png`);
+  });
+
+  it('OSS：GET 签名值与官方 SDK signatureUrlV4("GET") 逐字符一致', () => {
+    // 与 PUT 向量同一把钥匙/同一个 key：签名串首行从 PUT 变 GET，期望值随之改变
+    const uploads = signOssRequest(
+      { region: 'oss-cn-hangzhou', accessKeyId: 'STS.ExampleAccessKeyId', accessKeySecret: 'ExampleSecretKey', bucket: 'mao-example-bucket' },
+      'GET', KEY, 600, FIXED_MS,
+    );
+    expect(uploads.uploadUrl).toContain(`x-oss-signature=${OSS_EXPECTED_SIGNATURE_GET}`);
+    expect(uploads.uploadUrl).toContain('x-oss-date=20261121T032545Z');
+    expect(uploads.uploadUrl).toContain('x-oss-expires=600');
+    // send-files 私有前缀 + 120s 短有效期：真实下载场景的形态
+    const send = signOssRequest(
+      { region: 'oss-cn-hangzhou', accessKeyId: 'STS.ExampleAccessKeyId', accessKeySecret: 'ExampleSecretKey', bucket: 'mao-example-bucket' },
+      'GET', SEND_KEY, 120, FIXED_MS,
+    );
+    expect(send.uploadUrl).toContain(`x-oss-signature=${OSS_EXPECTED_SIGNATURE_GET_SEND}`);
+    expect(send.uploadUrl).toContain('x-oss-expires=120');
+    // 方法串确实进了签名：与 PUT 的签名值不同
+    expect(OSS_EXPECTED_SIGNATURE_GET).not.toBe(OSS_EXPECTED_SIGNATURE);
+  });
+
+  it('COS：GET 与 PUT 的方法串不同（FormatString 首行小写化），签名随之不同', () => {
+    const get = signCosRequest(COS_CFG, 'GET', SEND_KEY, 120, FIXED_MS);
+    const put = signCosRequest(COS_CFG, 'PUT', SEND_KEY, 120, FIXED_MS);
+    expect(get.uploadUrl).not.toBe(put.uploadUrl);
+    expect(get.uploadUrl).toContain(`/send-files/7/2f8a1c11-9c1e-4a1f-8f6e-1d2b3c4d5e6f.png?q-sign-algorithm=sha1`);
+    // COS 不签 contentType：GET 与 DELETE 仅方法串差异
+    expect(signCosRequest(COS_CFG, 'DELETE', SEND_KEY, 120, FIXED_MS).uploadUrl).not.toBe(get.uploadUrl);
+  });
+
+  it('COS：GET 签名值与官方 SDK getAuth({Method:"GET"}) 逐字符一致', () => {
+    const uploads = signCosRequest(
+      { region: 'ap-guangzhou', secretId: 'AKIDExampleId', secretKey: 'ExampleSecretKey', bucket: 'mao-example-bucket-1250000000' },
+      'GET', KEY, 600, FIXED_MS,
+    );
+    expect(uploads.uploadUrl).toContain(`q-signature=${COS_EXPECTED_SIGNATURE_GET}`);
+    expect(uploads.uploadUrl).toContain('q-sign-time=1795231544;1795232144');
+    const send = signCosRequest(
+      { region: 'ap-guangzhou', secretId: 'AKIDExampleId', secretKey: 'ExampleSecretKey', bucket: 'mao-example-bucket-1250000000' },
+      'GET', SEND_KEY, 120, FIXED_MS,
+    );
+    expect(send.uploadUrl).toContain(`q-signature=${COS_EXPECTED_SIGNATURE_GET_SEND}`);
+    expect(send.uploadUrl).toContain('q-sign-time=1795231544;1795231664');
+    expect(COS_EXPECTED_SIGNATURE_GET).not.toBe(COS_EXPECTED_SIGNATURE);
+  });
+
+  it('OBS：GET 的 Content-Type 段为空串（与 PUT 签实际值不同），过期时间仍为 expires 秒后', () => {
+    const get = signObsRequest(OBS_CFG, 'GET', SEND_KEY, 120, FIXED_MS, '');
+    const put = signObsRequest(OBS_CFG, 'PUT', SEND_KEY, 120, FIXED_MS, 'image/png');
+    expect(get.uploadUrl).not.toBe(put.uploadUrl);
+    const expires = Math.floor(FIXED_MS / 1000) + 120;
+    expect(get.uploadUrl).toContain(`Expires=${expires}`);
+    // 非空 contentType 的 GET 签名必然不同（服务端 GET 若带上该头会 403）
+    expect(signObsRequest(OBS_CFG, 'GET', SEND_KEY, 120, FIXED_MS, 'image/png').uploadUrl).not.toBe(get.uploadUrl);
+  });
+
+  it('OBS：GET 签名值与官方 SDK createSignedUrlSync({Method:"GET"}) 逐字符一致', () => {
+    const uploads = signObsRequest(
+      { endpoint: 'obs.cn-north-4.myhuaweicloud.com', accessKeyId: 'ExampleAccessKeyId', accessKeySecret: 'ExampleSecretKey', bucket: 'mao-example-bucket' },
+      'GET', KEY, 600, FIXED_MS, '',
+    );
+    expect(uploads.uploadUrl).toContain(`Signature=${OBS_EXPECTED_SIGNATURE_GET}`);
+    expect(uploads.uploadUrl).toContain('Expires=1795232145');
+    const send = signObsRequest(
+      { endpoint: 'obs.cn-north-4.myhuaweicloud.com', accessKeyId: 'ExampleAccessKeyId', accessKeySecret: 'ExampleSecretKey', bucket: 'mao-example-bucket' },
+      'GET', SEND_KEY, 120, FIXED_MS, '',
+    );
+    expect(send.uploadUrl).toContain(`Signature=${OBS_EXPECTED_SIGNATURE_GET_SEND}`);
+    expect(send.uploadUrl).toContain('Expires=1795231665');
+    expect(OBS_EXPECTED_SIGNATURE_GET).not.toBe(OBS_EXPECTED_SIGNATURE);
   });
 });

@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import multipart from '@fastify/multipart';
 import { describe, expect, it, vi } from 'vitest';
 import { handleError } from '../common/http-error.js';
-import { registerFileRoutes } from './file.routes.js';
+import { contentDisposition, registerFileRoutes } from './file.routes.js';
 import type { FileService } from './file.service.js';
 import type { WorkspaceBrowseService } from './workspace-browse.service.js';
 import type { WorkspaceGitService } from './workspace-git.service.js';
@@ -30,6 +30,7 @@ describe('file routes', () => {
     });
     const session = { id: 1, userId: 7, workspace: '/tmp/ws', agentId: 9 };
     const fileService = {
+      getUploadDir: () => '/tmp',
       listFiles: vi.fn(async () => [
         { id: 1, originalName: 'a.txt', storedName: 'x.txt', filePath: '/tmp/x.txt', fileSize: 1, uploaderId: 7, sessionId: 1 },
       ]),
@@ -517,6 +518,8 @@ describe('file routes', () => {
       workspaceGitService: {} as WorkspaceGitService,
       gitCommitMessageService: {} as GitCommitMessageService,
       gitWriteOperationService: {} as import('./git-write-operation.service.js').GitWriteOperationService,
+      // 本用例不涉及快照下载：给个不会被动到的替身（生产装配由 create-app 注入真实现）
+      sendFileService: {} as never,
       workspaceWriteService: {} as WorkspaceWriteService,
       workspaceOverviewService: {} as import('./workspace-overview.service.js').WorkspaceOverviewService,
       localFileFetchService,
@@ -698,5 +701,179 @@ describe('file routes', () => {
     expect((await get('/v1/files/workspace-directory?sessionId=1')).code).toBe(0);
     expect(workspaceBrowseService.listDirectory).toHaveBeenCalledTimes(1);
     await app.close();
+  });
+
+  // 技术方案 2026-11-24-send-file-snapshot D6：快照下载端点（消息只带 id，授权在路由）
+  it('sendDownloadAuthorizesOwnerAndSessionOwnerAndSetsImmutableHeaders', async () => {
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    app.addHook('preHandler', (req, _r, done) => {
+      req.userId = Number((req.headers['x-test-user'] ?? '7') as string) || 7;
+      done();
+    });
+    const root = useTmpDir('mao-send-dl-');
+    mkdirSync(join(root, 'send-files', '7'), { recursive: true });
+    mkdirSync(join(root, 'send-files', '9'), { recursive: true });
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9, 9, 9]);
+    writeFileSync(join(root, 'send-files', '7', 'snap.png'), png);
+    writeFileSync(join(root, 'send-files', '9', 'other.pdf'), '%PDF-1.4 fake');
+    const rows = [
+      { id: 'own', userId: 7, sessionId: 11, filename: '图.png', mime: 'image/png', bytes: png.length, storage: 'local', objectKey: '7/snap.png' },
+      // 群聊：发送时运行身份是发言者（9），会话归属人是 7 → 归属人也打得开
+      { id: 'session-owner', userId: 9, sessionId: 12, filename: '报表.pdf', mime: 'application/pdf', bytes: 12, storage: 'local', objectKey: '9/other.pdf' },
+      // 会话已删除 → 仅属主本人
+      { id: 'owner-only', userId: 9, sessionId: 99, filename: 'x.bin', mime: 'application/octet-stream', bytes: 1, storage: 'local', objectKey: '9/gone.bin' },
+    ];
+    const sessionService = {
+      getSession: vi.fn(async (id: number) => (id === 12 ? { id: 12, userId: 7 } : null)),
+    } as unknown as SessionService;
+    registerFileRoutes(app, {
+      fileService: {} as unknown as FileService,
+      sessionService,
+      workspaceBrowseService: {} as unknown as WorkspaceBrowseService,
+      workspaceGitService: {} as unknown as WorkspaceGitService,
+      gitCommitMessageService: {} as unknown as GitCommitMessageService,
+      gitWriteOperationService: {} as unknown as GitWriteOperationService,
+      workspaceWriteService: {} as unknown as WorkspaceWriteService,
+      workspaceOverviewService: {} as unknown as WorkspaceOverviewService,
+      pathSandbox: { getWorkspaceRoot: () => '/tmp' } as PathSandbox,
+      localFileFetchService: { fetch: vi.fn() },
+      sendFileService: {
+        findById: vi.fn(async (id: string) => rows.find((r) => r.id === id) ?? null),
+        openDownload: vi.fn(async (row: (typeof rows)[number]) => {
+          const path = join(root, 'send-files', row.objectKey);
+          if (!existsSync(path)) return { ok: false, error: '附件不存在' };
+          return { ok: true, localPath: path, size: row.bytes };
+        }),
+      } as never,
+    });
+
+    // 属主本人：图片 inline + nosniff + 不可变私有缓存
+    const own = await app.inject({ method: 'GET', url: '/v1/files/send-download?id=own' });
+    expect(own.statusCode).toBe(200);
+    expect(own.headers['content-disposition']).toContain('inline');
+    expect(own.headers['content-disposition']).toContain(encodeURIComponent('图.png'));
+    expect(own.headers['x-content-type-options']).toBe('nosniff');
+    expect(own.headers['cache-control']).toBe('private, max-age=604800, immutable');
+    expect(Buffer.from(own.rawPayload).equals(png)).toBe(true);
+
+    // 群聊：会话归属人（7）打开发言者（9）的快照
+    const viaSession = await app.inject({ method: 'GET', url: '/v1/files/send-download?id=session-owner' });
+    expect(viaSession.statusCode).toBe(200);
+    expect(viaSession.headers['content-disposition']).toContain('attachment');
+
+    // 行不存在 / 不属于你：一律 404，不区分
+    const missing = await app.inject({ method: 'GET', url: '/v1/files/send-download?id=nope' });
+    expect(missing.statusCode).toBe(404);
+    const ownerOnly = await app.inject({ method: 'GET', url: '/v1/files/send-download?id=owner-only' });
+    expect(ownerOnly.statusCode).toBe(404);
+    // 缺 id：参数错误（信封 code 非 0），不是 200
+    const noId = await app.inject({ method: 'GET', url: '/v1/files/send-download' });
+    expect(JSON.parse(noId.body).code).not.toBe(0);
+    await app.close();
+  });
+
+  /**
+   * Content-Disposition 双轨文件名。2026-11-24 起 send_file 的 filename 是模型可控输入，
+   * 兜底段（`filename="..."`）必须闭合：反斜杠是可打印 ASCII、能活过 [^\x20-\x7E] 过滤，
+   * 只转义 `"` 会让 `report\v2"` 变成 `filename="report\v2""`——引号被吃掉，整段不闭合。
+   */
+  describe('contentDisposition', () => {
+    it('非 ASCII 与 CRLF 在兜底段被替换，引号与反斜杠被转义', () => {
+      const header = contentDisposition('attachment', '图 片.png');
+      // 兜底段只剩 ASCII：中文被换成 _（空格本身在 \x20-\x7E 内，保留）
+      expect(header).toContain('filename="_ _.png";');
+      // filename* 保留原文（RFC 5987），CRLF 被 encodeURIComponent 编码，无法拆头
+      expect(header).toContain(`filename*=UTF-8''${encodeURIComponent('图 片.png')}`);
+    });
+
+    it('反斜杠结尾的文件名不会吃掉兜底段的引号', () => {
+      const header = contentDisposition('attachment', 'report\\');
+      expect(header).toContain('filename="report\\\\";');
+      // 引号后紧跟分号或字符串结尾：quoted-string 闭合
+      expect(/filename="[^"]*";/.test(header)).toBe(true);
+    });
+
+    it('内嵌引号被转义，且 CRLF 不进兜底段', () => {
+      expect(contentDisposition('attachment', 'a"b.txt')).toContain('filename="a\\"b.txt";');
+      const crlf = contentDisposition('attachment', 'a\r\nX-Evil: 1.txt');
+      expect(crlf).toContain('filename="a__X-Evil: 1.txt";');
+      expect(crlf).not.toContain('\r');
+      expect(crlf).not.toContain('\n');
+    });
+  });
+
+  /**
+   * 文件列表 URL 拼装（技术方案 2026-11-24 D7）：新上传是 `{uploadDir}/{userId}/{uuid}.ext`，
+   * 存量仍在 uploadDir 根上。改错这一行 → 输入框图片、个人头像、Agent 头像全部 404，
+   * 且没有任何既有用例会红，因此逐形态钉死。
+   */
+  describe('toVO 的 /uploads/ URL 拼装', () => {
+    async function listWith(rows: Array<Record<string, unknown>>, uploadDir: string, baseUrl: string | null = null) {
+      const app = Fastify();
+      app.setErrorHandler(handleError);
+      app.addHook('preHandler', (req, _r, done) => {
+        req.userId = 7;
+        done();
+      });
+      registerFileRoutes(app, {
+        fileService: {
+          getUploadDir: () => uploadDir,
+          listFiles: vi.fn(async () => rows),
+        } as unknown as FileService,
+        sessionService: { getSession: vi.fn(async () => null) } as unknown as SessionService,
+        workspaceBrowseService: {} as unknown as WorkspaceBrowseService,
+        workspaceGitService: {} as unknown as WorkspaceGitService,
+        gitCommitMessageService: {} as unknown as GitCommitMessageService,
+        gitWriteOperationService: {} as unknown as GitWriteOperationService,
+        workspaceWriteService: {} as unknown as WorkspaceWriteService,
+        workspaceOverviewService: {} as unknown as WorkspaceOverviewService,
+        pathSandbox: { getWorkspaceRoot: () => '/tmp' } as PathSandbox,
+        localFileFetchService: { fetch: vi.fn() },
+        sendFileService: {} as never,
+        getUploadBaseUrl: baseUrl == null ? undefined : async () => baseUrl,
+      });
+      const res = await app.inject({ method: 'GET', url: '/v1/files' });
+      const body = JSON.parse(res.body);
+      await app.close();
+      return body;
+    }
+
+    it('新形态 {userId}/{uuid}.ext：保留用户目录段', async () => {
+      const body = await listWith([{
+        id: 1, originalName: '图 片.png', storedName: 'a1b2c3.png', filePath: '/tmp/mao-uploads/7/a1b2c3.png', fileSize: 3, mimeType: 'image/png', sessionId: 1, uploaderId: 7,
+      }], '/tmp/mao-uploads');
+      expect(body.code).toBe(0);
+      // 回归：basename(storedName) 会拼成 /uploads/a1b2c3.png，静态托管下 404
+      expect(body.data[0].url).toBe('/uploads/7/a1b2c3.png');
+    });
+
+    it('存量根目录 {uuid}.ext：URL 与旧行为一致', async () => {
+      const body = await listWith([{
+        id: 2, originalName: 'a.txt', storedName: 'legacy.txt', filePath: '/tmp/mao-uploads/legacy.txt', fileSize: 1, mimeType: 'text/plain', sessionId: 1, uploaderId: 7,
+      }], '/tmp/mao-uploads');
+      expect(body.data[0].url).toBe('/uploads/legacy.txt');
+    });
+
+    it('跨根脏数据（filePath 跑出 uploadDir）：回落 storedName，不抛错', async () => {
+      const body = await listWith([{
+        id: 3, originalName: 'a.txt', storedName: 'stored.txt', filePath: '/var/other/stored.txt', fileSize: 1, mimeType: 'text/plain', sessionId: 1, uploaderId: 7,
+      }], '/tmp/mao-uploads');
+      expect(body.data[0].url).toBe('/uploads/stored.txt');
+    });
+
+    it('配了 baseUrl 时加前缀（本地模式也可能配，与 storageMode 无关）', async () => {
+      const body = await listWith([{
+        id: 4, originalName: 'a.png', storedName: 'x.png', filePath: '/tmp/mao-uploads/7/x.png', fileSize: 1, mimeType: 'image/png', sessionId: 1, uploaderId: 7,
+      }], '/tmp/mao-uploads', 'https://mao.example.com');
+      expect(body.data[0].url).toBe('https://mao.example.com/uploads/7/x.png');
+    });
+
+    it('incoming 文件仍在 runtime 目录：走下载端点，不拼 /uploads/', async () => {
+      const body = await listWith([{
+        id: 5, originalName: 'a.pdf', storedName: 'in.pdf', filePath: '/tmp/mao-runtime/1/incoming/in.pdf', fileSize: 1, mimeType: 'application/pdf', sessionId: 1, uploaderId: 7,
+      }], '/tmp/mao-uploads');
+      expect(body.data[0].url).toBe('/v1/files/5/download');
+    });
   });
 });

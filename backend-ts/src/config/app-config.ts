@@ -98,7 +98,7 @@ export interface AppConfig {
   app: {
     rootDir: string;
     gitCredential: { secretKey: string };
-    file: { uploadDir: string };
+    file: { uploadDir: string; sendDir: string };
     ws: { outboundQueueCapacity: number };
     taskNotification: {
       secretKey: string;
@@ -244,7 +244,7 @@ const DEFAULTS: AppConfig = {
   app: {
     rootDir: '/opt/mao',
     gitCredential: { secretKey: '' },
-    file: { uploadDir: './uploads' },
+    file: { uploadDir: './uploads', sendDir: './send-files' },
     ws: { outboundQueueCapacity: 10000 },
     taskNotification: {
       secretKey: 'mao-task-notification-default-key-v1-20260713',
@@ -546,6 +546,15 @@ export function loadConfig(): AppConfig {
   }
   cfg = resolvePlaceholders(cfg, cfg) as AppConfig;
   cfg = coerceTypes(cfg);
+  // FILE_SEND_DIR 缺省值改为「uploadDir 的兄弟目录」（技术方案 2026-11-24-send-file-snapshot D2）：
+  // application.yml 的 ${FILE_SEND_DIR:./send-files} 占位符语法表达不出「另一个值的兄弟目录」，
+  // 写死 cwd 相对路径会让「改了 FILE_UPLOAD_DIR 却没改 FILE_SEND_DIR」的部署把快照落到
+  // 后端 cwd 下——另一块文件系统、不在受备份的数据根里，且与 /uploads/ 不再平级。
+  // 判据用「仍等于缺省值」而非「env 未设置」：直接在 yml 里写死 send-dir 的部署要保持原值。
+  // dirname + join 不做 resolve，`~` 前缀原样留给 create-app 的 expandHome。
+  if (cfg.app.file.sendDir === './send-files' && !process.env.FILE_SEND_DIR) {
+    cfg.app.file.sendDir = join(dirname(cfg.app.file.uploadDir), 'send-files');
+  }
   if (process.env.JWT_SECRET) {
     cfg.jwt.secret = process.env.JWT_SECRET;
   }

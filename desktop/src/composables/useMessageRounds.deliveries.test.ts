@@ -148,3 +148,63 @@ describe('useMessageRounds：round.deliveries 汇总（步骤 + 最终回复）'
     expect(activeRound.value?.deliveries.map(d => d.url)).toEqual(['https://h/uploads/7/send-1.png'])
   })
 })
+
+// 2026-11-24-send-file-snapshot：快照 ref（send-file）。存量 workspace ref 仍由前端渲染，
+// 新发送只写 send-file；parseDeliveryRef 不认识 send-file 会让新卡片整条不渲染。
+describe('collectRoundDeliveries：send-file 快照 ref', () => {
+  it('按快照 id 收集，无 url', () => {
+    const messages = [
+      msg('s1', 'assistant', {
+        toolCalls: [
+          sendToolCall('t1', 'send_image', { success: true, channel: 'chat', channelStatus: 'skipped', filename: 'a.png', delivery: { kind: 'image', filename: 'a.png', mime: 'image/png', bytes: 12, ref: { type: 'send-file', id: 'id-1' } } }),
+          sendToolCall('t2', 'send_file', { success: true, channel: 'chat', channelStatus: 'skipped', filename: 'r.pdf', delivery: { kind: 'file', mime: 'application/pdf', ref: { type: 'send-file', id: 'id-2' } } }),
+        ],
+      }),
+    ]
+    expect(collectRoundDeliveries(messages)).toEqual([
+      { kind: 'image', ref: { type: 'send-file', id: 'id-1' }, mime: 'image/png', bytes: 12, filename: 'a.png' },
+      { kind: 'file', ref: { type: 'send-file', id: 'id-2' }, mime: 'application/pdf', bytes: undefined, filename: 'r.pdf' },
+    ])
+  })
+
+  it('filename 缺失时回落结果级 / delivery 级，再回落 attachment（不再取路径尾段）', () => {
+    const messages = [
+      msg('s1', 'assistant', {
+        toolCalls: [
+          sendToolCall('t1', 'send_file', { success: true, delivery: { kind: 'file', mime: 'application/pdf', ref: { type: 'send-file', id: 'id-3' } } }),
+          sendToolCall('t2', 'send_file', { success: true, filename: '显式名.pdf', delivery: { kind: 'file', ref: { type: 'send-file', id: 'id-4' } } }),
+          sendToolCall('t3', 'send_file', { success: true, delivery: { kind: 'file', filename: 'delivery 级.pdf', ref: { type: 'send-file', id: 'id-5' } } }),
+        ],
+      }),
+    ]
+    expect(collectRoundDeliveries(messages).map(d => d.filename)).toEqual(['attachment', '显式名.pdf', 'delivery 级.pdf'])
+  })
+
+  it('send-file ref 残缺（缺 id / 空串 / 未知 type）不收', () => {
+    const messages = [
+      msg('s1', 'assistant', {
+        toolCalls: [
+          sendToolCall('t1', 'send_image', { delivery: { kind: 'image', ref: { type: 'send-file' } } }),
+          sendToolCall('t2', 'send_image', { delivery: { kind: 'image', ref: { type: 'send-file', id: '' } } }),
+          sendToolCall('t3', 'send_image', { delivery: { kind: 'image', ref: { type: 'other', id: 'x' } } }),
+        ],
+      }),
+    ]
+    expect(collectRoundDeliveries(messages)).toEqual([])
+  })
+
+  it('存量 workspace ref 与快照 ref 可在同一轮共存（各自 key 不同）', () => {
+    const messages = [
+      msg('s1', 'assistant', {
+        toolCalls: [
+          sendToolCall('t1', 'send_image', { success: true, delivery: { kind: 'image', mime: 'image/png', ref: { type: 'workspace', sessionId: 42, path: 'a.png' } } }),
+          sendToolCall('t2', 'send_image', { success: true, delivery: { kind: 'image', mime: 'image/png', ref: { type: 'send-file', id: 'id-9' } } }),
+        ],
+      }),
+    ]
+    const deliveries = collectRoundDeliveries(messages)
+    expect(deliveries).toHaveLength(2)
+    expect(deliveries[0]!.ref).toEqual({ type: 'workspace', sessionId: 42, path: 'a.png' })
+    expect(deliveries[1]!.ref).toEqual({ type: 'send-file', id: 'id-9' })
+  })
+})

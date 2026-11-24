@@ -81,9 +81,19 @@ export class FileService {
     private readonly getMaxSizeMb: () => Promise<number>,
   ) {}
 
+  /**
+   * 输入框图片 / 个人头像 / Agent 头像上传（2026-11-24 D7）：落在 `{uploadDir}/{userId}/`，
+   * 与 `generate_image` / `edit_image` 产物、对象存储的 key `uploads/{userId}/...` 同口径。
+   *
+   * 兼容存量：旧文件仍在 `uploadDir` 根上、URL 只有一段，不搬迁、不改已落库的 URL；
+   * Nginx 对 `/uploads/` 是整树别名，两种形态都能访问。副作用（已评估接受）：
+   * `{uploadDir}/{userId}` 正是按用户 rw 挂进工具容器的目录，新上传自此可被容器内
+   * `shell` 读写——旧的根目录文件仍然不在挂载里。`storedName` 仍是单个 UUID 文件名，
+   * 不把用户 id 写进这一列；URL 由 `toVO` 按 `filePath` 相对 `uploadDir` 拼出。
+   */
   async uploadFile(bytes: Buffer, originalFilename: string | null, declaredMime: string | null, userId: number, sessionId: number | null): Promise<FileEntity> {
     await this.assertUploadable(bytes);
-    const dir = this.uploadDir;
+    const dir = join(this.uploadDir, String(userId));
     try {
       const entity = this.buildFileEntity(bytes, originalFilename, declaredMime, userId, sessionId);
       mkdirSync(dir, { recursive: true });
@@ -171,6 +181,11 @@ export class FileService {
 
   getFile(id: number): Promise<FileEntity | null> {
     return this.repo.findById(id);
+  }
+
+  /** 上传根目录（`toVO` 拼对外 URL 用：新文件带用户 id 段，存量根目录文件不带）。 */
+  getUploadDir(): string {
+    return this.uploadDir;
   }
 
   async listFiles(userId: number | null, sessionId: number | null): Promise<FileEntity[]> {
