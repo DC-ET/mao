@@ -27,6 +27,31 @@ function entry(text: string, files: DraftEntry['files'] = []): DraftEntry {
   return { html: `<p>${text}</p>`, text, files }
 }
 
+describe('模块初始化', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.resetModules()
+  })
+
+  it('浏览器里 indexedDB 存在时模块求值不崩（回归：database TDZ 白屏）', async () => {
+    const open = vi.fn(() => ({}) as unknown as IDBOpenDBRequest)
+    vi.stubGlobal('indexedDB', { open })
+    vi.resetModules()
+    // 动态 import 触发模块级 createDefaultPersistence()：旧代码在这里同步抛
+    // "Cannot access 'database' before initialization"，整个应用起不来。
+    const mod = await import('./draft-persist')
+    expect(mod.getDraftPersistence().enabled).toBe(true)
+    expect(open).toHaveBeenCalledWith('mao-drafts', 1)
+  })
+
+  it('没有 indexedDB 时回退 noop 实现', async () => {
+    vi.stubGlobal('indexedDB', undefined)
+    vi.resetModules()
+    const mod = await import('./draft-persist')
+    expect(mod.getDraftPersistence().enabled).toBe(false)
+  })
+})
+
 describe('草稿字节恢复', () => {
   it('Blob 用 meta 的名字和类型包回 File', () => {
     const blob = new Blob(['hello'], { type: '' })

@@ -57,9 +57,13 @@ interface BlobRecord {
   blob: Blob
 }
 
-let active: DraftPersistence = createDefaultPersistence()
+// 声明必须先于 active 的初始化：createDefaultPersistence() 在浏览器里会同步走
+// openDatabase() 读这两个变量，若排在 let active 之后即命中 TDZ
+// （"Cannot access 'database' before initialization"），整个模块求值崩溃、应用白屏。
+// Node 单测里 indexedDB 未定义、早退 noop，所以此前只在真实浏览器暴露。
 let database: IDBDatabase | null = null
 let opening: Promise<IDBDatabase> | null = null
+let active: DraftPersistence = createDefaultPersistence()
 
 export function getDraftPersistence(): DraftPersistence {
   return active
