@@ -95,6 +95,36 @@ describe('admin permission gates', () => {
     await allowed.app.close();
   });
 
+  it('gates role delete behind role:write', async () => {
+    const deleteRole = vi.fn(async () => undefined);
+    const stubs = (hasPermission: ReturnType<typeof vi.fn>) => ({
+      hasPermission,
+      listRoles: async () => [],
+      getRolePermissionIds: async () => [],
+      countRoleUsers: async () => 0,
+      createRole: vi.fn(),
+      updateRole: async () => null,
+      deleteRole,
+      listPermissions: async () => [],
+      assignPermissions: async () => undefined,
+      changeRolesWithAdminGuard: async () => undefined,
+    });
+
+    const readOnly = appWith(['role:read']);
+    registerPermissionRoutes(readOnly.app, stubs(readOnly.hasPermission) as never);
+    const blocked = JSON.parse((await readOnly.app.inject({ method: 'DELETE', url: '/v1/roles/3' })).body);
+    expect(blocked.code).toBe(1002);
+    expect(deleteRole).not.toHaveBeenCalled();
+    await readOnly.app.close();
+
+    const allowed = appWith(['role:write']);
+    registerPermissionRoutes(allowed.app, stubs(allowed.hasPermission) as never);
+    const deleted = JSON.parse((await allowed.app.inject({ method: 'DELETE', url: '/v1/roles/3' })).body);
+    expect(deleted.code).toBe(0);
+    expect(deleteRole).toHaveBeenCalledWith(3);
+    await allowed.app.close();
+  });
+
   it('requires audit:read for audit logs', async () => {
     const denied = appWith([]);
     const list = vi.fn(async () => ({ records: [], total: 0, page: 1, size: 20 }));

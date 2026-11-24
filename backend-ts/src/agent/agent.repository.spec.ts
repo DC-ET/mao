@@ -184,6 +184,26 @@ describe('permission repositories', () => {
     await roles.insert({ name: 'r', code: 'R' });
     await roles.updateById({ id: 1, name: 'r', code: 'R' });
 
+    const txDb = mockDb({ id: 5, code: 'OPS', name: '运营' }, []);
+    txDb.transaction.mockImplementation(async (fn) => fn(txDb));
+    const deleting = new MysqlRoleRepository(txDb as never);
+    expect(await deleting.softDeleteIfNoMembers(5, ['ADMIN', 'USER'])).toBe('deleted');
+    const sqls = txDb.execute.mock.calls.map((call) => String(call[0]));
+    expect(sqls.some((sql) => sql.includes('DELETE FROM role_permission'))).toBe(true);
+    expect(sqls.some((sql) => sql.includes('DELETE FROM role_skill_grant'))).toBe(true);
+    expect(sqls.some((sql) => sql.includes('DELETE FROM user_command_role'))).toBe(true);
+    expect(txDb.execute).toHaveBeenCalledWith(expect.stringContaining('deleted_token'), [5, 5]);
+
+    txDb.queryOne.mockResolvedValueOnce(null);
+    expect(await deleting.softDeleteIfNoMembers(9, ['ADMIN', 'USER'])).toBe('missing');
+
+    txDb.queryOne.mockResolvedValueOnce({ id: 1, code: 'ADMIN', name: '系统管理员' });
+    expect(await deleting.softDeleteIfNoMembers(1, ['ADMIN', 'USER'])).toBe('builtin');
+
+    txDb.queryOne.mockResolvedValueOnce({ id: 5, code: 'OPS', name: '运营' });
+    txDb.query.mockResolvedValueOnce([{ id: 10 }]);
+    expect(await deleting.softDeleteIfNoMembers(5, ['ADMIN', 'USER'])).toBe('has_members');
+
     const perms = new MysqlPermissionRepository(db as never);
     await perms.findAll();
     await perms.findByIds([1]);

@@ -33,6 +33,13 @@ export function registerPermissionRoutes(
     return sendOk(reply, role ? await toRoleVO(role, permissionService) : null);
   });
 
+  app.delete('/v1/roles/:id', async (request, reply) => {
+    const userId = requireUserId(request);
+    await requirePermission(permissionService, userId, 'role:write');
+    await permissionService.deleteRole(pathId(request));
+    return sendOk(reply);
+  });
+
   app.get('/v1/permissions', async (request, reply) => {
     await requireRequestPermission(permissionService, request, 'role:read');
     const list = await permissionService.listPermissions();

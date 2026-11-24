@@ -19,6 +19,8 @@ export function isActiveAccount(status: number | null | undefined): boolean {
 export class PermissionService {
   /** 角色侧批量成员操作的单次上限，与 FeedbackService.MAX_BATCH_IDS 对齐。 */
   static readonly MAX_BATCH_USERS = 100;
+  /** 登录建号查 USER，最后管理员保护查 ADMIN。编码创建后不可改。 */
+  static readonly BUILTIN_ROLE_CODES = ['ADMIN', 'USER'] as const;
 
   constructor(
     private readonly roleRepo: RoleRepository,
@@ -41,6 +43,19 @@ export class PermissionService {
     const id = await this.roleRepo.insert(role);
     role.id = id;
     return role;
+  }
+
+  async deleteRole(id: number): Promise<void> {
+    const status = await this.roleRepo.softDeleteIfNoMembers(id, PermissionService.BUILTIN_ROLE_CODES);
+    if (status === 'missing') {
+      throw new BusinessException(ErrorCode.ROLE_NOT_FOUND);
+    }
+    if (status === 'builtin') {
+      throw new BusinessException(ErrorCode.ROLE_BUILTIN);
+    }
+    if (status === 'has_members') {
+      throw new BusinessException(ErrorCode.ROLE_HAS_MEMBERS);
+    }
   }
 
   async updateRole(id: number, name?: string | null, description?: string | null): Promise<Role | null> {

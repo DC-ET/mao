@@ -68,6 +68,9 @@ export interface UserRepository {
   selectPage(page: number, size: number, keyword?: string, status?: number | null, authSource?: string | null, roleId?: number | null): Promise<{ records: User[]; total: number }>;
 }
 
+/** 软删结果：预置角色、仍有成员、角色已不存在，或已删除。 */
+export type RoleDeleteStatus = 'missing' | 'builtin' | 'has_members' | 'deleted';
+
 export interface RoleRepository {
   findById(id: number): Promise<Role | null>;
   findByCode(code: string): Promise<Role | null>;
@@ -75,6 +78,11 @@ export interface RoleRepository {
   findByIds(ids: number[]): Promise<Role[]>;
   insert(role: Role): Promise<number>;
   updateById(role: Role): Promise<void>;
+  /**
+   * 同一事务内锁角色行和成员绑定：预置角色与仍有成员的角色不删。
+   * 删掉时同时清权限、技能授权、系统指令可见范围，并把 deleted_token 写成角色 id 以释放名称/编码。
+   */
+  softDeleteIfNoMembers(id: number, builtinCodes: readonly string[]): Promise<RoleDeleteStatus>;
 }
 
 export interface PermissionRepository {

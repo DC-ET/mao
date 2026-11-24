@@ -4,6 +4,7 @@ import type {
   Permission,
   PermissionRepository,
   Role,
+  RoleDeleteStatus,
   RolePermission,
   RolePermissionRepository,
   RoleRepository,
@@ -51,6 +52,32 @@ export class MysqlRoleRepository implements RoleRepository {
       name: role.name,
       code: role.code,
       description: role.description,
+    });
+  }
+
+  async softDeleteIfNoMembers(id: number, builtinCodes: readonly string[]): Promise<RoleDeleteStatus> {
+    const builtin = new Set(builtinCodes);
+    return this.db.transaction(async (tx) => {
+      const role = await tx.queryOne<Role>(
+        'SELECT * FROM `role` WHERE id = ? AND deleted = 0 FOR UPDATE',
+        [id],
+      );
+      if (!role) return 'missing';
+      if (builtin.has(role.code)) return 'builtin';
+      const members = await tx.query<{ id: number }>(
+        'SELECT id FROM user_role WHERE role_id = ? FOR UPDATE',
+        [id],
+      );
+      if (members.length > 0) return 'has_members';
+      await tx.execute('DELETE FROM role_permission WHERE role_id = ?', [id]);
+      await tx.execute('DELETE FROM role_skill_grant WHERE role_id = ?', [id]);
+      await tx.execute('DELETE FROM user_command_role WHERE role_id = ?', [id]);
+      // deleted_token = id 让 (name, token) / (code, token) 让出存活行的 0，同一编码可以再建。
+      await tx.execute(
+        'UPDATE `role` SET deleted = 1, deleted_token = ? WHERE id = ? AND deleted = 0',
+        [id, id],
+      );
+      return 'deleted';
     });
   }
 }

@@ -11,6 +11,7 @@
 | 查看所有角色 | `role list` |
 | 新建角色 | `role create` |
 | 改角色名/描述 | `role update` |
+| 删除没有成员的角色 | `role delete` |
 | 给角色设权限 | `role assign-permissions` |
 | 查看角色追加的系统技能 | `role skills` |
 | 覆盖保存角色技能授权 | `role assign-skills` |
@@ -52,6 +53,18 @@ mao role create --name 运营 --code ops --description '运营人员'
 
 ```bash
 mao role update --id 2 --name 高级运营 --description '更新说明'
+```
+
+## 命令：role delete
+
+| 参数 | 必填 | 类型 | 含义 | 后端 |
+|------|------|------|------|------|
+| `--id` | 是 | 整数 | 角色 ID | `DELETE /roles/{id}` |
+
+只删除没有成员的角色。`ADMIN`（系统管理员）和 `USER`（普通用户）是预置角色，删除会被拒绝。角色下还有成员时也会被拒绝，需要先把成员移出。删除后该角色的权限、技能授权，以及系统指令里指向它的可见范围会一并去掉；名称和编码可以再次使用。需要 `role:write`。
+
+```bash
+mao role delete --id 3
 ```
 
 ## 命令：role assign-permissions
@@ -104,7 +117,7 @@ mao role assign-skills --id 2 --grants ""
 mao permission list
 ```
 
-返回权限点：`id`、`name`、`code`、`description`。`GET /permissions` 需要 `role:read`。`GET /roles` 需要 `role:read` 或 `user:write`（用户表单要选角色）。新建、编辑角色和保存权限集合需要 `role:write`。给用户绑角色仍是 `user:write`。
+返回权限点：`id`、`name`、`code`、`description`。`GET /permissions` 需要 `role:read`。`GET /roles` 需要 `role:read` 或 `user:write`（用户表单要选角色）。新建、编辑、删除角色和保存权限集合需要 `role:write`。给用户绑角色仍是 `user:write`。
 
 权限码按后台菜单成对出现（读进页面，写操作按钮和写接口）。当前目录：
 

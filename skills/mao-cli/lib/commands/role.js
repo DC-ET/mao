@@ -9,7 +9,7 @@ const {
   pickDefined,
   hasFlag,
 } = require('../args');
-const { get, post, put } = require('../http');
+const { get, post, put, del } = require('../http');
 const { emitResult, printError } = require('../output');
 
 function help() {
@@ -19,6 +19,7 @@ function help() {
   mao role list
   mao role create --name --code [--description]
   mao role update --id --name [--description]
+  mao role delete --id
   mao role assign-permissions --id --permission-ids 1,2,3
   mao role skills --id
   mao role assign-skills --id --grants name 或 name@agentId，逗号分隔
@@ -63,6 +64,12 @@ async function run(ctx, subcommand, _rest, flags) {
         description: getString(flags, 'description'),
       });
       const result = await put(ctx, `/roles/${id}`, body);
+      emitResult(result, { raw: ctx.raw });
+      return;
+    }
+    case 'delete': {
+      const id = requireNumber(flags, 'id', '角色 ID');
+      const result = await del(ctx, `/roles/${id}`);
       emitResult(result, { raw: ctx.raw });
       return;
     }

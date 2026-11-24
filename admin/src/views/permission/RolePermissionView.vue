@@ -17,10 +17,19 @@
             <el-table-column prop="name" label="角色" min-width="120" />
             <el-table-column prop="code" label="编码" width="110" />
             <el-table-column prop="userCount" label="用户数" width="80" align="right" />
-            <el-table-column label="操作" width="140" fixed="right">
+            <el-table-column label="操作" width="180" fixed="right">
               <template #default="{ row }">
                 <el-button type="primary" link size="small" @click.stop="handleViewMembers(row)">成员</el-button>
                 <el-button v-if="canWrite" type="primary" link size="small" @click.stop="handleEditRole(row)">编辑</el-button>
+                <el-button
+                  v-if="canWrite && !isBuiltinRole(row)"
+                  type="danger"
+                  link
+                  size="small"
+                  :disabled="deletingRoleId === row.id"
+                  :title="(row.userCount ?? 0) > 0 ? '请先移除全部成员' : '删除角色'"
+                  @click.stop="handleDeleteRole(row)"
+                >删除</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -198,6 +207,12 @@ interface SkillGrant {
 }
 const dialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit'>('create')
+const deletingRoleId = ref<number | null>(null)
+const BUILTIN_ROLE_CODES = new Set(['ADMIN', 'USER'])
+
+function isBuiltinRole(role: Role): boolean {
+  return BUILTIN_ROLE_CODES.has(role.code)
+}
 const memberDialogVisible = ref(false)
 const memberRole = ref<Role | null>(null)
 const roleFormRef = ref<FormInstance>()
@@ -516,6 +531,42 @@ function handleViewMembers(role: Role) {
   memberDialogVisible.value = true
 }
 
+async function handleDeleteRole(role: Role) {
+  if (deletingRoleId.value != null || isBuiltinRole(role)) return
+  if ((role.userCount ?? 0) > 0) {
+    ElMessage.warning(`角色「${role.name}」还有 ${role.userCount} 名成员，请先在「成员」中移出后再删除`)
+    return
+  }
+  const unsaved = role.id === currentRole.value?.id ? unsavedParts() : []
+  const extra = unsaved.length > 0 ? `当前未保存的${unsaved.join('和')}修改会一并丢弃。` : ''
+  try {
+    await ElMessageBox.confirm(
+      `确定删除角色「${role.name}」（${role.code}）吗？删除后权限、技能授权和系统指令里指向该角色的可见范围会一并移除，且不可恢复。${extra}`,
+      '删除角色',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  deletingRoleId.value = role.id
+  try {
+    await api.delete(`/roles/${role.id}`)
+    ElMessage.success('角色已删除')
+    if (memberRole.value?.id === role.id) {
+      memberDialogVisible.value = false
+      memberRole.value = null
+    }
+    if (currentRole.value?.id === role.id) {
+      currentRole.value = null
+      dirtyPermissions.value = false
+      dirtySkills.value = false
+    }
+    await refreshRoles()
+  } catch { /* 拦截器已提示失败 */ } finally {
+    if (deletingRoleId.value === role.id) deletingRoleId.value = null
+  }
+}
+
 /** 弹窗内增删成员后：刷新角色列表的用户数，并同步弹窗拿到的角色对象。 */
 async function handleMembersChanged() {
   await refreshRoles()
@@ -591,9 +642,6 @@ function handleBeforeUnload(event: BeforeUnloadEvent) {
 }
 
 onBeforeRouteLeave(async () => confirmDiscard('离开'))
-
-// TODO: 需后端补 DELETE /roles/:id（校验角色下无用户）后再提供删除角色按钮，
-// 见评审文档 #7（permission.routes.ts 目前仅有 create/update/assign 端点）。
 </script>
 
 <style scoped>

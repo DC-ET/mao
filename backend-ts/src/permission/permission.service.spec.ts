@@ -30,6 +30,7 @@ describe('PermissionService', () => {
     findByIds: vi.fn(),
     insert: vi.fn(async () => 3),
     updateById: vi.fn(),
+    softDeleteIfNoMembers: vi.fn(),
   } as unknown as RoleRepository;
   const permissionRepo = {
     findAll: vi.fn(),
@@ -325,6 +326,24 @@ describe('PermissionService', () => {
       vi.mocked(userRepo.findById).mockImplementation(async (id: number) => ({ id, username: 'a', status: id === 20 ? null : 1 }));
       expect(await service.removeRoleUsers(1, [10])).toEqual({ removed: 1 });
       expect(userRoleRepo.deleteByUserAndRole).toHaveBeenCalledWith(10, 1);
+    });
+
+    it('deleteRole maps repository status to not-found, builtin and members-remain', async () => {
+      vi.mocked(roleRepo.softDeleteIfNoMembers).mockResolvedValueOnce('missing');
+      await expect(service.deleteRole(9)).rejects.toMatchObject({ code: 3054 });
+
+      vi.mocked(roleRepo.softDeleteIfNoMembers).mockResolvedValueOnce('builtin');
+      await expect(service.deleteRole(1)).rejects.toMatchObject({ code: 3058 });
+
+      vi.mocked(roleRepo.softDeleteIfNoMembers).mockResolvedValueOnce('has_members');
+      await expect(service.deleteRole(3)).rejects.toMatchObject({ code: 3057 });
+      expect(roleRepo.softDeleteIfNoMembers).toHaveBeenLastCalledWith(3, ['ADMIN', 'USER']);
+    });
+
+    it('deleteRole accepts an empty custom role', async () => {
+      vi.mocked(roleRepo.softDeleteIfNoMembers).mockResolvedValueOnce('deleted');
+      await service.deleteRole(3);
+      expect(roleRepo.softDeleteIfNoMembers).toHaveBeenCalledWith(3, ['ADMIN', 'USER']);
     });
 
     it('does not consult the last-admin guard for non-ADMIN roles', async () => {
