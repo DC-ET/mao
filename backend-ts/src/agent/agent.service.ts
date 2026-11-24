@@ -26,6 +26,11 @@ export interface AgentBrowserDepsEnsurer {
   ensureForSkills(skillNames: readonly string[] | null | undefined): void;
 }
 
+/** 删除 Agent 时摘掉限定到该 Agent 的角色技能授权。agent_id = 0 的行不删。 */
+export interface AgentSkillGrantCleaner {
+  deleteByAgentId(agentId: number): Promise<void>;
+}
+
 export class AgentService {
   constructor(
     private readonly agentRepo: AgentRepository,
@@ -33,6 +38,7 @@ export class AgentService {
     private readonly suggestedQuestionService: AgentSuggestedQuestionService,
     private readonly modelLookup?: AgentModelLookup,
     private readonly browserDepsEnsurer?: AgentBrowserDepsEnsurer,
+    private readonly skillGrantCleaner?: AgentSkillGrantCleaner,
   ) {}
 
   listAgents(
@@ -246,6 +252,7 @@ export class AgentService {
     }
     await this.experienceService.deleteByAgentId(id);
     await this.suggestedQuestionService.deleteByAgentId(id);
+    await this.skillGrantCleaner?.deleteByAgentId(id);
     await this.agentRepo.deleteById(id);
   }
 

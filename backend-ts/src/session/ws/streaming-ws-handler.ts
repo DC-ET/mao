@@ -220,7 +220,7 @@ export interface WsHandlerDeps {
   shellSessionManager: { closeByConversation(sessionId: number): void };
   skillSyncService: {
     syncToSession(agent: Agent, userId: number, sessionId: number): Promise<{ failed: string[] }>;
-    getRemovedSkillNames(agent: Agent, userId: number, sessionId: number): string[];
+    getRemovedSkillNames(agent: Agent, userId: number, sessionId: number): Promise<string[]>;
   };
   localSkillRegistry: {
     report(sessionId: number, skills: LocalSkillRef[]): void;
@@ -2703,7 +2703,7 @@ export class StreamingWsHandler {
       return '没有可执行本机工具的客户端连接（桌面端 / mao-agent 未连接）';
     }
     const syncUrl = `/v1/skills/sync-package?sessionId=${sessionId}`;
-    const removed = this.deps.skillSyncService.getRemovedSkillNames(agent, userId, sessionId);
+    const removed = await this.deps.skillSyncService.getRemovedSkillNames(agent, userId, sessionId);
     console.info(`Syncing skills to client for session=${sessionId}, userId=${userId}, syncUrl=${syncUrl}, workspace=${session.workspace ?? ''}, removed=${JSON.stringify(removed)}`);
     const syncId = randomUUID();
     const done = new Promise<void>((resolve, reject) => {

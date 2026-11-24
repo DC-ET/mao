@@ -158,6 +158,7 @@
         :model-supports-vision="currentModelSupportsVision"
         :permission-level="sidePermissionLevel"
         :is-new-task="false"
+        :quick-command-agent-id="sideQuickCommandAgentId"
         @send="handleChatSend"
         @stop="handleStop"
         @continue="handleRetryExecution"
@@ -335,6 +336,18 @@ const parentCloudProjectKey = computed(() => {
 })
 // Real session ID: start with props if positive, otherwise 0
 const realSessionId = ref(props.sideSessionId > 0 ? props.sideSessionId : 0)
+/** 边路任务自己的 Agent，不借用主会话。还没建会话或元数据未到时留空，斜杠菜单先列全部。 */
+const sideQuickCommandAgentId = computed(() => {
+  const sid = realSessionId.value
+  if (!(sid > 0)) return null
+  const rootKey = sessionStore.findSideTaskRootKey(sid)
+  const fromTab = rootKey
+    ? sessionStore.getSideTasks(rootKey).find((task) => task.id === sid)?.agentId
+    : undefined
+  if (fromTab != null && String(fromTab) !== '') return String(fromTab)
+  const entityAgentId = sessionStore.sessionEntities.get(String(sid))?.agentId
+  return entityAgentId != null && String(entityAgentId) !== '' ? String(entityAgentId) : null
+})
 const hasRealSession = computed(() => realSessionId.value > 0)
 
 /** 浏览器 chip 显示条件：本边路会话直播中，或该会话已有历史回放（V202，30s 惰性探测）。

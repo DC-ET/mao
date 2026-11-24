@@ -2,7 +2,7 @@
 
 ## 用途
 
-管理服务端全局技能目录（`skill-docs`）：列表、详情、multipart 上传、删除。供 Agent 的 `skillNames` 引用。`assign` 把同一份技能目录写入指定用户的个人技能，不进入全局库。管理后台同页「个人 Skills」Tab 聚合各用户 `/user-skills`（接口 `/admin/user-skills`，支持可选 `userId` 参数仅返回该用户技能），并提供同样的指定用户上传。
+管理服务端全局技能目录（`skill-docs`）：列表、详情、multipart 上传、删除。会话里的系统技能有三层来源：Agent 表单里的共用技能、角色按 Agent 追加的技能（`role skills` / `role assign-skills`）、当前发言者的个人技能。个人技能对所有 Agent 生效，并且同名时覆盖前两层的正文。`assign` 把同一份技能目录写入指定用户的个人技能，不进入全局库。管理后台同页「个人 Skills」Tab 聚合各用户 `/user-skills`（接口 `/admin/user-skills`，支持可选 `userId` 参数仅返回该用户技能），并提供同样的指定用户上传。
 
 ## 命令选择
 

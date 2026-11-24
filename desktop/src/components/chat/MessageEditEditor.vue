@@ -122,6 +122,10 @@ const panels = useEditorTagPanels({
       sessionId: props.sessionId ?? null,
     }
   },
+  getAgentId: () => {
+    if (!props.sessionId) return null
+    return sessionStore.sessionEntities.get(props.sessionId)?.agentId ?? null
+  },
   slashTriggers: ['/'],
   autoComplete: false,
   onEscape: () => emit('cancel'),

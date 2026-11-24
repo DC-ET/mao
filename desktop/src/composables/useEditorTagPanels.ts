@@ -55,6 +55,11 @@ export interface EditorTagPanelsOptions {
   onEscape?: () => void
   /** 翻转测量锚点：编辑态传编辑器 wrap 元素；不传则 placement 恒 'top' */
   anchorEl?: () => HTMLElement | null
+  /**
+   * 这个输入框所属的 Agent。有值时斜杠菜单只列该 Agent 的系统技能；
+   * 空值不传 agentId，后端列出全部系统技能。Agent 变化后下次打开面板会重拉。
+   */
+  getAgentId?: () => string | number | null | undefined
 }
 
 export function useEditorTagPanels(opts: EditorTagPanelsOptions) {
@@ -118,17 +123,58 @@ export function useEditorTagPanels(opts: EditorTagPanelsOptions) {
 
   // ===== Quick commands: load（原 ChatInput :429-457） =====
 
-  async function ensureCommandsLoaded() {
-    try {
-      const { data } = await api.get('/quick-commands')
-      quickCommands.value = data || { skills: [], commands: [] }
-    } catch {
-      // Error handled by interceptor
-    } finally {
-      // 无论成功或失败都标记已加载，避免 detectAutoComplete 在失败时无限重试
-      commandsLoaded.value = true
+  let loadedCommandAgentKey: string | null = null
+  let inflightCommandAgentKey: string | null = null
+  let inflightCommandLoad: Promise<boolean> | null = null
+  let commandLoadFailedKey: string | null = null
+  let commandLoadSeq = 0
+
+  function commandAgentKey(): string {
+    const raw = opts.getAgentId?.()
+    if (raw == null || String(raw).trim() === '') return ''
+    return String(raw)
+  }
+
+  function commandsStale(): boolean {
+    return loadedCommandAgentKey !== commandAgentKey()
+  }
+
+  function ensureCommandsLoaded(): Promise<boolean> {
+    const key = commandAgentKey()
+    if (loadedCommandAgentKey === key) return Promise.resolve(true)
+    if (inflightCommandLoad && inflightCommandAgentKey === key) return inflightCommandLoad
+    if (loadedCommandAgentKey != null) {
+      quickCommands.value = { skills: [], commands: [] }
+      loadedCommandAgentKey = null
+      commandsLoaded.value = false
     }
-    await ensureLocalSkillsLoaded()
+    const seq = ++commandLoadSeq
+    inflightCommandAgentKey = key
+    inflightCommandLoad = (async () => {
+      let ok = false
+      try {
+        const { data } = key
+          ? await api.get('/quick-commands', { params: { agentId: key } })
+          : await api.get('/quick-commands')
+        if (seq !== commandLoadSeq) return false
+        quickCommands.value = data || { skills: [], commands: [] }
+        loadedCommandAgentKey = key
+        commandLoadFailedKey = null
+        commandsLoaded.value = true
+        ok = true
+      } catch {
+        // 失败不把新 Agent 标成已加载，下次打开面板再试；旧名单已在请求前丢掉
+        if (seq === commandLoadSeq) commandLoadFailedKey = key
+      } finally {
+        if (seq === commandLoadSeq) {
+          inflightCommandLoad = null
+          inflightCommandAgentKey = null
+        }
+      }
+      if (ok) await ensureLocalSkillsLoaded()
+      return ok
+    })()
+    return inflightCommandLoad
   }
 
   async function ensureLocalSkillsLoaded() {
@@ -183,6 +229,7 @@ export function useEditorTagPanels(opts: EditorTagPanelsOptions) {
     panelFilter.value = ''
     slashRange.value = null
     panelAutoOpened.value = false
+    if (commandLoadFailedKey === commandAgentKey()) commandLoadFailedKey = null
   }
 
   // ===== File reference: select（原 ChatInput :498-530） =====
@@ -314,6 +361,8 @@ export function useEditorTagPanels(opts: EditorTagPanelsOptions) {
     const triggerDocPos = from - (textBefore.length - lastTriggerIdx)
     slashRange.value = { from: triggerDocPos, to: from }
     panelFilter.value = afterTrigger
+    const failedThisAgent = panelVisible.value && commandLoadFailedKey === commandAgentKey()
+    if (commandsStale() && !failedThisAgent) ensureCommandsLoaded()
     if (!panelVisible.value) {
       ensureCommandsLoaded()
       panelVisible.value = true
@@ -334,11 +383,10 @@ export function useEditorTagPanels(opts: EditorTagPanelsOptions) {
     if (panelVisible.value && !panelAutoOpened.value) return
     if (filePanelVisible.value) return
 
-    // 如果指令数据尚未加载过，先加载数据（用标志位判断，避免数据为空时重复请求）
-    if (!commandsLoaded.value) {
-      ensureCommandsLoaded().then(() => {
-        // 数据加载完成后重新检测
-        detectAutoComplete()
+    // 尚未加载，或所属 Agent 已变：先拉这份名单再匹配。失败不在同一次输入里空转重试。
+    if ((!commandsLoaded.value || commandsStale()) && commandLoadFailedKey !== commandAgentKey()) {
+      ensureCommandsLoaded().then((ok) => {
+        if (ok) detectAutoComplete()
       })
       return
     }
@@ -392,6 +440,7 @@ export function useEditorTagPanels(opts: EditorTagPanelsOptions) {
     slashRange.value = { from: matchStart, to: from }
     panelFilter.value = currentWord
     panelAutoOpened.value = true
+    if (commandsStale()) ensureCommandsLoaded()
     if (!panelVisible.value) {
       ensureCommandsLoaded()
       panelVisible.value = true

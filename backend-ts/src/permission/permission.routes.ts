@@ -3,8 +3,13 @@ import { requireAnyRequestPermission, requirePermission, requireRequestPermissio
 import { bodyOf, pathId } from '../common/request.js';
 import type { Permission, Role } from '../user/types.js';
 import type { PermissionService } from './permission.service.js';
+import type { RoleSkillGrantService } from './role-skill-grant.service.js';
 
-export function registerPermissionRoutes(app: FastifyInstance, permissionService: PermissionService): void {
+export function registerPermissionRoutes(
+  app: FastifyInstance,
+  permissionService: PermissionService,
+  roleSkillGrants?: RoleSkillGrantService,
+): void {
   app.get('/v1/roles', async (request, reply) => {
     await requireAnyRequestPermission(permissionService, request, ['role:read', 'user:write']);
     const roles = await permissionService.listRoles();
@@ -69,6 +74,35 @@ export function registerPermissionRoutes(app: FastifyInstance, permissionService
     // 断言 + 写入同事务（锁 ADMIN 绑定），避免并发双降级清空全部管理员
     await permissionService.changeRolesWithAdminGuard(targetUserId, roleIds);
     return sendOk(reply);
+  });
+
+  if (roleSkillGrants) {
+    registerRoleSkillGrantRoutes(app, permissionService, roleSkillGrants);
+  }
+}
+
+function registerRoleSkillGrantRoutes(
+  app: FastifyInstance,
+  permissionService: PermissionService,
+  roleSkillGrants: RoleSkillGrantService,
+): void {
+  app.get('/v1/roles/:id/skills', async (request, reply) => {
+    await requireRequestPermission(permissionService, request, 'role:read');
+    const grants = await roleSkillGrants.listForRole(pathId(request));
+    return sendOk(reply, grants);
+  });
+
+  app.put('/v1/roles/:id/skills', async (request, reply) => {
+    const userId = requireUserId(request);
+    await requirePermission(permissionService, userId, 'role:write');
+    const body = bodyOf<{ grants?: unknown }>(request);
+    await roleSkillGrants.replaceForRole(pathId(request), body.grants);
+    return sendOk(reply);
+  });
+
+  app.get('/v1/role-skill-grants', async (request, reply) => {
+    await requireRequestPermission(permissionService, request, 'role:read');
+    return sendOk(reply, await roleSkillGrants.listAll());
   });
 }
 

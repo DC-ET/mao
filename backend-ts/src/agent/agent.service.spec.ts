@@ -123,6 +123,17 @@ describe('AgentService', () => {
     expect(agentRepo.deleteById).toHaveBeenCalledWith(1);
   });
 
+  it('删除 Agent 时先摘掉限定到该 Agent 的角色授权', async () => {
+    const order: string[] = [];
+    const cleaner = { deleteByAgentId: vi.fn(async () => { order.push('grants'); }) };
+    vi.mocked(agentRepo.deleteById).mockImplementationOnce(async () => { order.push('agent'); });
+    vi.mocked(agentRepo.findById).mockResolvedValue(agent(1, 'a', 0));
+    const withCleaner = new AgentService(agentRepo, experienceService, suggestedQuestionService, undefined, undefined, cleaner);
+    await withCleaner.deleteAgent(1);
+    expect(cleaner.deleteByAgentId).toHaveBeenCalledWith(1);
+    expect(order).toEqual(['grants', 'agent']);
+  });
+
   it('handles prompt versions and rollback', async () => {
     const versions = [{ id: 2, agentId: 1, version: 2, systemPrompt: 'new', operatorId: 7, sourceVersion: null, createdAt: 'now' }];
     vi.mocked(agentRepo.findById).mockResolvedValue(agent(1, 'a', 0));

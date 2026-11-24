@@ -31,8 +31,9 @@
         <el-card>
           <template #header>
             <div class="card-header">
-              <span>权限分配</span>
+              <span>{{ currentRole ? `${currentRole.name}（${currentRole.code}）` : '角色配置' }}</span>
               <el-button
+                v-if="rightTab === 'permissions'"
                 :type="dirtyPermissions ? 'primary' : 'default'"
                 :disabled="!currentRole || !canWrite"
                 :loading="savingPermissions"
@@ -40,15 +41,21 @@
               >
                 保存权限{{ dirtyPermissions ? '*' : '' }}
               </el-button>
+              <el-button
+                v-else
+                :type="dirtySkills ? 'primary' : 'default'"
+                :disabled="!canSaveSkills"
+                :loading="savingSkills"
+                @click="saveSkills"
+              >
+                保存技能{{ dirtySkills ? '*' : '' }}
+              </el-button>
             </div>
           </template>
 
           <el-empty v-if="!currentRole" description="请选择左侧角色" />
-          <div v-else>
-            <div class="role-title">
-              <strong>{{ currentRole.name }}</strong>
-              <el-tag size="small">{{ currentRole.code }}</el-tag>
-            </div>
+          <el-tabs v-else v-model="rightTab" :before-leave="beforeRightTabLeave">
+            <el-tab-pane label="权限" name="permissions">
             <el-collapse v-model="expandedGroups" class="permission-groups">
               <el-collapse-item v-for="group in permissionGroups" :key="group.id" :name="group.id">
                 <template #title>
@@ -82,7 +89,37 @@
                 </el-checkbox-group>
               </el-collapse-item>
             </el-collapse>
-          </div>
+            </el-tab-pane>
+            <el-tab-pane label="技能" name="skills">
+              <p class="skill-hint">这里追加的是岗位专属系统技能，会叠在 Agent 表单里的共用技能之上。ADMIN、USER 这类人人都有的角色不要配岗位技能，否则等于全员可见。</p>
+              <el-table :data="skillGrants" v-loading="loadingSkills" size="small" empty-text="尚未追加技能">
+                <el-table-column prop="skillName" label="技能" min-width="140" />
+                <el-table-column label="范围" min-width="160">
+                  <template #default="{ row }">{{ agentLabel(row.agentId) }}</template>
+                </el-table-column>
+                <el-table-column label="" width="70">
+                  <template #default="{ $index }">
+                    <el-button v-if="canWrite" type="danger" link size="small" @click="removeSkillGrant($index)">移除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <div v-if="canWrite && canSaveSkills" class="skill-add">
+                <el-select v-model="draftSkillName" filterable placeholder="选择技能" style="width: 180px">
+                  <el-option v-for="skill in skillOptions" :key="skill.name" :label="skill.name" :value="skill.name" />
+                </el-select>
+                <el-select v-model="draftAgentId" filterable placeholder="范围" style="width: 180px">
+                  <el-option :value="0" label="全部 Agent" />
+                  <el-option
+                    v-for="agent in agentOptions"
+                    :key="agent.id"
+                    :label="agent.enabled ? agent.name : `${agent.name}（已停用）`"
+                    :value="agent.id"
+                  />
+                </el-select>
+                <el-button @click="addSkillGrant">添加</el-button>
+              </div>
+            </el-tab-pane>
+          </el-tabs>
         </el-card>
       </el-col>
     </el-row>
@@ -138,10 +175,27 @@ interface Permission {
 const loading = ref(false)
 const savingRole = ref(false)
 const savingPermissions = ref(false)
+const savingSkills = ref(false)
+const loadingSkills = ref(false)
 const roles = ref<Role[]>([])
 const permissions = ref<Permission[]>([])
 const currentRole = ref<Role | null>(null)
 const dirtyPermissions = ref(false)
+const dirtySkills = ref(false)
+const skillGrantsReady = ref(false)
+const skillGrantsRoleId = ref<number | null>(null)
+const rightTab = ref<'permissions' | 'skills'>('permissions')
+const skillGrants = ref<SkillGrant[]>([])
+const skillOptions = ref<{ name: string }[]>([])
+const agentOptions = ref<{ id: number; name: string; enabled: boolean }[]>([])
+const draftSkillName = ref('')
+const draftAgentId = ref(0)
+let skillLoadSeq = 0
+
+interface SkillGrant {
+  skillName: string
+  agentId: number
+}
 const dialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit'>('create')
 const memberDialogVisible = ref(false)
@@ -149,6 +203,13 @@ const memberRole = ref<Role | null>(null)
 const roleFormRef = ref<FormInstance>()
 const authStore = useAuthStore()
 const canWrite = computed(() => authStore.hasPermission('role:write'))
+const canSaveSkills = computed(() =>
+  !!currentRole.value
+  && canWrite.value
+  && skillGrantsReady.value
+  && skillGrantsRoleId.value === currentRole.value.id
+  && !loadingSkills.value,
+)
 const roleForm = reactive({
   id: 0,
   name: '',
@@ -264,10 +325,120 @@ async function fetchAll() {
   }
 }
 
-function selectRole(role: Role) {
+function selectRole(role: Role, opts: { permissions?: boolean; skills?: boolean } = {}) {
+  const reloadPermissions = opts.permissions !== false
+  const reloadSkills = opts.skills !== false
   currentRole.value = role
-  selectedPermissionIds.value = [...(role.permissionIds || [])]
-  dirtyPermissions.value = false
+  if (reloadPermissions) {
+    selectedPermissionIds.value = [...(role.permissionIds || [])]
+    dirtyPermissions.value = false
+  }
+  if (reloadSkills) {
+    dirtySkills.value = false
+    skillGrants.value = []
+    skillGrantsReady.value = false
+    skillGrantsRoleId.value = null
+    void loadSkillGrants(role.id)
+  }
+}
+
+function agentLabel(agentId: number): string {
+  if (agentId === 0) return '全部 Agent'
+  const agent = agentOptions.value.find((item) => item.id === agentId)
+  if (!agent) return `Agent #${agentId}`
+  return agent.enabled ? agent.name : `${agent.name}（已停用）`
+}
+
+function markSkillsDirty() {
+  dirtySkills.value = true
+}
+
+function addSkillGrant() {
+  const skillName = draftSkillName.value.trim()
+  if (!skillName) {
+    ElMessage.warning('请选择技能')
+    return
+  }
+  const agentId = draftAgentId.value
+  if (skillGrants.value.some((grant) => grant.skillName === skillName && grant.agentId === agentId)) {
+    ElMessage.warning('这条授权已经在列表里')
+    return
+  }
+  if (skillGrants.value.some((grant) => grant.skillName === skillName && (grant.agentId === 0 || agentId === 0))) {
+    ElMessage.warning('同一技能不能同时授权给全部 Agent 和某个 Agent')
+    return
+  }
+  skillGrants.value = [...skillGrants.value, { skillName, agentId }]
+  draftSkillName.value = ''
+  markSkillsDirty()
+}
+
+function removeSkillGrant(index: number) {
+  skillGrants.value = skillGrants.value.filter((_, i) => i !== index)
+  markSkillsDirty()
+}
+
+async function loadSkillGrants(roleId: number) {
+  const seq = ++skillLoadSeq
+  loadingSkills.value = true
+  try {
+    const { data } = await api.get(`/roles/${roleId}/skills`)
+    if (seq !== skillLoadSeq || currentRole.value?.id !== roleId || dirtySkills.value) return
+    skillGrants.value = (Array.isArray(data) ? data : []).map((row: SkillGrant) => ({
+      skillName: row.skillName,
+      agentId: Number(row.agentId) || 0,
+    }))
+    skillGrantsRoleId.value = roleId
+    skillGrantsReady.value = true
+    dirtySkills.value = false
+  } catch {
+    if (seq === skillLoadSeq && currentRole.value?.id === roleId) {
+      skillGrantsReady.value = false
+      skillGrantsRoleId.value = null
+    }
+  } finally {
+    if (seq === skillLoadSeq) loadingSkills.value = false
+  }
+}
+
+async function loadSkillEditorOptions() {
+  try {
+    const [skills, agents] = await Promise.all([
+      api.get('/skill-docs'),
+      api.get('/agents', { params: { includeDisabled: true } }),
+    ])
+    skillOptions.value = (Array.isArray(skills.data) ? skills.data : [])
+      .filter((row: { name?: string }) => typeof row?.name === 'string')
+      .map((row: { name: string }) => ({ name: row.name }))
+    agentOptions.value = (Array.isArray(agents.data) ? agents.data : [])
+      .map((row: Record<string, unknown>) => ({
+        id: Number(row.id),
+        name: typeof row.name === 'string' ? row.name : '',
+        enabled: row.enabled !== false,
+      }))
+      .filter((agent) => Number.isInteger(agent.id) && agent.id > 0 && agent.name !== '')
+  } catch {
+    skillOptions.value = []
+    agentOptions.value = []
+  }
+}
+
+async function saveSkills() {
+  const roleId = currentRole.value?.id
+  if (roleId == null || savingSkills.value || !canSaveSkills.value) return
+  savingSkills.value = true
+  try {
+    await api.put(`/roles/${roleId}/skills`, {
+      grants: skillGrants.value.map((grant) => ({ skillName: grant.skillName, agentId: grant.agentId })),
+    })
+    if (currentRole.value?.id !== roleId) return
+    ElMessage.success('技能授权已保存')
+    dirtySkills.value = false
+    skillGrantsRoleId.value = roleId
+    skillGrantsReady.value = true
+  } catch { /* 拦截器已提示失败 */ } finally {
+    savingSkills.value = false
+  }
 }
 
 /**
@@ -280,8 +451,7 @@ async function refreshRoles() {
   if (id == null) return
   const updated = roles.value.find((r) => r.id === id)
   if (!updated) return
-  if (dirtyPermissions.value) currentRole.value = updated
-  else selectRole(updated)
+  selectRole(updated, { permissions: !dirtyPermissions.value, skills: !dirtySkills.value })
 }
 
 /** 勾选变化置脏；row-click 切换角色时如有未保存修改先确认 */
@@ -290,12 +460,20 @@ function onPermissionChange(next: number[]) {
   dirtyPermissions.value = true
 }
 
-async function confirmDiscardUnsaved(): Promise<boolean> {
-  if (!dirtyPermissions.value) return true
+function unsavedParts(): string[] {
+  const parts: string[] = []
+  if (dirtyPermissions.value) parts.push('权限')
+  if (dirtySkills.value) parts.push('技能')
+  return parts
+}
+
+async function confirmDiscard(action: '切换' | '离开'): Promise<boolean> {
+  const parts = unsavedParts()
+  if (parts.length === 0) return true
   try {
-    await ElMessageBox.confirm('当前角色的权限修改尚未保存，切换后将丢失，确认切换吗？', '未保存的修改', {
-      confirmButtonText: '放弃修改并切换',
-      cancelButtonText: '留在当前角色',
+    await ElMessageBox.confirm(`当前角色的${parts.join('和')}修改尚未保存，${action}后将丢失，确认${action}吗？`, '未保存的修改', {
+      confirmButtonText: action === '切换' ? '放弃修改并切换' : '放弃修改并离开',
+      cancelButtonText: action === '切换' ? '留在当前角色' : '留在当前页',
       type: 'warning'
     })
     return true
@@ -304,10 +482,15 @@ async function confirmDiscardUnsaved(): Promise<boolean> {
   }
 }
 
+async function beforeRightTabLeave(): Promise<boolean> {
+  if (savingPermissions.value || savingSkills.value) return false
+  return confirmDiscard('切换')
+}
+
 async function handleRoleRowClick(role: Role) {
-  if (savingPermissions.value) return
+  if (savingPermissions.value || savingSkills.value) return
   if (role.id === currentRole.value?.id) return
-  if (!(await confirmDiscardUnsaved())) return
+  if (!(await confirmDiscard('切换'))) return
   selectRole(role)
 }
 
@@ -380,6 +563,7 @@ async function savePermissions() {
 
 onMounted(() => {
   fetchAll()
+  void loadSkillEditorOptions()
   // 路由离开守卫之外，浏览器刷新/关闭也需要拦截（评审 #29）
   window.addEventListener('beforeunload', handleBeforeUnload)
 })
@@ -400,25 +584,13 @@ onUnmounted(() => {
 })
 
 function handleBeforeUnload(event: BeforeUnloadEvent) {
-  if (!dirtyPermissions.value) return
+  if (unsavedParts().length === 0) return
   event.preventDefault()
   // Chrome 需要 returnValue 才会弹出确认
   event.returnValue = ''
 }
 
-onBeforeRouteLeave(async (_to, _from) => {
-  if (!dirtyPermissions.value) return true
-  try {
-    await ElMessageBox.confirm('当前角色的权限修改尚未保存，离开后将丢失，确认离开吗？', '未保存的修改', {
-      confirmButtonText: '放弃修改并离开',
-      cancelButtonText: '留在当前页',
-      type: 'warning'
-    })
-    return true
-  } catch {
-    return false
-  }
-})
+onBeforeRouteLeave(async () => confirmDiscard('离开'))
 
 // TODO: 需后端补 DELETE /roles/:id（校验角色下无用户）后再提供删除角色按钮，
 // 见评审文档 #7（permission.routes.ts 目前仅有 create/update/assign 端点）。
@@ -431,11 +603,18 @@ onBeforeRouteLeave(async (_to, _from) => {
   align-items: center;
 }
 
-.role-title {
+.skill-hint {
+  margin: 0 0 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.skill-add {
   display: flex;
-  align-items: center;
   gap: 8px;
-  margin-bottom: 16px;
+  margin-top: 12px;
+  flex-wrap: wrap;
 }
 
 .permission-grid {

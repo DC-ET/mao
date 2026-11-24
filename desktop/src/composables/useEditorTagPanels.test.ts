@@ -393,6 +393,47 @@ describe('auto-complete（ChatInput 配置）', () => {
     return panels
   }
 
+  it('斜杠菜单按输入框所属 Agent 过滤，Agent 变了会重拉；没有 Agent 时不带参数', async () => {
+    vi.mocked(api.get).mockResolvedValue({ data: { skills: [{ type: 'skill', name: 'from-4', description: '' }], commands: [] } })
+    const agentId = ref<string | null>('4')
+    editor = makeEditor()
+    const panels = useEditorTagPanels({
+      editorRef: shallowRef(editor),
+      quickCommandPanelRef: ref(panelHandle()),
+      fileReferencePanelRef: ref(panelHandle()),
+      getContext: () => ({ ...CLOUD_CTX }),
+      getAgentId: () => agentId.value,
+    })
+    typeParagraph(editor, '/')
+    panels.handleEditorUpdate()
+    await vi.waitFor(() => expect(panels.quickCommands.value.skills[0]?.name).toBe('from-4'))
+
+    let releaseAgent9: (value: { data: { skills: { type: 'skill'; name: string; description: string }[]; commands: [] } }) => void = () => {}
+    vi.mocked(api.get).mockImplementation((url: string, config?: { params?: { agentId?: string } }) => {
+      if (url === '/quick-commands' && config?.params?.agentId === '9') {
+        return new Promise((resolve) => { releaseAgent9 = resolve })
+      }
+      if (url === '/quick-commands') {
+        return Promise.resolve({ data: { skills: [], commands: [] } })
+      }
+      return Promise.resolve({ data: { skills: [], commands: [] } })
+    })
+    agentId.value = '9'
+    typeParagraph(editor, '/git')
+    panels.handleEditorUpdate()
+    expect(panels.quickCommands.value.skills).toEqual([])
+    await vi.waitFor(() => expect(api.get).toHaveBeenCalledWith('/quick-commands', { params: { agentId: '9' } }))
+    releaseAgent9({ data: { skills: [{ type: 'skill', name: 'from-9', description: '' }], commands: [] } })
+
+    agentId.value = null
+    typeParagraph(editor, '/')
+    panels.handleEditorUpdate()
+    await vi.waitFor(() => {
+      const calls = vi.mocked(api.get).mock.calls.filter(([url]) => url === '/quick-commands')
+      expect(calls.some((call) => call.length === 1)).toBe(true)
+    })
+  })
+
   it('词前缀匹配开面板；Esc 后同词不弹、词变恢复（dismissedWord）', async () => {
     vi.mocked(api.get).mockResolvedValue({ data: { skills: [{ type: 'skill', name: 'skill-one', description: '' }], commands: [] } })
     const panels = makeChatPanels()

@@ -464,4 +464,33 @@ describe('skill routes', () => {
     expect(removeSkillNameFromAll).not.toHaveBeenCalled();
     await app.close();
   });
+
+  it('系统技能删除成功后摘掉角色授权', async () => {
+    const skillsDir = useTmpDir('mao-sdoc-');
+    const userDir = useTmpDir('mao-user-s-');
+    mkdirSync(join(skillsDir, 'demo'), { recursive: true });
+    writeFileSync(join(skillsDir, 'demo', 'SKILL.md'), '---\nname: demo\ndescription: Demo\n---\nBody\n');
+    const loader = new SkillLoader(new PathSandbox(skillsDir), skillsDir, 1);
+    const app = Fastify();
+    app.setErrorHandler(handleError);
+    app.addHook('preHandler', (req, _r, done) => { req.userId = 1; done(); });
+    const removeSkillNameFromAll = vi.fn(async () => 1);
+    const deleteBySkillName = vi.fn(async () => undefined);
+    registerSkillRoutes(app, {
+      userSkillService: new UserSkillService(userDir, noSystemSkillNames),
+      skillDocService: new SkillDocService(loader),
+      skillSyncService: { writeSyncZip: vi.fn(async (_a, _s, out) => { out.end(); }) } as unknown as SkillSyncService,
+      sessionService: { getSession: vi.fn(async () => ({ id: 1, userId: 1, agentId: 9 })) } as unknown as SessionService,
+      agentService: { removeSkillNameFromAll } as never,
+      agentLookup: { findById: vi.fn(async () => ({ id: 9, name: 'A' })) } as unknown as AgentLookup,
+      permissionService: { hasPermission: vi.fn(async () => true) },
+      userLookup: { findByIds: vi.fn(async () => []), listOptions: vi.fn(async () => []) },
+      roleSkillGrants: { deleteBySkillName },
+    });
+    const deleted = JSON.parse((await app.inject({ method: 'DELETE', url: '/v1/skill-docs/demo' })).body);
+    expect(deleted.code).toBe(0);
+    expect(removeSkillNameFromAll).toHaveBeenCalledWith('demo');
+    expect(deleteBySkillName).toHaveBeenCalledWith('demo');
+    await app.close();
+  });
 });

@@ -53,4 +53,6 @@ export interface SkillCatalog {
 
 export interface UserSkillCatalog {
   getUserSkillDocuments(userId: number): Promise<SkillDocument[]> | SkillDocument[];
+  /** 带 Agent 的斜杠菜单用它取本次系统技能。缺省时按空名单过滤。 */
+  resolveSystemSkillNames?(agent: { id?: number; skillNames?: string | null; deleted?: number }, userId: number | null): Promise<string[]>;
 }

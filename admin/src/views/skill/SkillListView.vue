@@ -179,6 +179,17 @@
             <RelatedAgentsPopover :agents="agentsBySkill(row.name)" />
           </template>
         </el-table-column>
+        <el-table-column label="关联角色" width="120" align="right" class-name="hide-on-mobile" label-class-name="hide-on-mobile">
+          <template #default="{ row }">
+            <span v-if="roleGrantLines(row.name).length === 0">0</span>
+            <el-popover v-else placement="top" :width="280" trigger="hover">
+              <template #reference>
+                <span class="related-roles-trigger">{{ roleGrantLines(row.name).length }}</span>
+              </template>
+              <div v-for="(line, index) in roleGrantLines(row.name)" :key="index">{{ line }}</div>
+            </el-popover>
+          </template>
+        </el-table-column>
         <el-table-column prop="folderPath" label="路径" min-width="250" show-overflow-tooltip class-name="hide-on-mobile" label-class-name="hide-on-mobile" />
         <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
@@ -374,7 +385,34 @@ import RelatedAgentsPopover from '../../components/RelatedAgentsPopover.vue'
 const { isMobile } = useBreakpoint()
 const authStore = useAuthStore()
 const canWrite = computed(() => authStore.hasPermission('skill:write'))
-const { agentsBySkill, load: loadAgentRelations } = useAgentRelations()
+const { agents, agentsBySkill, load: loadAgentRelations } = useAgentRelations()
+const roleGrants = ref<{ skillName: string; roleName: string; agentId: number }[]>([])
+
+function roleGrantLines(skillName: string): string[] {
+  return roleGrants.value
+    .filter((grant) => grant.skillName === skillName)
+    .map((grant) => {
+      if (grant.agentId === 0) return `${grant.roleName} · 全部 Agent`
+      const agent = agents.value.find((item) => item.id === grant.agentId)
+      const agentName = agent ? (agent.enabled ? agent.name : `${agent.name}（已停用）`) : `Agent #${grant.agentId}`
+      return `${grant.roleName} · ${agentName}`
+    })
+}
+
+async function loadRoleGrants() {
+  try {
+    const { data } = await api.get('/role-skill-grants', { skipErrorToast: true })
+    roleGrants.value = (Array.isArray(data) ? data : [])
+      .filter((row: { skillName?: string; roleName?: string }) => typeof row?.skillName === 'string' && typeof row?.roleName === 'string')
+      .map((row: { skillName: string; roleName: string; agentId?: number }) => ({
+        skillName: row.skillName,
+        roleName: row.roleName,
+        agentId: Number(row.agentId) || 0,
+      }))
+  } catch {
+    roleGrants.value = []
+  }
+}
 
 // ========== 浏览器依赖（browser-use 技能）按需安装 ==========
 // 状态来自 /admin/browser-deps/status（skill:read）；安装（skill:write）触发后轮询直至终态。
@@ -846,6 +884,7 @@ async function handleDelete(row: any) {
 onMounted(() => {
   void fetchActiveTab()
   void loadAgentRelations()
+  void loadRoleGrants()
   void fetchBrowserDeps()
 })
 
@@ -857,6 +896,7 @@ onActivated(() => {
   }
   void fetchActiveTab()
   void loadAgentRelations()
+  void loadRoleGrants()
   void fetchBrowserDeps()
 })
 
@@ -946,5 +986,10 @@ onUnmounted(() => {
   overflow-y: auto;
   font-size: 13px;
   line-height: 1.6;
+}
+
+.related-roles-trigger {
+  color: var(--el-color-primary);
+  cursor: pointer;
 }
 </style>

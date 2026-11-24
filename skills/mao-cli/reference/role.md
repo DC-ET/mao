@@ -12,6 +12,8 @@
 | 新建角色 | `role create` |
 | 改角色名/描述 | `role update` |
 | 给角色设权限 | `role assign-permissions` |
+| 查看角色追加的系统技能 | `role skills` |
+| 覆盖保存角色技能授权 | `role assign-skills` |
 | 查看权限点目录 | `permission list` |
 
 ## 命令：role list
@@ -66,6 +68,32 @@ mao role update --id 2 --name 高级运营 --description '更新说明'
 ```bash
 mao permission list
 mao role assign-permissions --id 2 --permission-ids 1,2,3,5
+```
+
+## 命令：role skills
+
+| 参数 | 必填 | 类型 | 含义 | 后端 |
+|------|------|------|------|------|
+| `--id` | 是 | 整数 | 角色 ID | `GET /roles/{id}/skills` |
+
+返回该角色追加的系统技能。`agentId` 为 `0` 表示全部 Agent，其他值只对那个 Agent 生效。这些技能叠在 Agent 表单的共用技能之上，不替换共用名单。
+
+```bash
+mao role skills --id 2
+```
+
+## 命令：role assign-skills
+
+| 参数 | 必填 | 类型 | 含义 | 后端字段 |
+|------|------|------|------|----------|
+| `--id` | 是 | 整数 | 角色 ID | 路径 |
+| `--grants` | 是 | 逗号分隔 | `技能名` 或 `技能名@agentId`。省略 `--grants` 报错，不会清空；显式空字符串清空 | `grants` |
+
+`PUT /roles/{id}/skills`，覆盖式保存。`@` 后面必须是非负整数，否则 CLI 不发请求。需要 `role:write`。
+
+```bash
+mao role assign-skills --id 2 --grants bigdata@12,git
+mao role assign-skills --id 2 --grants ""
 ```
 
 ## 命令：permission list
