@@ -794,6 +794,16 @@ export class HarnessService {
       if (!Number.isFinite(merged.triggerPayloadBytes) || merged.triggerPayloadBytes < 0) {
         merged.triggerPayloadBytes = this.compactionConfig.triggerPayloadBytes;
       }
+      // 同口径收口 contextWindowTokens / maxSummaryTokens：resolveEffectiveContextWindow 只保护
+      // 模型声明值，config 侧原样返回——0/负数/NaN 会让 shouldTrigger 的
+      // `triggerWindowTokens > 0` 门恒 false，token 维度自动压缩被静默关闭；NaN 还会原样
+      // 写进 handoff 指令（「正文控制在约 NaN tokens 以内」）。
+      if (!Number.isFinite(merged.contextWindowTokens) || merged.contextWindowTokens <= 0) {
+        merged.contextWindowTokens = this.compactionConfig.contextWindowTokens;
+      }
+      if (!Number.isFinite(merged.maxSummaryTokens) || merged.maxSummaryTokens <= 0) {
+        merged.maxSummaryTokens = this.compactionConfig.maxSummaryTokens;
+      }
       return merged;
     } catch (e) {
       harnessLog('warn', 'Failed to parse agent compaction config, using defaults', e);

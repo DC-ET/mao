@@ -411,7 +411,12 @@ export class SessionRunner {
       if (this.opts.ifRunning === 'cancel') {
         await this.sendCancel();
         await this.waitUntilSettled(CANCEL_WAIT_MS);
-        this.resetRound();
+        // 与下方 wait 分支同口径：等待期间用户按了 Ctrl+C（或 --max-duration 超时）时
+        // 不能 resetRound——那会把 cancelledByUserFlag 清掉，令 runPrompt:160 的
+        // 提前收尾判断被绕过，用户已取消的消息经重试循环照发。
+        if (!this.timedOutFlag && !this.cancelledByUserFlag) {
+          this.resetRound();
+        }
         return;
       }
       await this.waitOccupantWithOptionalTimeout();

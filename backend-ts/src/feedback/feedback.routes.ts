@@ -58,6 +58,19 @@ function parseAgentId(value: unknown): number | undefined {
   return agentId;
 }
 
+/**
+ * agentId 筛选三态解析：`agentIdNull=true` 是显式「空 Agent」标记（飞书点踩无 Agent 场景）——
+ * repository 支持 `agent_id IS NULL`，但 query string 表达不了 null，不发该标记就会与
+ * 「不筛选 Agent」同形（前端矩阵「无 Agent」下钻拿到全部 Agent 的反馈）。
+ * 具体 agentId 优先于标记（与前端 buildParams 的同优先级口径一致）。
+ */
+function parseAgentIdFilter(query: Record<string, unknown>): number | null | undefined {
+  const agentId = parseAgentId(query.agentId);
+  if (agentId != null) return agentId;
+  if (query.agentIdNull === true || query.agentIdNull === 'true') return null;
+  return undefined;
+}
+
 export function registerFeedbackRoutes(app: FastifyInstance, deps: FeedbackRouteDeps): void {
   // 提交/覆盖点踩
   app.put('/v1/feedback/messages/:messageId/dislike', async (req, reply) => {
@@ -123,7 +136,7 @@ export function registerFeedbackRoutes(app: FastifyInstance, deps: FeedbackRoute
     const result = await deps.feedback.listDetails({
       reason,
       status,
-      agentId: parseAgentId(query.agentId),
+      agentId: parseAgentIdFilter(query),
       startDate: parseDate(query.startDate),
       endDate: parseDate(query.endDate),
       page: page.page,

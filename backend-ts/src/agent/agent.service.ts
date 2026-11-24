@@ -94,10 +94,13 @@ export class AgentService {
     if (isDefault != null && isDefault === 1 && clientVisibleFlag === 0) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '默认 Agent 必须客户端可见，请先更改默认 Agent 或开启客户端可见');
     }
+    // 先校验默认模型再清旧默认旗标：clearDefaultFlag 是独立 UPDATE（自动提交），
+    // 若顺序颠倒，校验失败时旧默认旗标已被清掉而新 Agent 尚未 insert → 全库零默认
+    // Agent，后续所有会话创建被 requireDefaultAgent() 阻断，且表象与本次失败无关。
+    await this.requireEnabledModel(defaultModelId);
     if (isDefault != null && isDefault === 1) {
       await this.agentRepo.clearDefaultFlag();
     }
-    await this.requireEnabledModel(defaultModelId);
     const agent: Agent = {
       name,
       description,

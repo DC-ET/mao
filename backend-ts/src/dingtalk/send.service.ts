@@ -1,3 +1,5 @@
+import { clipByCodePoints } from '../common/utf8.js';
+
 /** 企业机器人图片消息。photoURL 接受上传接口返回的 media_id。 */
 export function imageMessageParam(mediaId: string): { msgKey: 'sampleImageMsg'; msgParam: string } {
   return { msgKey: 'sampleImageMsg', msgParam: JSON.stringify({ photoURL: mediaId }) };
@@ -26,13 +28,15 @@ export function limitReply(text: string, maxLength: number): { text: string; tru
   if (text.length <= limit) return { text, truncated: false };
   const suffix = '…（回复过长已截断）';
   const room = Math.max(0, limit - suffix.length);
-  return { text: `${text.slice(0, room)}${suffix}`, truncated: true };
+  // clipByCodePoints 按码点计数：slice 按码元硬切会在代理对（emoji）中间留孤立代理，
+  // msgParam JSON 到对端渲染成 U+FFFD 乱码（与 card-body / progress-card 同口径）。
+  return { text: `${clipByCodePoints(text, room)}${suffix}`, truncated: true };
 }
 
 export function markdownMessage(text: string, maxLength: number): { msgKey: 'sampleMarkdown'; msgParam: string } {
   const limited = limitReply(text, maxLength).text;
   const first = limited.split(/\r?\n/, 1)[0]?.trim() || 'Mao';
-  const title = first.length > 40 ? `${first.slice(0, 40)}…` : first;
+  const title = first.length > 40 ? `${clipByCodePoints(first, 40)}…` : first;
   return { msgKey: 'sampleMarkdown', msgParam: JSON.stringify({ title, text: limited }) };
 }
 

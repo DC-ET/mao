@@ -239,7 +239,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onActivated, reactive, ref } from 'vue'
+import { computed, onMounted, onActivated, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -365,9 +365,12 @@ const loading = ref(false)
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
-const filters = reactive<{ status?: FeedbackStatus; agentId?: number; reason?: FeedbackReason }>({ status: 'PENDING' })
+const filters = reactive<{ status?: FeedbackStatus; agentId?: number; agentIdNull?: boolean; reason?: FeedbackReason }>({ status: 'PENDING' })
 const dateRange = ref<[string, string] | null>(null)
 const agentOptions = ref<AgentOption[]>([])
+// 明细表实例：el-table 的选区以内部 store 为权威，只清 selectedRows/selectedIds 会留下
+// 复选框勾显，再勾选时 selection-change 会把「已取消」的行复活进批量忽略（不可逆）。
+const tableRef = ref()
 
 /** 原因筛选项由汇总接口 byReason 动态取（含 NO_REASON），不硬编码；空态给占位避免下拉为空。 */
 const reasonOptions = computed(() => summary.value.byReason.map((item) => ({ value: item.reason, label: item.label })))
@@ -394,7 +397,13 @@ function buildParams(): Record<string, unknown> {
     pageSize: pageSize.value
   }
   if (filters.status) params.status = filters.status
-  if (filters.agentId != null) params.agentId = filters.agentId
+  if (filters.agentId != null) {
+    params.agentId = filters.agentId
+  } else if (filters.agentIdNull) {
+    // 「无 Agent（飞书）」下钻：query string 无法直接表达 null，用显式标记让后端走
+    // repository 已有的 `agent_id IS NULL` 分支；不发标记就与「不筛选 Agent」同形。
+    params.agentIdNull = true
+  }
   if (filters.reason) params.reason = filters.reason
   if (dateRange.value?.[0]) params.startDate = dateRange.value[0]
   if (dateRange.value?.[1]) params.endDate = dateRange.value[1]
@@ -460,6 +469,7 @@ function handleSizeChange() {
 function handleReset() {
   filters.status = 'PENDING'
   filters.agentId = undefined
+  filters.agentIdNull = false
   filters.reason = undefined
   dateRange.value = null
   page.value = 1
@@ -467,11 +477,17 @@ function handleReset() {
   refreshAll()
 }
 
-/** 单元格点击：下钻到该 Agent + 该原因的待处理反馈。 */
+// 从 Agent 下拉选到具体 Agent 时清掉「无 Agent」下钻标记，避免清空下拉后旧标记复活。
+watch(() => filters.agentId, (agentId) => {
+  if (agentId != null) filters.agentIdNull = false
+})
+
+/** 单元格点击：下钻到该 Agent + 该原因的待处理反馈（agentId 为 null 即飞书来源的无 Agent 行）。 */
 function applyMatrixFilter(agentId: number | null, reason: FeedbackReason) {
   filters.status = 'PENDING'
   filters.reason = reason
   filters.agentId = agentId ?? undefined
+  filters.agentIdNull = agentId == null
   page.value = 1
   clearSelection()
   fetchList()
@@ -482,6 +498,7 @@ function handleMatrixRow(row: { agentId: number | null }) {
   filters.status = 'PENDING'
   filters.reason = undefined
   filters.agentId = row.agentId ?? undefined
+  filters.agentIdNull = row.agentId == null
   page.value = 1
   clearSelection()
   fetchList()
@@ -501,6 +518,9 @@ function handleSelectionChange(rows: FeedbackDetailItem[]) {
 }
 
 function clearSelection() {
+  // 先清 el-table 内部选区（会回发 selection-change 再走一遍本地 ref 清零），
+  // 只清本地 ref 会留下复选框勾显，之后任何一次勾选都会复活「已取消」的行。
+  tableRef.value?.clearSelection()
   selectedRows.value = []
   selectedIds.value = []
 }

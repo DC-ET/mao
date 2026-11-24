@@ -1,6 +1,7 @@
 import type { NotificationChannel } from '../notification/task/types.js';
 import type { WebhookSenderRegistry } from '../notification/task/webhook-sender.js';
 import { buildWeixinFallbackCard, WEIXIN_FALLBACK_HEADER } from '../notification/task/feishu-notification-card.js';
+import { clipByCodePoints } from '../common/utf8.js';
 
 /** webhook 降级推送的正文长度上限：钉钉/飞书文本消息均有长度限制，超长直接截断。 */
 const MAX_FALLBACK_TEXT_CHARS = 4000;
@@ -81,13 +82,16 @@ export class WeixinWebhookFallbackService {
       console.warn(`微信回复 webhook 降级跳过: 解密 webhook 地址失败, userId=${userId}`, e);
       return false;
     }
+    // MAX_*_CHARS 语义是「字符数」：slice 按码元硬切会在代理对（emoji）中间留孤立代理，
+    // 随 payload 发往钉钉/飞书 webhook，对端渲染成 U+FFFD 乱码（与 dingtalk send.service
+    // 的 limitReply 同口径，统一走 clipByCodePoints）。
     const body = text.length > MAX_FALLBACK_TEXT_CHARS
-      ? `${text.slice(0, MAX_FALLBACK_TEXT_CHARS)}\n\n（内容过长已截断，完整内容请在 Mao 桌面端/网页端查看）`
+      ? `${clipByCodePoints(text, MAX_FALLBACK_TEXT_CHARS)}\n\n（内容过长已截断，完整内容请在 Mao 桌面端/网页端查看）`
       : text;
     // 与正常任务通知同口径：text（钉钉/飞书回退）与 card（飞书 interactive 卡片）都传。
     // 只传 text 时飞书侧退化为纯文本消息，与其它通知的卡片形态不一致。
     const cardBody = text.length > MAX_FALLBACK_CARD_CHARS
-      ? `${text.slice(0, MAX_FALLBACK_CARD_CHARS)}\n\n（内容过长已截断，完整内容请在 Mao 桌面端/网页端查看）`
+      ? `${clipByCodePoints(text, MAX_FALLBACK_CARD_CHARS)}\n\n（内容过长已截断，完整内容请在 Mao 桌面端/网页端查看）`
       : text;
     try {
       const result = await this.senderRegistry

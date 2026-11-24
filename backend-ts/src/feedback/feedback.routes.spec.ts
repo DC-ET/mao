@@ -97,6 +97,32 @@ describe('feedback admin routes', () => {
     await fastify.close();
   });
 
+  it('list 的 agentIdNull=true 标记把 agentId 解析为 null（空 Agent 三态可达）', async () => {
+    const { deps, calls } = makeDeps();
+    const fastify = await app(deps);
+    // 「无 Agent（飞书）」下钻：不发标记就与「不筛选 Agent」同形，标记必须解析成 null
+    const marked = json(await fastify.inject({
+      method: 'GET',
+      url: '/v1/feedback/admin/list?agentIdNull=true',
+    }));
+    expect(marked.code).toBe(0);
+    expect((calls.listDetails[0][0] as Record<string, unknown>).agentId).toBeNull();
+
+    // 具体 agentId 优先于标记（与前端 buildParams 同口径）
+    const both = json(await fastify.inject({
+      method: 'GET',
+      url: '/v1/feedback/admin/list?agentIdNull=true&agentId=9',
+    }));
+    expect(both.code).toBe(0);
+    expect((calls.listDetails[1][0] as Record<string, unknown>).agentId).toBe(9);
+
+    // 缺省仍是不筛选（undefined），不能被误判成 null
+    const plain = json(await fastify.inject({ method: 'GET', url: '/v1/feedback/admin/list' }));
+    expect(plain.code).toBe(0);
+    expect((calls.listDetails[2][0] as Record<string, unknown>).agentId).toBeUndefined();
+    await fastify.close();
+  });
+
   it('dismiss 返回 updated 并透传操作人', async () => {
     const { deps, calls } = makeDeps();
     const fastify = await app(deps);

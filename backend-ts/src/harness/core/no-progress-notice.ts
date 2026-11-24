@@ -77,6 +77,35 @@ const SEND_MEDIA_SEMANTIC_KEYS = ['success', 'channel', 'channelStatus', 'filena
  */
 const SHELL_SEMANTIC_KEYS = ['exit_code', 'output', 'truncated', 'completed', 'current_workdir'] as const;
 
+/**
+ * create_scheduled_task 只取语义字段：`task_id` 是自增 id（每次调用必不同），不进全局
+ * 黑名单（spawn/check 系工具靠它做语义身份）；`next_fire_time` / `message` 由创建时刻
+ * 推导（cron 类任务的「下次执行」随创建时间变化），剔除后才能识别「同参数反复创建
+ * 同一任务」的退化循环。
+ */
+const SCHEDULED_TASK_SEMANTIC_KEYS = ['success', 'name', 'cron_expression', 'session_id'] as const;
+
+/**
+ * create_signal_watcher 只取语义字段：`watcher_id` 是自增 id；`message` 是 name/间隔/
+ * 会话的拼装文案（信息已被其余字段覆盖），剔除。
+ */
+const SIGNAL_WATCHER_SEMANTIC_KEYS = [
+  'success', 'name', 'probe_type', 'target', 'interval_minutes', 'status', 'trigger_mode', 'execute_session_id',
+] as const;
+
+/**
+ * 按工具归一化的语义白名单：key = 工具名，value = 进签名的语义字段（其余一律剔除）。
+ * 结果含随机 id / 传输字段的工具必须在这里登记——漏补即漏报（见 VOLATILE_RESULT_KEYS 注释）。
+ * 用 Map 而非对象字面量：toolName 来自模型输出，`constructor` 之类会命中对象原型链。
+ */
+const SEMANTIC_KEYS_BY_TOOL = new Map<string, readonly string[]>([
+  ['send_image', SEND_MEDIA_SEMANTIC_KEYS],
+  ['send_file', SEND_MEDIA_SEMANTIC_KEYS],
+  ['shell', SHELL_SEMANTIC_KEYS],
+  ['create_scheduled_task', SCHEDULED_TASK_SEMANTIC_KEYS],
+  ['create_signal_watcher', SIGNAL_WATCHER_SEMANTIC_KEYS],
+]);
+
 /** 调用级豁免：长等待 / 显式未完成结果不参与 streak。 */
 export const NO_PROGRESS_EXEMPT_CALLS: ReadonlyArray<(call: NoProgressCall) => boolean> = [
   (call) => call.toolName === 'shell' && isShellWaitAction(call.argumentsJson),
@@ -272,32 +301,25 @@ function buildRoundCalls(
 
 function normalizeResult(toolName: string, content: string): string {
   const parsed = parseJson(content);
-  if (toolName === 'send_image' || toolName === 'send_file') {
-    // 统一发送工具（2026-11-18-unified-send-media §5.3）：delivery.url 含随机文件名，
-    // error 是失败原因文本——都剔除；只留四语义字段，通道失败转成功算有进展
+  const semanticKeys = SEMANTIC_KEYS_BY_TOOL.get(toolName);
+  if (semanticKeys != null) {
+    // 按工具归一化（白名单）：只留语义字段，随机 id / 传输字段 / 时间推导字段全剔除
     if (parsed.ok && isPlainObject(parsed.value)) {
-      const node = parsed.value;
-      const picked: Record<string, unknown> = {};
-      for (const key of SEND_MEDIA_SEMANTIC_KEYS) {
-        if (key in node) picked[key] = node[key];
-      }
-      return stableStringify(picked);
-    }
-    return trimTrailingWhitespace(content);
-  }
-  if (toolName === 'shell') {
-    if (parsed.ok && isPlainObject(parsed.value)) {
-      const node = parsed.value;
-      const picked: Record<string, unknown> = {};
-      for (const key of SHELL_SEMANTIC_KEYS) {
-        if (key in node) picked[key] = node[key];
-      }
-      return stableStringify(picked);
+      return stableStringify(pickSemanticKeys(parsed.value, semanticKeys));
     }
     return trimTrailingWhitespace(content);
   }
   if (parsed.ok) return stableStringify(stripVolatile(parsed.value));
   return trimTrailingWhitespace(content);
+}
+
+/** 按白名单挑语义字段（缺失的键不占位），随后稳定序列化。 */
+function pickSemanticKeys(node: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  const picked: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (key in node) picked[key] = node[key];
+  }
+  return picked;
 }
 
 function stripVolatile(value: unknown): unknown {
