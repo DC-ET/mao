@@ -975,18 +975,25 @@ async function copyMessage() {
   font-size: var(--aw-text-caption);
 }
 
-/* 助手回复无气泡，用户消息只能靠实心底色认出：浓度别低于 ink 8%，
-   低了在白底上近乎白色，长会话里找不到自己的问题 */
+/* 用户消息用实心主色 + 白字：助手回复里的行内代码、步骤条、文件面板全是灰底，
+   灰/浅色系气泡会混进去，长会话里找不到自己的问题。气泡内元素一律改走半透明白。 */
 .user-text {
-  color: var(--aw-ink);
-  background: color-mix(in srgb, var(--aw-ink) 8%, var(--aw-canvas));
+  color: #fff;
+  background: var(--aw-primary);
   border-top-right-radius: var(--aw-radius-xs);
   white-space: pre-line;
   padding: 9px 16px;
 }
 
-:root[data-theme="dark"] .user-text {
-  background: color-mix(in srgb, var(--aw-ink) 12%, var(--aw-canvas));
+.user-text ::selection {
+  background: rgba(255, 255, 255, 0.35);
+  color: #fff;
+}
+
+.user-text :deep(.quick-command-tag),
+.user-text :deep(.file-reference-tag) {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
 }
 
 .user-text.collapsed .user-text-content {
@@ -1008,7 +1015,7 @@ async function copyMessage() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--aw-ink-muted-64);
+  color: rgba(255, 255, 255, 0.72);
   font-size: var(--aw-text-fine);
 }
 
@@ -1033,18 +1040,16 @@ async function copyMessage() {
   padding: 2px 0;
   border: none;
   background: none;
-  color: var(--aw-primary);
+  color: rgba(255, 255, 255, 0.85);
   font-size: var(--aw-text-fine);
+  text-decoration: underline;
+  text-underline-offset: 3px;
   cursor: pointer;
   line-height: 1.5;
 }
 
 .user-collapse-toggle:hover {
-  opacity: 0.7;
-}
-
-:root[data-theme="dark"] .user-collapse-toggle {
-  color: var(--aw-primary-on-dark);
+  color: #fff;
 }
 
 .assistant-text {

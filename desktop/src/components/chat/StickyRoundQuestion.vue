@@ -96,7 +96,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   max-width: min(60%, 480px);
-  padding: 6px 12px 6px 14px;
+  padding: 5px 12px 5px 6px;
   border: 1px solid color-mix(in srgb, var(--aw-ink) 8%, transparent);
   border-radius: var(--aw-radius-pill);
   /* 毛玻璃：下面滚动的正文只透出模糊色块，不和摘要文字打架 */
@@ -118,9 +118,14 @@ onUnmounted(() => {
   transform: translateY(-1px);
 }
 
+/* 与用户气泡同色，一眼对上「这是我发的」 */
 .sticky-label {
   flex-shrink: 0;
-  color: var(--aw-ink-muted-48);
+  padding: 1px 8px;
+  border-radius: var(--aw-radius-pill);
+  background: var(--aw-primary);
+  color: #fff;
+  font-size: var(--aw-text-micro);
 }
 
 .sticky-text {
