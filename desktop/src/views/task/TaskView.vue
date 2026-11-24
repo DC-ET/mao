@@ -1146,6 +1146,7 @@ async function handleDeleteSideTask(sideSessionId: number) {
   if (tab) {
     closeTab(tab.id)
     draftStore.clearDraftAndMark(tab.id)
+    if (sideSessionId > 0) draftStore.clearDraftAndMark(`side:${sideSessionId}`)
   }
   sessionStore.removeSideTask(parentSessionId, sideSessionId)
   // 递归口径下被删任务的深层后代成为孤儿（仍残留在平铺缓存里），按服务端为准整体刷新剔除
@@ -1173,6 +1174,7 @@ async function handlePromoteSideTask(sideSessionId: number) {
     if (tab) {
       closeTab(tab.id)
       draftStore.clearDraftAndMark(tab.id)
+      if (sideSessionId > 0) draftStore.clearDraftAndMark(`side:${sideSessionId}`)
     }
     sessionStore.removeSideTask(parentSessionId, sideSessionId)
     // 提升后其边路子树跟随新主会话、从旧树消失：按服务端为准刷新旧根的平铺列表剔除子树

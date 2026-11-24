@@ -817,6 +817,7 @@ export function createSessionListModule(ctx: {
         viewingSideTaskId.value = null
       }
       useDraftStore().clearDraftAndMark(`s:${sid}`)
+      useDraftStore().clearDraftAndMark(`side:${sid}`)
       return true
     } catch {
       // 拦截器已提示失败；返回 false 供调用方停止后续跳转，避免删除失败仍表现为成功

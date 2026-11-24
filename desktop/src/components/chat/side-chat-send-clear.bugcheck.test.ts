@@ -90,10 +90,9 @@ describe('边路发送流程接线', () => {
     expect(sendBody).toContain('clearInputIfUnedited(sentText, generation)')
   })
 
-  it('保留各自 draftKey 语义：入队清 props.tabId，保存确认清发送前捕获的 tabId', () => {
+  it('入队和保存确认都清发送开始时捕获的稳定草稿键', () => {
     const sendBody = fnBody(sidePanel, 'async function handleChatSend')
-    expect(sendBody).toContain('draftStore.clearDraft(props.tabId)')
-    expect(sendBody).toContain('const draftKeyAtSend = props.tabId')
-    expect(sendBody).toContain('draftStore.clearDraft(draftKeyAtSend)')
+    expect(sendBody).toContain('const draftKeyAtSend = draftKey.value')
+    expect(sendBody.match(/draftStore.clearDraft\(draftKeyAtSend\)/g) ?? []).toHaveLength(2)
   })
 })

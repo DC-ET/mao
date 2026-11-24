@@ -214,6 +214,14 @@
   color: var(--aw-tag-file-ink);
 }
 
+.draft-file-loading {
+  margin: 0;
+  padding: 4px 16px 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--el-text-color-secondary);
+}
+
 /* Pending files */
 .pending-files {
   display: flex;

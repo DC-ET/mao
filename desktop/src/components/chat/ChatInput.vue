@@ -80,6 +80,7 @@
     </div>
 
     <!-- Pending files -->
+    <p v-if="fileLoadHint" class="draft-file-loading" role="status">正在恢复附件</p>
     <ChatPendingFileList
       :pending-files="pendingFiles"
       :disabled="disabled"
@@ -185,6 +186,7 @@ import { useEditorTagPanels, type EditorPanelHandle } from '../../composables/us
 import type { Agent } from '../../stores/agent'
 import { useSessionStore, type CloudProject, type LocalWorkspaceSummary } from '../../stores/session'
 import { useDraftStore, type DraftEntry } from '../../stores/draft'
+import { previewUrlForRestoredFile } from '../../stores/draft-persist'
 import {
   capReplyQuote,
   serializeReplyQuotes,
@@ -312,6 +314,10 @@ const unregisterChatInput = inject<(key: string) => void>('unregisterChatInput',
 // ===== State =====
 const draftStore = useDraftStore()
 const pendingFiles = ref<{ file: File; previewUrl: string; localPath?: string; originalFile?: File }[]>([])
+const fileLoadHint = ref(false)
+let fileLoadHintTimer: ReturnType<typeof setTimeout> | null = null
+/** setContent 会同步触发 onUpdate。恢复过程中编辑器状态还没对齐，先别把半成品写进草稿。 */
+let restoringDraft = false
 const replyQuotes = ref<ReplyQuote[]>([])
 const draggingFile = ref(false)
 const editorContent = ref('')
@@ -434,7 +440,7 @@ const editor = useEditor({
     handlePaste: (_view, event) => {
       if (props.disabled) return true
       const items = event.clipboardData?.items
-      if (items) {
+      if (items && !attachmentsBlocked()) {
         let handledFile = false
         let warnedImageLimit = false
         for (const item of Array.from(items)) {
@@ -573,6 +579,8 @@ const editor = useEditor({
   onUpdate: ({ editor: ed }) => {
     editorContent.value = ed.getText({ blockSeparator: '\n' })
     panels.handleEditorUpdate()
+    // 停在当前会话刷新时，卸载钩子经常来不及跑。文字进内存后由 store 防抖落库。
+    persistEditor('debounce')
   },
 })
 
@@ -596,10 +604,20 @@ function buildCurrentDraft(): DraftEntry {
   }
 }
 
+/** 附件恢复完成前，编辑器里的空列表不能覆盖库里的文件。 */
+function attachmentsBlocked(): boolean {
+  return !!props.draftKey && draftStore.isFileLoading(props.draftKey)
+}
+
+function persistEditor(mode: 'debounce' | 'now', key: string | null | undefined = props.draftKey) {
+  if (restoringDraft) return
+  if (!key || draftStore.isCleared(key)) return
+  draftStore.setDraft(key, buildCurrentDraft(), mode)
+}
+
 /** 将当前输入内容写入草稿槽位；key 为空或已被显式清除时跳过 */
 function saveDraft(key?: string | null) {
-  if (!key || draftStore.isCleared(key)) return
-  draftStore.setDraft(key, buildCurrentDraft())
+  persistEditor('now', key)
 }
 
 /**
@@ -608,25 +626,75 @@ function saveDraft(key?: string | null) {
  */
 function restoreDraft(key?: string | null) {
   if (!editor.value) return
-  const d = key ? draftStore.getDraft(key) : undefined
-  if (d) {
-    editor.value.commands.setContent(d.html || '')
-    editorContent.value = d.text
-    // 浅拷贝隔离 store 快照：移除待发文件时的 splice/revoke 不影响草稿槽位
-    pendingFiles.value = d.files.map((item) => ({ ...item }))
-    replyQuotes.value = (d.quotes ?? []).map(quote => ({ ...quote }))
-  } else {
-    editor.value.commands.clearContent()
-    editorContent.value = ''
-    pendingFiles.value = []
-    replyQuotes.value = []
+  restoringDraft = true
+  let textOnlyKey: string | null = null
+  try {
+    const d = key ? draftStore.getDraft(key) : undefined
+    if (d) {
+      editor.value.commands.setContent(d.html || '')
+      editorContent.value = d.text
+      // 浅拷贝隔离 store 快照：移除待发文件时的 splice/revoke 不影响草稿槽位
+      pendingFiles.value = d.files.map((item) => ({ ...item }))
+      replyQuotes.value = (d.quotes ?? []).map(quote => ({ ...quote }))
+    } else {
+      const meta = key ? draftStore.getDraftMeta(key) : undefined
+      if (meta && key) {
+        // 先标上 filesLoading，随后的落库才不会把空附件列表写回库。
+        const token = meta.files.length > 0 ? draftStore.startFileLoad(key) : 0
+        pendingFiles.value = []
+        replyQuotes.value = (meta.quotes ?? []).map(quote => ({ ...quote }))
+        editor.value.commands.setContent(meta.html || '')
+        editorContent.value = meta.text
+        if (meta.files.length > 0) void recoverDraftFiles(key, token)
+        else textOnlyKey = key
+      } else {
+        editor.value.commands.clearContent()
+        editorContent.value = ''
+        pendingFiles.value = []
+        replyQuotes.value = []
+      }
+    }
+  } finally {
+    restoringDraft = false
   }
+  if (textOnlyKey) draftStore.setDraft(textOnlyKey, buildCurrentDraft(), 'now')
   refreshFileQuoteStale()
 }
 
+function clearFileLoadHint() {
+  if (fileLoadHintTimer) clearTimeout(fileLoadHintTimer)
+  fileLoadHintTimer = null
+  fileLoadHint.value = false
+}
+
+async function recoverDraftFiles(key: string, token: number) {
+  clearFileLoadHint()
+  fileLoadHintTimer = setTimeout(() => {
+    if (props.draftKey === key && draftStore.isFileLoading(key)) fileLoadHint.value = true
+  }, 1000)
+  try {
+    const files = await draftStore.readDraftFiles(key, token)
+    if (!files || props.draftKey !== key || !draftStore.isCurrentLoad(key, token)) return
+    pendingFiles.value = files.map(item => ({
+      file: item.file,
+      originalFile: item.originalFile,
+      localPath: item.localPath,
+      previewUrl: previewUrlForRestoredFile(item.file),
+    }))
+    draftStore.finishFileLoad(key, token, buildCurrentDraft())
+  } finally {
+    if (props.draftKey === key) clearFileLoadHint()
+  }
+}
+
 watch(() => props.draftKey, (newKey, oldKey) => {
-  // 先保存旧键内容，再恢复新键草稿
+  // 先按 filesLoading 把文字写上（附件列表仍沿用 meta），再取消这次字节回填。
   saveDraft(oldKey)
+  if (oldKey) {
+    draftStore.cancelFileLoad(oldKey)
+    draftStore.deactivateDraftKey(oldKey)
+  }
+  if (newKey) draftStore.activateDraftKey(newKey)
   restoreDraft(newKey)
 })
 
@@ -678,7 +746,7 @@ const {
 // ===== File handling =====
 
 function handleFileSelect(event: Event) {
-  if (props.disabled) return
+  if (props.disabled || attachmentsBlocked()) return
   const input = event.target as HTMLInputElement
   if (input.files) {
     for (const file of Array.from(input.files)) {
@@ -699,6 +767,7 @@ async function checkFileSize(file: File): Promise<{ ok: boolean; limitMb: number
 }
 
 function addPendingImage(file: File) {
+  if (attachmentsBlocked()) return
   if (pendingFiles.value.length >= MAX_PENDING_ATTACHMENTS) {
     ElMessage.warning('最多上传 10 个附件')
     return
@@ -706,6 +775,7 @@ function addPendingImage(file: File) {
   // 同步入队占位，避免循环内长度检查被异步校验绕过
   const entry = { file, previewUrl: URL.createObjectURL(file), originalFile: file }
   pendingFiles.value.push(entry)
+  saveDraft(props.draftKey)
   checkFileSize(file).then(({ ok, limitMb }) => {
     if (!ok) {
       ElMessage.warning(`图片 ${file.name} 超过 ${limitMb}MB 限制`)
@@ -717,6 +787,7 @@ function addPendingImage(file: File) {
 
 /** 非图片文件暂存到待发列表，发送时再处理（CLOUD 懒上传 / LOCAL 懒拷贝，无需预先创建会话）。 */
 async function addPendingFile(file: File) {
+  if (attachmentsBlocked()) return
   if (props.executionMode === 'LOCAL' && !isElectronClient) {
     ElMessage.warning('浏览器端暂不支持本地任务附件，请在桌面客户端添加')
     return
@@ -743,6 +814,7 @@ async function addPendingFile(file: File) {
     removeEntry()
     return
   }
+  saveDraft(props.draftKey)
   // LOCAL 模式首次暂存时明示拷贝语义：文件不进服务端，只落本机 Mao 目录
   if (isLocalMode && pendingFiles.value.length === 1) {
     ElMessage.info('文件将在发送时复制到本机 Mao 目录（~/.mao/attachments），不出本机')
@@ -780,7 +852,7 @@ const annotatingFile = computed(() => {
 })
 
 function startAnnotate(index: number) {
-  if (annotatingEntry.value) return
+  if (attachmentsBlocked() || annotatingEntry.value) return
   const entry = pendingFiles.value[index]
   if (entry && entry.file.type.startsWith('image/')) annotatingEntry.value = entry
 }
@@ -797,6 +869,7 @@ function handleAnnotateConfirm(file: File) {
   if (idx < 0) return
   if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl)
   pendingFiles.value[idx] = { ...entry, file, previewUrl: URL.createObjectURL(file) }
+  saveDraft(props.draftKey)
   // 标注产物不再走 addPendingImage 的校验-移除路径（撤掉会毁掉用户刚画的标注）：
   // 原图已过校验，产物超限只警示，服务端上传层有最终兜底
   void checkFileSize(file).then(({ ok, limitMb }) => {
@@ -811,9 +884,11 @@ function removePendingFileAt(idx: number) {
     URL.revokeObjectURL(item.previewUrl)
   }
   pendingFiles.value.splice(idx, 1)
+  saveDraft(props.draftKey)
 }
 
 function removeFile(index: number) {
+  if (attachmentsBlocked()) return
   removePendingFileAt(index)
 }
 
@@ -838,7 +913,7 @@ function handleDragLeave(e: DragEvent) {
 }
 
 function handleDropFiles(e: DragEvent) {
-  if (props.disabled) return
+  if (props.disabled || attachmentsBlocked()) return
   draggingFile.value = false
   const files = e.dataTransfer?.files
   if (!files || files.length === 0) return
@@ -1113,6 +1188,7 @@ function clearInput() {
 }
 
 onMounted(() => {
+  if (props.draftKey) draftStore.activateDraftKey(props.draftKey)
   registerChatInput(props.registerKey, { insertFileReference, addReplyQuote, insertFileRangeQuote })
   restoreDraft(props.draftKey)
 })
@@ -1153,12 +1229,17 @@ onBeforeUnmount(() => {
   }
   // 关闭面板 + 清理文件搜索防抖（逻辑归一到 composable，技术方案 §4.4）
   panels.closeAll()
-  // 兜底保存当前草稿（覆盖 KeepAlive 淘汰 / 路由离开）
+  // 兜底保存当前草稿（覆盖 KeepAlive 淘汰 / 路由离开）。刷新不一定走得到这里。
   try {
     saveDraft(props.draftKey)
   } catch {
     // 编辑器已随父级卸载时 getHTML 可能抛错，不能阻断路由切换
   }
+  if (props.draftKey) {
+    draftStore.cancelFileLoad(props.draftKey)
+    draftStore.deactivateDraftKey(props.draftKey)
+  }
+  clearFileLoadHint()
   const entry = props.draftKey ? draftStore.getDraft(props.draftKey) : undefined
   // 预览 URL 所有权已随草稿转移：仍有草稿条目时不 revoke，避免切回后预览失效
   if (!entry) {
