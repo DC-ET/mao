@@ -2,10 +2,10 @@ import { nextTick, ref } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
 import { useGitManager } from './useGitManager'
 import type { WorkspaceGitProvider } from './workspace-git-provider'
-import type { GitChangedFile, GitLogEntry } from '../types/git'
+import type { GitChangedFile, GitLogEntry, GitLogQuery } from '../types/git'
 
 function logEntry(hash: string, title: string): GitLogEntry {
-  return { hash, shortHash: hash.slice(0, 7), title, author: 'Test', date: '2026-10-28T10:00:00+08:00' }
+  return { hash, shortHash: hash.slice(0, 7), title, author: 'Test', date: '2026-10-28T10:00:00+08:00', parents: [] }
 }
 
 function fakeProvider(overrides: Partial<WorkspaceGitProvider> = {}) {
@@ -544,10 +544,10 @@ describe('useGitManager 分支对比', () => {
   // ===== 历史筛选（path / keyword）与提交正文缓存 =====
 
   function recordingLogProvider(pages: Array<number>) {
-    const seen: Array<{ limit?: number; offset?: number; path?: string; keyword?: string }> = []
+    const seen: GitLogQuery[] = []
     let call = 0
     const { provider } = fakeProvider({
-      getLog: vi.fn(async (opts?: { limit?: number; offset?: number; path?: string; keyword?: string }) => {
+      getLog: vi.fn(async (opts?: GitLogQuery) => {
         seen.push({ ...(opts ?? {}) })
         const count = pages[Math.min(call, pages.length - 1)] ?? 0
         call++
@@ -574,6 +574,40 @@ describe('useGitManager 分支对比', () => {
       await vi.advanceTimersByTimeAsync(1)
       expect(seen.length).toBe(2)
       expect(seen[1]).toMatchObject({ limit: 50, offset: 0, path: 'src/app.ts', keyword: 'fix' })
+    } finally {
+      vi.useRealTimers()
+    }
+  });
+
+  it('setLogAllBranches 立即重载第一页并携带 allBranches，后续翻页沿用；切仓库后重置', async () => {
+    vi.useFakeTimers()
+    try {
+      const { provider, seen } = recordingLogProvider([50])
+      const providerRef = ref<WorkspaceGitProvider | null>(provider)
+      const manager = useGitManager(providerRef)
+      manager.activeView.value = 'history'
+      await vi.advanceTimersByTimeAsync(0)
+      expect(seen[0].allBranches).toBeUndefined()
+
+      manager.setLogFilters({ keyword: 'fix' })
+      manager.setLogAllBranches(true)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(seen.length).toBe(2) // 不等 300ms 防抖，且在途防抖被并入本次
+      expect(seen[1]).toMatchObject({ offset: 0, keyword: 'fix', allBranches: true })
+      await vi.advanceTimersByTimeAsync(500)
+      expect(seen.length).toBe(2)
+
+      manager.setLogAllBranches(true) // 值不变不重复请求
+      await vi.advanceTimersByTimeAsync(0)
+      expect(seen.length).toBe(2)
+
+      manager.loadMoreLog()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(seen[2]).toMatchObject({ offset: 50, allBranches: true })
+
+      providerRef.value = recordingLogProvider([1]).provider
+      await nextTick()
+      expect(manager.logAllBranches.value).toBe(false)
     } finally {
       vi.useRealTimers()
     }

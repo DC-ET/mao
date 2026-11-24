@@ -165,7 +165,7 @@ test('log resolves the repo root of a first-level repoPath', async (t) => {
 })
 
 test('log line parser tolerates empty decorations', () => {
-  const line = ['abc1234', 'abc1234', 'subject', 'Test User', '2026-10-28T10:00:00+08:00', 'HEAD -> main'].join('\u0000')
+  const line = ['abc1234', 'abc1234', 'subject', 'Test User', '2026-10-28T10:00:00+08:00', 'HEAD -> main', 'p1 p2'].join('\u0000')
   const entry = parseLogLine(line)
   assert.deepEqual(entry, {
     hash: 'abc1234',
@@ -174,10 +174,41 @@ test('log line parser tolerates empty decorations', () => {
     author: 'Test User',
     date: '2026-10-28T10:00:00+08:00',
     refs: 'HEAD -> main',
+    parents: ['p1', 'p2'],
   })
-  const bare = parseLogLine(['abc1234', 'abc1234', 'subject', 'Test User', '2026-10-28T10:00:00+08:00', ''].join('\u0000'))
+  const bare = parseLogLine(['abc1234', 'abc1234', 'subject', 'Test User', '2026-10-28T10:00:00+08:00', '', ''].join('\u0000'))
   assert.equal(bare.refs, undefined)
+  assert.deepEqual(bare.parents, [])
   assert.equal(parseLogLine('broken'), null)
+})
+
+test('log returns parents for merges and allBranches excludes stash', async (t) => {
+  const repo = initRepo(t)
+  const root = git(repo, ['rev-parse', 'HEAD'])
+  git(repo, ['checkout', '-b', 'feature'])
+  commitFile(repo, 'f.txt', 'f\n', 'feature work')
+  const featureTip = git(repo, ['rev-parse', 'HEAD'])
+  git(repo, ['checkout', 'main'])
+  commitFile(repo, 'm.txt', 'm\n', 'main work')
+  const mainTip = git(repo, ['rev-parse', 'HEAD'])
+  git(repo, ['merge', '--no-ff', '-m', "Merge branch 'feature'", 'feature'])
+  git(repo, ['checkout', '-b', 'other'])
+  commitFile(repo, 'o.txt', 'o\n', 'other only')
+  git(repo, ['checkout', 'main'])
+  fs.writeFileSync(path.join(repo, 'README.md'), 'dirty\n')
+  git(repo, ['stash', 'push', '-m', 'wip-stash'])
+
+  const entries = await getGitLog(repo, undefined, {})
+  assert.deepEqual(entries[0].parents, [mainTip, featureTip])
+  assert.deepEqual(entries.at(-1).parents, [])
+  assert.equal(entries.at(-1).hash, root)
+  assert.ok(!entries.some((e) => e.title === 'other only'))
+
+  const all = await getGitLog(repo, undefined, { allBranches: true })
+  assert.ok(all.some((e) => e.title === 'other only'))
+  assert.ok(!all.some((e) => e.title.includes('wip-stash') || e.title.startsWith('index on')))
+  const index = new Map(all.map((e, i) => [e.hash, i]))
+  for (const e of all) for (const p of e.parents) assert.ok(index.get(p) > index.get(e.hash))
 })
 
 test('commit files merge numstat for a same-directory rename and reject unknown hashes', async (t) => {

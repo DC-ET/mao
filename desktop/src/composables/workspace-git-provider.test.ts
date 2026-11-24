@@ -60,9 +60,10 @@ describe('createLocalGitProvider git manager methods', () => {
     ;(globalThis as any).window = { electronAPI: { gitLog } }
     const provider = createLocalGitProvider('/tmp/ws', '1')
 
-    const entries = await provider.getLog({ limit: 50, offset: 100 }, 'sub-repo')
-    expect(gitLog).toHaveBeenCalledWith('/tmp/ws', 'sub-repo', { limit: 50, offset: 100 })
+    const entries = await provider.getLog({ limit: 50, offset: 100, allBranches: true }, 'sub-repo')
+    expect(gitLog).toHaveBeenCalledWith('/tmp/ws', 'sub-repo', { limit: 50, offset: 100, allBranches: true })
     expect(entries).toHaveLength(1)
+    expect(entries[0].parents).toEqual([])
   })
 
   it('读方法遇 IPC { error } 抛错，供各视图展示错误 + 重试', async () => {
@@ -160,7 +161,8 @@ describe('createCloudGitProvider git manager methods', () => {
     vi.mocked(api.get).mockResolvedValue({ data: [{ hash: 'h' }] } as never)
     const provider = createCloudGitProvider('7')
 
-    expect(await provider.getLog({ limit: 50, offset: 0 }, 'r')).toHaveLength(1)
+    // 旧后端不返回 parents：兜底为 []
+    expect(await provider.getLog({ limit: 50, offset: 0 }, 'r')).toEqual([{ hash: 'h', parents: [] }])
     expect(vi.mocked(api.get).mock.calls[0]).toEqual(['/files/workspace-git-log', {
       params: { sessionId: 7, repoPath: 'r', limit: 50, offset: 0, path: undefined },
     }])
@@ -168,6 +170,13 @@ describe('createCloudGitProvider git manager methods', () => {
     vi.mocked(api.get).mockResolvedValue({ data: null } as never)
     expect(await provider.getBranches('r')).toEqual([])
     expect(vi.mocked(api.get).mock.calls[1]).toEqual(['/files/workspace-git-branches', { params: { sessionId: 7, repoPath: 'r' } }])
+  })
+
+  it('getLog 的 allBranches 透传为查询参数，已有 parents 原样保留', async () => {
+    vi.mocked(api.get).mockResolvedValue({ data: [{ hash: 'h', parents: ['p'] }] } as never)
+    const provider = createCloudGitProvider('7')
+    expect(await provider.getLog({ allBranches: true })).toEqual([{ hash: 'h', parents: ['p'] }])
+    expect(vi.mocked(api.get).mock.calls[0][1]).toMatchObject({ params: { allBranches: true } })
   })
 
   it('getCommitFileDiff 请求失败转 unavailableReason，不抛错', async () => {

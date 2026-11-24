@@ -207,6 +207,98 @@ describeGit('WorkspaceGitService', () => {
     expect(await service.getLog(unborn, null, {})).toEqual([]);
   });
 
+  // ===== 提交图谱：parents / --date-order / allBranches =====
+
+  function commitFile(repo: string, name: string, message: string, env?: Record<string, string>): string {
+    writeFileSync(join(repo, name), `${name}\n`);
+    run(repo, 'git', 'add', name);
+    const r = spawnSync('git', ['commit', '-m', message], { cwd: repo, encoding: 'utf8', env: { ...process.env, ...env } });
+    if (r.status !== 0) throw new Error(`${r.stdout}${r.stderr}`);
+    return run(repo, 'git', 'rev-parse', 'HEAD').trim();
+  }
+
+  it('getLogReturnsParentsForLinearAndRootCommits', async () => {
+    const { service, repo } = await setupRepo();
+    const root = run(repo, 'git', 'rev-parse', 'HEAD').trim();
+    const second = commitFile(repo, 'a.txt', 'second');
+    const entries = await service.getLog(repo, null, {});
+    expect(entries.map((e) => e.hash)).toEqual([second, root]);
+    expect(entries[0].parents).toEqual([root]);
+    expect(entries[1].parents).toEqual([]);
+  });
+
+  it('getLogMergeCommitListsBothParentsInOrder', async () => {
+    const { service, repo, branch } = await setupRepo();
+    run(repo, 'git', 'checkout', '-b', 'feature');
+    const featureTip = commitFile(repo, 'f.txt', 'feature work');
+    run(repo, 'git', 'checkout', branch);
+    const mainTip = commitFile(repo, 'm.txt', 'main work');
+    run(repo, 'git', 'merge', '--no-ff', '-m', "Merge branch 'feature'", 'feature');
+    const entries = await service.getLog(repo, null, {});
+    expect(entries[0].title).toBe("Merge branch 'feature'");
+    expect(entries[0].parents).toEqual([mainTip, featureTip]);
+  });
+
+  it('getLogUsesDateOrderSoChildrenPrecedeParents', async () => {
+    const { service, repo, branch } = await setupRepo();
+    // 分支上的父提交时间晚于合并后的子提交（时钟偏差）：默认顺序会把父提交排到前面
+    run(repo, 'git', 'checkout', '-b', 'skewed');
+    const future = '2030-01-01T00:00:00+0000';
+    const skewed = commitFile(repo, 's.txt', 'skewed parent', { GIT_COMMITTER_DATE: future, GIT_AUTHOR_DATE: future });
+    run(repo, 'git', 'checkout', branch);
+    commitFile(repo, 'm.txt', 'main work');
+    const past = '2020-01-01T00:00:00+0000';
+    const r = spawnSync('git', ['merge', '--no-ff', '-m', 'merge skewed', 'skewed'], {
+      cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_COMMITTER_DATE: past, GIT_AUTHOR_DATE: past },
+    });
+    expect(r.status).toBe(0);
+    const entries = await service.getLog(repo, null, {});
+    const index = new Map(entries.map((e, i) => [e.hash, i]));
+    for (const entry of entries) {
+      for (const parent of entry.parents) expect(index.get(parent)!).toBeGreaterThan(index.get(entry.hash)!);
+    }
+    expect(index.has(skewed)).toBe(true);
+  });
+
+  it('getLogAllBranchesIncludesOtherBranchesButNotStash', async () => {
+    const { service, repo, branch } = await setupRepo();
+    run(repo, 'git', 'checkout', '-b', 'other');
+    commitFile(repo, 'o.txt', 'other only');
+    run(repo, 'git', 'checkout', branch);
+    writeFileSync(join(repo, 'README.md'), 'dirty\n');
+    run(repo, 'git', 'stash', 'push', '-m', 'wip-stash');
+
+    const headOnly = await service.getLog(repo, null, {});
+    expect(headOnly.map((e) => e.title)).not.toContain('other only');
+    const all = await service.getLog(repo, null, { allBranches: true });
+    expect(all.map((e) => e.title)).toContain('other only');
+    expect(all.map((e) => e.title).some((t) => t.includes('wip-stash'))).toBe(false);
+    expect(all.map((e) => e.title).some((t) => t.startsWith('index on'))).toBe(false);
+
+    // 与关键词筛选组合仍生效
+    const filtered = await service.getLog(repo, null, { allBranches: true, keyword: 'other' });
+    expect(filtered.map((e) => e.title)).toEqual(['other only']);
+  });
+
+  it('getLogAllBranchesOnUnbornRepositoryReturnsEmpty', async () => {
+    const { dir, service } = await setupRepo();
+    const unborn = join(dir, 'unborn');
+    mkdirSync(unborn, { recursive: true });
+    run(unborn, 'git', 'init');
+    expect(await service.getLog(unborn, null, { allBranches: true })).toEqual([]);
+  });
+
+  it('getLogAllBranchesWithoutLocalHeadStillShowsRemoteBranches', async () => {
+    const { dir, service, repo, branch } = await setupRepo();
+    const fresh = join(dir, 'fresh');
+    mkdirSync(fresh, { recursive: true });
+    run(fresh, 'git', 'init');
+    run(fresh, 'git', 'fetch', repo, `${branch}:refs/remotes/origin/${branch}`);
+    expect(await service.getLog(fresh, null, {})).toEqual([]);
+    const all = await service.getLog(fresh, null, { allBranches: true });
+    expect(all.map((e) => e.title)).toEqual(['init']);
+  });
+
   // ===== 提交历史 keyword 搜索（--grep --fixed-strings -i）=====
 
   /** 三个提交：fix: alpha bug（a-alpha.txt）/ feat: beta feature（b-beta.txt）/ fix: gamma issue（c-gamma.txt）。 */

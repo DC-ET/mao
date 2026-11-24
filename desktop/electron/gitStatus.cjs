@@ -700,8 +700,8 @@ function numstatNewPath(raw) {
 
 function parseLogLine(line) {
   const parts = line.split('\0')
-  if (parts.length < 6) return null
-  const [hash, shortHash, title, author, date, refs] = parts
+  if (parts.length < 7) return null
+  const [hash, shortHash, title, author, date, refs, parents] = parts
   if (!hash.trim()) return null
   const entry = {
     hash: hash.trim(),
@@ -709,6 +709,7 @@ function parseLogLine(line) {
     title,
     author: author.trim(),
     date: date.trim(),
+    parents: parents.trim().split(/\s+/).filter(Boolean),
   }
   if (refs && refs.trim()) entry.refs = refs
   return entry
@@ -766,14 +767,20 @@ function clampInt(value, fallback, min, max) {
  * 提交历史（分页，与后端 getLog 同命令同解析）。
  * @param {string} workspace
  * @param {string} [repoPath]
- * @param {{limit?: number, offset?: number, path?: string, keyword?: string}} [options]
+ * 一律 --date-order（图谱单遍分道依赖子提交在父提交之前）；allBranches 用
+ * --branches --remotes --tags（不用 --all，避免带进 refs/stash），有 HEAD 时再加 HEAD。
+ * @param {{limit?: number, offset?: number, path?: string, keyword?: string, allBranches?: boolean}} [options]
  * @returns {Promise<object[]>}
  */
 async function getGitLog(workspace, repoPath, options = {}) {
   const repoRoot = await resolveRepoRoot(workspace, repoPath)
   const limit = clampInt(options.limit, 50, 1, 200)
   const offset = clampInt(options.offset, 0, 0, Number.MAX_SAFE_INTEGER)
-  const args = ['log', '--format=%H%x00%h%x00%s%x00%an%x00%aI%x00%D', '-n', String(limit), '--skip', String(offset)]
+  const args = ['log', '--format=%H%x00%h%x00%s%x00%an%x00%aI%x00%D%x00%P', '--date-order', '-n', String(limit), '--skip', String(offset)]
+  if (options.allBranches) {
+    args.push('--branches', '--remotes', '--tags')
+    if (await runGitOk(repoRoot, ['rev-parse', '--verify', '-q', 'HEAD']) != null) args.push('HEAD')
+  }
   // 提交信息关键词：--fixed-strings 字面匹配（正则元字符不解释）、-i 大小写不敏感，
   // trim 后截断 100 字符，空值不产生参数；keyword 组必须插在 `--` 之前。
   const keyword = options.keyword ? String(options.keyword).trim().slice(0, 100) : ''

@@ -159,12 +159,14 @@
         :remotes="remotes"
         :path-filter="logPathFilter"
         :keyword="logKeyword"
+        :all-branches="logAllBranches"
         @load-more="loadMoreLog"
         @retry="retryLog"
         @toggle-commit="toggleCommit"
         @open-commit-diff="handleOpenCommitDiff"
         @update:path-filter="setLogFilters({ path: $event })"
         @update:keyword="setLogFilters({ keyword: $event })"
+        @update:all-branches="setLogAllBranches"
         @add-file-to-chat="(p) => $emit('add-file-to-chat', p)"
         @add-commit-to-chat="(t) => $emit('add-commit-to-chat', t)"
       />
@@ -321,7 +323,7 @@ const manager = useGitManager(statusProviderRef)
 const {
   activeView, logEntries, logLoading, logError, logExhausted,
   expandedCommit, commitFiles, commitBodies, commitFilesLoading,
-  logPathFilter, logKeyword, setLogFilters,
+  logPathFilter, logKeyword, setLogFilters, logAllBranches, setLogAllBranches,
   loadMoreLog, retryLog, toggleCommit,
   branches, branchesLoading, branchesError, loadBranches,
   compareBase, compareTarget, compareResult, compareLoading, compareError, loadCompare,

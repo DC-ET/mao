@@ -1,7 +1,7 @@
 <template>
   <div class="git-history-view">
     <!-- 筛选条：路径过滤（后端既有参数）+ 提交信息搜索（keyword）；空仓库且无筛选时不渲染 -->
-    <div v-if="entries.length > 0 || pathFilter || keyword" class="git-history-filters">
+    <div v-if="entries.length > 0 || pathFilter || keyword || allBranches" class="git-history-filters">
       <input
         class="git-filter-input"
         :value="pathFilter"
@@ -16,21 +16,37 @@
         placeholder="按提交信息搜索"
         @input="$emit('update:keyword', ($event.target as HTMLInputElement).value)"
       />
+      <label class="git-filter-toggle" title="显示全部本地 / 远端分支与标签的提交；关闭时只看当前分支">
+        <input
+          type="checkbox"
+          :checked="allBranches"
+          @change="$emit('update:allBranches', ($event.target as HTMLInputElement).checked)"
+        />
+        <span>全部分支</span>
+      </label>
     </div>
+    <!-- 按路径 / 关键词过滤后相邻两行不一定是父子关系，画出的线是假的 -->
+    <div v-if="entries.length > 0 && !graphEnabled" class="git-graph-hint">筛选中不显示图谱</div>
     <div v-if="error && entries.length === 0" class="git-state git-error">
       <p>{{ error }}</p>
       <button class="git-retry" @click="$emit('retry')">重试</button>
     </div>
     <div v-else-if="loading && entries.length === 0" class="git-state">加载中…</div>
     <div v-else-if="entries.length === 0" class="git-state">尚无提交</div>
-    <div v-else class="git-log-list">
+    <div v-else class="git-log-list" :class="{ 'has-graph': graph }">
       <div
-        v-for="entry in entries"
+        v-for="(entry, index) in entries"
         :key="entry.hash"
         class="git-log-row"
         :class="{ expanded: expandedCommit === entry.hash }"
       >
         <div class="git-log-main" @click="$emit('toggle-commit', entry.hash)">
+          <GitGraphCell
+            v-if="graph"
+            :lanes="graphLanes"
+            :row="graph.rows[index]"
+            :dangling-bottom="exhausted && index === entries.length - 1"
+          />
           <el-icon :size="12" class="git-log-expand-icon">
             <ArrowRight v-if="expandedCommit !== entry.hash" />
             <ArrowDown v-else />
@@ -40,7 +56,10 @@
             title="点击复制完整提交哈希"
             @click.stop="copyHash(entry.hash)"
           >{{ entry.shortHash }}</span>
-          <span class="git-log-title" :title="entry.title">{{ entry.title || '（无标题）' }}</span>
+          <span v-if="entry.parents.length > 1" class="git-log-title is-merge" :title="entry.title">
+            <el-icon :size="12" class="git-log-merge-icon"><Share /></el-icon>{{ mergeTitle(entry) }}
+          </span>
+          <span v-else class="git-log-title" :title="entry.title">{{ entry.title || '（无标题）' }}</span>
           <span class="git-log-meta">
             <span v-for="ref in decorations(entry)" :key="`${ref.kind}:${ref.name}`" class="git-log-ref" :class="`is-${ref.kind}`">
               {{ ref.name }}
@@ -52,29 +71,32 @@
             <el-icon :size="12"><ChatDotRound /></el-icon>
           </span>
         </div>
-        <div v-if="expandedCommit === entry.hash" class="git-commit-files">
-          <!-- 提交正文（%B 去首行标题）：展开时才随文件清单带回，无正文不渲染 -->
-          <pre v-if="commitBodies?.get(entry.hash)" class="git-commit-body">{{ commitBodies.get(entry.hash) }}</pre>
-          <div v-if="commitFilesLoading && !commitFiles?.get(entry.hash)" class="git-commit-files-state">读取文件清单…</div>
-          <template v-else-if="commitFiles?.get(entry.hash)">
-            <div
-              v-for="file in commitFiles.get(entry.hash)"
-              :key="file.path"
-              class="git-commit-file"
-              @click="$emit('open-commit-diff', { hash: entry.hash, file })"
-            >
-              <span class="git-commit-file-badge" :class="badgeClass(file.changeType)">{{ changeTypeLabel(file.changeType) }}</span>
-              <span class="git-commit-file-path" :title="file.path">{{ file.path }}</span>
-              <span class="git-commit-file-stat">
-                <span v-if="file.insertions" class="git-add">+{{ file.insertions }}</span>
-                <span v-if="file.deletions" class="git-del">-{{ file.deletions }}</span>
-              </span>
-              <span class="git-log-quote" title="添加到对话" @click.stop="$emit('add-file-to-chat', file.path)">
-                <el-icon :size="12"><ChatDotRound /></el-icon>
-              </span>
-            </div>
-          </template>
-          <div v-else class="git-commit-files-state">该提交没有文件变更</div>
+        <div v-if="expandedCommit === entry.hash" class="git-commit-expand">
+          <GitGraphCell v-if="graph" :lanes="graphLanes" :pass-lanes="graph.rows[index].passLanes" />
+          <div class="git-commit-files">
+            <!-- 提交正文（%B 去首行标题）：展开时才随文件清单带回，无正文不渲染 -->
+            <pre v-if="commitBodies?.get(entry.hash)" class="git-commit-body">{{ commitBodies.get(entry.hash) }}</pre>
+            <div v-if="commitFilesLoading && !commitFiles?.get(entry.hash)" class="git-commit-files-state">读取文件清单…</div>
+            <template v-else-if="commitFiles?.get(entry.hash)">
+              <div
+                v-for="file in commitFiles.get(entry.hash)"
+                :key="file.path"
+                class="git-commit-file"
+                @click="$emit('open-commit-diff', { hash: entry.hash, file })"
+              >
+                <span class="git-commit-file-badge" :class="badgeClass(file.changeType)">{{ changeTypeLabel(file.changeType) }}</span>
+                <span class="git-commit-file-path" :title="file.path">{{ file.path }}</span>
+                <span class="git-commit-file-stat">
+                  <span v-if="file.insertions" class="git-add">+{{ file.insertions }}</span>
+                  <span v-if="file.deletions" class="git-del">-{{ file.deletions }}</span>
+                </span>
+                <span class="git-log-quote" title="添加到对话" @click.stop="$emit('add-file-to-chat', file.path)">
+                  <el-icon :size="12"><ChatDotRound /></el-icon>
+                </span>
+              </div>
+            </template>
+            <div v-else class="git-commit-files-state">该提交没有文件变更</div>
+          </div>
         </div>
       </div>
       <div class="git-log-footer">
@@ -89,11 +111,13 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ArrowDown, ArrowRight, ChatDotRound } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowRight, ChatDotRound, Share } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { GitChangedFile, GitLogEntry, GitRemoteInfo } from '../../types/git'
 import { formatRelativeTime, parseRefsDecorations, type RefDecoration } from '../../utils/git-manager'
+import { GRAPH_MAX_LANES, computeGitGraph, parseMergeTitle } from '../../utils/git-graph'
 import { copyText } from '../../utils/clipboard'
+import GitGraphCell from './GitGraphCell.vue'
 
 const props = defineProps<{
   entries: GitLogEntry[]
@@ -108,6 +132,8 @@ const props = defineProps<{
   remotes?: GitRemoteInfo[]
   pathFilter?: string
   keyword?: string
+  /** 历史范围：true = 全部本地 / 远端分支与标签 */
+  allBranches?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -117,11 +143,21 @@ const emit = defineEmits<{
   'open-commit-diff': [payload: { hash: string; file: GitChangedFile }]
   'update:pathFilter': [value: string]
   'update:keyword': [value: string]
+  'update:allBranches': [value: boolean]
   'add-file-to-chat': [path: string]
   'add-commit-to-chat': [text: string]
 }>()
 
 const remoteNames = computed(() => (props.remotes ?? []).map((r) => r.name))
+
+const graphEnabled = computed(() => !props.pathFilter?.trim() && !props.keyword?.trim())
+const graph = computed(() => (graphEnabled.value && props.entries.length > 0 ? computeGitGraph(props.entries) : null))
+const graphLanes = computed(() => Math.min(graph.value?.laneCount ?? 1, GRAPH_MAX_LANES))
+
+/** 合并提交：认识的默认合并标题简化为「A → B」，否则原文（仍按合并样式弱化）。 */
+function mergeTitle(entry: GitLogEntry): string {
+  return parseMergeTitle(entry.title) ?? (entry.title || '（无标题）')
+}
 
 function decorations(entry: GitLogEntry): RefDecoration[] {
   return parseRefsDecorations(entry.refs, remoteNames.value)
@@ -196,13 +232,19 @@ function badgeClass(type: string): string {
   background: var(--aw-surface-hover);
 }
 
+/* 上下不留 padding：图谱列需撑满行高，相邻行的连线才能首尾相接 */
 .git-log-main {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 12px;
+  min-height: 32px;
+  padding: 0 12px;
   cursor: pointer;
   font-size: var(--git-fs-row, 13px);
+}
+
+.git-log-list.has-graph .git-log-row {
+  border-bottom: none;
 }
 
 .git-log-main:hover {
@@ -231,6 +273,16 @@ function badgeClass(type: string): string {
   color: var(--aw-ink);
 }
 
+.git-log-title.is-merge {
+  color: var(--aw-ink-muted-64);
+}
+
+.git-log-merge-icon {
+  margin-right: 4px;
+  vertical-align: -1px;
+  color: var(--aw-ink-muted-48);
+}
+
 .git-log-meta {
   flex-shrink: 0;
   display: flex;
@@ -249,6 +301,8 @@ function badgeClass(type: string): string {
 }
 
 .git-log-date {
+  flex-shrink: 0;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
@@ -278,9 +332,23 @@ function badgeClass(type: string): string {
   color: var(--aw-warning);
 }
 
-.git-commit-files {
-  padding: 2px 12px 8px 30px;
+.git-commit-expand {
+  display: flex;
   background: var(--aw-canvas-parchment);
+}
+
+.git-commit-files {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 12px 8px 30px;
+}
+
+.git-log-list.has-graph .git-commit-expand {
+  padding-left: 12px;
+}
+
+.git-log-list.has-graph .git-commit-files {
+  padding-left: 18px;
 }
 
 .git-commit-files-state {
@@ -417,6 +485,31 @@ function badgeClass(type: string): string {
 
 .git-filter-input::placeholder {
   color: var(--aw-ink-muted-40);
+}
+
+.git-filter-toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--git-fs-meta, 12px);
+  color: var(--aw-ink-muted-64);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.git-filter-toggle input {
+  margin: 0;
+  accent-color: var(--aw-primary);
+  cursor: pointer;
+}
+
+.git-graph-hint {
+  padding: 4px 12px;
+  font-size: var(--git-fs-meta, 12px);
+  color: var(--aw-ink-muted-48);
+  border-bottom: 1px solid var(--aw-divider-soft);
 }
 
 /* 行级「添加到对话」：hover 显现，不改变行高与布局 */

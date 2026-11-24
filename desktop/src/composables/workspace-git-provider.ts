@@ -7,6 +7,7 @@ import type {
   GitCommitMessage,
   GitFileDiff,
   GitLogEntry,
+  GitLogQuery,
   GitOperationResult,
   GitOperationType,
   GitRemoteInfo,
@@ -30,8 +31,8 @@ export interface WorkspaceGitProvider {
   commitWithMessage(message: string, repoPath?: string): Promise<GitOperationResult>
   pull(repoPath?: string): Promise<GitOperationResult>
   push(repoPath?: string): Promise<GitOperationResult>
-  /** 提交历史（分页）。读取失败抛错，由调用方按视图展示错误 + 重试。path 按文件过滤；keyword 按提交信息字面搜索（大小写不敏感）。 */
-  getLog(opts?: { limit?: number; offset?: number; path?: string; keyword?: string }, repoPath?: string): Promise<GitLogEntry[]>
+  /** 提交历史（分页，--date-order）。读取失败抛错，由调用方按视图展示错误 + 重试。 */
+  getLog(opts?: GitLogQuery, repoPath?: string): Promise<GitLogEntry[]>
   /** 单次提交的文件变更清单。hash 不存在时抛错（不可与空提交混淆）。 */
   getCommitFiles(hash: string, repoPath?: string): Promise<GitCommitFilesResult>
   /**
@@ -140,6 +141,11 @@ function unwrapIpcArray<T>(data: T[] | { error?: string } | undefined | null): T
     throw new Error((data as { error: string }).error)
   }
   return []
+}
+
+/** 旧后端 / 旧 Electron 主进程不返回 parents：兜底为 []，图谱只画孤立圆点而不崩。 */
+function normalizeLogEntries(entries: GitLogEntry[]): GitLogEntry[] {
+  return entries.map((e) => (Array.isArray(e.parents) ? e : { ...e, parents: [] }))
 }
 
 async function recordLocalActivity(sessionId: number, repoPath: string | undefined, result: GitOperationResult, started: number) {
@@ -260,9 +266,9 @@ export function createLocalGitProvider(workspace: string, sessionId: string): Wo
       await recordLocalActivity(numericSessionId, repoPath, result, started)
       return result
     },
-    async getLog(opts?: { limit?: number; offset?: number; path?: string; keyword?: string }, repoPath?: string) {
+    async getLog(opts?: GitLogQuery, repoPath?: string) {
       const data = await window.electronAPI.gitLog(workspace, repoPath, opts)
-      return unwrapIpcArray<GitLogEntry>(data)
+      return normalizeLogEntries(unwrapIpcArray<GitLogEntry>(data))
     },
     async getCommitFiles(hash: string, repoPath?: string) {
       const data = await window.electronAPI.gitCommitFiles(workspace, repoPath, hash)
@@ -519,11 +525,19 @@ export function createCloudGitProvider(sessionId: string): WorkspaceGitProvider 
         return failedOperation('push', e)
       }
     },
-    async getLog(opts?: { limit?: number; offset?: number; path?: string; keyword?: string }, repoPath?: string) {
+    async getLog(opts?: GitLogQuery, repoPath?: string) {
       const { data } = await api.get('/files/workspace-git-log', {
-        params: { sessionId: numericSessionId, repoPath, limit: opts?.limit, offset: opts?.offset, path: opts?.path, keyword: opts?.keyword },
+        params: {
+          sessionId: numericSessionId,
+          repoPath,
+          limit: opts?.limit,
+          offset: opts?.offset,
+          path: opts?.path,
+          keyword: opts?.keyword,
+          allBranches: opts?.allBranches ? true : undefined,
+        },
       })
-      return Array.isArray(data) ? data : []
+      return Array.isArray(data) ? normalizeLogEntries(data) : []
     },
     async getCommitFiles(hash: string, repoPath?: string) {
       const { data } = await api.get('/files/workspace-git-commit', {

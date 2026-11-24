@@ -438,6 +438,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
       offset: queryOptInt(request, 'offset'),
       path: queryOptStr(request, 'path'),
       keyword: queryOptStr(request, 'keyword'),
+      allBranches: ['true', '1'].includes(queryOptStr(request, 'allBranches') ?? ''),
     }));
   });
 

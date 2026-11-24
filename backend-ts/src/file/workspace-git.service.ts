@@ -82,6 +82,8 @@ export interface GitLogEntryDTO {
   date: string;
   /** 原始 %D refs 装饰串；无装饰时缺省 */
   refs?: string;
+  /** 父提交完整哈希（%P）；根提交为空数组，merge 依次为当前分支、被合并分支 */
+  parents: string[];
 }
 
 export interface GitBranchInfoDTO {
@@ -169,7 +171,7 @@ export function isValidBranchRefName(name: string): boolean {
   return name.split('/').every((part) => part.length > 0 && !part.startsWith('.') && !part.endsWith('.lock'));
 }
 
-const LOG_FORMAT = '%H%x00%h%x00%s%x00%an%x00%aI%x00%D';
+const LOG_FORMAT = '%H%x00%h%x00%s%x00%an%x00%aI%x00%D%x00%P';
 const LOG_DEFAULT_LIMIT = 50;
 const LOG_MAX_LIMIT = 200;
 
@@ -372,16 +374,23 @@ export class WorkspaceGitService {
    * limit 钳制 [1,200] 默认 50；offset ≥ 0；path 可选（按文件过滤）；
    * keyword 可选（提交信息 `--grep` 字面匹配：--fixed-strings 不解释正则元字符、
    * -i 大小写不敏感，trim 后截断 100 字符，空值不产生参数）。
+   * 一律 --date-order：保证子提交排在全部父提交之前，前端图谱单遍分道依赖这一点。
+   * allBranches 用 --branches --remotes --tags（不用 --all：会带进 refs/stash 与 notes），
+   * 有 HEAD 时再加 HEAD 以覆盖游离 HEAD；本地无提交但有远端分支时不加 HEAD，否则 git 报错。
    */
   async getLog(
     sessionWorkspace: string,
     repoPath?: string | null,
-    opts?: { limit?: number; offset?: number; path?: string | null; keyword?: string | null },
+    opts?: { limit?: number; offset?: number; path?: string | null; keyword?: string | null; allBranches?: boolean },
   ): Promise<GitLogEntryDTO[]> {
     const repoRoot = await this.resolveRepoRoot(sessionWorkspace, repoPath);
     const limit = clampInt(opts?.limit, LOG_DEFAULT_LIMIT, 1, LOG_MAX_LIMIT);
     const offset = clampInt(opts?.offset, 0, 0, Number.MAX_SAFE_INTEGER);
-    const args = ['log', `--format=${LOG_FORMAT}`, '-n', String(limit), '--skip', String(offset)];
+    const args = ['log', `--format=${LOG_FORMAT}`, '--date-order', '-n', String(limit), '--skip', String(offset)];
+    if (opts?.allBranches) {
+      args.push('--branches', '--remotes', '--tags');
+      if (await this.runGitOk(repoRoot, ['rev-parse', '--verify', '-q', 'HEAD']) != null) args.push('HEAD');
+    }
     // keyword 组必须插在 `--` 之前；与 `-- <path>` 天然 AND 组合。
     const keyword = opts?.keyword?.trim().slice(0, 100);
     if (keyword) args.push(`--grep=${keyword}`, '--fixed-strings', '-i');
@@ -1086,8 +1095,8 @@ function parseNameStatusLine(line: string): GitChangedFileDTO | null {
 /** 解析 `git log --format=%H%x00%h%x00%s%x00%an%x00%aI%x00%D` 的一行（NUL 分隔字段）。 */
 function parseLogLine(line: string): GitLogEntryDTO | null {
   const parts = line.split('\0');
-  if (parts.length < 6) return null;
-  const [hash, shortHash, title, author, date, refs] = parts;
+  if (parts.length < 7) return null;
+  const [hash, shortHash, title, author, date, refs, parents] = parts;
   if (hash.trim().length === 0) return null;
   const entry: GitLogEntryDTO = {
     hash: hash.trim(),
@@ -1095,6 +1104,7 @@ function parseLogLine(line: string): GitLogEntryDTO | null {
     title,
     author: author.trim(),
     date: date.trim(),
+    parents: parents.trim().split(/\s+/).filter((p) => p.length > 0),
   };
   if (refs.trim().length > 0) entry.refs = refs;
   return entry;

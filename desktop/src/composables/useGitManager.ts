@@ -34,6 +34,8 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
   /** 历史筛选：path 按文件过滤（后端既有参数），keyword 按提交信息字面搜索。空串 = 不筛选。 */
   const logPathFilter = ref('')
   const logKeyword = ref('')
+  /** 历史范围：false = 仅 HEAD 可达（默认）；true = 全部本地 / 远端分支与标签。随仓库身份重置。 */
+  const logAllBranches = ref(false)
   let filterDebounce: ReturnType<typeof setTimeout> | null = null
   let logSeq = 0
   let commitFilesSeq = 0
@@ -85,6 +87,7 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
     commitBodies.value = new Map()
     logPathFilter.value = ''
     logKeyword.value = ''
+    logAllBranches.value = false
     if (filterDebounce) {
       clearTimeout(filterDebounce)
       filterDebounce = null
@@ -143,6 +146,7 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
         offset: reset ? 0 : logOffset.value,
         path: logPathFilter.value.trim() || undefined,
         keyword: logKeyword.value.trim() || undefined,
+        allBranches: logAllBranches.value || undefined,
       })
       if (seq !== logSeq) return
       logEntries.value = reset ? entries : [...logEntries.value, ...entries]
@@ -166,6 +170,18 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
       filterDebounce = null
       void loadLog(true)
     }, 300)
+  }
+
+  /** 切换历史范围：立即重载第一页（开关不防抖），收起展开的提交；在途的筛选防抖一并并入本次请求。 */
+  function setLogAllBranches(value: boolean) {
+    if (logAllBranches.value === value) return
+    logAllBranches.value = value
+    expandedCommit.value = null
+    if (filterDebounce) {
+      clearTimeout(filterDebounce)
+      filterDebounce = null
+    }
+    void loadLog(true)
   }
 
   onScopeDispose(() => {
@@ -362,6 +378,8 @@ export function useGitManager(provider: Ref<WorkspaceGitProvider | null>) {
     logPathFilter,
     logKeyword,
     setLogFilters,
+    logAllBranches,
+    setLogAllBranches,
     loadMoreLog,
     retryLog,
     toggleCommit,

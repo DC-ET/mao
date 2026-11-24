@@ -387,7 +387,7 @@ describe('file routes', () => {
     ]);
     const sessionService = { getSession: vi.fn(async (id: number) => sessions.get(id)) } as unknown as SessionService;
     const workspaceGitService = {
-      getLog: vi.fn(async () => [{ hash: 'h', shortHash: 'h', title: 't', author: 'a', date: 'd' }]),
+      getLog: vi.fn(async () => [{ hash: 'h', shortHash: 'h', title: 't', author: 'a', date: 'd', parents: [] }]),
       getCommitFiles: vi.fn(async () => ({ hash: 'h', files: [] })),
       getCommitFileDiff: vi.fn(async () => ({ path: 'a', changeType: 'MODIFIED', beforeContent: '', afterContent: '' })),
       getBranches: vi.fn(async () => [{ name: 'main', isCurrent: true, isRemote: false }]),
@@ -460,7 +460,11 @@ describe('file routes', () => {
 
     // happy path：CLOUD 会话透传分页 / 哈希 / 分支 / stash 参数
     expect((await get('/v1/files/workspace-git-log?sessionId=1&limit=20&offset=10')).data[0].hash).toBe('h');
-    expect(vi.mocked(workspaceGitService.getLog).mock.calls[0][2]).toEqual({ limit: 20, offset: 10, path: undefined });
+    expect(vi.mocked(workspaceGitService.getLog).mock.calls[0][2]).toEqual({ limit: 20, offset: 10, path: undefined, allBranches: false });
+    await get('/v1/files/workspace-git-log?sessionId=1&allBranches=true');
+    expect(vi.mocked(workspaceGitService.getLog).mock.calls.at(-1)?.[2]).toMatchObject({ allBranches: true });
+    await get('/v1/files/workspace-git-log?sessionId=1&allBranches=no');
+    expect(vi.mocked(workspaceGitService.getLog).mock.calls.at(-1)?.[2]).toMatchObject({ allBranches: false });
     expect((await get('/v1/files/workspace-git-commit?sessionId=1&hash=abc1234')).data.hash).toBe('h');
     expect((await get('/v1/files/workspace-git-commit-file-diff?sessionId=1&hash=abc1234&path=a.txt')).data.path).toBe('a');
     // 改名提交：oldPath 作为可选查询参数透传（before 取自父提交的旧路径）

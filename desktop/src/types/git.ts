@@ -79,7 +79,7 @@ export interface GitOperationResult {
   conflict?: boolean
 }
 
-/** 提交历史条目（`git log --format=%H%x00%h%x00%s%x00%an%x00%aI%x00%D` 一行一提交）。 */
+/** 提交历史条目（`git log --date-order --format=%H%x00%h%x00%s%x00%an%x00%aI%x00%D%x00%P` 一行一提交）。 */
 export interface GitLogEntry {
   hash: string
   shortHash: string
@@ -89,6 +89,17 @@ export interface GitLogEntry {
   date: string
   /** 原始 %D refs 装饰串，如 'HEAD -> main, origin/main, tag: v1.0'；无装饰时缺省 */
   refs?: string
+  /** 父提交完整哈希；根提交为空数组。旧后端不返回时 provider 兜底为 [] */
+  parents: string[]
+}
+
+/** 提交历史查询：path 按文件过滤；keyword 按提交信息字面搜索；allBranches 为真时含全部本地 / 远端分支与标签。 */
+export interface GitLogQuery {
+  limit?: number
+  offset?: number
+  path?: string
+  keyword?: string
+  allBranches?: boolean
 }
 
 /** 分支条目：本地分支（isRemote=false）或远端跟踪分支（isRemote=true）。 */
