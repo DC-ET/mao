@@ -1367,7 +1367,7 @@ async function enterNewTaskMode(defaults?: NewTaskDefaults | null) {
   chatSending.value = false
   chatPendingApprovals.value = []
 
-  await syncNewTaskModel(resolved.agentId ?? null, defaults?.modelId)
+  await syncNewTaskModel(resolved.agentId ?? null, defaults?.modelId, generation)
   if (generation !== newTaskModeGeneration) return
   await nextTick()
   chatFocusInput.value?.()
@@ -1627,13 +1627,17 @@ async function fetchVisibleModelIds(): Promise<Set<number>> {
  */
 let modelSyncSeq = 0
 
-async function syncNewTaskModel(agentId: string | null, explicitModelId?: number) {
+async function syncNewTaskModel(agentId: string | null, explicitModelId?: number, generation?: number) {
   if (newTaskModelTouched.value) return
   // 竞态保护：连续进入新建态 / 快速切 Agent 时，只让最后一次请求写结果；
   // 旧请求晚到会把「新 Agent + 旧 Agent 的隐藏默认模型」写进会话，发送时被服务端拒绝。
+  // generation 由调用方传入自己的那一代（不能取调用瞬间的全局值，否则晚到的旧调用会拿到新代号）。
   const seq = ++modelSyncSeq
-  const generation = newTaskModeGeneration
-  const stillCurrent = () => seq === modelSyncSeq && generation === newTaskModeGeneration
+  const enteredAt = generation ?? newTaskModeGeneration
+  // 用户中途手选了模型，本次异步结果一律作废（含 global 分支的 /models/default 回写）
+  const stillCurrent = () => seq === modelSyncSeq
+    && enteredAt === newTaskModeGeneration
+    && !newTaskModelTouched.value
   const agent = agentId
     ? (agentStore.getAgentById(agentId) ?? await agentStore.fetchAgent(agentId))
     : null
@@ -1658,7 +1662,7 @@ async function syncNewTaskModel(agentId: string | null, explicitModelId?: number
 
 /** 切换 Agent 后重算模型（ChatPanel 调用）：未手选过就跟随新 Agent 的默认模型。 */
 async function syncNewTaskAgentModel(agentId: string | null): Promise<void> {
-  await syncNewTaskModel(agentId)
+  await syncNewTaskModel(agentId, undefined, newTaskModeGeneration)
 }
 
 async function loadDefaultModel(stillCurrent?: () => boolean) {
@@ -1767,7 +1771,7 @@ watch(getRouteWatchState, async (state, prev) => {
         newTaskModelTouched.value = false
         visibleModelIds = null
         newTaskModelId.value = previous.modelId
-        void syncNewTaskModel(previous.agentId ?? null, previous.modelId)
+        void syncNewTaskModel(previous.agentId ?? null, previous.modelId, newTaskModeGeneration)
         // 浏览器新建本地任务（技术方案 2026-11-17）：预填 LOCAL 时拉取已有本地工作区，
         // 供下拉 / 守卫与发送时设备沿用解析（Electron 走目录选择，不需要）
         if (!isElectronClient() && newTaskMode.value === 'LOCAL') {

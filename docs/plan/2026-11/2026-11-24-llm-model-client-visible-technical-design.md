@@ -141,11 +141,15 @@ ALTER TABLE `llm_model`
 
 ### 6.3 客户端守护（D6）
 
-`SessionService` 新增私有方法：
+`SessionService` 新增两个方法（第二个参数语义不同，别传错）：
 
 ```ts
-/** 客户端选择模型的合法性：存在、启用；不可见模型只放行「该 Agent 的默认模型」。 */
-private async assertModelSelectableByClient(modelId: number, agentId: number | null): Promise<void>
+/** 客户端选择模型的合法性：存在、启用；不可见模型只放行「该 Agent 的默认模型」。
+ *  第二参数是 Agent 的 defaultModelId（调用方已解析好 Agent，避免重复查库）。 */
+async assertModelSelectableByClient(modelId: number, agentDefaultModelId: number | null | undefined): Promise<void>
+
+/** 同上，但按 Agent id 解析默认模型：WS 边路会话等拿不到 Agent 对象时用。 */
+async assertModelSelectableForAgent(modelId: number, agentId: number | null): Promise<void>
 ```
 
 - `findById` 为空 → `MODEL_NOT_FOUND`。
@@ -156,7 +160,7 @@ private async assertModelSelectableByClient(modelId: number, agentId: number | n
 
 - `createSession` 加了末位可选参数 `opts?: { enforceClientModel?: boolean }`，**只有 `POST /v1/sessions`（客户端 HTTP 入口）传 true**。飞书/钉钉等内部通道用同一方法建会话、把「机器人配置的模型」作为显式 `modelId`，它们不传这个开关 → 不受客户端可见性限制（需求要求关掉可见性后渠道照常可用）。微信通道自建会话、OpenAPI/浮窗不传 `modelId`，同样不受影响。
 - `updateModelId(sessionId, modelId)`：先 `sessionRepo.selectById` 拿 `agentId`，再经 `agentLookup.findById` 取默认模型。签名不变。HTTP `PATCH` 与 WS `send_message` 两条客户端入口都覆盖。
-- WS `create_side_session`：边路会话直接 `save` 落库、不经 `createSession`，客户端可控 `data.modelId`。只在「显式传入且与父会话模型不同」时调用同一个校验（继承父会话的隐藏模型是合法场景）；失败回 `error` 事件，不建会话。
+- WS `create_side_session`：边路会话直接 `save` 落库、不经 `createSession`，客户端可控 `data.modelId`。只在「显式传入且与父会话模型不同」时调用 `assertModelSelectableForAgent(modelId, parentSession.agentId)`（继承父会话的隐藏模型是合法场景）；失败回 `error` 事件，不建会话。
 - `PATCH /v1/sessions/:id` 里 `agentId` 的更新提到 `modelId` 之前：模型可见性按「切换后的 Agent」判定，避免用旧 Agent 的默认模型放行/误拒。
 
 `updateSessionAgent` 与其他 Agent 逻辑均不动。

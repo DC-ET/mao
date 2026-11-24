@@ -712,6 +712,17 @@ describe('ModelService 客户端可选（技术方案 2026-11-24）', () => {
     expect(created.clientVisible).toBe(0);
   });
 
+  it('createModel：isDefault 传布尔 true 时清掉旧默认标记（不能出现两个默认）', async () => {
+    const repo = makeRepo();
+    const service = new ModelService(repo, { reassignModelId: vi.fn() }, { chat: vi.fn() });
+    const created = await service.createModel(
+      'n', 'openai', 'https://x', 'k', 'm', 0, true as unknown as number, null, 'text', 'none', '', '',
+      null, null, null, null, null, 'api_key', 1,
+    );
+    expect(created.isDefault).toBe(1);
+    expect(repo.clearDefaultFlag).toHaveBeenCalledTimes(1);
+  });
+
   it('updateModel：不传 clientVisible 保持原值', async () => {
     const repo = makeRepo();
     const service = new ModelService(repo, { reassignModelId: vi.fn() }, { chat: vi.fn() });

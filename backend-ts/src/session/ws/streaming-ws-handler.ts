@@ -105,7 +105,7 @@ export interface WsHandlerDeps {
     updateField(sessionId: number, field: string, value: unknown): Promise<void>;
     updateModelId(sessionId: number, modelId: number): Promise<void>;
     /** 客户端选模型的可选性校验（技术方案 2026-11-24 §6.3）：边路会话的 modelId 是客户端参数，不经 createSession。 */
-    assertModelSelectableByClient(modelId: number, agentDefaultModelId: number | null | undefined): Promise<void>;
+    assertModelSelectableForAgent(modelId: number, agentId: number | null): Promise<void>;
     getMessages(sessionId: number): Promise<Message[]>;
     getLastUserMessage(sessionId: number): Promise<Message | null>;
     editMessageAndTruncate(sessionId: number, messageId: number, content: string, images: string[]): Promise<Message>;
@@ -1641,7 +1641,7 @@ export class StreamingWsHandler {
     // 边路显式换了模型才校验：继承父会话模型（可能是隐藏的 Agent 默认模型）属于合法场景。
     if (modelId != null && modelId !== (parentSession.modelId ?? null)) {
       try {
-        await this.deps.sessionService.assertModelSelectableByClient(modelId, parentSession.agentId);
+        await this.deps.sessionService.assertModelSelectableForAgent(modelId, parentSession.agentId ?? null);
       } catch (e) {
         const message = e instanceof Error ? e.message : '该模型不可用';
         this.deps.registry.send(userId, wsEvent('error', parentSessionId, sideRejection(message)));

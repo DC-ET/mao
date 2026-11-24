@@ -127,6 +127,24 @@ test('toggles client visibility on and submits it with the model', async ({ page
   expect(state.writes[0].payload).toMatchObject({ clientVisible: true })
 })
 
+test('enabling default model auto-turns client visibility back on', async ({ page }) => {
+  await setup(page)
+
+  await page.locator('.el-table__body tr', { hasText: '客服专用' }).getByRole('button', { name: '编辑', exact: true }).click()
+  const toggle = clientVisibleSwitch(page)
+  await expect(toggle).not.toHaveClass(/is-checked/)
+
+  // 「客户端可选」的说明里也含「默认模型」字样，按 label 精确匹配「默认模型」那一项
+  const defaultSwitch = page
+    .locator('.el-dialog .el-form-item')
+    .filter({ has: page.locator('.el-form-item__label', { hasText: /^默认模型$/ }) })
+    .locator('.el-switch')
+  await defaultSwitch.click()
+
+  await expect(toggle).toHaveClass(/is-checked/)
+  await expect(toggle).toHaveClass(/is-disabled/)
+})
+
 test('disables the switch for the default model', async ({ page }) => {
   await setup(page)
 

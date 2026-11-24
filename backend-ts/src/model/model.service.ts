@@ -62,16 +62,6 @@ function normalizeFlag01(value: number | boolean | null | undefined): number | n
 }
 
 /**
- * 客户端可选归一：0/false → 0，其余显式值（1/true/非零数）→ 1；null/undefined = 未提供（返回 null）。
- * 接受 boolean 是因为前端表单直接提交布尔，类型层声明 number 不代表运行时只有 number。
- */
-function normalizeClientVisible(value: number | boolean | null | undefined): number | null {
-  if (value == null) return null;
-  if (value === 0 || value === false) return 0;
-  return 1;
-}
-
-/**
  * 默认模型必须对客户端可见（与「默认 Agent 必须客户端可见」同口径）。
  * 否则客户端新建态从 /v1/models/default 拿到的模型不在候选列表里，用户看到一个选不回来的名字。
  */
@@ -264,7 +254,8 @@ export class ModelService {
     clientVisible?: number | boolean | null,
   ): Promise<LlmModel> {
     const authTypeValue = normalizeAuthTypeInput(authType) ?? 'api_key';
-    const clientVisibleValue = normalizeClientVisible(clientVisible) ?? 1;
+    // 客户端可选：缺省可见；0/false 显式关闭。与 isDefault 共用同一套 0/1 归一。
+    const clientVisibleValue = normalizeFlag01(clientVisible) ?? 1;
     const isDefaultValue = normalizeFlag01(isDefault) ?? 0;
     requireDefaultModelVisible(isDefaultValue, clientVisibleValue);
     if (authTypeValue === 'ecp') await this.requireEcpEnabled();
@@ -272,7 +263,8 @@ export class ModelService {
     if (authTypeValue === 'api_key' && !hasText(apiKey)) {
       throw new BusinessException(ErrorCode.PARAM_INVALID.code, '请输入 API Key');
     }
-    if (isDefault != null && isDefault === 1) {
+    // 用归一后的值判断：前端可能提交布尔 true，裸比较会漏清旧默认标记（出现两个 is_default=1）。
+    if (isDefaultValue === 1) {
       await this.modelRepo.clearDefaultFlag();
     }
     const model: LlmModel = {
@@ -328,7 +320,7 @@ export class ModelService {
     clientVisible?: number | boolean | null,
   ): Promise<LlmModel> {
     const model = await this.getModel(id);
-    const nextClientVisible = normalizeClientVisible(clientVisible) ?? (model.clientVisible ?? 1);
+    const nextClientVisible = normalizeFlag01(clientVisible) ?? (model.clientVisible ?? 1);
     const isDefaultValue = normalizeFlag01(isDefault);
     const nextIsDefault = isDefaultValue ?? (model.isDefault ?? 0);
     // 先按「最终状态」校验，避免 clearDefaultFlag() 之后才发现组合非法（默认标记已被别的模型抢走）。

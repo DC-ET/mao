@@ -1653,9 +1653,21 @@ export class SessionService {
   }
 
   /**
+   * 同上，但按 Agent id 解析默认模型（WS 边路会话等拿不到 Agent 对象时用）。
+   * 注意第二个参数与 assertModelSelectableByClient 不同：这里是 agentId，不是 defaultModelId。
+   */
+  async assertModelSelectableForAgent(modelId: number, agentId: number | null): Promise<void> {
+    const agent = agentId != null ? await this.agentLookup.findById(agentId) : null;
+    await this.assertModelSelectableByClient(modelId, agent?.defaultModelId);
+  }
+
+  /**
    * 客户端选模型的合法性（技术方案 2026-11-24 §6.3）：存在、启用；
    * client_visible = 0 的模型只放行「该会话 Agent 的默认模型」——后台配好的默认模型允许使用，
    * 用户自己挑的隐藏模型拒绝。运行时解析不看可见性，这里只守客户端请求参数。
+   *
+   * 第二参数是 **Agent 的 defaultModelId**（不是 agentId）：调用方已解析好 Agent，
+   * 避免每条路径各查一次库。
    */
   async assertModelSelectableByClient(
     modelId: number,
