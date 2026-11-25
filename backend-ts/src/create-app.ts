@@ -997,6 +997,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       selectDefault: () => modelRepo.findDefault(),
     },
     { getValue: (key: string) => settingService.getValue(key) },
+    { findById: (id: number) => agentRepo.findById(id) },
     wsRegistry,
     (fn) => agentExecutor.submit(fn),
   );
