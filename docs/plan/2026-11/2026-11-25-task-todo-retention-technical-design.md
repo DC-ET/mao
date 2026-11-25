@@ -111,7 +111,7 @@ rendered.push({ role: 'user', content: wrapNotice(context.todoStateNotice) });
 
 - notice 处于请求尾部；`prompt-prefix-monitor` 既有约定「尾部追加不告警」（:253-255 注释），状态不变时逐字节稳定，前缀缓存只在状态变化时于尾部失效一小块。
 - 以 `<system-notice>` 开头 → `isRealUserMessage` 判 false（`compaction-service.ts:41`），不会被误当真实用户消息；notice 只存在于请求副本，不落库、不进 `context.messages`，与压缩边界判定无交集。
-- 压缩摘要请求 `deriveRequest` 复制的是 `context.messages`（无 notice），摘要生成依赖改动一；压缩后 `applyHistory` 刷新 notice，:587 的 preparedRequest 立即携带。
+- 压缩摘要请求（2026-11-25 评审勘误）：三个压缩触发路径（mid-loop / 手动 / 执行开始）的源请求都是 `promptEngine.buildRequest` 的产物（`agent-loop.ts:548`/`:652`、`harness-service.ts:588`），`deriveRequest` 复制的是 `source.messages`——notice 非空时必然随源请求进入摘要请求，位于 handoff 指令前一条。这是预期行为：摘要模型直接看到权威台账，便于按改动一抄写；且 `deriveRequest` 展开源请求（含 `promptCacheKey`）的目的就是复用主请求刚写过的前缀缓存，与 no-progress notice 进摘要请求的既有行为一致。notice 仍只存在于请求副本，不进 `context.messages`、不进压缩边界判定。压缩后 `applyHistory` 刷新 notice，:587 的 preparedRequest 立即携带。
 - manifest 不新增分节：notice token 计入「会话消息」行（`buildContextManifest` 按 finalMessages 估算，自动包含）。
 
 ## 4. 改动文件
@@ -152,6 +152,7 @@ rendered.push({ role: 'user', content: wrapNotice(context.todoStateNotice) });
 - **模型复述台账**：notice 文案已含「不要向用户复述本条」；若实测仍复述，再收敛为「仅在状态变化轮注入」的次级方案（默认不做，保持每轮在场）。
 - **摘要与 notice 短暂不一致**：摘要由模型抄写，可能有出入；notice 以 DB/工具结果为权威，摘要仅供叙事。不改摘要生成路径之外的逻辑。
 - **面板改台账的刷新盲区（已知限制，评审 P2）**：任务面板可经 `PATCH/DELETE /v1/sessions/:id/todos/:todoId`（`backend-ts/src/session/session.routes.ts:745/:761`）在执行中改台账，两个刷新点都覆盖不到，notice 与 DB 脱钩，直到下一次 task_* 调用或下一次 `applyHistory`（下一执行开始）才对齐、自愈。§3.2.3 的「进入下一次 buildRequest 前 notice 与权威状态一致」仅在「DB 变更均来自 task_* 工具」时全域成立。本期不加 REST 侧 hook，代价窗口小。
+- **task_* 部分成功后报错的刷新盲区（已知限制，同类）**：task_create / task_update 逐项写库后才校验下一项，后面的项非法时返回 errorJson（`task-tools.ts:202-208`、`:64-72`），此时前面的项已提交 DB；agent-loop 侧 errorJson 无 `todos` 键 → 保留旧 notice，台账与 DB 短暂脱钩，下一轮 task_* / `applyHistory` 自愈。不改代码：对 task 工具的 errorJson 一律清空会把「校验失败、DB 未变」误清空。
 - **token 成本**：每请求尾部约 150-250 tokens（7 项规模），可接受；manifest「会话消息」行会如实反映。
 - **遵从率不保证 100%**：本方案消除「台账不可见」这一结构性根因；flash 级模型长程遵循仍可能漂移，收尾对账（原方案 3）与产物挂钩（原方案 4）留作后续。
 - **依赖注入变更**：`SessionHistoryLoader` 构造签名变化，既有测试需同步补参（与 workspace-rules-snapshot 可选注入先例同款处理，可考虑带默认值保持旧测试零改动）。
