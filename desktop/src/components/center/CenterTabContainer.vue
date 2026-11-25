@@ -61,6 +61,7 @@
         :execution-mode="executionMode"
         :workspace="workspace"
         :agent-running="agentRunning"
+        :focus-repo="activeTab?.gitRepoFocus ?? null"
         @open-git-diff="(file, repoPath) => emit('open-git-diff', file, repoPath)"
         @open-commit-diff="emit('open-commit-diff', $event)"
         @open-branch-diff="emit('open-branch-diff', $event)"

@@ -171,7 +171,7 @@
                   v-for="repo in changedRepos"
                   :key="repo.path"
                   class="git-repo-item"
-                  :title="`查看 ${repo.name} 的变更`"
+                  :title="`在 Git 管理器中查看 ${repo.name} 的变更`"
                   @click.stop="handleRepoClick(repo.path)"
                 >
                   <span class="git-repo-name">{{ repo.name }}</span>
@@ -466,7 +466,7 @@ const emit = defineEmits<{
   'delete-side-task': [sideSessionId: number]
   'promote-side-task': [sideSessionId: number]
   'open-git-diff': [file: GitChangedFile, repoPath?: string]
-  'open-git': []
+  'open-git': [repoPath?: string]
   'select-agent': [agentId: string]
 }>()
 
@@ -630,10 +630,9 @@ function handleRepoSelect(path: string) {
 }
 
 function handleRepoClick(path: string) {
-  // selectRepo 返回是否选中成功：仓库已删除/不在列表时（方案5过期窗口）不切 tab，避免展示与点击目标错位
-  if (selectRepo(path)) {
-    inspectorActiveTab.value = 'git'
-  }
+  // 与摘要行图标同一目的地：中央 Git 管理器，并选中被点的仓库。
+  // 不切右侧边栏 Git 页（仓库已删除时由管理器侧 selectRepo 忽略，避免切到对不上的仓库）。
+  emit('open-git', path)
 }
 
 /** 摘要行 / Git 页签工具栏的「展开」入口：打开会话内的中央 Git 管理器 Tab（单例） */

@@ -236,6 +236,11 @@ const props = defineProps<{
   workspace?: string
   /** 当前会话 Agent 正在运行（撤销确认框追加风险提示） */
   agentRunning?: boolean
+  /**
+   * 检查器摘要点中的子仓库。nonce 每次点击加一，
+   * 面板据此选中该仓库并回到「变更」（列表未到时先记下，到了再选）。
+   */
+  focusRepo?: { path: string; nonce: number } | null
 }>()
 
 const emit = defineEmits<{
@@ -377,6 +382,22 @@ async function handleRefreshAll() {
 function handleRepoSelect(path: string) {
   selectRepo(path)
 }
+
+/** 摘要点仓库：选中它并回到变更视图。列表还没到时不记 nonce，等 repos 更新再试。 */
+let appliedFocusNonce = 0
+function applyRepoFocus() {
+  const focus = props.focusRepo
+  if (!focus?.path || focus.nonce === appliedFocusNonce) return
+  if (!selectRepo(focus.path)) return
+  appliedFocusNonce = focus.nonce
+  activeView.value = 'changes'
+}
+
+watch(
+  () => [props.focusRepo?.path, props.focusRepo?.nonce, repos.value] as const,
+  applyRepoFocus,
+  { immediate: true },
+)
 
 function runOperation(op: 'commit' | 'pull' | 'push') {
   void run(op).then(() => handleRefreshAll())

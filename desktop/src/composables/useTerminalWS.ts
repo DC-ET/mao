@@ -4,16 +4,40 @@ import { getToken } from '../utils/auth-storage'
 /**
  * 云端终端 WS 单例：一条连接多路复用多个 terminalId，与 useStreamWS 完全独立。
  * 协议见 docs/plan/2026-09/2026-09-03-cloud-terminal-design-v2.md 7.3：首帧 auth，之后 attach/detach/input/resize/ping。
+ * 增量回放（2026-11-25 移动端终端优化 §4.9）：attach 可带 fromSeq，attached 回 replay/seq，
+ * output 帧带原始字节序号 seq / endSeq。
  */
+export interface TerminalOutputMeta {
+  /** 帧首原始字节序号；缺失表示服务端未启用序号。 */
+  seq?: number
+  /** 帧尾原始字节序号。 */
+  endSeq?: number
+}
+
+export interface TerminalAttachedMeta {
+  replay: 'full' | 'delta'
+  /** 当前终端累计输出序号。 */
+  seq?: number
+}
+
+export interface AttachOptions {
+  /** 上次已写入的原始字节序号；null / 缺省则请求全量回放。 */
+  fromSeq?: number | null
+}
+
 export interface TerminalHandlers {
-  onOutput: (data: string) => void
+  onOutput: (data: string, meta?: TerminalOutputMeta) => void
   onExit?: (exitCode: number) => void
   onError?: (code: string, message: string) => void
-  onAttached?: (cols: number, rows: number) => void
+  onAttached?: (cols: number, rows: number, meta?: TerminalAttachedMeta) => void
+  /** 重连自动 re-attach 时读取「已写入的最后序号」；返回 null 表示必须全量回放。 */
+  getResumeSeq?: () => number | null
 }
 
 const SERVER_SILENCE_TIMEOUT_MS = 30_000
 const HEARTBEAT_INTERVAL_MS = 10_000
+/** 回前台时超过 2 个心跳周期没收到任何服务端消息，视为死连接。 */
+const HEARTBEAT_STALE_MS = HEARTBEAT_INTERVAL_MS * 2
 const MAX_RECONNECT_DELAY_MS = 30_000
 /** attach 帧发出后等待 attached 回帧的上限。 */
 const ATTACH_TIMEOUT_MS = 15_000
@@ -44,6 +68,9 @@ const attachWaiters = new Map<string, {
 /** 期望处于 attach 状态的终端：重连成功后自动重发 attach。 */
 const attachedTerminals = new Set<string>()
 const handlers = new Map<string, TerminalHandlers>()
+/** 每个终端最近一次请求的增量起点：重连自动 re-attach 时原样带回，避免又从 0 全量回放。 */
+const resumeSeq = new Map<string, number>()
+let lifecycleInstalled = false
 
 function wsUrl(): string {
   const wsBase = import.meta.env.VITE_WS_BASE_URL
@@ -108,7 +135,7 @@ function settleAttach(terminalId: string, error?: Error) {
 
 function onAuthenticated() {
   // 已认证状态下再收到 connected（服务端对重复 auth 的幂等应答）：只 flush，不重排 attach，
-  // 否则会对所有终端重复 attach → 清屏 + 全量回放
+  // 否则会对所有终端重复 attach，打断增量回放（甚至触发不必要的全量清屏）
   if (authenticated) {
     flushPending()
     return
@@ -117,7 +144,15 @@ function onAuthenticated() {
   // 重连后重新绑定所有仍在前端存活的终端（后端 attach 绑在旧 socket 上）；
   // 已排队的 attach 帧去重，避免同一终端连发两次 attach 造成重复回放
   const queued = pendingFrames.filter((f) => f.type !== 'attach')
-  pendingFrames = [...[...attachedTerminals].map((terminalId) => ({ type: 'attach', terminalId })), ...queued]
+  const attachFrames = [...attachedTerminals].map((terminalId) => {
+    const handler = handlers.get(terminalId)
+    // 优先用 handler 的实时序号：resumeSeq 只在显式 attach 时更新，跟不上后续输出
+    const fromSeq = handler?.getResumeSeq ? handler.getResumeSeq() : resumeSeq.get(terminalId)
+    return fromSeq != null
+      ? { type: 'attach', terminalId, fromSeq }
+      : { type: 'attach', terminalId }
+  })
+  pendingFrames = [...attachFrames, ...queued]
   flushPending()
 }
 
@@ -126,11 +161,26 @@ function routeMessage(msg: Record<string, any>) {
   const handler = terminalId ? handlers.get(terminalId) : undefined
   switch (msg.type) {
     case 'output':
-      if (handler && typeof msg.data === 'string') handler.onOutput(msg.data)
+      if (handler && typeof msg.data === 'string') {
+        const meta: TerminalOutputMeta | undefined = typeof msg.seq === 'number' || typeof msg.endSeq === 'number'
+          ? {
+              seq: typeof msg.seq === 'number' ? msg.seq : undefined,
+              endSeq: typeof msg.endSeq === 'number' ? msg.endSeq : undefined,
+            }
+          : undefined
+        handler.onOutput(msg.data, meta)
+      }
       return
     case 'attached':
       if (terminalId) settleAttach(terminalId)
-      handler?.onAttached?.(Number(msg.cols) || 80, Number(msg.rows) || 24)
+      handler?.onAttached?.(
+        Number(msg.cols) || 80,
+        Number(msg.rows) || 24,
+        {
+          replay: msg.replay === 'delta' ? 'delta' : 'full',
+          seq: typeof msg.seq === 'number' ? msg.seq : undefined,
+        },
+      )
       return
     case 'exit':
       if (terminalId) {
@@ -243,7 +293,76 @@ function connect(): Promise<void> {
   return connectPromise
 }
 
+/** 立即丢弃当前连接并重连；不置 intentionalClose，保证 onclose 后仍会走重连逻辑。 */
+function reconnectNow(): void {
+  intentionalClose = false
+  const previous = ws
+  // 先摘掉引用：旧 socket 的 onclose 会走「旧连接」分支，不会误关新连接
+  ws = null
+  authenticated = false
+  connected.value = false
+  stopHeartbeat()
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+  reconnectDelay = 1000
+  if (connectPromise) {
+    const settle = pendingSettle
+    connectPromise = null
+    pendingSettle = null
+    settle?.reject(new Error('Terminal WebSocket reconnecting'))
+  }
+  if (previous) {
+    try {
+      previous.close()
+    } catch {
+      // 已关闭的 socket 再 close 会抛错，忽略
+    }
+  }
+  connect().catch(() => {})
+}
+
+/**
+ * 回前台 / 网络恢复：后台时 JS 定时器被冻结，心跳可能已经几十秒没跑。
+ * - 连接不是 OPEN：立即重连（重置退避）。
+ * - OPEN 且超过 2 个心跳周期没收到任何服务端消息：判定死连接，立即重连。
+ * - 否则补发一次 ping，不等定时器。
+ */
+function resumeAfterForeground(): void {
+  if (intentionalClose) return
+  if (attachedTerminals.size === 0 && handlers.size === 0) return
+  if (ws?.readyState === WebSocket.CONNECTING) return
+  if (ws?.readyState === WebSocket.OPEN && authenticated) {
+    if (Date.now() - lastServerMessageAt > HEARTBEAT_STALE_MS) {
+      reconnectNow()
+      return
+    }
+    try {
+      ws.send(JSON.stringify({ type: 'ping' }))
+    } catch {
+      // 发送失败由 onclose 接手重连
+    }
+    return
+  }
+  reconnectNow()
+}
+
+/** 监听器只装一次；node 单测环境没有 document，直接跳过。 */
+function installLifecycleListeners(): void {
+  if (lifecycleInstalled || typeof document === 'undefined') return
+  lifecycleInstalled = true
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') resumeAfterForeground()
+  })
+  if (typeof window !== 'undefined') {
+    window.addEventListener('online', resumeAfterForeground)
+  }
+}
+
 export function useTerminalWS() {
+  installLifecycleListeners()
+
   function ensureConnected(): Promise<void> {
     intentionalClose = false
     return connect()
@@ -256,13 +375,21 @@ export function useTerminalWS() {
   function unregisterTerminal(terminalId: string) {
     handlers.delete(terminalId)
     attachedTerminals.delete(terminalId)
+    resumeSeq.delete(terminalId)
     settleAttach(terminalId)
   }
 
   /** 绑定终端；Promise 在收到 attached 帧、收到错误帧或超时后 settle。 */
-  function attach(terminalId: string): Promise<void> {
+  function attach(terminalId: string, options: AttachOptions = {}): Promise<void> {
     // attach 是明确的连线意图：撤销上次 disconnect() 的「不再重连」状态（登出后重新登录）
     intentionalClose = false
+    const fromSeq = typeof options.fromSeq === 'number'
+      && Number.isInteger(options.fromSeq)
+      && options.fromSeq >= 0
+      ? options.fromSeq
+      : null
+    if (fromSeq != null) resumeSeq.set(terminalId, fromSeq)
+    else resumeSeq.delete(terminalId)
     attachedTerminals.add(terminalId)
     const existing = attachWaiters.get(terminalId)
     if (existing) {
@@ -281,7 +408,7 @@ export function useTerminalWS() {
       reject(new Error('终端连接超时'))
     }, ATTACH_TIMEOUT_MS)
     attachWaiters.set(terminalId, { promise, resolve, reject, timer })
-    send({ type: 'attach', terminalId })
+    send(fromSeq != null ? { type: 'attach', terminalId, fromSeq } : { type: 'attach', terminalId })
     return promise
   }
 
@@ -321,6 +448,7 @@ export function useTerminalWS() {
     }
     attachedTerminals.clear()
     handlers.clear()
+    resumeSeq.clear()
     pendingFrames = []
     for (const terminalId of [...attachWaiters.keys()]) {
       settleAttach(terminalId)
@@ -350,5 +478,7 @@ export function useTerminalWS() {
     sendResize,
     isAttached,
     disconnect,
+    /** 回前台 / 网络恢复时主动探活；单测直接调用，不依赖 document 事件。 */
+    resumeAfterForeground,
   }
 }

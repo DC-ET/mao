@@ -1,36 +1,80 @@
 import { spawn, type IPty } from 'node-pty';
 
-/** 终端输出环形缓冲：超出上限时从头部丢弃，attach 时整体回放。 */
+/** 终端输出环形缓冲：超出上限时从头部丢弃，attach 时整体回放或按序号增量回读。 */
 export class OutputRingBuffer {
-  private chunks: string[] = [];
+  private chunks: Array<{ data: string; startSeq: number; endSeq: number }> = [];
   private bytes = 0;
   private truncated = false;
+  /** 已写入缓冲区末尾的累计字节序号（下一段输出的起始序号）。 */
+  private nextSeq = 0;
 
   constructor(private readonly maxBytes: number) {}
 
-  append(data: string): void {
-    if (data === '') return;
-    this.chunks.push(data);
-    this.bytes += Buffer.byteLength(data, 'utf8');
+  /**
+   * 追加一段 PTY 输出；返回帧尾序号。
+   * 序号是原始流的 UTF-8 字节偏移：sanitizeReplayData 会删/改字节，但 seq 永远按原始流推进。
+   */
+  append(data: string): number {
+    if (data === '') return this.nextSeq;
+    const dataBytes = Buffer.byteLength(data, 'utf8');
+    const startSeq = this.nextSeq;
+    this.nextSeq += dataBytes;
+    this.chunks.push({ data, startSeq, endSeq: this.nextSeq });
+    this.bytes += dataBytes;
     while (this.bytes > this.maxBytes && this.chunks.length > 1) {
       const dropped = this.chunks.shift()!;
-      this.bytes -= Buffer.byteLength(dropped, 'utf8');
+      this.bytes -= Buffer.byteLength(dropped.data, 'utf8');
       this.truncated = true;
     }
     // 单帧就超过上限时不能连它一起丢（否则最近输出全没、回放一片空白），
-    // 只保留这一帧的尾部字节。
+    // 只保留这一帧的尾部字节；起点序号要同步推进到被裁掉的字节之后，
+    // 否则增量回放会重复或漏掉一段。
     if (this.bytes > this.maxBytes && this.chunks.length === 1) {
-      this.chunks[0] = tailWithinBytes(this.chunks[0], this.maxBytes);
-      this.bytes = Buffer.byteLength(this.chunks[0], 'utf8');
+      const only = this.chunks[0];
+      const tail = tailWithinBytes(only.data, this.maxBytes);
+      const droppedBytes = Buffer.byteLength(only.data, 'utf8') - Buffer.byteLength(tail, 'utf8');
+      only.data = tail;
+      only.startSeq += droppedBytes;
+      this.bytes = Buffer.byteLength(tail, 'utf8');
       this.truncated = true;
     }
+    return this.nextSeq;
   }
 
-  /** 回放内容；曾被截断时前置一行提示。 */
+  /** 当前累计序号（下一段输出的起始序号）。 */
+  getSeq(): number {
+    return this.nextSeq;
+  }
+
+  /** 缓冲区仍可增量回放的起点；空缓冲时等于当前序号。 */
+  getStartSeq(): number {
+    return this.chunks.length > 0 ? this.chunks[0].startSeq : this.nextSeq;
+  }
+
+  /** 全量回放内容；曾被截断时前置一行提示。 */
   read(): string {
-    const body = this.chunks.join('');
+    const body = this.chunks.map((c) => c.data).join('');
     if (body === '' && !this.truncated) return '';
     return this.truncated ? `\r\n[历史输出过长，已截断前面部分]\r\n${body}` : body;
+  }
+
+  /**
+   * 增量回读 [fromSeq, 当前序号)；fromSeq 早于缓冲起点或超前于当前序号时返回 null（调用方走全量）。
+   * 返回的 data 是原始流字节（调用方仍需 sanitizeReplayData），startSeq/endSeq 都是原始序号。
+   */
+  readSince(fromSeq: number): { data: string; startSeq: number; endSeq: number } | null {
+    if (!Number.isInteger(fromSeq) || fromSeq < this.getStartSeq() || fromSeq > this.nextSeq) return null;
+    const parts: string[] = [];
+    for (const chunk of this.chunks) {
+      if (chunk.endSeq <= fromSeq) continue;
+      if (chunk.startSeq >= fromSeq) {
+        parts.push(chunk.data);
+        continue;
+      }
+      // fromSeq 正常是帧边界；这里防御非法输入，按 UTF-8 字节切片并对齐到字符边界
+      parts.push(sliceFromBytes(chunk.data, fromSeq - chunk.startSeq));
+    }
+    return { data: parts.join(''), startSeq: fromSeq, endSeq: this.nextSeq };
   }
 
   isEmpty(): boolean {
@@ -40,6 +84,7 @@ export class OutputRingBuffer {
   clear(): void {
     this.chunks = [];
     this.bytes = 0;
+    this.nextSeq = 0;
     this.truncated = false;
   }
 }
@@ -59,6 +104,22 @@ function tailWithinBytes(text: string, maxBytes: number): string {
     while (start > 0 && (buf[start] & 0xc0) === 0x80) start -= 1;
   }
   return buf.subarray(start).toString('utf8');
+}
+
+/** 从字符串的第 offset 个 UTF-8 字节起截取，并对齐到字符边界（避免切出乱码）。 */
+function sliceFromBytes(text: string, offset: number): string {
+  const buf = Buffer.from(text, 'utf8');
+  if (offset <= 0) return text;
+  if (offset >= buf.length) return '';
+  let start = offset;
+  while (start < buf.length && (buf[start] & 0xc0) === 0x80) start += 1;
+  return buf.subarray(start).toString('utf8');
+}
+
+/** 一段实时输出的原始字节序号区间（左闭右开）。 */
+export interface OutputSeq {
+  seq: number;
+  endSeq: number;
 }
 
 export interface RemoteTerminalInfo {
@@ -157,7 +218,7 @@ export class RemoteTerminal {
   private readonly pty: PtyLike;
   private readonly buffer: OutputRingBuffer;
   /** 当前接收输出的连接（socketId → 回调）；null 表示无人 attach。 */
-  private sink: { socketId: string; onOutput: (data: string) => void } | null = null;
+  private sink: { socketId: string; onOutput: (data: string, seq: OutputSeq) => void } | null = null;
   private exitListeners: Array<(exitCode: number) => void> = [];
 
   constructor(deps: RemoteTerminalDeps) {
@@ -175,8 +236,9 @@ export class RemoteTerminal {
 
     this.pty.onData((data: string) => {
       this.lastActiveAt = Date.now();
+      const startSeq = this.buffer.getSeq();
       this.buffer.append(data);
-      this.sink?.onOutput(data);
+      this.sink?.onOutput(data, { seq: startSeq, endSeq: this.buffer.getSeq() });
     });
     this.pty.onExit(({ exitCode }) => {
       this.alive = false;
@@ -210,7 +272,7 @@ export class RemoteTerminal {
   }
 
   /** 绑定输出接收方；返回被顶替的旧 socketId（无则 null）。 */
-  attach(socketId: string, onOutput: (data: string) => void): string | null {
+  attach(socketId: string, onOutput: (data: string, seq: OutputSeq) => void): string | null {
     const previous = this.sink != null && this.sink.socketId !== socketId ? this.sink.socketId : null;
     this.sink = { socketId, onOutput };
     this.touch();
@@ -227,6 +289,21 @@ export class RemoteTerminal {
   /** attach 后回放历史输出。 */
   readBuffered(): string {
     return this.buffer.read();
+  }
+
+  /** 当前输出累计字节序号（增量回放的帧尾）。 */
+  getSeq(): number {
+    return this.buffer.getSeq();
+  }
+
+  /** 缓冲仍可增量回放的起点。 */
+  getBufferStartSeq(): number {
+    return this.buffer.getStartSeq();
+  }
+
+  /** 增量回读 [fromSeq, 当前序号)；返回 null 表示 fromSeq 已滚出缓冲，调用方应全量回放。 */
+  readBufferedFrom(fromSeq: number): { data: string; startSeq: number; endSeq: number } | null {
+    return this.buffer.readSince(fromSeq);
   }
 
   write(data: string): void {

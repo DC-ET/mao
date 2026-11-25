@@ -20,6 +20,9 @@ import TerminalPanel from '../terminal/TerminalPanel.vue'
   display: flex;
   flex-direction: column;
   height: 100vh;
+  /* 移动浏览器的 100vh 大于实际可视高度（地址栏 / 工具栏），dvh 跟随动态视口；
+     不支持 dvh 的旧 WebView 用上一行 100vh 兜底。 */
+  height: 100dvh;
   overflow: hidden;
 }
 

@@ -693,15 +693,19 @@ describe('useStreamWS 后台子代理完成通知（assistant_message_saved）',
     await subscribe('9')
 
     const store = useSessionStore()
-    store.setMessages('9', [])
+    // 本轮提问已在缓存里（锚点）：通知插到它之后、流式回复之前
+    store.setMessages('9', [{
+      id: 'u1', role: 'user', content: '审查一下', createdAt: '2026-11-25 09:59:00',
+    } satisfies ChatMessageLike])
     noticeFrame(notice)
 
     const msgs = store.getMessages('9')
-    expect(msgs).toHaveLength(1)
-    expect(msgs[0].id).toBe('901')
-    expect(msgs[0].content).toContain('后台子代理（explorer）已完成')
+    expect(msgs).toHaveLength(2)
+    expect(msgs[0].id).toBe('u1')
+    expect(msgs[1].id).toBe('901')
+    expect(msgs[1].content).toContain('后台子代理（explorer）已完成')
     // metadata 必须解析成对象，MessageBubble 的 backgroundSubagentCompletion 判定才成立
-    expect(msgs[0].metadata?.backgroundSubagentCompletion).toMatchObject({
+    expect(msgs[1].metadata?.backgroundSubagentCompletion).toMatchObject({
       childSessionId: 42,
       executionId: 7,
       status: 'COMPLETED',
@@ -716,11 +720,57 @@ describe('useStreamWS 后台子代理完成通知（assistant_message_saved）',
     await subscribe('9')
 
     const store = useSessionStore()
-    store.setMessages('9', [])
+    store.setMessages('9', [{
+      id: 'u1', role: 'user', content: '审查一下', createdAt: '2026-11-25 09:59:00',
+    } satisfies ChatMessageLike])
     noticeFrame(notice)
     noticeFrame(notice)
 
     expect(store.getMessages('9').filter(m => m.id === '901')).toHaveLength(1)
+  })
+
+  // 回归（用户截图反馈）：4 张后台子代理完成卡片出现在时间线最前面，提问被挤到回复下面。
+  // 触发路径：用户先发出提问（会话跑起来），再打开/刷新这个会话的标签页（边路任务 Tab 最常见），
+  // 本地缓存是空的，fetchMessages 还没回来；后端又把流式事件广播给该用户所有连接（不按
+  // subscribe 过滤），delta 先建出本轮流式气泡，提问始终没进本地列表。此时按「插在流式气泡
+  // 之前」的旧规则插入，list.length - 1 === 0，卡片全部落到提问之前；随后迟到的
+  // user_message_saved 又按追加把提问排到回复下面，两头都错位。
+  it('列表里只有流式气泡（提问未落地）时通知不落到最前面，提问回显后补插到提问之后', async () => {
+    const { connect, subscribe } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    await subscribe('9')
+
+    const store = useSessionStore()
+    // 广播 delta 先建出本轮流式气泡，提问还没落地（useChat.runRestoreSession 明确记录了
+    // 这个前提：不能跳过 fetchMessages，否则丢历史进度）
+    const streaming = store.ensureStreamingAssistantMessage('9')
+    store.appendDelta('9', '主线输出')
+
+    noticeFrame({ ...notice, messageId: 901 })
+    noticeFrame({ ...notice, messageId: 902 })
+    noticeFrame({ ...notice, messageId: 903 })
+    noticeFrame({ ...notice, messageId: 904 })
+
+    // 没有锚点：暂存，卡片一条都没落到时间线最前面
+    expect(store.getMessages('9').map(m => m.id)).toEqual([streaming.id])
+
+    // 远端回显的提问随后落地（user_message_saved 的无乐观消息分支）
+    sockets[0].onmessage?.({
+      target: sockets[0],
+      data: JSON.stringify({
+        type: 'user_message_saved',
+        sessionId: 9,
+        data: { content: '审查一下当前 mao 项目未提交的代码。', messageId: 77 },
+      }),
+    })
+    store.appendDelta('9', '，后续')
+
+    const msgs = store.getMessages('9')
+    // 提问在最前，卡片紧随其后，回复气泡仍在同一轮里继续追加
+    expect(msgs.map(m => m.id)).toEqual(['77', '901', '902', '903', '904', streaming.id])
+    expect(msgs.find(m => m.id === streaming.id)?.content).toBe('主线输出，后续')
   })
 
   it('缺少 messageId 或无后台子代理标记的事件不插入', async () => {

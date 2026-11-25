@@ -17,6 +17,8 @@
  *
  * 注意：屏幕阅读器依赖 textarea 内的累积值，故 screenReaderMode 开启时不应安装本清扫器。
  */
+import { isTouchTerminal } from './terminal-touch'
+
 export interface ImeSweepTarget {
   value: string
   addEventListener(type: string, listener: () => void): void
@@ -87,15 +89,8 @@ export function installImeTextareaSweeper(textarea: ImeSweepTarget, options: Ime
 /**
  * 是否需要安装清扫器：触屏环境（安卓壳与移动端浏览器）才有软键盘输入法路径，
  * 桌面 Electron / 桌面浏览器维持 xterm 原生行为。
+ * 判定与终端其它触屏行为共用 terminal-touch 的 isTouchTerminal，避免两处漂移。
  */
 export function shouldInstallImeSweeper(): boolean {
-  if (typeof window === 'undefined') return false
-  try {
-    // @ts-ignore Capacitor 7 运行时注入
-    if (window.Capacitor?.isNativePlatform?.()) return true
-  } catch {
-    // 读取失败按非原生壳处理
-  }
-  if ((window as any).electronAPI) return false
-  return window.matchMedia?.('(pointer: coarse)').matches === true
+  return isTouchTerminal()
 }

@@ -41,7 +41,10 @@ class FakeTerminal implements AttachableTerminal {
   readonly written: string[] = [];
   readonly resized: Array<{ cols: number; rows: number }> = [];
   buffered = '';
-  private sink: { socketId: string; onOutput: (data: string) => void } | null = null;
+  /** 测试可置：缓冲被截断后的起点序号（模拟已滚出缓冲的历史）。 */
+  bufferStartSeq = 0;
+  private liveBytes = 0;
+  private sink: { socketId: string; onOutput: (data: string, seq: { seq: number; endSeq: number }) => void } | null = null;
   private exitListeners: Array<(exitCode: number) => void> = [];
 
   /** 中继语义测试可置 true：attach 跳过 terminal:use（技术方案 2026-11-18 D5）。 */
@@ -49,7 +52,7 @@ class FakeTerminal implements AttachableTerminal {
 
   constructor(readonly terminalId: string, readonly sessionId: number, readonly userId: number) {}
 
-  attach(socketId: string, onOutput: (data: string) => void): string | null {
+  attach(socketId: string, onOutput: (data: string, seq: { seq: number; endSeq: number }) => void): string | null {
     const previous = this.sink != null && this.sink.socketId !== socketId ? this.sink.socketId : null;
     this.sink = { socketId, onOutput };
     return previous;
@@ -67,6 +70,22 @@ class FakeTerminal implements AttachableTerminal {
 
   readBuffered(): string {
     return this.buffered;
+  }
+
+  getSeq(): number {
+    return this.bufferStartSeq + Buffer.byteLength(this.buffered, 'utf8') + this.liveBytes;
+  }
+
+  getBufferStartSeq(): number {
+    return this.bufferStartSeq;
+  }
+
+  readBufferedFrom(fromSeq: number): { data: string; startSeq: number; endSeq: number } | null {
+    const total = this.getSeq();
+    if (!Number.isInteger(fromSeq) || fromSeq < this.bufferStartSeq || fromSeq > total) return null;
+    const buf = Buffer.from(this.buffered, 'utf8');
+    const offset = fromSeq - this.bufferStartSeq;
+    return { data: buf.subarray(offset).toString('utf8'), startSeq: fromSeq, endSeq: total };
   }
 
   write(data: string): void {
@@ -97,7 +116,9 @@ class FakeTerminal implements AttachableTerminal {
   }
 
   emit(data: string): void {
-    this.sink?.onOutput(data);
+    const start = this.getSeq();
+    this.liveBytes += Buffer.byteLength(data, 'utf8');
+    this.sink?.onOutput(data, { seq: start, endSeq: start + Buffer.byteLength(data, 'utf8') });
   }
 
   fireExit(code = 0): void {
@@ -364,11 +385,17 @@ describe('TerminalWsHandler attach', () => {
     const socket = await authed(harness);
     await harness.handler.handleTextMessage(socket, JSON.stringify({ type: 'attach', terminalId: 't1' }));
 
-    expect(socket.sent[1]).toEqual({ type: 'attached', terminalId: 't1', cols: 80, rows: 24 });
-    expect(socket.sent[2]).toEqual({ type: 'output', terminalId: 't1', data: 'history' });
+    expect(socket.sent[1]).toMatchObject({
+      type: 'attached',
+      terminalId: 't1',
+      cols: 80,
+      rows: 24,
+      replay: 'full',
+    });
+    expect(socket.sent[2]).toMatchObject({ type: 'output', terminalId: 't1', data: 'history' });
     expect(harness.audit).toEqual([{ event: 'ATTACH', terminalId: 't1' }]);
     terminal.emit('live');
-    expect(socket.last()).toEqual({ type: 'output', terminalId: 't1', data: 'live' });
+    expect(socket.last()).toMatchObject({ type: 'output', terminalId: 't1', data: 'live' });
   });
 
   it('skips the replay frame when the buffer is empty', async () => {
@@ -388,10 +415,83 @@ describe('TerminalWsHandler attach', () => {
     const socket = await authed(harness);
     await harness.handler.handleTextMessage(socket, JSON.stringify({ type: 'attach', terminalId: 't1' }));
 
-    expect(socket.sent[2]).toEqual({ type: 'output', terminalId: 't1', data: 'prompt$ ' });
+    expect(socket.sent[2]).toMatchObject({ type: 'output', terminalId: 't1', data: 'prompt$ ' });
     // 实时流不过滤：活着的程序确实在等应答
     terminal.emit('\x1b]11;?\x07');
-    expect(socket.last()).toEqual({ type: 'output', terminalId: 't1', data: '\x1b]11;?\x07' });
+    expect(socket.last()).toMatchObject({ type: 'output', terminalId: 't1', data: '\x1b]11;?\x07' });
+  });
+
+  it('attaches with fromSeq to replay only the delta', async () => {
+    const harness = newHarness();
+    const terminal = harness.registry.add(new FakeTerminal('t1', 3, 7));
+    terminal.buffered = 'abcdef';
+    const socket = await authed(harness);
+    await harness.handler.handleTextMessage(socket, JSON.stringify({ type: 'attach', terminalId: 't1', fromSeq: 3 }));
+
+    expect(socket.frames('attached')[0]).toMatchObject({ replay: 'delta', seq: 6 });
+    expect(socket.frames('output')[0]).toMatchObject({ data: 'def', seq: 3, endSeq: 6 });
+  });
+
+  it('keeps an incomplete escape sequence at the delta tail for the live stream', async () => {
+    const harness = newHarness();
+    const terminal = harness.registry.add(new FakeTerminal('t1', 3, 7));
+    terminal.buffered = 'abc\x1b[6';
+    const socket = await authed(harness);
+    await harness.handler.handleTextMessage(socket, JSON.stringify({ type: 'attach', terminalId: 't1', fromSeq: 3 }));
+
+    // 半条 CSI 不能丢：丢掉后实时流的 "n" 会以裸字节落屏
+    expect(socket.frames('output')[0]).toMatchObject({ data: '\x1b[6', seq: 3, endSeq: 6 });
+  });
+
+  it('does not send an empty delta frame when fromSeq equals the current seq', async () => {
+    const harness = newHarness();
+    const terminal = harness.registry.add(new FakeTerminal('t1', 3, 7));
+    terminal.buffered = 'abcdef';
+    const socket = await authed(harness);
+    await harness.handler.handleTextMessage(socket, JSON.stringify({ type: 'attach', terminalId: 't1', fromSeq: 6 }));
+
+    expect(socket.frames('attached')[0]).toMatchObject({ replay: 'delta', seq: 6 });
+    // attached.seq 已经是基线，客户端不需要空 output 帧推进序号
+    expect(socket.frames('output')).toHaveLength(0);
+  });
+
+  it('falls back to a full replay for invalid or too-old fromSeq', async () => {
+    for (const fromSeq of [-1, 7, 1.5, 'abc']) {
+      const harness = newHarness();
+      const terminal = harness.registry.add(new FakeTerminal('t1', 3, 7));
+      terminal.buffered = 'abcdef';
+      const socket = await authed(harness);
+      await harness.handler.handleTextMessage(socket, JSON.stringify({ type: 'attach', terminalId: 't1', fromSeq }));
+
+      expect(socket.frames('attached')[0]).toMatchObject({ replay: 'full' });
+      expect(socket.frames('output')[0]).toMatchObject({ data: 'abcdef' });
+    }
+
+    // 缓冲已截断：缓冲起点之前的 fromSeq 只能全量
+    const harness = newHarness();
+    const terminal = harness.registry.add(new FakeTerminal('t1', 3, 7));
+    terminal.buffered = 'ef';
+    terminal.bufferStartSeq = 4;
+    const socket = await authed(harness);
+    await harness.handler.handleTextMessage(socket, JSON.stringify({ type: 'attach', terminalId: 't1', fromSeq: 2 }));
+    expect(socket.frames('attached')[0]).toMatchObject({ replay: 'full' });
+  });
+
+  it('exposes a seq jump when a frame is dropped for backpressure', async () => {
+    const harness = newHarness();
+    const terminal = harness.registry.add(new FakeTerminal('t1', 3, 7));
+    const socket = await authed(harness);
+    await harness.handler.handleTextMessage(socket, JSON.stringify({ type: 'attach', terminalId: 't1' }));
+
+    terminal.emit('aa'); // seq 0..2
+    socket.bufferedAmount = OUTPUT_BACKPRESSURE_BYTES + 1;
+    terminal.emit('bb'); // 被丢：seq 2..4
+    socket.bufferedAmount = 0;
+    terminal.emit('cc'); // seq 4..6
+
+    const last = socket.last()!;
+    expect(last).toMatchObject({ type: 'output', seq: 4, endSeq: 6 });
+    expect(String(last.data)).toContain('cc');
   });
 
   it('rejects attach without terminalId', async () => {
@@ -436,7 +536,7 @@ describe('TerminalWsHandler attach', () => {
     expect(first.last()).toMatchObject({ type: 'error', terminalId: 't1', code: 'TERMINAL_TAKEN_OVER' });
     expect(second.frames('attached')).toHaveLength(1);
     terminal.emit('after');
-    expect(second.last()).toEqual({ type: 'output', terminalId: 't1', data: 'after' });
+    expect(second.last()).toMatchObject({ type: 'output', terminalId: 't1', data: 'after' });
     // 旧连接不再收到输出，也不再能写入
     await harness.handler.handleTextMessage(first, JSON.stringify({ type: 'input', terminalId: 't1', data: 'x' }));
     expect(first.last()).toMatchObject({ type: 'error', code: 'TERMINAL_FORBIDDEN' });
@@ -590,13 +690,13 @@ describe('TerminalWsHandler messages', () => {
 
     socket.bufferedAmount = 0;
     terminal.emit('recovered');
-    expect(socket.last()).toEqual({
+    expect(socket.last()).toMatchObject({
       type: 'output',
       terminalId: 't1',
       data: '\r\n[输出过快，已丢弃部分内容]\r\nrecovered',
     });
     terminal.emit('next');
-    expect(socket.last()).toEqual({ type: 'output', terminalId: 't1', data: 'next' });
+    expect(socket.last()).toMatchObject({ type: 'output', terminalId: 't1', data: 'next' });
   });
 
   it('survives send failures', async () => {

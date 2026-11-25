@@ -650,6 +650,26 @@ describe('Git 管理器 Tab 与提交 diff 的 id 隔离', () => {
     expect(tabs.activeTabId.value).toBe('git')
   })
 
+  it('openGitTab 带仓库路径时记在页签上，再点同一个仓库也会更新 nonce', async () => {
+    const tabs = setup()
+    tabs.openGitTab('mao')
+    await nextTick()
+
+    const git = tabs.tabs.value.find(t => t.type === 'git')
+    expect(git?.gitRepoFocus).toEqual({ path: 'mao', nonce: 1 })
+    expect(tabs.activeTabId.value).toBe('git')
+
+    tabs.openGitTab()
+    expect(tabs.tabs.value.find(t => t.type === 'git')?.gitRepoFocus).toEqual({ path: 'mao', nonce: 1 })
+
+    tabs.openGitTab('mao')
+    expect(tabs.tabs.value.filter(t => t.type === 'git')).toHaveLength(1)
+    expect(tabs.tabs.value.find(t => t.type === 'git')?.gitRepoFocus).toEqual({ path: 'mao', nonce: 2 })
+
+    tabs.openGitTab('other')
+    expect(tabs.tabs.value.find(t => t.type === 'git')?.gitRepoFocus).toEqual({ path: 'other', nonce: 3 })
+  })
+
   it('openGitTab 与其他 Tab 并存，互不顶掉', async () => {
     const tabs = setup()
     tabs.openFileManagerTab()

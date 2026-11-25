@@ -6,7 +6,7 @@
 //   原 fetch 按钮在该场景禁用，合并后不能丢失这个入口）；
 // - 非 git 仓库：按钮禁用并直接在 title 说明原因。
 // @vitest-environment jsdom
-import { createApp, h, nextTick } from 'vue'
+import { createApp, h, nextTick, ref } from 'vue'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 const state = vi.hoisted(() => ({
@@ -21,6 +21,10 @@ const state = vi.hoisted(() => ({
   selectedRepoPath: '',
   operationsProvider: null as any,
   tooltips: [] as string[],
+  reposRef: null as { value: Array<{ path: string }> } | null,
+  managerActiveView: null as { value: string } | null,
+  initialManagerView: 'changes',
+  selectedRepoPaths: [] as string[],
 }))
 
 // element-plus 只桩到本组件用到的两件：ElMessage（toast）、ElTooltip（透传渲染，content 收集到 state.tooltips）
@@ -63,15 +67,20 @@ vi.mock('./GitCompareView.vue', async () => {
 // ---- mock composables：真实实现返回 ref，mock 也要用真 ref（异步工厂里取 vue）----
 vi.mock('../../composables/useGitRepos', async () => {
   const { ref } = await import('vue')
+  const repos = ref<Array<{ path: string }>>([])
+  state.reposRef = repos
   return {
     useGitRepos: () => ({
-      repos: ref([]),
+      repos,
       isRootGit: ref(state.isRootGit),
       multiRepoMode: ref(state.multiRepoMode),
       selectedRepoPath: ref(state.selectedRepoPath),
       selectedRepo: ref(null),
       refresh: async () => { state.refreshReposCalls += 1 },
-      selectRepo: () => {},
+      selectRepo: (path: string) => {
+        state.selectedRepoPaths.push(path)
+        return repos.value.some((repo) => repo.path === path)
+      },
     }),
   }
 })
@@ -94,19 +103,23 @@ vi.mock('../../composables/useGitStatus', async () => {
 vi.mock('../../composables/useGitManager', async () => {
   const { ref } = await import('vue')
   return {
-    useGitManager: () => ({
-      // 真实实现里 activeView 是 ref：子导航点击会赋值，mock 也必须是 ref
-      activeView: ref('changes'),
-      logEntries: [], logLoading: false, logError: '', logExhausted: false,
-      expandedCommit: null, commitFiles: [], commitFilesLoading: false,
-      loadMoreLog: async () => {}, retryLog: async () => {}, toggleCommit: async () => {},
-      branches: [], branchesLoading: false, branchesError: '', loadBranches: async () => {},
-      compareBase: ref(''), compareTarget: ref(''), compareResult: ref(null),
-      compareLoading: ref(false), compareError: ref(''), loadCompare: async () => {},
-      stashes: [], stashesLoading: false, stashesError: '', loadStashes: async () => {},
-      remotes: ref([]), loadRemotes: async () => {},
-      refreshLoadedViews: async () => { state.refreshLoadedViewsCalls += 1 },
-    }),
+    useGitManager: () => {
+      const activeView = ref(state.initialManagerView)
+      state.managerActiveView = activeView
+      return {
+        // 真实实现里 activeView 是 ref：子导航点击会赋值，mock 也必须是 ref
+        activeView,
+        logEntries: [], logLoading: false, logError: '', logExhausted: false,
+        expandedCommit: null, commitFiles: [], commitFilesLoading: false,
+        loadMoreLog: async () => {}, retryLog: async () => {}, toggleCommit: async () => {},
+        branches: [], branchesLoading: false, branchesError: '', loadBranches: async () => {},
+        compareBase: ref(''), compareTarget: ref(''), compareResult: ref(null),
+        compareLoading: ref(false), compareError: ref(''), loadCompare: async () => {},
+        stashes: [], stashesLoading: false, stashesError: '', loadStashes: async () => {},
+        remotes: ref([]), loadRemotes: async () => {},
+        refreshLoadedViews: async () => { state.refreshLoadedViewsCalls += 1 },
+      }
+    },
   }
 })
 
@@ -165,6 +178,9 @@ beforeEach(() => {
   state.selectedRepoPath = ''
   state.operationsProvider = null
   state.tooltips = []
+  state.selectedRepoPaths = []
+  if (state.reposRef) state.reposRef.value = []
+  state.initialManagerView = 'changes'
 })
 
 describe('GitManagerPanel 多仓库撤销', () => {
@@ -360,6 +376,39 @@ describe('GitManagerPanel 对比视图入口', () => {
     compareBtn.click()
     await nextTick()
     expect(host.querySelector('.git-compare-stub')).not.toBeNull()
+    app.unmount()
+  })
+})
+
+describe('GitManagerPanel 摘要点仓库', () => {
+  it('focusRepo 选中该仓库并回到变更视图；列表晚到时补选', async () => {
+    state.reposRef!.value = []
+    state.initialManagerView = 'history'
+    const focusRepo = ref<{ path: string; nonce: number } | null>({ path: 'mao', nonce: 1 })
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const app = createApp({
+      render: () => h(GitManagerPanel as any, {
+        sessionId: 's1',
+        gitProvider: {},
+        focusRepo: focusRepo.value,
+      }),
+    })
+    app.mount(host)
+    await nextTick()
+    expect(state.selectedRepoPaths).toEqual(['mao'])
+    expect(state.managerActiveView!.value).toBe('history')
+
+    state.reposRef!.value = [{ path: 'mao' }, { path: 'other' }]
+    await nextTick()
+    expect(state.selectedRepoPaths).toEqual(['mao', 'mao'])
+    expect(state.managerActiveView!.value).toBe('changes')
+
+    state.managerActiveView!.value = 'history'
+    focusRepo.value = { path: 'other', nonce: 2 }
+    await nextTick()
+    expect(state.selectedRepoPaths.at(-1)).toBe('other')
+    expect(state.managerActiveView!.value).toBe('changes')
     app.unmount()
   })
 })
