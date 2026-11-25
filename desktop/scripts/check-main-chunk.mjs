@@ -22,7 +22,10 @@ if (files.length === 0) {
 
 const FORBIDDEN = [
   'sequenceDiagram',
-  'katex-mathml',
+  // katex 字体名（katex.min.css @font-face 独有）。不能用 'katex-mathml'：selection-quote
+  // 的选区跳过选择器（.katex-mathml）也是本仓源码字面量，源码自身就会命中该串，
+  // 主 chunk 无论是否真打进 katex 都恒报——守卫只能用库内部独有字面量。
+  'KaTeX_Math-Italic',
   // jszip 中央目录错误消息（ArchiveBrowser 动态 import）。冒号前那个空格是 jszip
   // 原文（dist/jszip.min.js），写成无空格版恒不命中——字面量必须与库产物逐字符对齐
   "Can't find end of central directory",
