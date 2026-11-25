@@ -10,7 +10,10 @@ import { getLocalDeviceId } from '../utils/device-info'
 import { isElectronClient } from '../utils/platform'
 import { useSessionStore } from '../stores/session'
 import { installImeTextareaSweeper, shouldInstallImeSweeper } from '../utils/terminal-ime-guard'
-import { useTerminalWS } from './useTerminalWS'
+import { installTouchScroll } from '../utils/terminal-touch-scroll'
+import { isTouchTerminal } from '../utils/terminal-touch'
+import { useTerminalWS, type TerminalAttachedMeta, type TerminalOutputMeta } from './useTerminalWS'
+import { useTerminalModifiers } from './useTerminalModifiers'
 
 const DARK_THEME = {
   background: '#26262a',
@@ -76,6 +79,14 @@ interface TerminalInstance {
   searchAddon: SearchAddon
   mode: 'local' | 'remote'
   disposers: Array<() => void>
+  /** WebGL 上下文丢失后的重试状态（每实例只重载一次）。 */
+  webglState: { lost: boolean; retried: boolean }
+  /** 已写入 xterm 的原始流最后字节序号；null 表示下次 attach 必须全量回放。 */
+  lastSeq: number | null
+  /** 下一帧应出现的帧首序号；null 表示尚未建立序号基线（全量回放中）。 */
+  expectedSeq: number | null
+  /** 收到过背压缺口：下次 attach 不带 fromSeq，强制全量回放。 */
+  needsFullReplay: boolean
 }
 
 /** 后端 GET/POST /sessions/{id}/terminals 返回的终端信息。 */
@@ -93,6 +104,33 @@ interface RemoteTerminalInfo {
 
 const DEFAULT_COLS = 80
 const DEFAULT_ROWS = 24
+
+const FONT_SIZE_KEY = 'mao_terminal_font_size'
+export const TERMINAL_PANEL_STATE_KEY = 'mao_terminal_panel_state'
+const MIN_FONT_SIZE = 10
+const MAX_FONT_SIZE = 18
+const DEFAULT_FONT_SIZE = 12
+
+function loadFontSize(): number {
+  try {
+    if (typeof localStorage === 'undefined') return DEFAULT_FONT_SIZE
+    const raw = Number(localStorage.getItem(FONT_SIZE_KEY))
+    if (!Number.isFinite(raw)) return DEFAULT_FONT_SIZE
+    return Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, Math.round(raw)))
+  } catch {
+    return DEFAULT_FONT_SIZE
+  }
+}
+
+/** 与全局令牌 --aw-tracking（0.025em）对齐；xterm 的 letterSpacing 只收 px。 */
+function letterSpacingFor(fontSize: number): number {
+  return Math.round(fontSize * 0.025 * 100) / 100
+}
+
+const terminalFontSize = ref(loadFontSize())
+/** 修饰键状态是模块级单例：所有终端实例共用一套粘滞状态。 */
+const modifiers = useTerminalModifiers()
+let visibilityRetryInitialized = false
 
 // Module-level singleton state
 const tabs = ref<TerminalTab[]>([])
@@ -196,14 +234,20 @@ export function useTerminal() {
   }
 
   /** 建 xterm 实例并装载 fit / webgl / search 插件（local 与 remote 共用）。 */
-  function buildTerminal(): { terminal: Terminal; fitAddon: FitAddon; searchAddon: SearchAddon } {
+  function buildTerminal(): {
+    terminal: Terminal
+    fitAddon: FitAddon
+    searchAddon: SearchAddon
+    webglState: { lost: boolean; retried: boolean }
+  } {
+    initVisibilityRetry()
+    const fontSize = terminalFontSize.value
     const terminal = new Terminal({
       cursorBlink: true,
-      fontSize: 12,
+      fontSize,
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-      // 与全局令牌 --aw-tracking（style.css）的 0.025em 对齐；xterm 的 letterSpacing
-      // 只收 px，故按上面的 fontSize 换算，改字号需同步改这里。
-      letterSpacing: 0.3,
+      // 与全局令牌 --aw-tracking（style.css）的 0.025em 对齐；改字号时同步换算
+      letterSpacing: letterSpacingFor(fontSize),
       lineHeight: 1.2,
       scrollback: 5000,
       theme: currentTheme(),
@@ -215,18 +259,58 @@ export function useTerminal() {
     const searchAddon = new SearchAddon()
     terminal.loadAddon(searchAddon)
 
+    const webglState = { lost: false, retried: false }
     // Load WebGL renderer for better selection accuracy
     try {
       const webgl = new WebglAddon()
-      // 上下文丢失（GPU 重置/驱动故障）时释放 WebGL 渲染器，xterm 自动回落 DOM/canvas 渲染
+      // 上下文丢失（GPU 重置/驱动故障、安卓切后台）时释放 WebGL 渲染器，xterm 自动回落 DOM 渲染；
+      // 回前台时由 initVisibilityRetry 尝试重载一次（见 retryWebgl）
       webgl.onContextLoss(() => {
+        webglState.lost = true
         webgl.dispose()
       })
       terminal.loadAddon(webgl)
     } catch {
       // WebGL not supported, fall back to canvas renderer
     }
-    return { terminal, fitAddon, searchAddon }
+    return { terminal, fitAddon, searchAddon, webglState }
+  }
+
+  /** WebGL 上下文丢失后回到前台只重试一次；失败就始终用 DOM 渲染。 */
+  function retryWebgl(inst: TerminalInstance): void {
+    if (!inst.webglState.lost || inst.webglState.retried) return
+    inst.webglState.retried = true
+    try {
+      const webgl = new WebglAddon()
+      webgl.onContextLoss(() => {
+        inst.webglState.lost = true
+        webgl.dispose()
+      })
+      inst.terminal.loadAddon(webgl)
+      inst.webglState.lost = false
+    } catch {
+      // 放弃：本实例生命周期内不再尝试
+    }
+  }
+
+  function initVisibilityRetry(): void {
+    if (visibilityRetryInitialized) return
+    if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') return
+    visibilityRetryInitialized = true
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return
+      for (const [, inst] of instances) retryWebgl(inst)
+    })
+  }
+
+  /** 原始通道：按键条 / 触摸滚动用，不经过 onData 的修饰键处理。 */
+  function writeInstance(id: string, inst: TerminalInstance, data: string): void {
+    if (data === '') return
+    if (inst.mode === 'local') {
+      window.electronAPI.terminal.write(id, data)
+    } else {
+      terminalWS.sendInput(id, data)
+    }
   }
 
   async function createLocalTerminal(cwd?: string): Promise<string | null> {
@@ -235,10 +319,11 @@ export function useTerminal() {
 
     const result = await window.electronAPI.terminal.create({ cwd, cols: DEFAULT_COLS, rows: DEFAULT_ROWS })
     const id = result.id
-    const { terminal, fitAddon, searchAddon } = buildTerminal()
+    const { terminal, fitAddon, searchAddon, webglState } = buildTerminal()
 
     const dataDisposer = terminal.onData((data) => {
-      window.electronAPI.terminal.write(id, data)
+      const output = modifiers.applyModifiers(data)
+      if (output !== '') window.electronAPI.terminal.write(id, output)
     })
     const resizeDisposer = terminal.onResize(({ cols, rows }) => {
       window.electronAPI.terminal.resize(id, cols, rows)
@@ -250,6 +335,10 @@ export function useTerminal() {
       searchAddon,
       mode: 'local',
       disposers: [() => dataDisposer.dispose(), () => resizeDisposer.dispose()],
+      webglState,
+      lastSeq: null,
+      expectedSeq: null,
+      needsFullReplay: false,
     })
 
     const shellName = result.shell.split('/').pop() || 'zsh'
@@ -259,36 +348,73 @@ export function useTerminal() {
     return id
   }
 
+  /** 增量回放：根据 attached / output 帧维护本地的序号基线。 */
+  function applyRemoteOutput(inst: TerminalInstance, data: string, meta?: TerminalOutputMeta): void {
+    if (meta && typeof meta.seq === 'number' && typeof meta.endSeq === 'number') {
+      if (inst.expectedSeq != null && meta.seq !== inst.expectedSeq) {
+        // 背压丢帧（或服务端补发不连续）：本地内容已有缺口，下次 attach 强制全量
+        inst.needsFullReplay = true
+        inst.lastSeq = null
+      }
+      inst.expectedSeq = meta.endSeq
+      if (!inst.needsFullReplay) inst.lastSeq = meta.endSeq
+    }
+    inst.terminal.write(data)
+  }
+
+  function handleAttached(inst: TerminalInstance, meta?: TerminalAttachedMeta): void {
+    if ((meta?.replay ?? 'full') === 'full') {
+      // 全量回放前清屏，避免与已显示内容重复。用 RIS（ESC c）而非 reset()：
+      // 清屏要排在写队列里，否则清不掉尚未落屏的上一段回放。
+      inst.terminal.write('\x1bc')
+      inst.lastSeq = null
+      inst.expectedSeq = null
+      inst.needsFullReplay = false
+      return
+    }
+    // 增量：回放帧的帧首序号应等于上次写到的位置；空回放时没有 output 帧，
+    // 下一次实时帧从同一位置继续，基线不变。
+    inst.expectedSeq = inst.lastSeq
+  }
+
   /** 把后端已存在的终端接入前端（新建与恢复共用）。 */
   function adoptRemoteTerminal(info: RemoteTerminalInfo, sessionId: string): string {
     initThemeListener()
     const id = info.terminalId
-    const { terminal, fitAddon, searchAddon } = buildTerminal()
+    const { terminal, fitAddon, searchAddon, webglState } = buildTerminal()
 
-    const dataDisposer = terminal.onData((data) => {
-      terminalWS.sendInput(id, data)
-    })
-    const resizeDisposer = terminal.onResize(({ cols, rows }) => {
-      terminalWS.sendResize(id, cols, rows)
-    })
-
-    instances.set(id, {
+    const inst: TerminalInstance = {
       terminal,
       fitAddon,
       searchAddon,
       mode: 'remote',
-      disposers: [() => dataDisposer.dispose(), () => resizeDisposer.dispose()],
+      disposers: [],
+      webglState,
+      lastSeq: null,
+      expectedSeq: null,
+      needsFullReplay: false,
+    }
+
+    const dataDisposer = terminal.onData((data) => {
+      const output = modifiers.applyModifiers(data)
+      if (output !== '') terminalWS.sendInput(id, output)
     })
+    const resizeDisposer = terminal.onResize(({ cols, rows }) => {
+      terminalWS.sendResize(id, cols, rows)
+    })
+    inst.disposers.push(() => dataDisposer.dispose(), () => resizeDisposer.dispose())
+
+    // 先登记实例再 attach：onOutput 闭包和 attach 的成功回调都要拿到稳定的 inst
+    instances.set(id, inst)
 
     terminalWS.registerTerminal(id, {
-      onOutput: (data) => terminal.write(data),
-      onAttached: () => {
-        // 每次 attach 服务端都会回放整段缓冲，先清屏避免与已显示内容重复。
-        // 用 RIS（ESC c）而非 reset()：清屏要排在写队列里，否则清不掉尚未落屏的上一段回放
-        terminal.write('\x1bc')
+      onOutput: (data, meta) => applyRemoteOutput(inst, data, meta),
+      onAttached: (_cols, _rows, meta) => {
+        handleAttached(inst, meta)
         clearTakenOver(id)
       },
       onExit: () => removeTab(id),
+      getResumeSeq: () => (inst.needsFullReplay ? null : inst.lastSeq),
       onError: (code, message) => {
         if (code === 'TERMINAL_TAKEN_OVER') {
           // 终端被其他窗口接管：保留 tab，提供「重新接管」入口
@@ -318,9 +444,12 @@ export function useTerminal() {
 
   /** attach 并处理失败：失败时在终端内提示，避免「tab 在但无输出」的静默故障。 */
   function attachRemote(id: string): void {
-    void terminalWS.attach(id).then(() => {
-      const inst = instances.get(id)
-      if (inst) terminalWS.sendResize(id, inst.terminal.cols, inst.terminal.rows)
+    const inst = instances.get(id)
+    // 背压缺口过就强制全量；否则带上最后写入的原始序号做增量回放
+    const fromSeq = inst && !inst.needsFullReplay ? inst.lastSeq : null
+    void terminalWS.attach(id, { fromSeq }).then(() => {
+      const current = instances.get(id)
+      if (current) terminalWS.sendResize(id, current.terminal.cols, current.terminal.rows)
     }).catch(() => {
       // 终端已被回收/退出的情况由 onError/onExit 分支处理，这里只覆盖超时等未回帧场景。
       // 断线场景重连后会自动重新 attach；连接正常但未回帧时需用户手动重开面板
@@ -452,6 +581,13 @@ export function useTerminal() {
       if (textarea && shouldInstallImeSweeper()) {
         inst.disposers.push(installImeTextareaSweeper(textarea))
       }
+      // xterm 6.0 没有触摸滚动：触屏端自己补单指滑动 + 双指捏合字号
+      if (isTouchTerminal()) {
+        inst.disposers.push(installTouchScroll(inst.terminal, {
+          sendRaw: (data) => writeInstance(id, inst, data),
+          onPinchSteps: (steps) => adjustFontSize(steps),
+        }))
+      }
     }
     nextTick(() => {
       inst.fitAddon.fit()
@@ -460,7 +596,8 @@ export function useTerminal() {
       } else {
         terminalWS.sendResize(id, inst.terminal.cols, inst.terminal.rows)
       }
-      inst.terminal.focus()
+      // 触屏端不自动聚焦：只想看输出时不该被软键盘顶掉半屏
+      if (!isTouchTerminal()) inst.terminal.focus()
     })
   }
 
@@ -474,6 +611,36 @@ export function useTerminal() {
     for (const [id] of instances) {
       fitTerminal(id)
     }
+  }
+
+  /** 字号调整（A−/A+ 与双指捏合同一入口）；所有实例共用，改完重新 fit 让 PTY 尺寸跟上。 */
+  function adjustFontSize(delta: number): void {
+    const next = Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, terminalFontSize.value + delta))
+    if (next === terminalFontSize.value) return
+    terminalFontSize.value = next
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.setItem(FONT_SIZE_KEY, String(next))
+    } catch {
+      // 隐私模式下写入可能失败，不影响本次调整
+    }
+    for (const [, inst] of instances) {
+      inst.terminal.options.fontSize = next
+      inst.terminal.options.letterSpacing = letterSpacingFor(next)
+    }
+    fitAllTerminals()
+  }
+
+  /**
+   * 原始写出通道：按键条 / 触摸滚动用，不经过 terminal.input() → onData → applyModifiers。
+   * 用 terminal.input(data, true) 不能绕过（第二个参数只标记用户输入，仍会触发 onData）。
+   */
+  function sendRaw(data: string): void {
+    const id = activeTabId.value
+    if (!id) return
+    const inst = instances.get(id)
+    if (!inst) return
+    writeInstance(id, inst, data)
+    modifiers.consumeOnce()
   }
 
   function switchTab(id: string) {
@@ -551,7 +718,8 @@ export function useTerminal() {
       activeTabId.value = visibleTabs.value[0].id
     }
     const inst = activeTabId.value ? instances.get(activeTabId.value) : null
-    if (inst) nextTick(() => inst.terminal.focus())
+    // 触屏端不自动弹键盘（§4.5）；桌面保持原行为
+    if (inst && !isTouchTerminal()) nextTick(() => inst.terminal.focus())
   }
 
   function getActiveInstance(): TerminalInstance | null {
@@ -575,6 +743,12 @@ export function useTerminal() {
     takenOverTabs.value = []
     activeTabId.value = null
     isOpen.value = false
+    modifiers.reset()
+    try {
+      if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(TERMINAL_PANEL_STATE_KEY)
+    } catch {
+      // 无存储权限时忽略
+    }
   }
 
   return {
@@ -592,6 +766,9 @@ export function useTerminal() {
     mountTerminal,
     fitTerminal,
     fitAllTerminals,
+    adjustFontSize,
+    sendRaw,
+    fontSize: terminalFontSize,
     switchTab,
     closeTerminal,
     togglePanel,

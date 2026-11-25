@@ -302,18 +302,21 @@ html.android-capacitor .management-dialog .el-dialog__body {
   -webkit-overflow-scrolling: touch;
 }
 
-/* 安卓终端：面板随软键盘避让（margin-bottom 由 JS 设置），内容区收窄留白并放大触控目标。 */
-html.android-capacitor .terminal-panel {
+/* 触屏终端（安卓壳 + 手机 / 平板浏览器）：面板随软键盘避让（margin-bottom 由 JS 设置），
+   内容区收窄留白。xterm 6 没有触摸滚动，必须关掉浏览器的手势判定，否则自定义滑动
+   会在首个 touchmove 之前被 touchcancel。 */
+.terminal-panel--touch {
   transition: margin-bottom 0.12s ease-out;
+  overscroll-behavior: contain;
+  -webkit-text-size-adjust: 100%;
 }
 
-html.android-capacitor .terminal-container {
+.terminal-panel--touch .terminal-container {
   padding: 4px 8px;
 }
 
-html.android-capacitor .terminal-keybar-btn {
-  min-width: 44px;
-  height: 36px;
+.terminal-panel--touch .xterm {
+  touch-action: none;
 }
 
 /* ============================================

@@ -7,6 +7,7 @@ vi.mock('../utils/auth-storage', () => ({
 const sockets: FakeWebSocket[] = []
 
 class FakeWebSocket {
+  static readonly CONNECTING = 0
   static readonly OPEN = 1
   static readonly CLOSED = 3
   readyState = 0
@@ -159,5 +160,97 @@ describe('useTerminalWS', () => {
     await expect(attached).resolves.toBeUndefined()
     expect(errors).toEqual(['TERMINAL_RECLAIMED'])
     expect(ws.isAttached('t1')).toBe(false)
+  })
+
+  it('attach 带 fromSeq，重连自动 re-attach 时原样带回', () => {
+    const ws = useTerminalWS()
+    void ws.attach('t1', { fromSeq: 42 })
+    const first = connectAndAuth()
+    expect(first.frames('attach')).toEqual([{ type: 'attach', terminalId: 't1', fromSeq: 42 }])
+
+    first.close()
+    ws.resumeAfterForeground()
+    const second = connectAndAuth()
+    expect(second.frames('attach')).toEqual([{ type: 'attach', terminalId: 't1', fromSeq: 42 }])
+  })
+
+  it('不带 fromSeq 的 attach 在重连时不带增量字段', () => {
+    const ws = useTerminalWS()
+    void ws.attach('t1', { fromSeq: null })
+    connectAndAuth()
+    const second = sockets[0]!
+    second.close()
+    ws.resumeAfterForeground()
+    const third = connectAndAuth()
+    expect(third.frames('attach')).toEqual([{ type: 'attach', terminalId: 't1' }])
+  })
+
+  it('重连时优先使用 handler 的实时序号', () => {
+    const ws = useTerminalWS()
+    let lastSeq: number | null = 0
+    ws.registerTerminal('t1', {
+      onOutput: () => {},
+      getResumeSeq: () => lastSeq,
+    })
+    void ws.attach('t1', { fromSeq: 0 })
+    const first = connectAndAuth()
+    lastSeq = 17
+    first.close()
+    ws.resumeAfterForeground()
+    const second = connectAndAuth()
+    expect(second.frames('attach')).toEqual([{ type: 'attach', terminalId: 't1', fromSeq: 17 }])
+  })
+
+  it('handler 要求全量回放时重连不带 fromSeq', () => {
+    const ws = useTerminalWS()
+    ws.registerTerminal('t1', {
+      onOutput: () => {},
+      getResumeSeq: () => null,
+    })
+    void ws.attach('t1', { fromSeq: 5 })
+    const first = connectAndAuth()
+    first.close()
+    ws.resumeAfterForeground()
+    const second = connectAndAuth()
+    expect(second.frames('attach')).toEqual([{ type: 'attach', terminalId: 't1' }])
+  })
+
+  it('output / attached 帧把 seq / replay 透传给 handler', () => {
+    const ws = useTerminalWS()
+    const outputs: Array<{ data: string; meta?: unknown }> = []
+    const attachedMeta: unknown[] = []
+    ws.registerTerminal('t1', {
+      onOutput: (data, meta) => outputs.push({ data, meta }),
+      onAttached: (_cols, _rows, meta) => attachedMeta.push(meta),
+    })
+    void ws.attach('t1')
+    const socket = connectAndAuth()
+
+    socket.emit({ type: 'attached', terminalId: 't1', cols: 80, rows: 24, replay: 'delta', seq: 12 })
+    socket.emit({ type: 'output', terminalId: 't1', data: 'xx', seq: 12, endSeq: 14 })
+
+    expect(attachedMeta).toEqual([{ replay: 'delta', seq: 12 }])
+    expect(outputs).toEqual([{ data: 'xx', meta: { seq: 12, endSeq: 14 } }])
+  })
+
+  it('回前台且连接正常时立即补一次 ping', () => {
+    const ws = useTerminalWS()
+    void ws.attach('t1')
+    const socket = connectAndAuth()
+    ws.resumeAfterForeground()
+    expect(socket.frames('ping')).toHaveLength(1)
+    expect(sockets).toHaveLength(1)
+  })
+
+  it('回前台发现连接已断时立即重连，不等退避定时器', () => {
+    const ws = useTerminalWS()
+    void ws.attach('t1')
+    const first = connectAndAuth()
+    first.close()
+    expect(sockets).toHaveLength(1)
+
+    ws.resumeAfterForeground()
+    expect(sockets).toHaveLength(2)
+    connectAndAuth()
   })
 })

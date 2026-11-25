@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useTerminal } from './useTerminal'
+import { useTerminalModifiers } from './useTerminalModifiers'
 import { useSessionStore, type Session } from '../stores/session'
 
 const { apiMock, wsMock, FakeTerminal } = vi.hoisted(() => {
@@ -15,8 +17,16 @@ const { apiMock, wsMock, FakeTerminal } = vi.hoisted(() => {
     open = vi.fn()
     dispose = vi.fn()
     loadAddon = vi.fn()
-    onData = vi.fn(() => ({ dispose: () => {} }))
+    private dataCb: ((data: string) => void) | null = null
+    onData = vi.fn((cb: (data: string) => void) => {
+      this.dataCb = cb
+      return { dispose: () => {} }
+    })
     onResize = vi.fn(() => ({ dispose: () => {} }))
+
+    emitData(data: string): void {
+      this.dataCb?.(data)
+    }
   }
   return {
     FakeTerminal,
@@ -75,6 +85,10 @@ function useCloudSession(id = 's1') {
 }
 
 describe('useTerminal 关闭最后一个 tab 自动收起面板', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
@@ -131,5 +145,55 @@ describe('useTerminal 关闭最后一个 tab 自动收起面板', () => {
     handlers.onExit()
 
     expect(terminal.isOpen.value).toBe(false)
+  })
+
+  it('sendRaw 走原始通道并消耗单次修饰键', async () => {
+    useCloudSession()
+    const terminal = useTerminal()
+    terminal.isOpen.value = true
+    apiMock.post.mockResolvedValue({ data: remoteInfo('t1') })
+    await terminal.createTerminal()
+
+    const mods = useTerminalModifiers()
+    mods.toggleCtrl()
+    terminal.sendRaw('\x03')
+
+    expect(wsMock.sendInput).toHaveBeenCalledWith('t1', '\x03')
+    expect(mods.ctrl.value).toBe('off')
+  })
+
+  it('onData 经过修饰键处理（软键盘路径）', async () => {
+    useCloudSession()
+    const terminal = useTerminal()
+    terminal.isOpen.value = true
+    apiMock.post.mockResolvedValue({ data: remoteInfo('t1') })
+    await terminal.createTerminal()
+
+    const inst = terminal.getInstance('t1')!
+    const mods = useTerminalModifiers()
+    mods.toggleCtrl()
+    const fake = inst.terminal as unknown as { emitData: (data: string) => void }
+    fake.emitData('c')
+
+    expect(wsMock.sendInput).toHaveBeenCalledWith('t1', '\x03')
+    expect(mods.ctrl.value).toBe('off')
+  })
+
+  it('触屏端 mount 终端不自动聚焦（不弹软键盘）', async () => {
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) })
+    useCloudSession()
+    const terminal = useTerminal()
+    terminal.isOpen.value = true
+    apiMock.post.mockResolvedValue({ data: remoteInfo('t1') })
+    await terminal.createTerminal()
+
+    const inst = terminal.getInstance('t1')!
+    terminal.mountTerminal('t1', {} as HTMLElement)
+    await nextTick()
+    await nextTick()
+
+    const focusMock = inst.terminal.focus as unknown as { mock: { calls: unknown[] } }
+    expect(focusMock.mock.calls).toHaveLength(0)
+    vi.unstubAllGlobals()
   })
 })

@@ -1,5 +1,5 @@
 import { harnessLog } from '../log.js';
-import type { RemoteTerminalInfo } from './remote-terminal.js';
+import type { OutputSeq, RemoteTerminalInfo } from './remote-terminal.js';
 import { sanitizeReplayData } from './replay-sanitizer.js';
 import {
   MAX_TERMINAL_COLS,
@@ -49,10 +49,16 @@ export interface AttachableTerminal {
    * （该权限语义是服务器 shell）。归属校验两种终端都做。
    */
   readonly skipTerminalUsePermission: boolean;
-  attach(socketId: string, onOutput: (data: string) => void): string | null;
+  attach(socketId: string, onOutput: (data: string, seq: OutputSeq) => void): string | null;
   detach(socketId: string): boolean;
   attachedSocketId(): string | null;
   readBuffered(): string;
+  /** 当前输出累计字节序号（增量回放的帧尾）。 */
+  getSeq(): number;
+  /** 环形缓冲仍可增量回放的起点。 */
+  getBufferStartSeq(): number;
+  /** 增量回读 [fromSeq, 当前序号)；null 表示 fromSeq 已滚出缓冲。 */
+  readBufferedFrom(fromSeq: number): { data: string; startSeq: number; endSeq: number } | null;
   write(data: string): void;
   resize(cols: number, rows: number): void;
   onExit(listener: (exitCode: number) => void): void;
@@ -265,7 +271,7 @@ export class TerminalWsHandler {
     // 若继续绑定会把 sink 挂在死连接上（终端永不进 idle 回收，还会顶替重连后的新连接）
     if (this.connections.get(conn.socket.id) !== conn || conn.socket.readyState !== TERMINAL_WS_OPEN) return;
 
-    const previousSocketId = terminal.attach(conn.socket.id, (data) => this.sendOutput(conn.socket.id, terminalId, data));
+    const previousSocketId = terminal.attach(conn.socket.id, (data, seq) => this.sendOutput(conn.socket.id, terminalId, data, seq));
     if (previousSocketId != null) {
       const previous = this.connections.get(previousSocketId);
       if (previous) {
@@ -282,12 +288,48 @@ export class TerminalWsHandler {
     }
 
     const info = terminal.toInfo();
-    this.send(conn.socket, { type: 'attached', terminalId, cols: info.cols, rows: info.rows });
-    // 回放的是历史字节：先剔除会引发 xterm 自动应答的序列（旧查询被重新应答后，
-    // 应答经 input 帧回到 PTY 被 bash 当命令执行，每次重开面板都刷一屏 command not found）
-    const buffered = sanitizeReplayData(terminal.readBuffered());
-    if (buffered !== '') {
-      this.send(conn.socket, { type: 'output', terminalId, data: buffered });
+    const currentSeq = terminal.getSeq();
+    // fromSeq 非法（非整数 / 负数 / 超出范围）或已滚出缓冲时按全量回放。
+    const fromSeq = readNumber(root, 'fromSeq');
+    const delta = fromSeq != null
+      && Number.isInteger(fromSeq)
+      && fromSeq >= 0
+      && fromSeq >= terminal.getBufferStartSeq()
+      && fromSeq <= currentSeq;
+    this.send(conn.socket, {
+      type: 'attached',
+      terminalId,
+      cols: info.cols,
+      rows: info.rows,
+      replay: delta ? 'delta' : 'full',
+      seq: currentSeq,
+    });
+    if (delta) {
+      const replay = terminal.readBufferedFrom(fromSeq);
+      if (replay) {
+        // 增量帧即使被 sanitize 清空也要发：客户端靠 endSeq 推进 lastSeq，
+        // 否则下一帧会被误判成缺口、触发不必要的全量回放。
+        this.send(conn.socket, {
+          type: 'output',
+          terminalId,
+          data: sanitizeReplayData(replay.data),
+          seq: replay.startSeq,
+          endSeq: replay.endSeq,
+        });
+      }
+    } else {
+      // 回放的是历史字节：先剔除会引发 xterm 自动应答的序列（旧查询被重新应答后，
+      // 应答经 input 帧回到 PTY 被 bash 当命令执行，每次重开面板都刷一屏 command not found）
+      const buffered = sanitizeReplayData(terminal.readBuffered());
+      if (buffered !== '') {
+        this.send(conn.socket, {
+          type: 'output',
+          terminalId,
+          data: buffered,
+          seq: terminal.getBufferStartSeq(),
+          endSeq: currentSeq,
+        });
+      }
     }
     this.deps.audit?.('ATTACH', terminal, { ip: conn.socket.ip, username: conn.username });
   }
@@ -342,7 +384,7 @@ export class TerminalWsHandler {
     return terminal;
   }
 
-  private sendOutput(socketId: string, terminalId: string, data: string): void {
+  private sendOutput(socketId: string, terminalId: string, data: string, seq: OutputSeq): void {
     const conn = this.connections.get(socketId);
     if (!conn) return;
     if (conn.socket.readyState !== TERMINAL_WS_OPEN) return;
@@ -351,7 +393,13 @@ export class TerminalWsHandler {
       return;
     }
     const payload = conn.dropped.delete(terminalId) ? `${DROPPED_NOTICE}${data}` : data;
-    this.send(conn.socket, { type: 'output', terminalId, data: payload });
+    this.send(conn.socket, {
+      type: 'output',
+      terminalId,
+      data: payload,
+      seq: seq.seq,
+      endSeq: seq.endSeq,
+    });
   }
 
   private handleTerminalExit(terminalId: string, exitCode: number): void {
