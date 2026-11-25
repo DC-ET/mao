@@ -916,6 +916,94 @@ describe('session store 实体/投影模型', () => {
     expect(store.getMessages('1').map(m => m.id)).toEqual(['u1', 'u2'])
   })
 
+  // 回归（用户第二张截图反馈）：盯屏看 Agent 执行时，完成卡片漂到时间线顶部、第一轮思考之上；
+  // 刷新后才回到派发它的那条工具调用后面。成因：只按「插在流式气泡之前」定位，而子代理在后台
+  // 跑，主线早已推进到后面几条消息，气泡在尾部、卡片就跟着跑到末尾之前——视觉上就是顶部/错位。
+  // 正确锚点是 spawn_subagent 消息：后端 persistCompletionNotice 就把通知落在那条消息之后，
+  // 且该工具 result 带 child_session_id，与通知 metadata 的 childSessionId 对得上。
+  it('完成通知插在派发它的 spawn_subagent 消息之后，不跟着流式气泡漂走', () => {
+    const store = useSessionStore()
+    store.addUserMessage('1', { id: 'u1', role: 'user', content: '审查一下', createdAt: '2026-11-25 09:59:00' })
+    // 主线已经推进过的几条消息（读取 / 思考 / 编辑）
+    store.addAssistantMessage('1', { id: 'm1', role: 'assistant', content: '', createdAt: '2026-11-25 10:00:00' })
+    store.addAssistantMessage('1', { id: 'm2', role: 'assistant', content: '', createdAt: '2026-11-25 10:01:00' })
+    // 派发子代理的那条消息：工具结果带 child_session_id
+    store.addAssistantMessage('1', {
+      id: 'm3',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-11-25 10:02:00',
+      toolCalls: [{
+        id: 'tc-1',
+        name: 'spawn_subagent',
+        status: 'success',
+        isExpanded: false,
+        argsStreaming: false,
+        result: JSON.stringify({ success: true, task_id: 9, child_session_id: 42, status: 'RUNNING' }),
+      }],
+    })
+    store.addAssistantMessage('1', { id: 'm4', role: 'assistant', content: '', createdAt: '2026-11-25 10:03:00' })
+    const streaming = store.ensureStreamingAssistantMessage('1')
+    store.appendDelta('1', '主线还在输出')
+
+    store.insertPersistedAssistantMessage('1', {
+      id: '901',
+      role: 'assistant',
+      content: '后台子代理（reviewer）已完成 · 点击查看详情',
+      createdAt: '2026-11-25 10:04:00',
+      metadata: { backgroundSubagentCompletion: { childSessionId: 42, executionId: 7, status: 'COMPLETED' } },
+    })
+
+    // 紧跟派发消息 m3 之后，而不是漂到流式气泡之前（那会跑到 m4 之后、视觉顶部）
+    expect(store.getMessages('1').map(m => m.id)).toEqual(['u1', 'm1', 'm2', 'm3', '901', 'm4', streaming.id])
+    // 同一轮回复仍在同一条 tracked 气泡里追加，没有被拆成两段
+    expect(streaming.content).toBe('主线还在输出')
+  })
+
+  // 追问复用同一 child_session_id：通知属于最近一次派发，取最后一条匹配。
+  it('追问后完成通知锚到最近一次 subagent_followup 消息之后', () => {
+    const store = useSessionStore()
+    store.addUserMessage('1', { id: 'u1', role: 'user', content: '审查一下', createdAt: '2026-11-25 09:59:00' })
+    const spawnCall = (id: string) => ({
+      id: `tc-${id}`,
+      name: 'spawn_subagent',
+      status: 'success' as const,
+      isExpanded: false,
+      argsStreaming: false,
+      result: JSON.stringify({ success: true, child_session_id: 42, status: 'RUNNING' }),
+    })
+    store.addAssistantMessage('1', { id: 'm1', role: 'assistant', content: '', createdAt: '2026-11-25 10:00:00', toolCalls: [spawnCall('1')] })
+    store.addAssistantMessage('1', {
+      id: 'm2',
+      role: 'assistant',
+      content: '',
+      createdAt: '2026-11-25 10:01:00',
+      toolCalls: [{ ...spawnCall('2'), name: 'subagent_followup' }],
+    })
+
+    store.insertPersistedAssistantMessage('1', {
+      id: '901',
+      role: 'assistant',
+      content: '后台子代理（reviewer）已完成 · 点击查看详情',
+      createdAt: '2026-11-25 10:02:00',
+      metadata: { backgroundSubagentCompletion: { childSessionId: 42, executionId: 8, status: 'COMPLETED' } },
+    })
+
+    expect(store.getMessages('1').map(m => m.id)).toEqual(['u1', 'm1', 'm2', '901'])
+  })
+
+  // 没有后台子代理标记的消息（以及认不出 child_session_id 的）保持原有定位规则，
+  // 不影响其他「服务端直接落库的助手消息」。
+  it('非后台子代理消息仍按流式气泡定位', () => {
+    const store = useSessionStore()
+    store.addUserMessage('1', { id: 'u1', role: 'user', content: 'hi', createdAt: '2026-11-25 10:00:00' })
+    const streaming = store.ensureStreamingAssistantMessage('1')
+    store.insertPersistedAssistantMessage('1', {
+      id: '902', role: 'assistant', content: '普通落库消息', createdAt: '2026-11-25 10:01:00',
+    })
+    expect(store.getMessages('1').map(m => m.id)).toEqual(['u1', '902', streaming.id])
+  })
+
   // 边路任务 Tab 打开进行中会话时 fetchMessages 迟到：通知先暂存，REST 历史（已含这些卡片）
   // 落地后必须按服务端顺序归位，且不能因为暂存的副本重复上屏。
   it('REST 历史带回通知后，暂存的副本不重复上屏', () => {

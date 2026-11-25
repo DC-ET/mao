@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
+import type { ChatMessage } from '../types/chat'
 
 vi.mock('../utils/auth-storage', () => ({
   getToken: () => 'test-token',
@@ -799,6 +800,49 @@ describe('useStreamWS 后台子代理完成通知（assistant_message_saved）',
     store.setMessages('9', [])
     expect(() => noticeFrame({ ...notice, metadata: '{not-json' })).not.toThrow()
     expect(store.getMessages('9')).toHaveLength(0)
+  })
+
+  // 回归（用户第二张截图反馈）：不刷新页面、盯屏看 Agent 执行时，完成卡片漂到时间线顶部、
+  // 第一轮思考之上；刷新后才回到派发它的那条工具调用后面。子代理在后台跑，主线早已推进到
+  // 后面几条消息，只按「插在流式气泡之前」定位就会跟着气泡跑到末尾之前（视觉即顶部/错位）。
+  it('通知锚到派发它的 spawn_subagent 消息之后，不跟着流式气泡漂走', async () => {
+    const { connect, subscribe } = useStreamWS()
+    const pending = connect()
+    sockets[0].open()
+    await pending
+    await subscribe('9')
+
+    const store = useSessionStore()
+    // 盯屏看到的本地列表：提问 + 主线已推进的几条消息 + 派发子代理的那条 + 继续推进的消息
+    const live: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: '审查一下当前 mao 项目未提交的代码。', createdAt: '2026-11-25 09:59:00' },
+      { id: 'm1', role: 'assistant', content: '', createdAt: '2026-11-25 10:00:00' },
+      {
+        id: 'm2',
+        role: 'assistant',
+        content: '',
+        createdAt: '2026-11-25 10:01:00',
+        toolCalls: [{
+          id: 'tc-1',
+          name: 'spawn_subagent',
+          status: 'success',
+          isExpanded: false,
+          argsStreaming: false,
+          result: JSON.stringify({ success: true, task_id: 9, child_session_id: 42, status: 'RUNNING' }),
+        }],
+      },
+      { id: 'm3', role: 'assistant', content: '', createdAt: '2026-11-25 10:02:00' },
+    ]
+    store.setMessages('9', live)
+    const streaming = store.ensureStreamingAssistantMessage('9')
+    store.appendDelta('9', '主线还在输出')
+
+    noticeFrame(notice)
+
+    // 紧跟派发消息 m2 之后——与刷新后 REST 历史里的位置一致
+    expect(store.getMessages('9').map(m => m.id)).toEqual(['u1', 'm1', 'm2', '901', 'm3', streaming.id])
+    // 同一轮回复仍在同一条 tracked 气泡里追加，没有被拆成两段
+    expect(streaming.content).toBe('主线还在输出')
   })
 })
 

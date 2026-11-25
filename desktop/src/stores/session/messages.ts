@@ -5,6 +5,7 @@ import { elapsedBaseMs } from '../../utils/elapsed'
 import { stripImageUrlLines } from '../../utils/imageUrlAnnotation'
 import { nowDateTime } from '../../utils/datetime'
 import { toRelativeWorkspacePath } from '../../utils/workspace-path'
+import { getBackgroundCompletion } from '../../utils/backgroundNotice'
 import type { TaskPhase } from './types'
 import type { LlmRetryInfo } from './types'
 
@@ -57,6 +58,30 @@ function echoesPersistedReply(local: ChatMessage[], index: number, fetched: Chat
     return false;
   }
   return false;
+}
+
+/**
+ * 派发该后台子代理的工具调用所在消息的下标（找不到返回 -1）。
+ *
+ * `spawn_subagent` / `subagent_followup` 的 result JSON 带 `child_session_id`，与完成通知
+ * metadata 里的 `childSessionId` 是同一个值；后端 persistCompletionNotice 就是把通知落在
+ * 这条消息之后（background-subagent-manager.ts）。取最后一条匹配：追问复用同一
+ * child_session_id，通知属于最近一次派发。
+ */
+function findSpawnCallIndex(list: ChatMessage[], childSessionId: number): number {
+  for (let i = list.length - 1; i >= 0; i--) {
+    for (const call of list[i]!.toolCalls ?? []) {
+      if (call.name !== 'spawn_subagent' && call.name !== 'subagent_followup') continue
+      if (typeof call.result !== 'string' || call.result === '') continue
+      try {
+        const parsed = JSON.parse(call.result) as Record<string, unknown>
+        if (Number(parsed.child_session_id) === childSessionId) return i
+      } catch {
+        // 结果被截断/不是 JSON：这条调用认不出子会话，继续往前找
+      }
+    }
+  }
+  return -1
 }
 
 /**
@@ -407,10 +432,15 @@ export function createMessageRuntimeModule(ctx: {
    *
    * 这正是后台子代理在主会话执行中完成时的真实时序：通知插入时主线还在流式输出。
    *
-   * 锚点是列表里最后一条 user 消息（启动本轮的那条提问），通知绝不能插到它之前。
-   * 广播不按 subscribe 过滤，进行中会话被打开/刷新时本地可能只有流式气泡、用户消息
-   * 还没落地，此时 list.length - 1 === 0，按上面的规则插就是把卡片顶到时间线最前面。
-   * 没有锚点时暂存进 pendingNoticeMessages，等用户消息/历史落地后由 flushPendingNotices 补插。
+   * 插入位置按优先级取：
+   *  1. 派发该子代理的 spawn_subagent / subagent_followup 消息之后——与服务端落库顺序
+   *     一致（见 findSpawnCallIndex）。子代理在后台跑，主线往往已推进到后面几条消息，
+   *     只按气泡插会让卡片漂到时间线顶部。
+   *  2. 本轮提问之后、流式气泡之前。
+   *  3. 都没有锚点（列表里还没有本轮提问）时暂存，等用户消息/历史落地后补插。
+   * 绝不能插到列表里最后一条 user 消息之前：广播不按 subscribe 过滤，进行中会话被
+   * 打开/刷新时本地可能只有流式气泡，那时插就等于把卡片顶到时间线最前面，
+   * useMessageRounds 还会把首个 user 之前的助手消息整批丢掉（卡片直接消失）。
    */
   function insertPersistedAssistantMessage(sessionId: string, msg: ChatMessage) {
     const sid = String(sessionId)
@@ -429,6 +459,19 @@ export function createMessageRuntimeModule(ctx: {
       if (!pending.some(m => String(m.id) === msgId)) {
         pendingNoticeMessages.value.set(sid, [...pending, msg])
       }
+      return
+    }
+
+    // 后台子代理完成通知优先按「派发它的那条工具调用」定位，和服务端落库顺序对齐。
+    // 只按流式气泡插是错的：子代理在后台跑，主线早就推进到后面几条消息，卡片会整批漂到
+    // 时间线顶部（用户实测：漂到第一轮思考之上），只有刷新后从 REST 历史里才归位。
+    // 追问（subagent_followup）复用同一 child_session_id，findSpawnCallIndex 取最后一条匹配。
+    const childSessionId = getBackgroundCompletion(msg)?.childSessionId
+    const spawnIndex = childSessionId != null ? findSpawnCallIndex(list, childSessionId) : -1
+    if (spawnIndex >= 0) {
+      const next = [...list]
+      next.splice(Math.max(spawnIndex + 1, lastUserIndex + 1), 0, msg)
+      sessionMessages.value.set(sid, next)
       return
     }
 
