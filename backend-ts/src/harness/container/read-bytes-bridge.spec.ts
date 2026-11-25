@@ -9,9 +9,9 @@ function makeBridge(uploadOriginProvider?: () => Promise<string | null>, session
   const base = useTmpDir('mao-bridge-');
   const uploadDir = join(base, 'uploads');
   const runtimeDir = join(base, 'runtime');
-  const readBytes = vi.fn(async () => null);
+  const openReadStream = vi.fn(async () => null);
   const bridge = new DockerSendBytesBridge({
-    router: { readBytes } as unknown as DockerToolRouter,
+    router: { openReadStream } as unknown as DockerToolRouter,
     runtimeResolver: { resolveUserHomeDir: (userId: number) => join(base, 'users', String(userId)) } as never,
     runtimeDir,
     uploadDir,
@@ -19,7 +19,7 @@ function makeBridge(uploadOriginProvider?: () => Promise<string | null>, session
     sessionAgentIdOf: sessionAgentIdOf ?? (async () => 5),
     uploadOriginProvider,
   });
-  return { bridge, readBytes, uploadDir, runtimeDir, base };
+  return { bridge, openReadStream, uploadDir, runtimeDir, base };
 }
 
 describe('DockerSendBytesBridge', () => {
@@ -40,37 +40,37 @@ describe('DockerSendBytesBridge', () => {
     expect(bridge.extraRoots(null)).toEqual(['/tmp']);
   });
 
-  it('forwards readBytes to the container router and skips it without a user', async () => {
-    const { bridge, readBytes } = makeBridge();
+  it('forwards openStream to the container router and skips it without a user', async () => {
+    const { bridge, openReadStream } = makeBridge();
     const input = { userId: 7, sessionId: 11, workspace: '/ws/7', path: 'a.png', maxBytes: 1024 };
-    await bridge.readBytes(input);
+    await bridge.openStream(input);
     // agentId 由 sessionAgentIdOf 按会话解析（缺省桩恒返 5）后透传
-    expect(readBytes).toHaveBeenCalledWith({ ...input, agentId: 5 });
+    expect(openReadStream).toHaveBeenCalledWith({ ...input, agentId: 5 });
 
-    readBytes.mockClear();
-    expect(await bridge.readBytes({ ...input, userId: null })).toBeNull();
-    expect(readBytes).not.toHaveBeenCalled();
+    openReadStream.mockClear();
+    expect(await bridge.openStream({ ...input, userId: null })).toBeNull();
+    expect(openReadStream).not.toHaveBeenCalled();
   });
 
-  it('readBytes: 轮快照存在时优先于按会话查库兜底（切 Agent 不路由分裂）', async () => {
+  it('openStream: 轮快照存在时优先于按会话查库兜底（切 Agent 不路由分裂）', async () => {
     // round-1 review Bug 1 回归：dispatcher 经 AsyncLocalStorage 注入按轮快照的 agentId；
     // 会话行已是新 Agent（9）时桥仍用快照 5 路由——同一轮 docker-only 工具与 send 工具同容器
-    const { bridge, readBytes } = makeBridge(undefined, async () => 9);
+    const { bridge, openReadStream } = makeBridge(undefined, async () => 9);
     const input = { userId: 7, sessionId: 11, workspace: '/ws/7', path: 'a.png', maxBytes: 1024 };
     await sendToolRoundContext.run({ agentId: 5 }, async () => {
-      await bridge.readBytes(input);
+      await bridge.openStream(input);
     });
-    expect(readBytes).toHaveBeenCalledWith({ ...input, agentId: 5 });
+    expect(openReadStream).toHaveBeenCalledWith({ ...input, agentId: 5 });
     // 无快照（host 用户路径）时回落查库值
-    await bridge.readBytes(input);
-    expect(readBytes).toHaveBeenLastCalledWith({ ...input, agentId: 9 });
+    await bridge.openStream(input);
+    expect(openReadStream).toHaveBeenLastCalledWith({ ...input, agentId: 9 });
   });
 
-  it('readBytes: 会话不存在（agentId 不可得）时明确报错不派发', async () => {
-    const { bridge, readBytes } = makeBridge(undefined, async () => null);
-    await expect(bridge.readBytes({ userId: 7, sessionId: 11, workspace: '/ws/7', path: 'a.png', maxBytes: 1024 }))
+  it('openStream: 会话不存在（agentId 不可得）时明确报错不派发', async () => {
+    const { bridge, openReadStream } = makeBridge(undefined, async () => null);
+    await expect(bridge.openStream({ userId: 7, sessionId: 11, workspace: '/ws/7', path: 'a.png', maxBytes: 1024 }))
       .rejects.toThrow(/无法路由/);
-    expect(readBytes).not.toHaveBeenCalled();
+    expect(openReadStream).not.toHaveBeenCalled();
   });
 
   it('foreignPathMessage: 他人 uploads 给出带公开 URL 的可执行文案', async () => {

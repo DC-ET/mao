@@ -39,7 +39,10 @@ test('通道名集合与今天一致（§5.7 的 8 条）', () => {
   assert.deepEqual(Object.keys(handlers).sort(), [
     'list-directory',
     'list-workspace-files',
-    'local-delivery-read-bytes',
+    'local-delivery-close',
+    'local-delivery-digest',
+    'local-delivery-open',
+    'local-delivery-read',
     'local-edit-file',
     'local-read-bytes',
     'local-read-file',
@@ -234,7 +237,13 @@ test('local-read-bytes / local-read-workspace-bytes：委托形状保持', async
   const wsBytes = await handlers['local-read-workspace-bytes'](null, { workspace: dir, path: 'a.bin' })
   assert.equal(wsBytes.size, 3)
 
-  const delivery = await handlers['local-delivery-read-bytes'](null, { workspace: dir, path: 'a.bin', maxBytes: 1024 })
-  assert.equal(delivery.size, 3)
-  assert.ok(delivery.bytes instanceof Buffer)
+  const opened = await handlers['local-delivery-open'](null, { workspace: dir, path: 'a.bin', maxBytes: 1024 })
+  assert.equal(opened.ok, true)
+  assert.equal(opened.size, 3)
+  const chunk = await handlers['local-delivery-read'](null, { openId: opened.openId, offset: 0, length: 3 })
+  assert.equal(chunk.ok, true)
+  assert.ok(chunk.bytes instanceof Buffer)
+  assert.deepEqual([...chunk.bytes], [1, 2, 3])
+  const closed = await handlers['local-delivery-close'](null, { openId: opened.openId })
+  assert.equal(closed.ok, true)
 })

@@ -205,7 +205,8 @@ async function handleFileDownload(d: SendDelivery) {
   if (downloadingKeys.has(key)) return
   downloadingKeys.add(key)
   try {
-    const result = await downloadDeliveryUrl(srcOf(d), d.filename)
+    const fileId = d.ref?.type === 'send-file' ? d.ref.id : undefined
+    const result = await downloadDeliveryUrl(srcOf(d), d.filename, fileId != null ? { fileId } : undefined)
     if (!result.ok) {
       ElMessage.error(result.error || '下载失败')
     }

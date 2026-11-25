@@ -113,7 +113,7 @@ export function redactCredentialQuery(rawUrl: string): string {
   if (question < 0) return rawUrl;
   const params = new URLSearchParams(rawUrl.slice(question + 1));
   for (const key of [...params.keys()]) {
-    if (/^(?:token|access_token|refresh_token|sso_token)$/i.test(key)) params.set(key, '[REDACTED]');
+    if (/^(?:token|access_token|refresh_token|sso_token|ticket)$/i.test(key)) params.set(key, '[REDACTED]');
   }
   return `${rawUrl.slice(0, question)}?${params.toString()}`;
 }

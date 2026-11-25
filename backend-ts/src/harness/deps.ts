@@ -298,6 +298,12 @@ export interface StreamingWsRegistry {
   getDeviceExecutorSocket?(userId: number, deviceId: string): { id: string } | null;
   /** 指定设备当前是否有可用执行连接。 */
   hasDeviceConnection(userId: number, deviceId: string): boolean;
+  /**
+   * 定向投递到指定连接（按连接 id 精确匹配）：未绑定设备的会话在用户级广播下
+   * 由首个成功响应的执行端认领，后续帧必须只发给这一条连接（2026-11-25 R2）。
+   * 连接不存在 / 非 OPEN / 未授权时返回 false。
+   */
+  sendToLocalSocket?(userId: number, socketId: string, event: WsEvent): boolean;
   subscribe?(userId: number, sessionId: number): void;
 }
 

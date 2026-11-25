@@ -15,12 +15,28 @@ function isOpenApiPath(rawUrl: string): boolean {
   return domainPath(rawUrl).startsWith(OPEN_API_PATH_PREFIX);
 }
 
+/** 查询串里是否带指定参数（只用于公开路径判定，值由路由自行校验）。 */
+function hasQueryParam(rawUrl: string, name: string): boolean {
+  const question = rawUrl.indexOf('?');
+  if (question < 0) return false;
+  try {
+    return new URLSearchParams(rawUrl.slice(question + 1)).has(name);
+  } catch {
+    return false;
+  }
+}
+
 export function isPublicPath(method: string, rawUrl: string): boolean {
   const path = rawUrl.split('?')[0].replace(/^\/api/, '') || '/';
   if (PUBLIC_PREFIXES.some((p) => path.startsWith(p))) {
     return true;
   }
   if ((method === 'GET' || method === 'HEAD') && path.startsWith('/uploads/')) {
+    return true;
+  }
+  // 发送快照的短时票据下载（技术方案 2026-11-25 R6）：票据本身是能力凭据，由路由校验；
+  // 不带票据时仍要求 JWT（<img> 内联预览走 query token 的既有通道）。
+  if (method === 'GET' && path === '/v1/files/send-download' && hasQueryParam(rawUrl, 'ticket')) {
     return true;
   }
   if (method === 'GET' && /^\/v1\/dingtalk\/bind\/[^/]+$/.test(path)) return true;

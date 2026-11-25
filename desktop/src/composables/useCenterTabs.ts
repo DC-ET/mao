@@ -289,7 +289,16 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
    * 做 id——token 轮换会开出重复页签，且 id 会经 recordActiveTabFor 明文写进 localStorage
    * （见 auth-storage 对 token 落盘的既定约束）。调用方传稳定 key（形态 A 用 ref 身份）。
    */
-  function openDeliveryFileTab(delivery: { url: string; filename: string; mime?: string; key?: string }) {
+  function openDeliveryFileTab(delivery: {
+    url: string
+    filename: string
+    mime?: string
+    key?: string
+    /** 快照字节数：中心预览超过 20MB 只提示下载（2026-11-25 D6）。 */
+    bytes?: number
+    /** 快照 id：下载时换短时票据（R6）。 */
+    fileId?: string
+  }) {
     if (!delivery.url) return
     const state = getSessionState()
     const id = `delivery:${delivery.key ?? delivery.url}`
@@ -305,6 +314,10 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
       } else {
         delete existing.deliveryMime
       }
+      if (delivery.bytes != null) existing.deliveryBytes = delivery.bytes
+      else delete existing.deliveryBytes
+      if (delivery.fileId != null) existing.deliveryFileId = delivery.fileId
+      else delete existing.deliveryFileId
       existing.version = (existing.version ?? 0) + 1
       state.activeTabId = existing.id
       notifyTabsChanged()
@@ -317,6 +330,8 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
       filePath: title,
       deliveryUrl: delivery.url,
       ...(normalizedMime ? { deliveryMime: normalizedMime } : {}),
+      ...(delivery.bytes != null ? { deliveryBytes: delivery.bytes } : {}),
+      ...(delivery.fileId != null ? { deliveryFileId: delivery.fileId } : {}),
       version: 0,
     }
     state.tabs.push(newTab)

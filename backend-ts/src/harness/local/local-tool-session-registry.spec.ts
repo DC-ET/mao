@@ -202,6 +202,45 @@ describe('LocalToolSessionRegistry', () => {
     expect(await onA.future).toContain('Device disconnected');
   });
 
+  it('delivery_read 认领连接后按 socketId 定向投递（不再广播）', async () => {
+    const wsRegistry = {
+      hasLocalClientConnection: vi.fn(() => true),
+      hasDeviceConnection: vi.fn(() => false),
+      sendToLocalClients: vi.fn(),
+      sendToDevice: vi.fn(() => ({ targetCount: 0, successCount: 0, failureCount: 0 })),
+      sendToLocalSocket: vi.fn(() => true),
+    } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
+    const sessionMapper = { selectById: vi.fn(async () => ({ id: 10, userId: 7, targetDeviceId: null })) };
+    const registry = new LocalToolSessionRegistry(wsRegistry, sessionMapper as unknown as SessionMapper);
+
+    const pending = await registry.sendDeliveryReadRequest(
+      10, { action: 'read', streamId: 's1', offset: 0, length: 512 }, { socketId: 'ws-a' },
+    );
+    expect(pending.requestId).not.toBeNull();
+    expect(wsRegistry.sendToLocalSocket).toHaveBeenCalledWith(7, 'ws-a', expect.anything());
+    expect(wsRegistry.sendToLocalClients).not.toHaveBeenCalled();
+    // 断线失败按连接 id 匹配：定向投递只记了 id，引用比较会漏掉、白等超时
+    registry.failAllForSocket({ id: 'ws-a' });
+    expect(await pending.future).toContain('Device disconnected');
+  });
+
+  it('registry 不提供 sendToLocalSocket 时退回广播，不误判执行端离线', async () => {
+    const wsRegistry = {
+      hasLocalClientConnection: vi.fn(() => true),
+      hasDeviceConnection: vi.fn(() => false),
+      sendToLocalClients: vi.fn(),
+      sendToDevice: vi.fn(() => ({ targetCount: 0, successCount: 0, failureCount: 0 })),
+    } as unknown as StreamingWsRegistry & Record<string, ReturnType<typeof vi.fn>>;
+    const sessionMapper = { selectById: vi.fn(async () => ({ id: 10, userId: 7, targetDeviceId: null })) };
+    const registry = new LocalToolSessionRegistry(wsRegistry, sessionMapper as unknown as SessionMapper);
+
+    const pending = await registry.sendDeliveryReadRequest(
+      10, { action: 'read', streamId: 's1' }, { socketId: 'ws-a' },
+    );
+    expect(pending.requestId).not.toBeNull();
+    expect(wsRegistry.sendToLocalClients).toHaveBeenCalledTimes(1);
+  });
+
   it('resolvesBoundDeviceFromDbWhenMemoryIsEmpty', async () => {
     const wsRegistry = {
       hasLocalClientConnection: vi.fn(() => false),

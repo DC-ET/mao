@@ -479,16 +479,16 @@ describe('createAndAttach 来源自报（技术方案 2026-11-03 D11）', () => 
     expect(handled).toHaveLength(1);
   });
 
-  it('routes file_fetch / delivery_fetch for the subscribed session to localExecutor（2026-11-18 委托帧）', async () => {
+  it('routes file_fetch / delivery_read for the subscribed session to localExecutor（2026-11-25 拉取帧）', async () => {
     const handled: WsEvent[] = [];
     const { ws } = await attached({
       localExecutor: { handleEvent: async (evt) => { handled.push(evt); } },
     });
     ws.emit({ type: 'file_fetch', sessionId: 11, data: { requestId: 'ff-1', path: 'a.png', workspace: '/tmp/x' } });
-    ws.emit({ type: 'delivery_fetch', sessionId: 11, data: { requestId: 'df-1', path: 'a.pdf', workspace: '/tmp/x', maxBytes: 1024 } });
-    expect(handled.map((e) => e.type)).toEqual(['file_fetch', 'delivery_fetch']);
+    ws.emit({ type: 'delivery_read', sessionId: 11, data: { requestId: 'df-1', action: 'open', streamId: 's1', path: 'a.pdf', workspace: '/tmp/x', maxBytes: 1024 } });
+    expect(handled.map((e) => e.type)).toEqual(['file_fetch', 'delivery_read']);
     // 非当前订阅会话：与 tool_execute 同口径被 acceptEvent 丢弃
-    ws.emit({ type: 'delivery_fetch', sessionId: 99, data: { requestId: 'df-2', path: 'a.pdf', workspace: '/tmp/x', maxBytes: 1024 } });
+    ws.emit({ type: 'delivery_read', sessionId: 99, data: { requestId: 'df-2', action: 'open', streamId: 's2', path: 'a.pdf', workspace: '/tmp/x', maxBytes: 1024 } });
     expect(handled).toHaveLength(2);
   });
 });

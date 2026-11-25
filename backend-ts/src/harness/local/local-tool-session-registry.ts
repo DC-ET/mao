@@ -19,6 +19,11 @@ export interface PendingLocalToolRequest {
   requestId: string | null;
   future: Promise<string>;
   resolve: (v: string) => void;
+  /**
+   * 是否定向投递给绑定设备（true = 该设备的回包具有权威性；false = 用户级广播，
+   * 多个执行端都可能响应，错误回包要与成功回包竞争）。
+   */
+  directed: boolean;
 }
 
 /** 会话执行目标：userId + 绑定的执行端设备（deviceId 为 null = 未绑定，走用户级广播回退）。 */
@@ -91,7 +96,9 @@ export class LocalToolSessionRegistry {
     if (socket == null) return;
     for (const [sessionId, map] of [...this.pendingRequests]) {
       for (const [requestId, entry] of [...map]) {
-        if (entry.socket !== socket) continue;
+        // 按连接 id 比较：定向到已认领连接（delivery_read 的 read/digest）时只记了 id，
+        // 引用比较会让这些请求漏掉断线失败，白等到 60s / 300s 超时。
+        if (entry.socket == null || entry.socket.id !== socket.id) continue;
         map.delete(requestId);
         entry.resolve(JSON.stringify({ error: 'Device disconnected' }));
       }
@@ -209,22 +216,57 @@ export class LocalToolSessionRegistry {
   }
 
   /**
-   * LOCAL 发送字节委托读取（技术方案 2026-11-18-unified-send-media §6）：向绑定执行端
-   * 下发 `delivery_fetch`，复用工具委托的全套簿记；分片由 LocalDeliveryFetchService 拼装。
-   * 与工具调用无关：无审批、无工具卡、不落库。
+   * LOCAL 发送字节委托读取（技术方案 2026-11-18-unified-send-media §6；
+   * 2026-11-25-send-file-1gb R2 改为服务端窗口拉取）：向绑定执行端下发 `delivery_read`
+   * 的 open / read / close 帧，复用工具委托的全套簿记（requestId / pendingRequests /
+   * 投递落空立即报错 / 断线 failAll）。与工具调用无关：无审批、无工具卡、不落库。
    */
-  async sendDeliveryRequest(
+  async sendDeliveryReadRequest(
     sessionId: number,
-    filePath: string,
-    workspace: string | null | undefined,
-    maxBytes: number,
+    payload: {
+      action: 'open' | 'read' | 'digest';
+      streamId: string;
+      path?: string;
+      workspace?: string;
+      offset?: number;
+      length?: number;
+      maxBytes?: number;
+    },
+    options: { socketId?: string | null } = {},
   ): Promise<PendingLocalToolRequest> {
     return this.dispatchRequest(
       sessionId,
-      'delivery_fetch',
+      'delivery_read',
       LOCAL_EXECUTOR_OFFLINE_DELIVERY_ERROR,
-      (requestId) => ({ requestId, path: filePath, workspace: workspace ?? '', maxBytes }),
+      (requestId) => ({ requestId, ...payload }),
+      options.socketId ?? null,
     );
+  }
+
+  /**
+   * 关闭帧：不登记 pending（响应无人等待）。
+   * 未绑定设备的会话在 open 成功后由某个执行端认领，这里必须定向发给同一条连接，
+   * 否则另一台在线设备收到一个它没有的 streamId（无害，但白跑一次磁盘/句柄检查）。
+   */
+  sendDeliveryClose(sessionId: number, streamId: string, socketId?: string | null): void {
+    void this.resolveTarget(sessionId).then((target) => {
+      if (target == null) return;
+      const event = wsEvent('delivery_read', sessionId, {
+        requestId: randomUUID(),
+        action: 'close',
+        streamId,
+      });
+      if (socketId != null && socketId !== '') {
+        if (this.streamingWsRegistry.sendToLocalSocket?.(target.userId, socketId, event) === true) return;
+      }
+      if (target.deviceId != null) this.streamingWsRegistry.sendToDevice(target.userId, target.deviceId, event);
+      else this.streamingWsRegistry.sendToLocalClients(target.userId, event);
+    }).catch(() => undefined);
+  }
+
+  /** 丢弃一个已不再等待的 pending 请求（首帧超时 / 调用方放弃）：避免表项滞留到断线。 */
+  dropToolRequest(sessionId: number, requestId: string): void {
+    this.pendingRequests.get(sessionId)?.delete(requestId);
   }
 
   /**
@@ -233,9 +275,10 @@ export class LocalToolSessionRegistry {
    */
   private async dispatchRequest(
     sessionId: number | null,
-    eventType: 'tool_execute' | 'file_fetch' | 'delivery_fetch',
+    eventType: 'tool_execute' | 'file_fetch' | 'delivery_read',
     offlineError: string,
     buildPayload: (requestId: string) => Record<string, unknown>,
+    targetSocketId: string | null = null,
   ): Promise<PendingLocalToolRequest> {
     const target = await this.resolveTarget(sessionId);
     const reachable = target != null && (target.deviceId != null
@@ -246,6 +289,7 @@ export class LocalToolSessionRegistry {
         requestId: null,
         future: Promise.resolve(JSON.stringify({ error: offlineError })),
         resolve: () => {},
+        directed: false,
       };
     }
     const { userId, deviceId } = target;
@@ -254,9 +298,11 @@ export class LocalToolSessionRegistry {
     const future = new Promise<string>((r) => { resolve = r; });
     // 记录请求实际下发到的连接（定向投递时为当前执行连接）：连接断开时只失败它收到的请求；
     // 同设备其它连接上在途的请求不受影响（执行连接可能已交接给新连接，见 failAllForSocket）。
-    const dispatchedSocket = deviceId != null
-      ? this.streamingWsRegistry.getDeviceExecutorSocket?.(userId, deviceId) ?? null
-      : null;
+    const dispatchedSocket = targetSocketId != null
+      ? { id: targetSocketId }
+      : deviceId != null
+        ? this.streamingWsRegistry.getDeviceExecutorSocket?.(userId, deviceId) ?? null
+        : null;
     if (sessionId != null) {
       let map = this.pendingRequests.get(sessionId);
       if (!map) {
@@ -267,7 +313,16 @@ export class LocalToolSessionRegistry {
     }
     const event = wsEvent(eventType, sessionId, buildPayload(requestId));
     let delivered = true;
-    if (deviceId != null) {
+    if (targetSocketId != null) {
+      // 已认领的连接：只发给它。连接已断 = 这次拉取无法继续，调用方按「执行端不在线」收敛。
+      const sendToSocket = this.streamingWsRegistry.sendToLocalSocket;
+      if (sendToSocket != null) {
+        delivered = sendToSocket.call(this.streamingWsRegistry, userId, targetSocketId, event);
+      } else {
+        // 实现不提供按连接定向（测试桩 / 旧实现）：退回用户级广播，不能误判成执行端离线
+        this.streamingWsRegistry.sendToLocalClients(userId, event);
+      }
+    } else if (deviceId != null) {
       const dispatch = this.streamingWsRegistry.sendToDevice(userId, deviceId, event);
       // 定向投递零成功 = 该设备当前没有任何可写的执行连接（最后一条已半死）。
       // 以往这里静默放行，调用方只看到 isConnected=true 就开等，最终白等到 900s 超时。
@@ -283,9 +338,10 @@ export class LocalToolSessionRegistry {
         requestId: null,
         future: Promise.resolve(JSON.stringify({ error: offlineError })),
         resolve: () => {},
+        directed: false,
       };
     }
-    return { requestId, future, resolve };
+    return { requestId, future, resolve, directed: deviceId != null };
   }
 
   completeToolRequest(sessionId: number, requestId: string, result: string): void {

@@ -800,9 +800,44 @@ async function probeDeliveryEnvelopeError(url: string): Promise<string | null> {
 /**
  * 下载 Agent 发送文件的会话副本 URL，并保留原始展示文件名（避免落成 `send-{uuid}.ext`）。
  * 安卓壳 / 微信内置浏览器受 WebView Blob 下载限制，走外链打开；跨域失败时回退外链。
+ *
+ * 2026-11-25 send_file 1GB（D6 / R6）：快照（`fileId` 存在）改为「先用 JWT 换短时票据 →
+ * 直接导航 / 交给 Chromium 下载」。不再 `resp.blob()`——1GB 会把整份文件塞进页面内存；
+ * 也不再 `window.open`——Electron 的 setWindowOpenHandler 会把新窗口交给系统浏览器，
+ * 票据会落到外部浏览器。非快照来源（workspace-download / 活引用）保持原 Blob 行为。
  */
-export async function downloadDeliveryUrl(url: string, suggestedName: string): Promise<DownloadResult> {
+export async function downloadDeliveryUrl(
+  url: string,
+  suggestedName: string,
+  options?: { fileId?: string },
+): Promise<DownloadResult> {
   const targetName = suggestedName.trim() || url.split('/').pop() || 'download'
+  const fileId = options?.fileId?.trim() ?? ''
+  if (fileId !== '') {
+    try {
+      const ticket = await requestSendDownloadTicket(fileId)
+      const ticketUrl = `${API_BASE}/files/send-download?id=${encodeURIComponent(fileId)}&ticket=${encodeURIComponent(ticket)}`
+      if (isAndroidCapacitor() || isWechatBrowser()) {
+        const opened = await openExternalUrl(ticketUrl)
+        return opened ? { ok: true, url: ticketUrl } : { ok: false, error: '无法调起系统下载', url: ticketUrl }
+      }
+      const electron = (window as any).electronAPI
+      if (typeof electron?.downloadUrl === 'function') {
+        await electron.downloadUrl(ticketUrl)
+        return { ok: true, url: ticketUrl }
+      }
+      // Web：同窗口导航到 attachment（浏览器原生下载，不新开窗口、不进页面内存）
+      const anchor = document.createElement('a')
+      anchor.href = ticketUrl
+      anchor.rel = 'noopener'
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      return { ok: true, url: ticketUrl }
+    } catch (e) {
+      return { ok: false, error: apiErrorMessage(e, '下载失败'), url }
+    }
+  }
   if (isAndroidCapacitor() || isWechatBrowser()) {
     const envelopeError = await probeDeliveryEnvelopeError(url)
     if (envelopeError != null) return { ok: false, error: envelopeError, url }
@@ -828,14 +863,47 @@ export async function downloadDeliveryUrl(url: string, suggestedName: string): P
 }
 
 /**
+ * 换快照下载票据（R6）：`POST /files/send-download-ticket` 带 JWT，返回绑定文件 + 用户的
+ * HMAC 票据（24 小时）。票据只用于这一个文件的下载，不进消息 JSON、不写日志。
+ */
+async function requestSendDownloadTicket(fileId: string): Promise<string> {
+  const token = getToken()
+  const resp = await fetch(`${API_BASE}/files/send-download-ticket`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ id: fileId }),
+  })
+  if (!resp.ok) throw new Error(await extractDownloadError(resp))
+  const body = await resp.json() as { code?: number; message?: string; data?: { ticket?: string } }
+  if (body?.code !== 0 || typeof body?.data?.ticket !== 'string' || body.data.ticket === '') {
+    throw new Error(body?.message || '下载失败')
+  }
+  return body.data.ticket
+}
+
+/**
  * Agent 发送文件（`send_file` 会话副本 URL）的只读预览与下载 provider。
  * 供中心区 `FileViewer` 复用整套代码 / Markdown / PDF / 表格 / Word / 压缩包 / 音视频预览链路。
+ *
+ * 2026-11-25 send_file 1GB（D6）：`bytes` 超过 20MB 时不做 `arrayBuffer()`，直接提示下载，
+ * 避免点开大文件卡片把整份拉进渲染进程；下载走 `fileId` 换票据（R6）。
  */
+export const DELIVERY_PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
+
 export function createDeliveryFileProvider(delivery: {
   url: string
   filename: string
   mime?: string
+  /** 快照字节数（delivery.bytes）；缺省 / 未知长度按可预览处理。 */
+  bytes?: number
+  /** 快照 id：下载时换短时票据。 */
+  fileId?: string
 }): WorkspaceFileProvider {
+  const tooLargeToPreview = delivery.bytes != null && delivery.bytes > DELIVERY_PREVIEW_MAX_BYTES;
+  const tooLargeMessage = '文件过大，请下载后查看';
   return {
     async listDirectory() {
       return { entries: [] }
@@ -844,6 +912,7 @@ export function createDeliveryFileProvider(delivery: {
       return { entries: [] }
     },
     async readFile(_relativePath: string, opts?: { offset?: number; limit?: number }): Promise<ReadFileResult> {
+      if (tooLargeToPreview) return { content: '', total_lines: 0, error: tooLargeMessage }
       try {
         const resp = await fetch(delivery.url)
         if (!resp.ok) {
@@ -881,6 +950,7 @@ export function createDeliveryFileProvider(delivery: {
       }
     },
     async previewFile(): Promise<PreviewFileResult> {
+      if (tooLargeToPreview) return { error: tooLargeMessage };
       try {
         const resp = await fetch(delivery.url)
         if (!resp.ok) {
@@ -898,6 +968,7 @@ export function createDeliveryFileProvider(delivery: {
       }
     },
     async readFileBytes(): Promise<ReadFileBytesResult> {
+      if (tooLargeToPreview) return { error: tooLargeMessage };
       try {
         const resp = await fetch(delivery.url)
         if (!resp.ok) {
@@ -915,7 +986,11 @@ export function createDeliveryFileProvider(delivery: {
       }
     },
     downloadFile(_relativePath: string, suggestedName: string): Promise<DownloadResult> {
-      return downloadDeliveryUrl(delivery.url, suggestedName || delivery.filename)
+      return downloadDeliveryUrl(
+        delivery.url,
+        suggestedName || delivery.filename,
+        delivery.fileId != null ? { fileId: delivery.fileId } : undefined,
+      )
     },
   }
 }

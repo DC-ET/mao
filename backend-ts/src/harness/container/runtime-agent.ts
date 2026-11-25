@@ -208,8 +208,13 @@ export class RuntimeAgent {
       socket.on('close', () => {
         clearHandshakeTimer();
         // 身份判断：旧连接晚到的 close 不得把新连接的 this.socket 置空，
-        // 否则容器→宿主机帧（tool_result/pty_*/runtime_status/pong）被静默丢弃
-        if (this.socket === socket) this.socket = null;
+        // 否则容器→宿主机帧（tool_result/pty_*/runtime_status/pong）被静默丢弃；
+        // 同理，读取流句柄只属于当前连接，旧连接晚到的 close 不能关掉新连接刚打开的句柄。
+        if (this.socket === socket) {
+          this.socket = null;
+          // 连接断开：发送读取流句柄全部释放（服务端侧的在途拉取会按失败收敛）
+          this.executor.closeReadStreams();
+        }
         if (ready) resolve();
         else fail(new Error('connection closed before ready'));
       });
@@ -242,8 +247,11 @@ export class RuntimeAgent {
       case 'tool_call':
         void this.handleToolCall(frame.id, frame.tool, frame.args, frame.envelope);
         break;
-      case 'read_bytes':
-        this.handleReadBytes(frame.id, frame.path, frame.maxBytes, frame.envelope);
+      case 'read_bytes_range':
+        void this.handleReadBytesRange(frame);
+        break;
+      case 'read_bytes_close':
+        this.executor.closeReadStream(frame.streamId);
         break;
       case 'mcp_connect':
         void this.handleMcpConnect(frame.id, frame.sessionId, frame.server, frame.env, frame.envelope);
@@ -308,12 +316,25 @@ export class RuntimeAgent {
     }
   }
 
-  private handleReadBytes(id: string, filePath: string, maxBytes: number, envelope: RuntimeEnvelope): void {
-    const outcome = this.executor.handleReadBytes(filePath, maxBytes, envelope);
+  /** 外部发送工具的按区间读取（2026-11-25-send-file-1gb D3）：单片 512KB，不再整份读入。 */
+  private async handleReadBytesRange(frame: Extract<RuntimeRequestFrame, { type: 'read_bytes_range' }>): Promise<void> {
+    const outcome = await this.executor.handleReadBytesRange({
+      streamId: frame.streamId,
+      offset: frame.offset,
+      length: frame.length,
+      path: frame.path,
+      maxBytes: frame.maxBytes,
+      envelope: frame.envelope,
+      digest: frame.digest,
+    });
     if (outcome.ok) {
-      this.send({ v: 1, type: 'read_bytes_result', id, ok: true, base64: outcome.base64 });
+      this.send({
+        v: 1, type: 'read_bytes_range_result', id: frame.id, ok: true,
+        data: outcome.data, size: outcome.size, mtimeMs: outcome.mtimeMs,
+        ...(outcome.sha256 != null ? { sha256: outcome.sha256 } : {}),
+      });
     } else {
-      this.send({ v: 1, type: 'read_bytes_result', id, ok: false, error: outcome.error });
+      this.send({ v: 1, type: 'read_bytes_range_result', id: frame.id, ok: false, error: outcome.error });
     }
   }
 

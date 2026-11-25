@@ -60,7 +60,7 @@
 | `SKILLS_DIR` / `USER_SKILLS_DIR` | **是** | 技能目录（平台技能源 / 用户技能）。`SKILLS_DIR` 只放后台上传的系统技能，不得指向 git 检出内的 `skills/`（内置技能根），重叠会拒绝启动 |
 | `SKILL_VIEWS_DIR` | 否（docker 模式生产须配，见 [deploy.md](deploy.md)） | 技能视图根（平台技能的用户级只读副本），默认 `./skill-views`；生产配 `/opt/mao-data/skill-views`（纳入备份/监控）；漏配功能可用，但视图落在后端 cwd 下 |
 | `FILE_UPLOAD_DIR` | **是** | 本地上传目录 |
-| `FILE_SEND_DIR` | 否 | 发送附件快照根（`send_image` / `send_file` 发送时另存的副本），默认取 `{FILE_UPLOAD_DIR 的父目录}/send-files`（生产即 `/opt/mao-data/send-files`，与 `uploads/` 平级；只有 `FILE_UPLOAD_DIR` 与它都保持缺省时才落在后端 cwd 下），显式设置时以本变量为准（**不得配在 `FILE_UPLOAD_DIR` 之内**，启动即拒）。该目录只经带登录鉴权的 `/api/v1/files/send-download` 访问，**不要**为它加 Nginx `alias`，也不挂进工具容器；需纳入备份与磁盘监控 |
+| `FILE_SEND_DIR` | 否 | 发送附件快照根（`send_image` / `send_file` 发送时另存的副本），默认取 `{FILE_UPLOAD_DIR 的父目录}/send-files`（生产即 `/opt/mao-data/send-files`，与 `uploads/` 平级；只有 `FILE_UPLOAD_DIR` 与它都保持缺省时才落在后端 cwd 下），显式设置时以本变量为准（**不得配在 `FILE_UPLOAD_DIR` 之内**，启动即拒）。该目录只经带登录鉴权的 `/api/v1/files/send-download` 访问，**不要**为它加 Nginx `alias`，也不挂进工具容器；需纳入备份与磁盘监控；2026-11-25 起单文件上限 1GB，写入先落 `{FILE_SEND_DIR}/.tmp/` 再原子入位，启动只清理 6 小时前的残片（蓝绿双进程共用目录） |
 | `MAO_RUNTIME_DIR` | 否 | 运行时目录 |
 | `MAO_USER_HOME_DIR` | 否 | CLOUD 用户 HOME |
 | `MAO_SHARE_DIR` | 否 | share 根，默认 `/opt/mao-data/share`：2026-11-09 起按 Agent 隔离（容器内每 Agent 只挂 `agent-experience/<agentId>` 与 `agents/<agentId>` 两条子路径 rw）；宿主机侧用于路径解析、启动兜底与经验库索引根。不属于 `MAO_CONTAINER_*` 容器调参系列 |

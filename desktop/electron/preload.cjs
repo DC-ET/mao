@@ -87,8 +87,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   localReadBytes: (args) => ipcRenderer.invoke('local-read-bytes', args),
   // file_fetch 委托读取（方案 2026-11-18）：workspace + 相对路径，主进程 containment 校验
   localReadWorkspaceBytes: (payload) => ipcRenderer.invoke('local-read-workspace-bytes', payload),
-  // delivery_fetch 委托读取（统一发送媒体方案）：workspace + 相对或 workspace 内绝对路径
-  localDeliveryReadFile: (payload) => ipcRenderer.invoke('local-delivery-read-bytes', payload),
+  // delivery_read 委托读取（2026-11-25 send_file 1GB R2）：open / read / close 三段，
+  // open 校验路径并返回 size / mtimeMs，read 按 offset 读一片（512KB）。
+  localDeliveryOpen: (payload) => ipcRenderer.invoke('local-delivery-open', payload),
+  localDeliveryRead: (payload) => ipcRenderer.invoke('local-delivery-read', payload),
+  localDeliveryDigest: (payload) => ipcRenderer.invoke('local-delivery-digest', payload),
+  localDeliveryClose: (payload) => ipcRenderer.invoke('local-delivery-close', payload),
+  // 大文件下载（R6）：票据 URL 交给 Chromium 下载，不进页面内存、不 window.open
+  downloadUrl: (url) => ipcRenderer.invoke('download-url', url),
   localWriteFile: (args) => ipcRenderer.invoke('local-write-file', args),
   localEditFile: (args) => ipcRenderer.invoke('local-edit-file', args),
 

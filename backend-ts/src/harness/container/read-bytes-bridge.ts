@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { DockerToolRouter } from './docker-tool-router.js';
-import { sendToolRoundContext, type SendBytesSupport } from '../tool/impl/send-file-bytes.js';
+import { sendToolRoundContext, type SendBytesStream, type SendBytesSupport } from '../tool/impl/send-file-bytes.js';
 import type { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
 
 /**
@@ -92,9 +92,13 @@ export class DockerSendBytesBridge implements SendBytesSupport {
     }
   }
 
-  async readBytes(input: {
+  /**
+   * 容器流式读取（2026-11-25 1GB D3）：返回按区间拉取的流与 open 时 stat 的大小；
+   * 用户不走容器时返回 null（调用方降级宿主机严格解析）。
+   */
+  async openStream(input: {
     userId: number | null; sessionId: number | null; workspace: string | null; path: string; maxBytes: number;
-  }): Promise<Buffer | null> {
+  }): Promise<SendBytesStream | null> {
     if (input.userId == null) return null;
     // 容器键第二维（2026-11-07 复合容器方案 §5.6）：优先取 dispatcher 按轮快照放入
     // AsyncLocalStorage 的 agentId——轮中切 Agent 后与同轮 docker-only 工具路由到同一
@@ -108,7 +112,7 @@ export class DockerSendBytesBridge implements SendBytesSupport {
     if (agentId == null) {
       throw new Error(`容器读字节无法路由：会话不存在或缺少 Agent 维度 (sessionId=${input.sessionId})`);
     }
-    return this.deps.router.readBytes({
+    const opened = await this.deps.router.openReadStream({
       userId: input.userId,
       agentId,
       sessionId: input.sessionId,
@@ -116,6 +120,39 @@ export class DockerSendBytesBridge implements SendBytesSupport {
       path: input.path,
       maxBytes: input.maxBytes,
     });
+    if (opened == null) return null;
+    return {
+      stream: opened.stream,
+      size: opened.size,
+      contentType: null,
+      digest: opened.digest,
+      close: opened.close,
+    };
+  }
+
+  /** 整份变体（小文件调用方）：容器流汇聚成 Buffer，读完显式释放执行端句柄。 */
+  async readBytes(input: {
+    userId: number | null; sessionId: number | null; workspace: string | null; path: string; maxBytes: number;
+  }): Promise<Buffer | null> {
+    const opened = await this.openStream(input);
+    if (opened == null) return null;
+    try {
+      const chunks: Buffer[] = [];
+      let total = 0;
+      for await (const chunk of opened.stream) {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+        total += buf.length;
+        if (total > input.maxBytes) {
+          opened.stream.destroy();
+          throw new Error(`文件过大，上限 ${Math.floor(input.maxBytes / (1024 * 1024))}MB`);
+        }
+        chunks.push(buf);
+      }
+      return Buffer.concat(chunks);
+    } finally {
+      // 窗口流正常读完不会自己 close，这里必须显式释放（否则容器 fd 滞留到 60s 空闲回收）
+      await opened.close?.();
+    }
   }
 
   extraRoots(userId: number | null): string[] {

@@ -3,6 +3,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   SendImageTool,
@@ -56,17 +57,21 @@ type SendFileSaveInput = Parameters<SendFileStore['save']>[0];
 interface FakeStore {
   save: ReturnType<typeof vi.fn>;
   /** 已落快照（按调用顺序）：断言工具交给存储的字段（属主 / 扩展名 / mime / 字节）。 */
-  saved: { input: SendFileSaveInput; id: string }[];
+  saved: { input: SendFileSaveInput; id: string; bytes: Buffer }[];
   /** 下一次 save 返回失败（模拟存储写入 / 插表失败）。 */
   failNextWith: (error: string) => void;
 }
 
 /** 快照存储替身：本地 / 云分流在 SendFileService 里单测，这里只记工具侧入参。 */
 function fakeStore(): FakeStore {
-  const saved: { input: SendFileSaveInput; id: string }[] = [];
+  const saved: { input: SendFileSaveInput; id: string; bytes: Buffer }[] = [];
   let seq = 0;
   let nextFailure: string | null = null;
   const save = vi.fn(async (input: SendFileSaveInput) => {
+    // 消费来源流：验证工具交给存储的是「流 + 声明大小」，而不是整块 Buffer
+    const chunks: Buffer[] = [];
+    for await (const chunk of input.body) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const bytes = Buffer.concat(chunks);
     if (nextFailure != null) {
       const error = nextFailure;
       nextFailure = null;
@@ -74,8 +79,11 @@ function fakeStore(): FakeStore {
     }
     seq += 1;
     const id = `snapshot-${seq}`;
-    saved.push({ input, id });
-    return { ok: true as const, id, mime: input.mime, bytes: input.bytes.length };
+    saved.push({ input, id, bytes });
+    const captured = input.captureBytes != null && input.captureBytes > 0 && bytes.length <= input.captureBytes
+      ? bytes
+      : undefined;
+    return { ok: true as const, id, mime: input.mime, bytes: bytes.length, ...(captured != null ? { captured } : {}) };
   });
   return { save, saved, failNextWith: (error: string) => { nextFailure = error; } };
 }
@@ -100,7 +108,7 @@ interface Harness {
   wechat: { resolveAccount: ReturnType<typeof vi.fn>; uploadImage: ReturnType<typeof vi.fn>; uploadFile: ReturnType<typeof vi.fn>; sendImage: ReturnType<typeof vi.fn>; sendFile: ReturnType<typeof vi.fn> };
   feishu: { resolveSendTarget: ReturnType<typeof vi.fn>; sendImage: ReturnType<typeof vi.fn>; sendFile: ReturnType<typeof vi.fn> };
   dingtalk: { resolveSendTarget: ReturnType<typeof vi.fn>; sendImage: ReturnType<typeof vi.fn>; sendFile: ReturnType<typeof vi.fn> };
-  deliveryFetch: { fetch: ReturnType<typeof vi.fn> };
+  deliveryFetch: { openStream: ReturnType<typeof vi.fn> };
   imageTool: SendImageTool;
   fileTool: SendFileTool;
 }
@@ -130,7 +138,7 @@ function build(
     sendImage: vi.fn(async () => 'img.png'),
     sendFile: vi.fn(async () => 'file.pdf'),
   };
-  const deliveryFetch = { fetch: vi.fn() };
+  const deliveryFetch = { openStream: vi.fn() };
   const sessionLookup = { getSession: vi.fn(async () => session) };
   const copyDeps: SendCopyDeps = {
     uploadDir,
@@ -150,7 +158,7 @@ function build(
     new DingtalkSendStrategy({ resolveSendTarget: dingtalk.resolveSendTarget, sendImage: dingtalk.sendImage, sendFile: dingtalk.sendFile } as never),
     store,
     sendBytesSupport,
-    { fetch: deliveryFetch.fetch } as never,
+    { openStream: deliveryFetch.openStream } as never,
   ] as const;
   const imageTool = new SendImageTool(...common);
   const fileTool = new SendFileTool(...common);
@@ -160,10 +168,16 @@ function build(
 /** 会记录读字节调用的 support 替身：形态 B 命中时断言容器 / 宿主读取均未触发。 */
 function spySupport(extraRoots: string[] = []): SendBytesSupport {
   return {
+    openStream: vi.fn(async () => null),
     readBytes: vi.fn(async () => null),
     extraRoots: () => extraRoots,
     foreignPathMessage: vi.fn(async () => null),
   } as unknown as SendBytesSupport;
+}
+
+/** LOCAL 执行端流式来源替身：整块字节包成单块流。 */
+function streamOf(bytes: Buffer) {
+  return { ok: true as const, stream: Readable.from([bytes]), size: bytes.length };
 }
 
 beforeEach(() => {
@@ -192,7 +206,7 @@ describe('send_image / send_file（统一发送，2026-11-18-unified-send-media 
     // 存储侧入参：属主 = 运行身份、会话 id、嗅探 mime、白名单扩展名、原字节
     expect(h.store.saved).toHaveLength(1);
     expect(h.store.saved[0].input).toMatchObject({ userId: 7, sessionId: 11, filename: 'a.png', mime: 'image/png', ext: '.png' });
-    expect(h.store.saved[0].input.bytes.equals(PNG)).toBe(true);
+    expect(h.store.saved[0].bytes.equals(PNG)).toBe(true);
     expect(h.feishu.sendImage).toHaveBeenCalledTimes(1);
     expect(h.wechat.uploadImage).not.toHaveBeenCalled();
     expect(h.dingtalk.sendImage).not.toHaveBeenCalled();
@@ -351,21 +365,21 @@ describe('send_image / send_file（统一发送，2026-11-18-unified-send-media 
 
   it('LOCAL + 本机路径：服务端读不到时向执行端拉取（D10），成功后快照照常', async () => {
     const h = build({ executionMode: 'LOCAL', workspace: '/Users/u/proj', projectKey: null, parentSessionId: null });
-    h.deliveryFetch.fetch.mockResolvedValue({ ok: true, bytes: PNG });
+    h.deliveryFetch.openStream.mockResolvedValue(streamOf(PNG));
     const r = JSON.parse(await h.imageTool.execute(JSON.stringify({ image: '/Users/u/proj/pic.png' }), 11, 7, '/Users/u/proj')) as {
       success: boolean; delivery: { ref?: unknown };
     };
-    expect(h.deliveryFetch.fetch).toHaveBeenCalledWith(11, 7, '/Users/u/proj/pic.png', '/Users/u/proj', 20 * 1024 * 1024);
+    expect(h.deliveryFetch.openStream).toHaveBeenCalledWith(11, 7, '/Users/u/proj/pic.png', '/Users/u/proj', 20 * 1024 * 1024);
     expect(r.success).toBe(true);
     expectSnapshotRef(r.delivery);
   });
 
   it('LOCAL + 执行端离线：错误透传，不落快照、不推送', async () => {
     const h = build({ executionMode: 'LOCAL', workspace: '/Users/u/proj', projectKey: null });
-    h.deliveryFetch.fetch.mockResolvedValue({ ok: false, error: '执行端不在线或版本过旧，无法读取本机文件' });
+    h.deliveryFetch.openStream.mockResolvedValue({ ok: false, error: '执行端不在线或版本过旧，无法读取本机文件' });
     const r = JSON.parse(await h.imageTool.execute(JSON.stringify({ image: '/Users/u/proj/pic.png' }), 11, 7, '/Users/u/proj'));
     expect(r.error).toBe('执行端不在线或版本过旧，无法读取本机文件');
-    expect(h.deliveryFetch.fetch).toHaveBeenCalledTimes(1);
+    expect(h.deliveryFetch.openStream).toHaveBeenCalledTimes(1);
     expect(h.wechat.uploadImage).not.toHaveBeenCalled();
     expect(h.feishu.sendImage).not.toHaveBeenCalled();
     expect(h.store.saved).toEqual([]);
@@ -374,35 +388,37 @@ describe('send_image / send_file（统一发送，2026-11-18-unified-send-media 
   it('LOCAL 回退仅限宿主机没有该文件：容器错误 / 跨成员预检不转执行端（§6.1）', async () => {
     // 容器读失败：容器里没有不等于本机没有，按现状抛错，不去执行端找
     const containerErr = {
+      openStream: vi.fn(async () => { throw new Error('容器读取失败'); }),
       readBytes: vi.fn(async () => { throw new Error('容器读取失败'); }),
       extraRoots: () => [],
       foreignPathMessage: vi.fn(async () => null),
     } as unknown as SendBytesSupport;
     const h = build({ executionMode: 'LOCAL', workspace: '/Users/u/proj', projectKey: null }, containerErr);
-    h.deliveryFetch.fetch.mockResolvedValue({ ok: true, bytes: PNG });
+    h.deliveryFetch.openStream.mockResolvedValue(streamOf(PNG));
     const raw = await h.imageTool.execute(JSON.stringify({ image: '/Users/u/proj/a.png' }), 11, 7, '/Users/u/proj');
     expect(JSON.parse(raw).error).toBe('容器读取失败');
-    expect(h.deliveryFetch.fetch).not.toHaveBeenCalled();
+    expect(h.deliveryFetch.openStream).not.toHaveBeenCalled();
   });
 
   it('LOCAL 回退仅限宿主机没有该文件：跨成员预检命中不转执行端', async () => {
     // 跨成员路径预检命中：给出可执行文案，不把他人文件转给执行端
     const foreign = {
+      openStream: vi.fn(async () => null),
       readBytes: vi.fn(async () => null),
       extraRoots: () => [],
       foreignPathMessage: vi.fn(async () => '这是其他成员的产物：https://x/uploads/9/a.png'),
     } as unknown as SendBytesSupport;
     const h2 = build({ executionMode: 'LOCAL', workspace: '/Users/u/proj', projectKey: null }, foreign);
-    h2.deliveryFetch.fetch.mockResolvedValue({ ok: true, bytes: PNG });
+    h2.deliveryFetch.openStream.mockResolvedValue(streamOf(PNG));
     const r2 = JSON.parse(await h2.imageTool.execute(JSON.stringify({ image: '/Users/u/proj/a.png' }), 11, 7, '/Users/u/proj'));
     expect(r2.error).toContain('其他成员的产物');
-    expect(h2.deliveryFetch.fetch).not.toHaveBeenCalled();
+    expect(h2.deliveryFetch.openStream).not.toHaveBeenCalled();
   });
 
-  it('CLOUD 会话不发 delivery_fetch：读失败直接报错', async () => {
+  it('CLOUD 会话不发 delivery_read：读失败直接报错', async () => {
     const h = build({ executionMode: 'CLOUD', workspace: null, projectKey: null });
     await h.imageTool.execute(JSON.stringify({ image: 'missing.png' }), 11, 7, h.workspace);
-    expect(h.deliveryFetch.fetch).not.toHaveBeenCalled();
+    expect(h.deliveryFetch.openStream).not.toHaveBeenCalled();
   });
 
   it('边路任务：飞书绑定按边路解析不到时回落父会话（评审补充）', async () => {
@@ -544,6 +560,7 @@ describe('工作区来源一律落快照（2026-11-24-send-file-snapshot D1，�
   /** 会记录读字节调用的 support 替身：快照路径读全量字节，这里断言它确实被读。 */
   function spySupport(extraRoots: string[] = []): SendBytesSupport {
     return {
+      openStream: vi.fn(async () => null),
       readBytes: vi.fn(async () => null),
       extraRoots: () => extraRoots,
       foreignPathMessage: vi.fn(async () => null),
@@ -569,7 +586,7 @@ describe('工作区来源一律落快照（2026-11-24-send-file-snapshot D1，�
     expect(r.delivery.mime).toBe('image/png');
     expect(r.delivery.bytes).toBe(PNG.length);
     expect(h.store.saved).toHaveLength(1);
-    expect(h.store.saved[0].input.bytes.equals(PNG)).toBe(true);
+    expect(h.store.saved[0].bytes.equals(PNG)).toBe(true);
   });
 
   it('工作区文件绝对路径入参：同样落快照（不再产出 workspace ref）', async () => {
@@ -719,6 +736,7 @@ describe('本人 uploads 既有文件原地引用（形态 B，2026-11-24 保留
   /** 会记录读字节调用的 support 替身：ref 命中时断言容器 / 宿主读取均未触发。 */
   function spySupport(extraRoots: string[] = []): SendBytesSupport {
     return {
+      openStream: vi.fn(async () => null),
       readBytes: vi.fn(async () => null),
       extraRoots: () => extraRoots,
       foreignPathMessage: vi.fn(async () => null),
@@ -1034,5 +1052,119 @@ describe('combineSendResult / 纯函数', () => {
     expect(basenameOfSource('/Users/u/proj/季度报告.pdf')).toBe('季度报告.pdf');
     expect(basenameOfSource('D:\\code\\x\\a.png')).toBe('a.png');
     expect(basenameOfSource('https://a.com/files/图表.png?download=1')).toBe('图表.png');
+  });
+});
+
+// ── 2026-11-25 send_file 1GB：常量 / 流式入参 / 通道超限不读推送字节 / 取消 ──
+describe('send_file 1GB（2026-11-25 D1/D2/R4）', () => {
+  it('上限常量：文件 1GB、图片 20MB（通道上限不随之放大）', async () => {
+    const mod = await import('./send-media-tool.js');
+    expect(mod.SEND_FILE_MAX_BYTES).toBe(1024 * 1024 * 1024);
+    expect(mod.SEND_IMAGE_MAX_BYTES).toBe(20 * 1024 * 1024);
+    expect(mod.channelMaxBytes('file', 'wechat')).toBe(20 * 1024 * 1024);
+    expect(mod.channelMaxBytes('file', 'dingtalk')).toBe(20 * 1024 * 1024);
+    expect(mod.channelMaxBytes('file', 'feishu')).toBe(30 * 1024 * 1024);
+    expect(mod.channelMaxBytes('image', 'feishu')).toBe(10 * 1024 * 1024);
+    expect(mod.channelMaxBytes('file', 'chat')).toBe(0);
+  });
+
+  it('交给存储的是流 + 声明大小（verifySize），并带回通道推送所需的 captured 字节', async () => {
+    const h = build({ projectKey: WEIXIN_PROJECT_KEY, executionMode: 'CLOUD' });
+    writeFileSync(join(h.workspace, 'note.pdf'), PDF);
+    const r = JSON.parse(await h.fileTool.execute(JSON.stringify({ file: 'note.pdf' }), 11, 7, h.workspace)) as {
+      success: boolean; channelStatus: string;
+    };
+    expect(r.success).toBe(true);
+    expect(r.channelStatus).toBe('sent');
+    const call = h.store.saved[0];
+    expect(call.input.declaredSize).toBe(PDF.length);
+    expect(call.input.verifySize).toBe(true);
+    expect(call.input.captureBytes).toBe(20 * 1024 * 1024);
+    expect(h.wechat.uploadFile).toHaveBeenCalledTimes(1);
+    expect((h.wechat.uploadFile.mock.calls[0] as unknown[])[2]).toEqual(PDF);
+  });
+
+  it('超过通道上限：快照成功、通道 skipped 字节读取（uploadFile 不被调用）', async () => {
+    const h = build({ projectKey: WEIXIN_PROJECT_KEY, executionMode: 'CLOUD' });
+    const big = join(h.workspace, 'big.bin');
+    // 20MB + 1 字节：超过微信通道上限，但仍远小于 1GB 快照上限
+    writeFileSync(big, Buffer.alloc(20 * 1024 * 1024 + 1, 1));
+    const r = JSON.parse(await h.fileTool.execute(JSON.stringify({ file: 'big.bin' }), 11, 7, h.workspace)) as {
+      success: boolean; channelStatus: string; error?: string; delivery?: { bytes: number };
+    };
+    expect(r.success).toBe(true);
+    expect(r.channelStatus).toBe('failed');
+    expect(r.error).toContain('文件超过 20MB 上限');
+    expect(r.delivery?.bytes).toBe(20 * 1024 * 1024 + 1);
+    expect(h.wechat.uploadFile).not.toHaveBeenCalled();
+    // 超通道上限不回传 pushed 字节
+    expect(h.store.saved[0].input.captureBytes).toBe(0);
+    expect(h.store.saved[0].input.gateLargeFile).toBe(true);
+  });
+
+  it('对话页（chat）大文件也进并发闸：没有通道上限不等于没有闸（R5）', async () => {
+    const h = build({ projectKey: null, executionMode: 'CLOUD' });
+    const big = join(h.workspace, 'chat-big.bin');
+    // 20MB + 1 字节：chat 无通道上限，但仍应判定为大文件（阈值 = 最严通道上限）
+    writeFileSync(big, Buffer.alloc(20 * 1024 * 1024 + 1, 1));
+    const r = JSON.parse(await h.fileTool.execute(JSON.stringify({ file: 'chat-big.bin' }), 11, 7, h.workspace)) as {
+      success: boolean; channelStatus: string;
+    };
+    expect(r.success).toBe(true);
+    expect(r.channelStatus).toBe('skipped');
+    expect(h.store.saved[0].input.gateLargeFile).toBe(true);
+    // 20MB 以下不进闸
+    writeFileSync(join(h.workspace, 'chat-small.bin'), Buffer.alloc(1024, 1));
+    await h.fileTool.execute(JSON.stringify({ file: 'chat-small.bin' }), 11, 7, h.workspace);
+    expect(h.store.saved[1].input.gateLargeFile).toBe(false);
+  });
+
+  it('取消信号：入口即返回「发送已取消」，不打开来源、不落快照', async () => {
+    const h = build({ projectKey: null, executionMode: 'CLOUD' });
+    writeFileSync(join(h.workspace, 'a.pdf'), PDF);
+    const { ToolCancelContext } = await import('../tool-cancel-context.js');
+    const r = JSON.parse(await ToolCancelContext.run({ get: () => true }, () =>
+      h.fileTool.execute(JSON.stringify({ file: 'a.pdf' }), 11, 7, h.workspace),
+    )) as { error?: string };
+    expect(r.error).toBe('发送已取消');
+    expect(h.store.save).not.toHaveBeenCalled();
+  });
+});
+
+describe('send_file 完整性校验（2026-11-25 R8）', () => {
+  it('容器 / 执行端来源：save 提交前比对 sha256，不一致即失败且不推送', async () => {
+    const support: SendBytesSupport = {
+      openStream: vi.fn(async () => ({
+        stream: Readable.from([PDF]),
+        size: PDF.length,
+        contentType: null,
+        digest: async () => 'remote-hash',
+        close: () => undefined,
+      })),
+      readBytes: vi.fn(async () => PDF),
+      extraRoots: () => [],
+    };
+    const h = build({ projectKey: WEIXIN_PROJECT_KEY, executionMode: 'DOCKER' }, support);
+    let seenServerHash = '';
+    h.store.save.mockImplementation(async (input: SendFileSaveInput) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of input.body) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      seenServerHash = 'server-hash';
+      try {
+        await input.verifyDigest?.(seenServerHash);
+      } catch (e) {
+        return { ok: false as const, error: (e as Error).message };
+      }
+      return { ok: true as const, id: 'snap-digest', mime: input.mime, bytes: (chunks as Buffer[]).length };
+    });
+    // 来源是容器内路径：宿主机不存在，support.openStream 命中
+    const r = JSON.parse(await h.fileTool.execute(JSON.stringify({ file: '/tmp/container-only.pdf' }), 11, 7, h.workspace)) as {
+      success?: boolean; error?: string;
+    };
+    // 硬失败（errorJson）：连 success 字段都不返回，且不推通道
+    expect(r.success).toBeUndefined();
+    expect(r.error).toContain('文件校验失败');
+    expect(seenServerHash).toBe('server-hash');
+    expect(h.wechat.uploadFile).not.toHaveBeenCalled();
   });
 });

@@ -8,7 +8,7 @@ const assert = require('node:assert')
 const path = require('path')
 const os = require('os')
 const fs = require('fs')
-const { resolveContainedWorkspacePath, readWorkspaceBytes, readDeliveryWorkspaceBytes } = require('./localWorkspaceRead.cjs')
+const { resolveContainedWorkspacePath, readWorkspaceBytes } = require('./localWorkspaceRead.cjs')
 
 const WORKSPACE = path.join(os.tmpdir(), 'mao-local-workspace-read-test')
 
@@ -115,19 +115,38 @@ test('父级目录 symlink 指向外部时穿出被拒（realpath containment）
   }
 })
 
-// ── delivery_fetch（统一发送媒体方案 §6.2）：相对或 workspace 内绝对路径、普通文件、非符号链接、maxBytes ──
+// ── delivery_read（2026-11-25 send_file 1GB R2）：open / read / close、路径校验、上限、mtime 变更 ──
 
-test('delivery：相对路径 / workspace 内绝对路径都读到字节', () => {
-  const rel = readDeliveryWorkspaceBytes(WORKSPACE, 'screenshots/a.png', { maxBytes: 1024 })
-  assert.strictEqual(rel.error, undefined)
-  assert.deepStrictEqual([...rel.bytes], [0x89, 0x50, 0x4e, 0x47])
-  const absolute = path.join(WORKSPACE, 'screenshots', 'a.png')
-  const abs = readDeliveryWorkspaceBytes(WORKSPACE, absolute, { maxBytes: 1024 })
-  assert.strictEqual(abs.error, undefined)
-  assert.deepStrictEqual([...abs.bytes], [0x89, 0x50, 0x4e, 0x47])
+const {
+  openDeliveryFile,
+  readDeliveryChunk,
+  closeDeliveryFile,
+  closeAllDeliveryFiles,
+  digestDeliveryFile,
+  DELIVERY_READ_RANGE_BYTES,
+} = require('./localDeliveryStream.cjs')
+
+test.after(() => {
+  closeAllDeliveryFiles()
 })
 
-test('delivery：workspace 外绝对路径 / 越界 / 反斜杠 / NUL 一律拒绝', () => {
+test('delivery：open 返回 size / mtimeMs，read 按 offset 读到字节', () => {
+  const opened = openDeliveryFile(WORKSPACE, 'screenshots/a.png', 1024)
+  assert.strictEqual(opened.ok, true)
+  assert.strictEqual(opened.size, 4)
+  assert.ok(Number.isFinite(opened.mtimeMs))
+  const chunk = readDeliveryChunk(opened.openId, 1, 2)
+  assert.strictEqual(chunk.ok, true)
+  assert.deepStrictEqual([...chunk.bytes], [0x50, 0x4e])
+  assert.strictEqual(chunk.size, 4)
+  closeDeliveryFile(opened.openId)
+})
+
+test('delivery：workspace 内绝对路径可开；workspace 外 / 越界 / 反斜杠 / NUL 一律拒绝', () => {
+  const absolute = path.join(WORKSPACE, 'screenshots', 'a.png')
+  const abs = openDeliveryFile(WORKSPACE, absolute, 1024)
+  assert.strictEqual(abs.ok, true)
+  closeDeliveryFile(abs.openId)
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-delivery-outside-'))
   try {
     fs.writeFileSync(path.join(outside, 'x.pdf'), 'x')
@@ -138,7 +157,7 @@ test('delivery：workspace 外绝对路径 / 越界 / 反斜杠 / NUL 一律拒�
       'a\0b.png',
       '',
     ]) {
-      const resolved = readDeliveryWorkspaceBytes(WORKSPACE, bad, { maxBytes: 1024 })
+      const resolved = openDeliveryFile(WORKSPACE, bad, 1024)
       assert.strictEqual(typeof resolved.error, 'string', `应拒绝：${JSON.stringify(bad)}`)
     }
   } finally {
@@ -154,22 +173,65 @@ test('delivery：目标本身是符号链接被拒（不跟到目标）', () => 
     return // Windows 无符号链接权限时跳过
   }
   try {
-    assert.strictEqual(readDeliveryWorkspaceBytes(WORKSPACE, 'screenshots/link.png').error, '不接受符号链接')
+    assert.strictEqual(openDeliveryFile(WORKSPACE, 'screenshots/link.png').error, '不接受符号链接')
   } finally {
     fs.rmSync(link, { force: true })
   }
 })
 
-test('delivery：帧内 maxBytes 作为读取上限（图片 20MB 场景不再按 30MB 读整份）', () => {
+test('delivery：帧内 maxBytes 作为打开上限（图片 20MB 场景不再整份读入）', () => {
   const big = path.join(WORKSPACE, 'screenshots', 'big.bin')
   fs.writeFileSync(big, Buffer.alloc(8, 1))
   try {
-    const capped = readDeliveryWorkspaceBytes(WORKSPACE, 'screenshots/big.bin', { maxBytes: 4 })
+    const capped = openDeliveryFile(WORKSPACE, 'screenshots/big.bin', 4)
     assert.match(capped.error, /文件过大/)
-    const ok = readDeliveryWorkspaceBytes(WORKSPACE, 'screenshots/big.bin', { maxBytes: 8 })
-    assert.strictEqual(ok.error, undefined)
+    const ok = openDeliveryFile(WORKSPACE, 'screenshots/big.bin', 8)
+    assert.strictEqual(ok.ok, true)
     assert.strictEqual(ok.size, 8)
+    closeDeliveryFile(ok.openId)
   } finally {
     fs.rmSync(big, { force: true })
+  }
+})
+
+test('delivery：单片长度超过 512KB / 负数 / 已关闭句柄 → 拒绝', () => {
+  const opened = openDeliveryFile(WORKSPACE, 'screenshots/a.png', 1024)
+  assert.match(readDeliveryChunk(opened.openId, 0, DELIVERY_READ_RANGE_BYTES + 1).error, /单片上限/)
+  assert.match(readDeliveryChunk(opened.openId, -1, 1).error, /区间不合法/)
+  closeDeliveryFile(opened.openId)
+  assert.match(readDeliveryChunk(opened.openId, 0, 1).error, /已关闭/)
+})
+
+test('delivery：digest 返回整份 sha256（R8），与顺序读到的字节一致', async () => {
+  const crypto = require('crypto')
+  const file = path.join(WORKSPACE, 'screenshots', 'digest.bin')
+  const payload = Buffer.from('abcdefghij')
+  fs.writeFileSync(file, payload)
+  try {
+    const opened = openDeliveryFile(WORKSPACE, 'screenshots/digest.bin', 1024)
+    const result = await digestDeliveryFile(opened.openId)
+    assert.strictEqual(result.ok, true)
+    assert.strictEqual(result.sha256, crypto.createHash('sha256').update(payload).digest('hex'))
+    closeDeliveryFile(opened.openId)
+  } finally {
+    fs.rmSync(file, { force: true })
+  }
+})
+
+test('delivery：发送期间文件 mtime 变化 → 失败（避免撕裂快照）', () => {
+  const file = path.join(WORKSPACE, 'screenshots', 'mutating.bin')
+  fs.writeFileSync(file, Buffer.alloc(64, 2))
+  try {
+    const opened = openDeliveryFile(WORKSPACE, 'screenshots/mutating.bin', 1024)
+    assert.strictEqual(opened.ok, true)
+    // 修改文件并推进 mtime（部分文件系统 mtime 精度 1s，显式设置）
+    fs.writeFileSync(file, Buffer.alloc(64, 3))
+    const future = new Date(Date.now() + 5000)
+    fs.utimesSync(file, future, future)
+    const chunk = readDeliveryChunk(opened.openId, 0, 16)
+    assert.match(chunk.error, /文件在发送期间被修改/)
+    closeDeliveryFile(opened.openId)
+  } finally {
+    fs.rmSync(file, { force: true })
   }
 })

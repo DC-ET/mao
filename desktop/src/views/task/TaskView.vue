@@ -417,6 +417,8 @@ provide('openDeliveryFile', (delivery: SendDelivery) => {
     filename: delivery.filename,
     key: deliveryKey(delivery),
     ...(delivery.mime != null ? { mime: delivery.mime } : {}),
+    ...(delivery.bytes != null ? { bytes: delivery.bytes } : {}),
+    ...(delivery.ref?.type === 'send-file' ? { fileId: delivery.ref.id } : {}),
   })
 })
 

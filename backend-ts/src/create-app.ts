@@ -98,6 +98,7 @@ import { GitWriteOperationService } from './file/git-write-operation.service.js'
 import { GitCommitMessageService } from './file/git-commit-message.service.js';
 import { UploadTicketService } from './upload/upload-ticket.service.js';
 import { SendFileEntityRepository, SendFileService } from './file/send-file.service.js';
+import { SendDownloadTicketService } from './file/send-download-ticket.service.js';
 import { SkillBundleService } from './skill/skill-bundle.service.js';
 import { UserSkillService } from './skill/user-skill.service.js';
 import { SkillDocService } from './skill/skill-doc.service.js';
@@ -658,6 +659,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       obs: await settingService.getObsConfig(),
     }),
   );
+  // 快照下载票据（2026-11-25 R6）：与 JWT 同源密钥派生的 HMAC，无状态、不入库。
+  const sendDownloadTickets = new SendDownloadTicketService(cfg.jwt.secret);
 
   const userSkillsDir = cfg.app.harness.userSkillsDir || resolve(process.env.HOME ?? '/tmp', '.mao/data/userskills');
   // 内置技能（技术方案 2026-11-20）：随仓库发版的只读系统技能。名单/bundled 不合法或找不到
@@ -1169,6 +1172,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     remoteFileProxy,
     uploadTicketService,
     sendFileService,
+    sendDownloadTickets,
     skillBundleService, userSkillService, skillDocService,
     scheduledService,
     openRunService, apiTokenService, webhookTriggerService, outboundSubscriptionService,

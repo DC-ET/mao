@@ -1,20 +1,21 @@
-// delivery_fetch 委托读取（统一发送媒体方案 2026-11-18 §6.2）：路径校验、绝对路径在 workspace 内的口径、
-// 分片回传、executor 分支的静默失败与路由入口。
+// delivery_read 委托读取（2026-11-25 send_file 1GB R2）：路径校验、绝对路径在 workspace 内的口径、
+// open / read / close 三段、执行端错误显式回包与路由入口。
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  DELIVERY_FETCH_CHUNK_BYTES,
-  DELIVERY_FETCH_MAX_BYTES,
-  readDeliveryFileBytes,
+  DELIVERY_READ_CHUNK_BYTES,
+  DELIVERY_READ_MAX_BYTES,
+  openDeliveryFile,
+  readDeliveryChunk,
   resolveDeliveryWorkspacePath,
 } from '../src/local/file-fetch';
 import { LocalExecutor } from '../src/local/executor';
 import { DAEMON_ROUTED_EVENTS } from '../src/commands/local';
 import type { WsClient } from '../src/ws/ws-client';
 
-const WORKSPACE = mkdtempSync(path.join(tmpdir(), 'mao-delivery-fetch-'));
+const WORKSPACE = mkdtempSync(path.join(tmpdir(), 'mao-delivery-read-'));
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -82,34 +83,65 @@ describe('resolveDeliveryWorkspacePath', () => {
   });
 });
 
-describe('readDeliveryFileBytes', () => {
-  it('读到普通文件字节（不限制文件扩展名）', async () => {
+describe('openDeliveryFile / readDeliveryChunk', () => {
+  it('读到普通文件字节（不限制扩展名），open 回 size / mtimeMs', async () => {
     writeFileSync(path.join(WORKSPACE, 'doc.bin'), Buffer.from([1, 2, 3]));
-    await expect(readDeliveryFileBytes(WORKSPACE, 'doc.bin')).resolves.toEqual(Buffer.from([1, 2, 3]));
+    const opened = await openDeliveryFile(WORKSPACE, 'doc.bin');
+    expect(opened.size).toBe(3);
+    expect(Number.isFinite(opened.mtimeMs)).toBe(true);
+    const chunk = await readDeliveryChunk(opened, 1, 2);
+    expect([...chunk.bytes]).toEqual([2, 3]);
+    await opened.handle.close();
   });
 
-  it('maxBytes 上限生效（副本侧 20MB 图片 / 30MB 文件由服务端传入）', async () => {
+  it('maxBytes 上限生效（图片 20MB / 文件 1GB 由服务端传入）', async () => {
     writeFileSync(path.join(WORKSPACE, 'big.dat'), Buffer.alloc(32, 7));
-    await expect(readDeliveryFileBytes(WORKSPACE, 'big.dat', 16)).rejects.toThrow('过大');
-    await expect(readDeliveryFileBytes(WORKSPACE, 'big.dat', 32)).resolves.toHaveLength(32);
+    await expect(openDeliveryFile(WORKSPACE, 'big.dat', 16)).rejects.toThrow('过大');
+    const opened = await openDeliveryFile(WORKSPACE, 'big.dat', 32);
+    expect(opened.size).toBe(32);
+    await opened.handle.close();
   });
 
-  it('非法 / 缺省 maxBytes 按 30MB 兜底（模块常量与后端同表）', async () => {
+  it('非法 / 缺省 maxBytes 按 1GB 兜底（模块常量与后端同表）', async () => {
     writeFileSync(path.join(WORKSPACE, 'small.dat'), Buffer.alloc(4, 1));
-    await expect(readDeliveryFileBytes(WORKSPACE, 'small.dat', Number.NaN)).resolves.toHaveLength(4);
-    await expect(readDeliveryFileBytes(WORKSPACE, 'small.dat', 0)).resolves.toHaveLength(4);
-    expect(DELIVERY_FETCH_MAX_BYTES).toBe(30 * 1024 * 1024);
-    expect(DELIVERY_FETCH_CHUNK_BYTES).toBe(512 * 1024);
+    const a = await openDeliveryFile(WORKSPACE, 'small.dat', Number.NaN);
+    const b = await openDeliveryFile(WORKSPACE, 'small.dat', 0);
+    expect(a.size).toBe(4);
+    expect(b.size).toBe(4);
+    await a.handle.close();
+    await b.handle.close();
+    expect(DELIVERY_READ_MAX_BYTES).toBe(1024 * 1024 * 1024);
+    expect(DELIVERY_READ_CHUNK_BYTES).toBe(512 * 1024);
   });
 
   it('目录 / 不存在的文件拒绝', async () => {
     mkdirSync(path.join(WORKSPACE, 'dir'), { recursive: true });
-    await expect(readDeliveryFileBytes(WORKSPACE, 'dir')).rejects.toThrow();
-    await expect(readDeliveryFileBytes(WORKSPACE, 'missing.pdf')).rejects.toThrow();
+    await expect(openDeliveryFile(WORKSPACE, 'dir')).rejects.toThrow();
+    await expect(openDeliveryFile(WORKSPACE, 'missing.pdf')).rejects.toThrow();
+  });
+
+  it('单片超过 512KB / 区间非法 → 拒绝', async () => {
+    writeFileSync(path.join(WORKSPACE, 'range.bin'), Buffer.alloc(8, 1));
+    const opened = await openDeliveryFile(WORKSPACE, 'range.bin');
+    await expect(readDeliveryChunk(opened, 0, DELIVERY_READ_CHUNK_BYTES + 1)).rejects.toThrow('单片上限');
+    await expect(readDeliveryChunk(opened, -1, 1)).rejects.toThrow('不合法');
+    await opened.handle.close();
+  });
+
+  it('发送期间文件 mtime 变化 → 失败（避免撕裂快照）', async () => {
+    const file = path.join(WORKSPACE, 'mutating.bin');
+    writeFileSync(file, Buffer.alloc(64, 2));
+    const opened = await openDeliveryFile(WORKSPACE, 'mutating.bin');
+    const future = new Date(Date.now() + 5000);
+    writeFileSync(file, Buffer.alloc(64, 3));
+    const { utimesSync } = await import('node:fs');
+    utimesSync(file, future, future);
+    await expect(readDeliveryChunk(opened, 0, 16)).rejects.toThrow('文件在发送期间被修改');
+    await opened.handle.close();
   });
 });
 
-/** 构造最小 LocalExecutor：只注入 delivery_fetch 分支需要的 ws 与信任工作区。 */
+/** 构造最小 LocalExecutor：只注入 delivery_read 分支需要的 ws 与信任工作区。 */
 function makeExecutor(wsSend: (payload: object) => Promise<boolean>, workspace = WORKSPACE) {
   return new LocalExecutor({
     ws: { sendReliable: wsSend } as unknown as WsClient,
@@ -128,93 +160,88 @@ function makeExecutor(wsSend: (payload: object) => Promise<boolean>, workspace =
   });
 }
 
-type DeliveryFetchHook = (sid: number, d: Record<string, unknown>) => Promise<void>;
+type DeliveryReadHook = (sid: number, d: Record<string, unknown>) => Promise<void>;
 
-describe('LocalExecutor.onDeliveryFetch', () => {
-  it('信任内正常读取：按 512KB 分片回传 delivery_fetch_result', async () => {
+describe('LocalExecutor.onDeliveryRead', () => {
+  it('open / read / close 三段：回 size / mtimeMs 与按 offset 的 base64 字节', async () => {
     const frames: Array<Record<string, unknown>> = [];
     const executor = makeExecutor(async (payload) => {
       frames.push(payload as Record<string, unknown>);
       return true;
     });
-    const bytes = Buffer.alloc(DELIVERY_FETCH_CHUNK_BYTES + 4, 9);
-    writeFileSync(path.join(WORKSPACE, 'two.bin'), bytes);
-    await (executor as unknown as { onDeliveryFetch: DeliveryFetchHook }).onDeliveryFetch(
-      40,
-      { requestId: 'r1', path: 'two.bin', workspace: WORKSPACE, maxBytes: DELIVERY_FETCH_MAX_BYTES },
-    );
-    expect(frames).toHaveLength(2);
-    expect(frames[0]).toMatchObject({
-      type: 'delivery_fetch_result',
-      sessionId: 40,
-      requestId: 'r1',
-      seq: 1,
-      total: 2,
-      data: bytes.subarray(0, DELIVERY_FETCH_CHUNK_BYTES).toString('base64'),
+    const bytes = Buffer.from('0123456789');
+    writeFileSync(path.join(WORKSPACE, 'ten.bin'), bytes);
+    const hook = executor as unknown as { onDeliveryRead: DeliveryReadHook };
+    await hook.onDeliveryRead(40, {
+      requestId: 'r-open', action: 'open', streamId: 's1', path: 'ten.bin', workspace: WORKSPACE, maxBytes: DELIVERY_READ_MAX_BYTES,
     });
-    expect(frames[1]).toMatchObject({ seq: 2, total: 2, data: bytes.subarray(DELIVERY_FETCH_CHUNK_BYTES).toString('base64') });
-    // 序列化后必须低于出站截断（mao-agent 900KB）与服务端 1MB maxPayload
-    expect(JSON.stringify(frames[0]).length).toBeLessThan(1_000_000);
+    expect(frames[0]).toMatchObject({ type: 'delivery_read_result', sessionId: 40, requestId: 'r-open', ok: true, size: 10 });
+    await hook.onDeliveryRead(40, {
+      requestId: 'r-read', action: 'read', streamId: 's1', offset: 4, length: 3,
+    });
+    expect(frames[1]).toMatchObject({
+      ok: true,
+      data: bytes.subarray(4, 7).toString('base64'),
+      size: 10,
+    });
+    await hook.onDeliveryRead(40, { requestId: 'r-close', action: 'close', streamId: 's1' });
+    await hook.onDeliveryRead(40, { requestId: 'r-read2', action: 'read', streamId: 's1', offset: 0, length: 1 });
+    expect(frames.at(-1)).toMatchObject({ ok: false, error: '读取流已关闭或不存在' });
+    executor.closeDeliveryHandles();
   });
 
-  it('帧内 maxBytes 生效：超过副本上限的文件静默不读（不发送任何帧）', async () => {
+  it('帧内 maxBytes 超限：open 显式回「文件过大」（服务端据此给准确文案）', async () => {
     writeFileSync(path.join(WORKSPACE, 'too-big.png'), Buffer.alloc(64, 3));
-    const send = vi.fn(async () => true);
-    const executor = makeExecutor(send);
-    await (executor as unknown as { onDeliveryFetch: DeliveryFetchHook }).onDeliveryFetch(
-      40,
-      { requestId: 'r1', path: 'too-big.png', workspace: WORKSPACE, maxBytes: 32 },
-    );
-    expect(send).not.toHaveBeenCalled();
-  });
-
-  it('信任外 workspace / 越界 / 不存在 / 缺 requestId → 静默不回包', async () => {
-    const send = vi.fn(async () => true);
-    const executor = makeExecutor(send);
-    const call = (d: Record<string, unknown>) =>
-      (executor as unknown as { onDeliveryFetch: DeliveryFetchHook }).onDeliveryFetch(40, d);
-    writeFileSync(path.join(WORKSPACE, 'ok.pdf'), 'x');
-    await call({ requestId: 'r1', path: 'ok.pdf', workspace: '/elsewhere' }); // 信任外
-    await call({ requestId: 'r2', path: '../escape.pdf', workspace: WORKSPACE }); // 越界
-    await call({ requestId: 'r3', path: 'missing.pdf', workspace: WORKSPACE }); // 文件不存在
-    await call({ requestId: 'r4', path: '', workspace: WORKSPACE }); // 空路径
-    await call({ path: 'ok.pdf', workspace: WORKSPACE }); // 缺 requestId
-    expect(send).not.toHaveBeenCalled();
-  });
-
-  it('sendReliable 中途失败 → 立即停止，不回 error 帧', async () => {
-    writeFileSync(path.join(WORKSPACE, 'multi.bin'), Buffer.alloc(DELIVERY_FETCH_CHUNK_BYTES + 4, 5));
-    let calls = 0;
-    const send = vi.fn(async () => {
-      calls += 1;
-      return calls < 2;
-    });
-    const executor = makeExecutor(send);
-    await (executor as unknown as { onDeliveryFetch: DeliveryFetchHook }).onDeliveryFetch(
-      40,
-      { requestId: 'r1', path: 'multi.bin', workspace: WORKSPACE, maxBytes: DELIVERY_FETCH_MAX_BYTES },
-    );
-    expect(calls).toBe(2);
-  });
-
-  it('帧 maxBytes 非法 / 缺省时按 30MB 兜底照常回传', async () => {
-    writeFileSync(path.join(WORKSPACE, 'fallback.bin'), Buffer.from('abc'));
     const frames: Array<Record<string, unknown>> = [];
     const executor = makeExecutor(async (payload) => {
       frames.push(payload as Record<string, unknown>);
       return true;
     });
-    const hook = executor as unknown as { onDeliveryFetch: DeliveryFetchHook };
-    await hook.onDeliveryFetch(40, { requestId: 'r1', path: 'fallback.bin', workspace: WORKSPACE, maxBytes: 'x' });
-    await hook.onDeliveryFetch(40, { requestId: 'r2', path: 'fallback.bin', workspace: WORKSPACE });
-    expect(frames).toHaveLength(2);
-    expect(frames.every((f) => f.type === 'delivery_fetch_result')).toBe(true);
+    await (executor as unknown as { onDeliveryRead: DeliveryReadHook }).onDeliveryRead(
+      40,
+      { requestId: 'r1', action: 'open', streamId: 's1', path: 'too-big.png', workspace: WORKSPACE, maxBytes: 32 },
+    );
+    expect(frames[0]).toMatchObject({ ok: false, error: expect.stringContaining('过大') });
+    executor.closeDeliveryHandles();
+  });
+
+  it('信任外 workspace / 越界 / 不存在 / 缺字段 → 显式回 ok:false', async () => {
+    const frames: Array<Record<string, unknown>> = [];
+    const executor = makeExecutor(async (payload) => {
+      frames.push(payload as Record<string, unknown>);
+      return true;
+    });
+    const call = (d: Record<string, unknown>) =>
+      (executor as unknown as { onDeliveryRead: DeliveryReadHook }).onDeliveryRead(40, d);
+    writeFileSync(path.join(WORKSPACE, 'ok.pdf'), 'x');
+    await call({ requestId: 'r1', action: 'open', streamId: 's1', path: 'ok.pdf', workspace: '/elsewhere' });
+    await call({ requestId: 'r2', action: 'open', streamId: 's2', path: '../escape.pdf', workspace: WORKSPACE });
+    await call({ requestId: 'r3', action: 'open', streamId: 's3', path: 'missing.pdf', workspace: WORKSPACE });
+    // 缺 streamId / requestId：静默
+    await call({ requestId: 'r4', action: 'open', path: 'ok.pdf', workspace: WORKSPACE });
+    await call({ action: 'open', streamId: 's5', path: 'ok.pdf', workspace: WORKSPACE });
+    expect(frames.filter((f) => f.ok === false)).toHaveLength(3);
+    expect(frames).toHaveLength(3);
+    executor.closeDeliveryHandles();
+  });
+
+  it('sendReliable 失败不冒泡（下一片仍可重试；关闭时清句柄）', async () => {
+    writeFileSync(path.join(WORKSPACE, 'multi.bin'), 'abc');
+    const send = vi.fn(async () => false);
+    const executor = makeExecutor(send);
+    const hook = executor as unknown as { onDeliveryRead: DeliveryReadHook };
+    await hook.onDeliveryRead(40, {
+      requestId: 'r-open', action: 'open', streamId: 's1', path: 'multi.bin', workspace: WORKSPACE, maxBytes: DELIVERY_READ_MAX_BYTES,
+    });
+    await hook.onDeliveryRead(40, { requestId: 'r-read', action: 'read', streamId: 's1', offset: 0, length: 3 });
+    expect(send).toHaveBeenCalled();
+    executor.closeDeliveryHandles();
   });
 });
 
 describe('路由入口（评审补充 P1）', () => {
-  it('DAEMON_ROUTED_EVENTS 覆盖 file_fetch 与 delivery_fetch', () => {
+  it('DAEMON_ROUTED_EVENTS 覆盖 file_fetch 与 delivery_read', () => {
     expect(DAEMON_ROUTED_EVENTS.has('file_fetch')).toBe(true);
-    expect(DAEMON_ROUTED_EVENTS.has('delivery_fetch')).toBe(true);
+    expect(DAEMON_ROUTED_EVENTS.has('delivery_read')).toBe(true);
   });
 });
