@@ -47,7 +47,7 @@ import {
 } from './impl/scheduled-task-tools.js';
 import { CreateSignalWatcherTool, ListSignalWatchersTool, type SignalWatcherServiceRef } from './impl/signal-watcher-tools.js';
 import { FeishuDownloadFileTool } from './impl/feishu-tools.js';
-import { SendImageTool, SendFileTool, WechatSendStrategy, FeishuSendStrategy, DingtalkSendStrategy, type SendFileStore } from './impl/send-media-tool.js';
+import { SendImageTool, SendFileTool, WechatSendStrategy, FeishuSendStrategy, DingtalkSendStrategy, type SendFileStore, type SendDownloadLinkIssuer } from './impl/send-media-tool.js';
 import type { LocalDeliveryFetchService } from '../local/delivery-fetch.service.js';
 import type { DingtalkMediaSendSupport } from './impl/dingtalk-tools.js';
 import type { SendBytesSupport } from './impl/send-file-bytes.js';
@@ -120,6 +120,11 @@ export interface DefaultToolRegistryDeps {
   localDeliveryFetchService?: LocalDeliveryFetchService | null;
   /** 发送附件快照存储（2026-11-24-send-file-snapshot D3）：本地 / 多云分流与插表在实现里。必填。 */
   sendFileStore: SendFileStore;
+  /**
+   * 通道发送失败时的兜底下载链接签发（2026-11-25）：外部通道有硬上限（微信 / 钉钉 20MB、
+   * 飞书 30MB），超限时给用户一条带短时票据的下载地址。未注入 = 不给链接（行为同旧版）。
+   */
+  sendDownloadLink?: SendDownloadLinkIssuer | null;
   definitionRegistry: AgentDefinitionRegistry;
   harnessService: HarnessService;
   agentLoop: AgentLoop;
@@ -213,6 +218,7 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
       deps.sendFileStore,
       deps.sendBytesSupport,
       deps.localDeliveryFetchService ?? null,
+      deps.sendDownloadLink ?? null,
     ),
     new SendFileTool(
       deps.pathSandbox, deps.sessionService,
@@ -224,6 +230,7 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
       deps.sendFileStore,
       deps.sendBytesSupport,
       deps.localDeliveryFetchService ?? null,
+      deps.sendDownloadLink ?? null,
     ),
     new FeishuDownloadFileTool(deps.feishuToolSupport, deps.feishuGroupMediaLookup, deps.feishuMediaDownloader, deps.feishuMaxInboundFileBytes, deps.feishuMessageDetailFetcher),
     new SpawnSubagentTool(deps.backgroundSubagentManager, deps.definitionRegistry),

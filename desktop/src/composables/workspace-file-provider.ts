@@ -864,7 +864,9 @@ export async function downloadDeliveryUrl(
 
 /**
  * 换快照下载票据（R6）：`POST /files/send-download-ticket` 带 JWT，返回绑定文件 + 用户的
- * HMAC 票据（24 小时）。票据只用于这一个文件的下载，不进消息 JSON、不写日志。
+ * HMAC 票据（12 小时）。桌面点下载时现换一张，只用于这一个文件的下载：不进消息正文、
+ * 不写日志（访问日志已脱敏）。通道发送失败时后端也会把它拼成兜底下载链接返回给 Agent，
+ * 那条链接会随工具结果留在会话里，到期自动失效。
  */
 async function requestSendDownloadTicket(fileId: string): Promise<string> {
   const token = getToken()

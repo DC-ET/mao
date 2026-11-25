@@ -10,11 +10,11 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
  * - `POST /v1/files/send-download-ticket` 用 JWT 换一张无状态 HMAC 票据；
  * - `GET /v1/files/send-download?id=..&ticket=..` 凭票据下载，不需要 JWT。
  *
- * 票据绑定 `文件 id + 授权用户 id`，有效期 24 小时（R7 的 Range 续传会原样重用同一个
- * URL，60 秒票据续传必然失败）。票据泄露的影响面只有这一个文件、最长 24 小时，
+ * 票据绑定 `文件 id + 授权用户 id`，有效期 12 小时（R7 的 Range 续传会原样重用同一个
+ * URL，60 秒票据续传必然失败）。票据泄露的影响面只有这一个文件、最长 12 小时，
  * 不能换取其它资源，也不是登录凭证。不入库、不落盘。
  */
-export const SEND_DOWNLOAD_TICKET_TTL_MS = 24 * 60 * 60 * 1000;
+export const SEND_DOWNLOAD_TICKET_TTL_MS = 12 * 60 * 60 * 1000;
 
 export interface SendDownloadTicketClaims {
   fileId: string;

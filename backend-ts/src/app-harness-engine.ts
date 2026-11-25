@@ -23,6 +23,10 @@ import type { SubagentExecutionMapper } from './harness/delegate/subagent-execut
 import type { LocalToolSessionRegistry } from './harness/local/local-tool-session-registry.js';
 import type { LocalDeliveryFetchService } from './harness/local/delivery-fetch.service.js';
 import type { SendFileStore } from './harness/tool/impl/send-media-tool.js';
+import { toStaticUploadBase } from './harness/tool/impl/generate-image-tool.js';
+import type { SendDownloadTicketService } from './file/send-download-ticket.service.js';
+import { SEND_DOWNLOAD_TICKET_TTL_MS } from './file/send-download-ticket.service.js';
+import { harnessLog } from './harness/log.js';
 import type { SubAgentVisibilityService } from './harness/delegate/subagent-visibility-service.js';
 import type { BackgroundSubagentManager } from './harness/delegate/background-subagent-manager.js';
 import type { MessageRepository } from './session/session.repository.js';
@@ -126,6 +130,11 @@ export interface HarnessEngineDeps {
   localDeliveryFetch: LocalDeliveryFetchService;
   /** 发送附件快照存储（2026-11-24-send-file-snapshot D3）：本地 / 多云分流与插表在实现里。必填。 */
   sendFileStore: SendFileStore;
+  /**
+   * 发送快照下载票据（2026-11-25）：通道发送失败时用它签发兜底下载链接。
+   * 未注入 = 不给链接（工具行为同旧版）。
+   */
+  sendDownloadTickets?: SendDownloadTicketService | null;
   visibility: SubAgentVisibilityService;
   backgroundSubagentManager: BackgroundSubagentManager;
   messageRepo: MessageRepository;
@@ -197,6 +206,7 @@ export interface HarnessEngineResult {
 export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineResult {
   const d = deps as any;
   const { cfg, apiPrefix, uploadDir, harnessTuning } = d;
+  const sendDownloadTickets = d.sendDownloadTickets ?? null;
 
   const toolRegistry = createDefaultToolRegistry({
     pathSandbox: d.pathSandbox,
@@ -287,6 +297,26 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     sendBytesSupport: d.sendBytesBridge,
     localDeliveryFetchService: d.localDeliveryFetch,
     sendFileStore: d.sendFileStore,
+    // 通道失败时的兜底下载链接（2026-11-25）：票据 + 站点 origin 拼出可直接下载的地址。
+    // 拿不到 baseUrl 一律返回 null（不返回不可达链接），签发失败也不影响发送结果。
+    sendDownloadLink: sendDownloadTickets == null
+      ? null
+      : async (fileId: string, userId: number) => {
+        try {
+          // 站点根地址优先（site 未配置时 getSiteBaseUrl 内部回落到 upload.baseUrl）；
+          // 两者都没配 = 拿不到可达 origin，直接不返回链接
+          const baseUrl = await d.settingService.getSiteBaseUrl();
+          const origin = toStaticUploadBase(baseUrl ?? '', apiPrefix);
+          if (origin === '') return null;
+          const issued = sendDownloadTickets.issue(fileId, userId);
+          const url = `${origin}${apiPrefix}/v1/files/send-download`
+            + `?id=${encodeURIComponent(fileId)}&ticket=${encodeURIComponent(issued.ticket)}`;
+          return { url, expiresAt: issued.expiresAt, ttlHours: Math.round(SEND_DOWNLOAD_TICKET_TTL_MS / 3_600_000) };
+        } catch (e) {
+          harnessLog('warn', 'send download link resolve failed', e);
+          return null;
+        }
+      },
     dingtalkMediaSendSupport: {
       resolveSendTarget: (sessionId: number | null) => d.dingtalkMediaHolder.current?.resolveSendTarget(sessionId) ?? Promise.resolve(null),
       sendImage: async (target: any, bytes: any, fileName: string) => {

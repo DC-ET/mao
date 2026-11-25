@@ -22,6 +22,7 @@ import {
   type SendCopyDeps,
   type SendFileStore,
   type SendMediaSession,
+  type SendDownloadLinkIssuer,
 } from './send-media-tool.js';
 import { WEIXIN_PROJECT_KEY } from '../../../domain/types.js';
 import { BusinessException } from '../../../common/business-exception.js';
@@ -116,7 +117,7 @@ interface Harness {
 function build(
   session: SendMediaSession | null,
   sendBytesSupport: SendBytesSupport | null = null,
-  opts: { uploadDir?: string; store?: FakeStore } = {},
+  opts: { uploadDir?: string; store?: FakeStore; downloadLinkIssuer?: SendDownloadLinkIssuer | null } = {},
 ): Harness {
   const workspace = tmpDir('send-media-ws-');
   const uploadDir = opts.uploadDir ?? tmpDir('send-media-up-');
@@ -159,6 +160,7 @@ function build(
     store,
     sendBytesSupport,
     { openStream: deliveryFetch.openStream } as never,
+    opts.downloadLinkIssuer ?? null,
   ] as const;
   const imageTool = new SendImageTool(...common);
   const fileTool = new SendFileTool(...common);
@@ -1117,6 +1119,63 @@ describe('send_file 1GB（2026-11-25 D1/D2/R4）', () => {
     writeFileSync(join(h.workspace, 'chat-small.bin'), Buffer.alloc(1024, 1));
     await h.fileTool.execute(JSON.stringify({ file: 'chat-small.bin' }), 11, 7, h.workspace);
     expect(h.store.saved[1].input.gateLargeFile).toBe(false);
+  });
+
+  it('通道失败且快照成功：结果带短时下载链接与有效期（error 里也附上）', async () => {
+    const expiresAt = Date.UTC(2026, 10, 25, 12, 0, 0);
+    const issuer = vi.fn(async (fileId: string) => ({
+      url: `https://mao.example.com/api/v1/files/send-download?id=${fileId}&ticket=t-1`,
+      expiresAt,
+      ttlHours: 12,
+    }));
+    const h = build({ projectKey: WEIXIN_PROJECT_KEY, executionMode: 'CLOUD' }, null, { downloadLinkIssuer: issuer });
+    // 20MB + 1 字节：超过微信通道上限，快照仍成功
+    writeFileSync(join(h.workspace, 'big.pdf'), Buffer.alloc(20 * 1024 * 1024 + 1, 1));
+    const r = JSON.parse(await h.fileTool.execute(JSON.stringify({ file: 'big.pdf' }), 11, 7, h.workspace)) as {
+      success: boolean; channelStatus: string; error?: string; downloadUrl?: string; downloadUrlExpiresAt?: string;
+      delivery: { ref: { id: string } };
+    };
+    expect(r.success).toBe(true);
+    expect(r.channelStatus).toBe('failed');
+    // 链接按「实际落表的快照 id + 运行身份」签发，不在客户端拼
+    expect(issuer).toHaveBeenCalledWith(r.delivery.ref.id, 7);
+    expect(r.downloadUrl).toBe(`https://mao.example.com/api/v1/files/send-download?id=${r.delivery.ref.id}&ticket=t-1`);
+    expect(r.downloadUrlExpiresAt).toBe(new Date(expiresAt).toISOString());
+    expect(r.error).toContain('12 小时内有效，请勿转发');
+    expect(r.error).toContain(r.downloadUrl!);
+  });
+
+  it('通道成功 / chat 会话 / 签发失败：都不返回下载链接', async () => {
+    const okIssuer = vi.fn(async (fileId: string) => ({
+      url: `https://mao.example.com/dl?id=${fileId}`, expiresAt: Date.now() + 1000, ttlHours: 12,
+    }));
+
+    // 通道成功：没有失败就不签发
+    const ok = build({ projectKey: WEIXIN_PROJECT_KEY, executionMode: 'CLOUD' }, null, { downloadLinkIssuer: okIssuer });
+    writeFileSync(join(ok.workspace, 'small.pdf'), PDF);
+    const r1 = JSON.parse(await ok.fileTool.execute(JSON.stringify({ file: 'small.pdf' }), 11, 7, ok.workspace));
+    expect(r1.channelStatus).toBe('sent');
+    expect(r1.downloadUrl).toBeUndefined();
+    expect(okIssuer).not.toHaveBeenCalled();
+
+    // chat 会话：没有外部通道，不存在「通道失败」
+    const chat = build({ projectKey: null, executionMode: 'CLOUD' }, null, { downloadLinkIssuer: okIssuer });
+    writeFileSync(join(chat.workspace, 'a.pdf'), PDF);
+    const r2 = JSON.parse(await chat.fileTool.execute(JSON.stringify({ file: 'a.pdf' }), 11, 7, chat.workspace));
+    expect(r2.channelStatus).toBe('skipped');
+    expect(r2.downloadUrl).toBeUndefined();
+    expect(okIssuer).not.toHaveBeenCalled();
+
+    // 签发抛错：不影响发送结果，只是没有链接
+    const boom = build({ projectKey: WEIXIN_PROJECT_KEY, executionMode: 'CLOUD' }, null, {
+      downloadLinkIssuer: vi.fn(async () => { throw new Error('signer down'); }),
+    });
+    writeFileSync(join(boom.workspace, 'big2.pdf'), Buffer.alloc(20 * 1024 * 1024 + 1, 1));
+    const r3 = JSON.parse(await boom.fileTool.execute(JSON.stringify({ file: 'big2.pdf' }), 11, 7, boom.workspace));
+    expect(r3.success).toBe(true);
+    expect(r3.channelStatus).toBe('failed');
+    expect(r3.downloadUrl).toBeUndefined();
+    expect(r3.error).toContain('已放入当前对话');
   });
 
   it('取消信号：入口即返回「发送已取消」，不打开来源、不落快照', async () => {

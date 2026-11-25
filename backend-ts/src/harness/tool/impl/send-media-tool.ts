@@ -432,6 +432,7 @@ export function combineSendResult(
   channel: SendChannel,
   snapshot: SendSnapshotOutcome,
   push: ChannelPushResult,
+  downloadLink: SendDownloadLink | null = null,
 ): string {
   const channelLabel = channel === 'chat' ? null : CHANNEL_LABELS[channel];
   const channelStatus: 'skipped' | 'sent' | 'failed' = channel === 'chat' ? 'skipped' : (push.ok ? 'sent' : 'failed');
@@ -462,6 +463,13 @@ export function combineSendResult(
   }
   const result: Record<string, unknown> = { success, channel, channelStatus, filename };
   if (delivery != null) result.delivery = delivery;
+  // 通道失败时的兜底下载链接：结构化字段 + 写进 error，保证模型不改写也能把链接给到用户
+  if (downloadLink != null) {
+    result.downloadUrl = downloadLink.url;
+    result.downloadUrlExpiresAt = new Date(downloadLink.expiresAt).toISOString();
+    const note = `下载链接（${downloadLink.ttlHours} 小时内有效，请勿转发）：${downloadLink.url}`;
+    error = error == null ? note : `${error}；${note}`;
+  }
   if (error != null) result.error = error;
   return toJson(result);
 }
@@ -470,6 +478,28 @@ export function combineSendResult(
 export type SendSnapshotOutcome =
   | { ok: true; id: string; mime: string; bytes: number }
   | { ok: false; error: string };
+
+/**
+ * 通道发送失败时给用户的兜底下载链接（2026-11-25 追加）。
+ *
+ * 外部通道有硬上限（微信 / 钉钉 20MB、飞书 30MB），超过时对话页能收到、通道收不到；
+ * 只回「请去网页/客户端下载」用户还得自己找，所以这里直接给一条带短时票据的下载地址。
+ * 票据是 bearer 凭证（见 `SendDownloadTicketService`）：拿到链接即可下载、到期自动失效，
+ * 因此只在通道失败时签发，并在文案里明确有效期与「请勿转发」。
+ */
+export interface SendDownloadLink {
+  url: string;
+  /** epoch 毫秒，与票据过期时间同源。 */
+  expiresAt: number;
+  /** 有效期小时数（文案用，来自票据 TTL 常量）。 */
+  ttlHours: number;
+}
+
+/** 签发兜底下载链接：未装配 / 拿不到 baseUrl / 签发失败一律返回 null（不影响发送结果）。 */
+export type SendDownloadLinkIssuer = (
+  fileId: string,
+  userId: number,
+) => Promise<SendDownloadLink | null>;
 
 /** 来源 basename：路径 / URL 尾段；空回落来源本身（§4.1 filename 回落链）。 */
 export function basenameOfSource(source: string): string {
@@ -574,7 +604,7 @@ function toWorkspaceRelative(workspace: string, absPath: string): string | null 
 
 // ─────────────────────────── 两个新工具 ───────────────────────────
 
-const SEND_TOOL_BASE_PROMPT = '网页、桌面、安卓打开这条会话时，附件出现在该轮回复下方。这条会话若绑定了微信、飞书或钉钉，同一份内容再发给对应的用户或群。支持本地文件路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp）或 http(s) URL。发给用户的工作区文件会在发送时另存一份快照，之后修改或删除源文件不影响已经发出的附件。发送你自己 uploads 目录里已有的文件（如生成图）仍直接引用，删除原文件后附件会失效。结果含 error 时，向用户说明原因。结果里已有 delivery，或 channelStatus 为 sent 的那一侧已经完成，不要把同一份内容再发一次。';
+const SEND_TOOL_BASE_PROMPT = '网页、桌面、安卓打开这条会话时，附件出现在该轮回复下方。这条会话若绑定了微信、飞书或钉钉，同一份内容再发给对应的用户或群。支持本地文件路径（工作区相对路径，或允许集内的绝对路径：会话工作区、本人 uploads/{userId} 产物目录、runtime、HOME、/tmp）或 http(s) URL。发给用户的工作区文件会在发送时另存一份快照，之后修改或删除源文件不影响已经发出的附件。发送你自己 uploads 目录里已有的文件（如生成图）仍直接引用，删除原文件后附件会失效。结果含 error 时，向用户说明原因。结果里已有 delivery，或 channelStatus 为 sent 的那一侧已经完成，不要把同一份内容再发一次。通道发送失败但对话页已保存时，结果会额外带 downloadUrl 与 downloadUrlExpiresAt（原地引用的 uploads 直链则在 delivery.url，长期有效）：请把这条链接原样告诉用户（带有效期时说明「有效期内可用、请勿转发」），不要只说去网页或客户端查看；通道发送成功时不要粘贴或编造链接。';
 
 /** LOCAL 读本机文件的执行端拉取（D10）：缺省 null（未装配时 LOCAL 本机路径直接失败）。 */
 export interface SendDeliveryFetcher {
@@ -610,6 +640,8 @@ abstract class SendMediaToolBase extends BaseTool {
     protected readonly sendFileStore: SendFileStore,
     protected readonly sendBytesSupport?: SendBytesSupport | null,
     protected readonly deliveryFetch?: SendDeliveryFetcher | null,
+    /** 通道失败时的兜底下载链接签发（未装配 = 不给链接）。 */
+    protected readonly downloadLinkIssuer?: SendDownloadLinkIssuer | null,
   ) { super(); }
 
   protected abstract kind(): 'image' | 'file';
@@ -789,6 +821,20 @@ abstract class SendMediaToolBase extends BaseTool {
     }
   }
 
+  /**
+   * 通道失败时的兜底下载链接（2026-11-25）：签发失败 / 未装配 / 拿不到 baseUrl 一律返回 null，
+   * 绝不让链接问题影响发送结果本身。
+   */
+  private async issueDownloadLink(fileId: string, userId: number): Promise<SendDownloadLink | null> {
+    if (this.downloadLinkIssuer == null) return null;
+    try {
+      return await this.downloadLinkIssuer(fileId, userId);
+    } catch (e) {
+      harnessLog('warn', 'send download link issue failed', e);
+      return null;
+    }
+  }
+
   /** 原地引用 delivery 组装：形态 B 带 url，均带 filename（Agent 自定义文件名时不丢）。 */
   private buildRefDelivery(live: SendLiveRef, filename: string): SendRefDelivery {
     const delivery: SendRefDelivery = { kind: this.kind(), url: live.url, mime: live.mime, filename };
@@ -950,7 +996,11 @@ abstract class SendMediaToolBase extends BaseTool {
             }
           }
         }
-        return combineSendResult(kind, filename, channel, snapshot, push);
+        // 通道失败但对话页快照成功：给一条带短时票据的下载地址，用户不必自己去网页/客户端找
+        const downloadLink = strategy != null && !push.ok && snapshot.ok
+          ? await this.issueDownloadLink(snapshot.id, userId)
+          : null;
+        return combineSendResult(kind, filename, channel, snapshot, push, downloadLink);
       } finally {
         // 释放容器 / 执行端句柄（摘要比对已由 save 的 verifyDigest 在提交前完成）
         await opened.close?.();
@@ -973,8 +1023,9 @@ export class SendImageTool extends SendMediaToolBase {
     sendFileStore: SendFileStore,
     sendBytesSupport?: SendBytesSupport | null,
     deliveryFetch?: SendDeliveryFetcher | null,
+    downloadLinkIssuer?: SendDownloadLinkIssuer | null,
   ) {
-    super(pathSandbox, sessionLookup, copyDeps, wechat, feishu, dingtalk, sendFileStore, sendBytesSupport, deliveryFetch);
+    super(pathSandbox, sessionLookup, copyDeps, wechat, feishu, dingtalk, sendFileStore, sendBytesSupport, deliveryFetch, downloadLinkIssuer);
   }
 
   getName(): string { return 'send_image'; }
@@ -999,6 +1050,8 @@ export class SendImageTool extends SendMediaToolBase {
         channelStatus: { type: 'string' },
         filename: { type: 'string' },
         delivery: { type: 'object' },
+        downloadUrl: { type: 'string', description: '仅通道发送失败时返回：带短时票据的下载地址' },
+        downloadUrlExpiresAt: { type: 'string', description: 'downloadUrl 的过期时间（ISO 8601）' },
         error: { type: 'string' },
       },
     };
@@ -1023,8 +1076,9 @@ export class SendFileTool extends SendMediaToolBase {
     sendFileStore: SendFileStore,
     sendBytesSupport?: SendBytesSupport | null,
     deliveryFetch?: SendDeliveryFetcher | null,
+    downloadLinkIssuer?: SendDownloadLinkIssuer | null,
   ) {
-    super(pathSandbox, sessionLookup, copyDeps, wechat, feishu, dingtalk, sendFileStore, sendBytesSupport, deliveryFetch);
+    super(pathSandbox, sessionLookup, copyDeps, wechat, feishu, dingtalk, sendFileStore, sendBytesSupport, deliveryFetch, downloadLinkIssuer);
   }
 
   getName(): string { return 'send_file'; }
@@ -1050,12 +1104,14 @@ export class SendFileTool extends SendMediaToolBase {
         channelStatus: { type: 'string' },
         filename: { type: 'string' },
         delivery: { type: 'object' },
+        downloadUrl: { type: 'string', description: '仅通道发送失败时返回：带短时票据的下载地址' },
+        downloadUrlExpiresAt: { type: 'string', description: 'downloadUrl 的过期时间（ISO 8601）' },
         error: { type: 'string' },
       },
     };
   }
   getToolPrompt(): string | null {
-    return `send_file：把一份文件发到当前会话。${SEND_TOOL_BASE_PROMPT}文件大小不超过 1GB，扩展名不限；绑定的通道可能更严（微信 / 钉钉 20MB、飞书 30MB，钉钉还有扩展名白名单），超过通道上限时对话里仍能看到、通道不会收到。较大的文件可能需要数分钟，请等待结果，不要重复调用。`;
+    return `send_file：把一份文件发到当前会话。${SEND_TOOL_BASE_PROMPT}文件大小不超过 1GB，扩展名不限；绑定的通道可能更严（微信 / 钉钉 20MB、飞书 30MB，钉钉还有扩展名白名单），超过通道上限时对话里仍能看到、通道不会收到，此时结果里会带可下载的 downloadUrl。较大的文件可能需要数分钟，请等待结果，不要重复调用。`;
   }
   protected kind(): 'image' | 'file' { return 'file'; }
   protected maxBytes(): number { return SEND_FILE_MAX_BYTES; }

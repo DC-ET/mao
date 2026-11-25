@@ -974,6 +974,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     sendBytesBridge, dingtalkMediaHolder, definitionRegistry, holder, subagentMapper,
     localToolSessions, localDeliveryFetch, visibility, backgroundSubagentManager,
     sendFileStore: sendFileService,
+    // 通道失败时的兜底下载链接（2026-11-25）：票据签发与 HTTP 下载端点共用同一实例
+    sendDownloadTickets,
     messageRepo, compactionSvc, embedPageToolRegistry, mcpToolsRegistry, routingMcpClient,
     httpToolService, httpApiExecutor, llmAdapter, promptEngine, contextManager,
     compactionService, compactionArchiveService, compactionConfig, historyLoader,

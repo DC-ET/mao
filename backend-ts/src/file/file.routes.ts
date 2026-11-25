@@ -877,7 +877,7 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
 
   /**
    * 发送快照下载票据（技术方案 2026-11-25-send-file-1gb R6）：
-   * 属主鉴权后签发绑定 `文件 id + userId` 的无状态 HMAC 票据，有效期 24 小时
+   * 属主鉴权后签发绑定 `文件 id + userId` 的无状态 HMAC 票据，有效期 12 小时
    * （Range 续传会重用同一个 URL，短票据续传必失败）。不入库、不落盘。
    */
   app.post('/v1/files/send-download-ticket', async (request, reply) => {

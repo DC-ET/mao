@@ -4,7 +4,7 @@ import { SEND_DOWNLOAD_TICKET_TTL_MS, SendDownloadTicketService } from './send-d
 describe('SendDownloadTicketService（2026-11-25 R6）', () => {
   const svc = new SendDownloadTicketService('unit-test-secret');
 
-  it('issue / verify：绑定文件 id + 用户，24 小时有效', () => {
+  it('issue / verify：绑定文件 id + 用户，12 小时有效', () => {
     const now = 1_700_000_000_000;
     const { ticket, expiresAt } = svc.issue('file-1', 7, now);
     expect(expiresAt).toBe(now + SEND_DOWNLOAD_TICKET_TTL_MS);
