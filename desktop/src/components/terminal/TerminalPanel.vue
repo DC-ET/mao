@@ -278,8 +278,18 @@ function setContainerRef(id: string, el: HTMLElement | null) {
 
 let fitTimer: ReturnType<typeof setTimeout> | null = null
 let lastFitAt = 0
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
-/** 100ms 节流 fit：iOS 的 visualViewport scroll 在键盘 / 地址栏动画期间高频触发。 */
+/** 软键盘是否展开：只看高度差，候选栏 / 输入时的 visualViewport 抖动不算。 */
+let keyboardOpen = false
+
+function isKeyboardOpen(): boolean {
+  const vv = window.visualViewport
+  if (!vv) return false
+  return window.innerHeight - vv.height > Math.min(160, window.innerHeight * 0.25)
+}
+
+/** 拖动面板等连续操作：100ms 节流 fit，让内容跟手。 */
 function queueFit(): void {
   if (fitTimer != null) return
   const wait = Math.max(0, 100 - (Date.now() - lastFitAt))
@@ -290,20 +300,41 @@ function queueFit(): void {
   }, wait)
 }
 
+/** 视口变化：去抖 250ms，等键盘 / 地址栏动画停下来再算一次，避免中途反复 resize PTY。 */
+function debouncedFit(): void {
+  if (debounceTimer != null) clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(() => {
+    debounceTimer = null
+    lastFitAt = Date.now()
+    if (activeTabId.value) fitTerminal(activeTabId.value)
+  }, 250)
+}
+
 function handleViewportChange(): void {
-  maxHeight.value = computeMaxHeight()
   const vv = window.visualViewport
   const panel = panelRef.value
   if (vv && panel) {
     const occluded = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop))
     panel.style.marginBottom = occluded > 0 ? `${occluded}px` : ''
   }
-  queueFit()
+  // 只有软键盘真正开合才重算面板可用高度并重排 PTY。输入法候选栏、输入时 vv 的
+  // 细微抖动若也触发 fit，服务端 shell 会反复收到 SIGWINCH 重绘提示符，用户看到
+  // 的就是「输入第二个字符跳到下一行」。
+  const open = isKeyboardOpen()
+  if (open === keyboardOpen) return
+  keyboardOpen = open
+  maxHeight.value = computeMaxHeight()
+  debouncedFit()
 }
 
 function handleWindowResize(): void {
   if (isTouch) {
+    // 横竖屏切换等窗口级变化：键盘状态与可用高度都重算，再补一次 fit。
+    // 键盘只会触发 visualViewport 事件，不会走这里，所以这里可以放心重排。
+    keyboardOpen = isKeyboardOpen()
+    maxHeight.value = computeMaxHeight()
     handleViewportChange()
+    debouncedFit()
     return
   }
   maxHeight.value = computeMaxHeight()
@@ -786,11 +817,9 @@ function handleSwitch(id: string) {
 
 async function handleCloseTab(id: string) {
   if (isTouch) {
-    const tab = visibleTabs.value.find((t) => t.id === id)
-    const title = tab ? formatTabTitle(tab) : '该终端'
     try {
       await ElMessageBox.confirm(
-        `关闭后 ${title} 的进程会被结束。`,
+        '关闭后该终端内的进程会被结束。',
         '关闭终端',
         { type: 'warning', confirmButtonText: '关闭', cancelButtonText: '取消' },
       )
@@ -799,16 +828,6 @@ async function handleCloseTab(id: string) {
     }
   }
   await closeTerminal(id)
-}
-
-function formatTabTitle(tab: { title: string; cwd: string }): string {
-  const parts: string[] = []
-  if (tab.cwd && tab.cwd !== '~') {
-    const folderName = tab.cwd.split('/').filter(Boolean).pop()
-    if (folderName) parts.push(folderName)
-  }
-  if (parts.length === 0) parts.push(tab.title)
-  return parts.join(' ')
 }
 
 /** 当前 tab 是否被其他窗口接管（需用户手动重新接管）。 */
@@ -885,7 +904,10 @@ watch(isOpen, async (open) => {
     return
   }
   if (isTouch && panelHeight.value === 0) panelHeight.value = Math.round(maxHeight.value * 0.5)
+  keyboardOpen = isKeyboardOpen()
+  maxHeight.value = computeMaxHeight()
   handleViewportChange()
+  debouncedFit()
   const session = sessionStore.activeSession
   if (session && (session.executionMode === 'CLOUD' || session.executionMode === 'LOCAL')) {
     await restoreRemoteTabs(session.id)
@@ -901,6 +923,7 @@ onMounted(() => {
     // visualViewport 桌面也存在，仅触屏注册（桌面缩放不该触发键盘避让）
     window.visualViewport?.addEventListener('resize', handleViewportChange)
     window.visualViewport?.addEventListener('scroll', handleViewportChange)
+    keyboardOpen = isKeyboardOpen()
     handleViewportChange()
   }
 })
@@ -915,6 +938,10 @@ onUnmounted(() => {
   if (fitTimer != null) {
     clearTimeout(fitTimer)
     fitTimer = null
+  }
+  if (debounceTimer != null) {
+    clearTimeout(debounceTimer)
+    debounceTimer = null
   }
   scrollDisposer?.()
   writeParsedDisposer?.()

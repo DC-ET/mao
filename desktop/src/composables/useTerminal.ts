@@ -143,6 +143,8 @@ const isOpen = ref(false)
 const takenOverTabs = ref<string[]>([])
 
 const instances = new Map<string, TerminalInstance>()
+/** 上次 fit 时的容器尺寸：半列 / 半行以内的变化不改 PTY 尺寸，避免视口抖动反复触发 SIGWINCH。 */
+const lastFitSize = new Map<string, { width: number; height: number }>()
 /** 同一任务的 restoreRemoteTabs 去重（togglePanel 与 watch(isOpen) 会并发触发）。 */
 const restoreInflight = new Map<string, Promise<void>>()
 
@@ -645,6 +647,22 @@ export function useTerminal() {
   function fitTerminal(id: string) {
     const inst = instances.get(id)
     if (!inst) return
+    const container = inst.terminal.element?.parentElement
+    if (container) {
+      const width = container.clientWidth
+      const height = container.clientHeight
+      if (width <= 0 || height <= 0) return
+      const prev = lastFitSize.get(id)
+      // 半列 / 半行以内的变化改不出新的 cols/rows，跳过可避免把视口抖动放大成 PTY resize
+      const cellWidth = inst.terminal.cols > 0 ? width / inst.terminal.cols : 0
+      const cellHeight = inst.terminal.rows > 0 ? height / inst.terminal.rows : 0
+      if (
+        prev
+        && Math.abs(width - prev.width) < cellWidth / 2
+        && Math.abs(height - prev.height) < cellHeight / 2
+      ) return
+      lastFitSize.set(id, { width, height })
+    }
     inst.fitAddon.fit()
   }
 
@@ -706,6 +724,7 @@ export function useTerminal() {
 
   function removeTab(id: string) {
     replayRequested.delete(id)
+    lastFitSize.delete(id)
     const inst = instances.get(id)
     if (inst) {
       if (inst.mode === 'remote') terminalWS.unregisterTerminal(id)
@@ -776,6 +795,7 @@ export function useTerminal() {
   /** 登出时清空模块级状态，避免重新登录后残留失效 tab。 */
   function reset() {
     replayRequested.clear()
+    lastFitSize.clear()
     for (const [id, inst] of [...instances]) {
       inst.disposers.forEach((d) => d())
       inst.terminal.dispose()
