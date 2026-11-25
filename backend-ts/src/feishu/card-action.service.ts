@@ -47,6 +47,11 @@ function toCardCallback(bold: string, body: string, toast?: FeishuCardActionResp
   };
 }
 
+/** 排队卡片「已取消」终态卡：飞书按钮取消与 web 端取消共用同一份文案与结构（不传会话详情 URL）。 */
+export function buildQueueCancelledCard(): Record<string, unknown> {
+  return buildQueueCardText('✖️ 已取消', '这条消息已取消，未进入执行。');
+}
+
 /**
  * SDK EventDispatcher 会把 v2 信封的 header/event 展开到顶层；部分入口仍可能传入原始信封。
  * 两种形态都要能读到 action / operator / open_message_id，否则按钮点击会静默无效。
@@ -138,6 +143,14 @@ export class FeishuCardActionService {
       message?: string;
     }>;
   }) {}
+
+  /**
+   * web 端「取消排队」复用的终态卡：与卡片按钮取消（handleCancel）同一份文案与结构，
+   * 不传 sessionDetailUrl（否则 web 取消出的卡会多一个「会话详情」按钮，两端表现不一致）。
+   */
+  renderCancelledCard(): Record<string, unknown> {
+    return buildQueueCancelledCard();
+  }
 
   async handle(raw: unknown, accountId: string): Promise<FeishuCardActionResponse | undefined> {
     const event = unwrapCardActionEvent(raw);
@@ -400,7 +413,7 @@ export class FeishuCardActionService {
     const result = await this.options.queuePort.cancel(row.id);
     if (result === 'ALREADY_STARTED') return { toast: { type: 'info', content: '该消息已开始执行' } };
     if (result === 'NOT_FOUND') return { toast: { type: 'info', content: '该消息已失效' } };
-    const card = buildQueueCardText('✖️ 已取消', '这条消息已取消，未进入执行。');
+    const card = buildQueueCancelledCard();
     this.patchInBackground(row, card);
     return toCardCallback('✖️ 已取消', '这条消息已取消，未进入执行。', {
       type: 'success',

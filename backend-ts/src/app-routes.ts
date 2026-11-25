@@ -88,6 +88,7 @@ import type { WeixinMonitorService } from './weixin/monitor.service.js';
 import type { MysqlFeishuBotRepository } from './feishu/feishu_bot.repository.js';
 import type { MysqlFeishuBindingRepository } from './feishu/binding.repository.js';
 import type { FeishuMonitorService } from './feishu/monitor.service.js';
+import type { FeishuInboundQueueViewPort } from './feishu/types.js';
 import type { TaskNotificationPreferenceService } from './notification/task/preference.service.js';
 import type { StreamingWsHandler } from './session/ws/streaming-ws-handler.js';
 import type { TerminalWsHandler } from './harness/terminal/terminal-ws-handler.js';
@@ -357,6 +358,8 @@ export interface RouteDeps {
   feishuBots: MysqlFeishuBotRepository;
   feishuBinding: MysqlFeishuBindingRepository;
   feishuMonitor: FeishuMonitorService;
+  /** 飞书入站排队视图（web 面板）：session 路由注入用，缺省时接口返回空列表。 */
+  feishuInboundQueueView?: FeishuInboundQueueViewPort;
 
   // dingtalk
   dingtalk: { registerRoutes(api: FastifyInstance): void };
@@ -415,7 +418,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     budgetService,
     mcpServerService, mcpClient, mcpPref, userMcpLoadModeService, mcpLoadModeResolver,
     qrLogin, weixinAccounts, weixinMonitor,
-    feishuBots, feishuBinding, feishuMonitor,
+    feishuBots, feishuBinding, feishuMonitor, feishuInboundQueueView,
     dingtalk,
     notifPref,
     wsHandler, terminalWsHandler,
@@ -543,6 +546,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     registerUploadRoutes(api, () => settingService.getUploadConfig());
     registerSessionRoutes(api, {
       sessionService, activityService, messageQueueService,
+      feishuInboundQueueView,
       agentLookup: {
         findById: (id: number) => agentRepo.findById(id),
         findByIds: (ids: number[]) => agentRepo.findByIds(ids),

@@ -169,6 +169,7 @@ import { FeishuAskFormStore } from './feishu/ask-form-store.js';
 import { FeishuActiveProgressRegistry } from './feishu/active-progress.js';
 import { createFeishuAskMount } from './feishu/ask-mount.js';
 import { createPlatformQueueRelay, registerUploadStatic, createTerminalAudit } from './app-utils.js';
+import { createRunningChannelResolver } from './feishu/inbound-queue-view.js';
 import type { FeishuNormalizedMessage } from './feishu/types.js';
 import { MysqlApiTokenRepository, MysqlOutboundDeliveryRepository, MysqlOutboundSubscriptionRepository, MysqlWebhookTriggerRepository } from './openapi/openapi.repository.js';
 import { ApiTokenService } from './openapi/api-token.service.js';
@@ -1112,8 +1113,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     permissionService, routeChatClient, feishuActiveProgress, feishuAskFormStore,
     dingtalkMediaHolder, mcpServerLookup, activityService, activityHeartbeat, todoMapper,
     jwt,
+    // 队列卡片「另有 M 条本地排队」计数（feishu-cards helper 注入）
+    messageQueueService,
   });
-  const { feishuInboundHandler, feishuInboundProcessor, feishuCardActionService, feishuMonitor, dingtalk, feishuTaskQueue, feishuProgressCardRepo, createFeishuRecoveryProgress, analyticsService, statisticsService, adminAnalytics, httpToolStatsStore, mcpValidator } = feishuHandler;
+  const { feishuInboundHandler, feishuInboundProcessor, feishuCardActionService, feishuMonitor, dingtalk, feishuTaskQueue, feishuInboundQueueView, feishuProgressCardRepo, createFeishuRecoveryProgress, analyticsService, statisticsService, adminAnalytics, httpToolStatsStore, mcpValidator } = feishuHandler;
 
   // 跨通道队列接力（0.0.434）：IM（飞书/钉钉/微信）执行收尾且队列排空后消费平台排队消息
   // （message_queue：定时任务/Webhook/插队）；WS 侧执行收尾且平台队列排空后消费 IM 入站队列。
@@ -1126,6 +1129,12 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
   wsHandler.registerExternalBusyCheck((sessionId) => weixinInboundHandler.hasRunningSession(sessionId));
   wsHandler.registerImQueueDrainHandler((sessionId) => { void feishuInboundHandler.drainNextIfPending(sessionId); });
   wsHandler.registerImQueueDrainHandler((sessionId) => { void dingtalk.drainNextIfPending(sessionId); });
+  // 平台队列推送（queue_updated）带上「当前执行来源」，否则飞书→本地接力后前端会一直保留上一帧的
+  // runningChannel，「下一组」徽标长期错标。wsHandler 构造早于飞书 handler，故晚绑定注入。
+  wsHandler.setRunningChannelResolver(createRunningChannelResolver({
+    hasFeishuRunning: (sessionId) => feishuInboundHandler.hasRunningSession(sessionId),
+    hasLocalClaim: (sessionId) => wsHandler.hasExecutionClaim(sessionId),
+  }));
 
   // 失败会话批量恢复：
   // 候选查询编排 + 排除判定 + 预览/执行入口；续跑内核在 app-lifecycle 构造 CrashRecoveryRunner
@@ -1163,6 +1172,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     auditService,
     llmCallService,
     sessionService, activityService, messageQueueService,
+    feishuInboundQueueView,
     agentRepo, modelRepo, todoRepo, pathSandbox, subagentExecutionRepo,
     sessionCompactionEventService, sessionCompactionService, runTraceService, runTraceRecordService,
     approvalRegistry, askUserQuestionsRegistry, inFlightToolRegistry, treeSignalPublisher,

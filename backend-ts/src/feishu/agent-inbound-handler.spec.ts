@@ -1248,7 +1248,8 @@ describe('AgentFeishuInboundHandler', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     // 排队消息失败后不再续接：claim 只发生一次，该失败队列行仍被清理
     expect(claims).toBe(1);
-    expect(queueService.complete).toHaveBeenCalledWith(2);
+    // 收尾删行时透传 sessionId：队列变化通知需要它，避免为通知再查一次库。
+    expect(queueService.complete).toHaveBeenCalledWith(2, 7);
   });
 
   it('still drains the queue when sending the reply fails after success', async () => {

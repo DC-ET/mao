@@ -2,11 +2,22 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import { useSessionStore } from '../stores/session'
 import { useStreamWS } from './useStreamWS'
+import { readInboundQueueSnapshot } from '../utils/queue-view'
 
 /** 拉取会话待发送队列（取消后的状态回填等场景只有 sessionId，没有输入框上下文） */
 export async function fetchSessionQueue(sessionId: string): Promise<void> {
   const sessionStore = useSessionStore()
   const sid = String(sessionId)
+  // 飞书入站队列是补充信息：独立拉取，不参与调用方的等待——
+  // 该端点慢/失败都不该拖住「会话队列已加载」这个判据，失败侧保留旧值（后续事件会再刷新）。
+  api.get(`/sessions/${sid}/inbound-queue`)
+    .then(({ data }) => {
+      const snapshot = readInboundQueueSnapshot(data)
+      sessionStore.setInboundQueue(sid, snapshot.items)
+      sessionStore.setRunningChannel(sid, snapshot.runningChannel)
+      sessionStore.setLastRunFailed(sid, snapshot.lastRunFailed)
+    })
+    .catch(() => { /* ignore：后续 inbound_queue_updated 事件会再刷新 */ })
   try {
     const { data } = await api.get(`/sessions/${sid}/queue`)
     sessionStore.setQueueMessages(sid, data || [])

@@ -168,6 +168,7 @@
         @insert="insertQueueMessage"
         @delete="deleteQueueMessage"
         @reorder="reorderQueueMessage"
+        @cancel="cancelInboundQueueMessage"
       />
 
       <ApprovalStack
@@ -737,7 +738,7 @@ async function confirmEdit(messageId: string, newContent: string, images: string
 
 // --- 队列消息撤回编辑 ---
 
-const { handleQueueEdit } = useChatQueue(
+const { handleQueueEdit, cancelInboundQueueMessage } = useChatQueue(
   () => sessionId.value,
   () => chatInputRef.value,
 )

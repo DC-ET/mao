@@ -36,11 +36,21 @@ export interface PasswordBindDeps {
 
 // ========== 排队卡片 ==========
 
-export function buildFeishuQueueCard(context: FeishuInboundContext, queueId: number, position: number): Record<string, unknown> {
+export function buildFeishuQueueCard(
+  context: FeishuInboundContext,
+  queueId: number,
+  position: number,
+  localQueuedCount?: number,
+): Record<string, unknown> {
   const summary = context.text.length > 60 ? `${clipByCodePoints(context.text, 60)}…` : context.text;
   const showSender = context.chatType === 'group';
   const senderLabel = (context.senderLabel?.trim() || '用户');
   const body = showSender ? `${senderLabel}：${summary}` : summary;
+  // 位次是「飞书队列内」的快照（web 面板展示实时值，可能不同）；本地队列条数只在存在时追加一句。
+  const localHint = (localQueuedCount ?? 0) > 0
+    ? `另有 ${localQueuedCount} 条本地排队消息将在其后执行。`
+    : '';
+  const notice = `当前任务正在执行中，这条消息已进入飞书队列（第 ${position} 位），将在当前任务完成后自动开始处理。${localHint}`;
   return {
     schema: '2.0',
     config: { update_multi: true },
@@ -48,7 +58,7 @@ export function buildFeishuQueueCard(context: FeishuInboundContext, queueId: num
       direction: 'vertical', padding: '12px 12px 12px 12px',
       elements: [
         { tag: 'markdown', content: '**⏳ 任务排队中**', text_align: 'left', text_size: 'normal_v2' },
-        { tag: 'markdown', content: `当前任务正在执行中，这条消息已进入队列（第 ${position} 位），将在当前任务完成后自动开始处理。`, text_align: 'left', text_size: 'normal_v2' },
+        { tag: 'markdown', content: notice, text_align: 'left', text_size: 'normal_v2' },
         { tag: 'markdown', content: body, text_align: 'left', text_size: 'normal_v2' },
         {
           tag: 'column_set', flex_mode: 'flow', background_style: 'default',
@@ -65,15 +75,26 @@ export function buildFeishuQueueCard(context: FeishuInboundContext, queueId: num
 export interface FeishuQueueCardDeps {
   getFeishuClient: (botId: number) => Promise<Lark.Client | null>;
   feishuMessageService: FeishuMessageService;
+  /** 本地（message_queue）待执行条数，用于卡片提示「另有 M 条」；缺省按 0 处理。 */
+  countLocalQueue?: (sessionId: number) => Promise<number>;
 }
 
 export function createFeishuQueueCardHelper(deps: FeishuQueueCardDeps) {
-  const { getFeishuClient, feishuMessageService } = deps;
+  const { getFeishuClient, feishuMessageService, countLocalQueue } = deps;
 
   return async (context: FeishuInboundContext, queueId: number, position: number, sessionId: number): Promise<string | null> => {
     const client = await getFeishuClient(Number(context.accountId));
     if (client == null) return null;
-    const data = { msg_type: 'interactive', content: JSON.stringify(buildFeishuQueueCard(context, queueId, position)) };
+    let localQueuedCount = 0;
+    if (countLocalQueue != null) {
+      try {
+        localQueuedCount = await countLocalQueue(sessionId);
+      } catch (error) {
+        // 只影响附加文案，不影响卡片发送。
+        console.warn(`飞书排队卡片统计本地队列失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    const data = { msg_type: 'interactive', content: JSON.stringify(buildFeishuQueueCard(context, queueId, position, localQueuedCount)) };
     const response = await (context.chatType === 'group' && context.messageId != null
       ? client.im.v1.message.reply({ path: { message_id: context.messageId }, data })
       : client.im.v1.message.create({ params: { receive_id_type: 'open_id' }, data: { ...data, receive_id: context.senderId! } }));

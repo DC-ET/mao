@@ -98,6 +98,7 @@
       @insert="insertQueueMessage"
       @delete="deleteQueueMessage"
       @reorder="reorderQueueMessage"
+      @cancel="cancelInboundQueueMessage"
     />
 
     <ApprovalStack
@@ -435,7 +436,7 @@ const sideExecutorClientType = computed<string | null>(() => {
 const { deviceId: currentDeviceId } = useCurrentDevice()
 
 // 队列操作与主会话共用同一实现；差异只有会话 id 来源（占位态还没有真实会话）
-const { fetchQueue, insertQueueMessage, deleteQueueMessage, reorderQueueMessage, handleQueueEdit } = useChatQueue(
+const { fetchQueue, insertQueueMessage, deleteQueueMessage, reorderQueueMessage, handleQueueEdit, cancelInboundQueueMessage } = useChatQueue(
   () => hasRealSession.value ? String(realSessionId.value) : null,
   () => chatInputRef.value,
 )

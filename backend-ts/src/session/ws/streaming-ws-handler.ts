@@ -414,6 +414,11 @@ export class StreamingWsHandler {
   private readonly externalBusyChecks: Array<(sessionId: number) => boolean> = [];
   /** message_queue 排空且会话空闲时的接力出口：消费飞书/钉钉等 IM 入站队列里的 busy 入队消息。 */
   private readonly imQueueDrainHandlers: Array<(sessionId: number) => void> = [];
+  /**
+   * 当前执行来源解析（create-app 晚绑定，依赖飞书 handler 的 busy 集）：
+   * 随 queue_updated 下发给前端，用于标注「下一组」；未注入时按 null 处理。
+   */
+  private runningChannelResolver: ((sessionId: number, phase?: string | null) => 'feishu' | 'local' | null) | null = null;
   private readonly suppressAutoConsumeSend = new Set<number>();
   /** 用户已点「停止」但 cancel flag 尚未注册（执行提交前的窗口期）的会话 → 登记时间戳；注册标志时按时间判定消费。 */
   private readonly pendingCancels = new Map<number, number>();
@@ -472,6 +477,14 @@ export class StreamingWsHandler {
    */
   registerImQueueDrainHandler(handler: (sessionId: number) => void): void {
     this.imQueueDrainHandlers.push(handler);
+  }
+
+  /**
+   * 注入「当前执行来源」解析器（飞书 / 本地 / 无）。
+   * wsHandler 构造早于飞书 handler，必须在装配层晚绑定；未注入时 queue_updated 只会带 null。
+   */
+  setRunningChannelResolver(resolver: (sessionId: number, phase?: string | null) => 'feishu' | 'local' | null): void {
+    this.runningChannelResolver = resolver;
   }
 
   private isExternalSessionBusy(sessionId: number): boolean {
@@ -2459,7 +2472,11 @@ export class StreamingWsHandler {
       }
       queueData.push(map);
     }
-    this.deps.registry.send(userId, wsEvent('queue_updated', sessionId, { queue: queueData }));
+    this.deps.registry.send(userId, wsEvent('queue_updated', sessionId, {
+      queue: queueData,
+      // 与 inbound_queue_updated 同源：前端据此决定两组队列的「下一组」徽标。
+      runningChannel: this.runningChannelResolver?.(sessionId) ?? null,
+    }));
   }
 
   /**

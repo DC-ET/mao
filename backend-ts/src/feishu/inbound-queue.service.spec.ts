@@ -16,8 +16,9 @@ function repo(overrides: Partial<Record<keyof FeishuInboundQueueRepository, unkn
     findById: vi.fn(async () => null),
     findByCardMessageId: vi.fn(async () => null),
     findByBotAndMessage: vi.fn(async () => null),
-    jumpToFront: vi.fn(async () => false),
+    jumpToFront: vi.fn(async () => ({ ok: false, sessionId: null })),
     cancelQueued: vi.fn(async () => false),
+    listQueuedBySession: vi.fn(async () => []),
     listRunning: vi.fn(async () => []),
     resetRunningToQueued: vi.fn(async () => false),
     findPersistedMessageByQueueId: vi.fn(async () => null),
@@ -76,11 +77,52 @@ describe('FeishuTaskQueueService', () => {
     expect(await service.cancel(1)).toBe('ALREADY_STARTED');
   });
 
-  it('jumpToFront delegates to repository', async () => {
-    const r = repo({ jumpToFront: vi.fn(async () => true) });
-    const service = new FeishuTaskQueueService(r);
+  it('jumpToFront delegates to repository and notifies the row session', async () => {
+    const r = repo({ jumpToFront: vi.fn(async () => ({ ok: true, sessionId: 7 })) });
+    const onChanged = vi.fn();
+    const service = new FeishuTaskQueueService(r, { onChanged });
     expect(await service.jumpToFront(3)).toBe(true);
     expect(r.jumpToFront).toHaveBeenCalledWith(3);
+    expect(onChanged).toHaveBeenCalledWith(7);
+  });
+
+  it('notifies onChanged on enqueue/claim/complete/cancel', async () => {
+    const enqueued = repo({ findMaxRankForUpdate: vi.fn(async () => 0), findByBotAndMessage: vi.fn(async () => null), insert: vi.fn(async () => 5) });
+    const onEnqueue = vi.fn();
+    await new FeishuTaskQueueService(enqueued, { onChanged: onEnqueue })
+      .enqueue({ sessionId: 7, botId: 1, messageId: 'om_1', senderOpenId: 'ou_1', maoUserId: null, payload: '{}' });
+    expect(onEnqueue).toHaveBeenCalledWith(7);
+
+    const claimed = repo({ claimNextQueued: vi.fn(async () => row({ status: 'RUNNING' })) });
+    const onClaim = vi.fn();
+    await new FeishuTaskQueueService(claimed, { onChanged: onClaim }).claimNext(7);
+    expect(onClaim).toHaveBeenCalledWith(7);
+
+    const completed = repo({ deleteById: vi.fn(async () => undefined) });
+    const onComplete = vi.fn();
+    await new FeishuTaskQueueService(completed, { onChanged: onComplete }).complete(1, 7);
+    expect(onComplete).toHaveBeenCalledWith(7);
+
+    const cancelled = repo({ findById: vi.fn(async () => row()), cancelQueued: vi.fn(async () => true), deleteById: vi.fn(async () => undefined) });
+    const onCancel = vi.fn();
+    await new FeishuTaskQueueService(cancelled, { onChanged: onCancel }).cancel(1);
+    expect(onCancel).toHaveBeenCalledWith(7);
+  });
+
+  it('complete falls back to findById when sessionId is omitted', async () => {
+    const r = repo({ findById: vi.fn(async () => row({ sessionId: 9 })), deleteById: vi.fn(async () => undefined) });
+    const onChanged = vi.fn();
+    await new FeishuTaskQueueService(r, { onChanged }).complete(1);
+    expect(r.findById).toHaveBeenCalledWith(1);
+    expect(onChanged).toHaveBeenCalledWith(9);
+  });
+
+  it('onChanged errors do not bubble and missing hook is tolerated', async () => {
+    const r = repo({ findById: vi.fn(async () => row()), cancelQueued: vi.fn(async () => true), deleteById: vi.fn(async () => undefined) });
+    const throwing = vi.fn(() => { throw new Error('boom'); });
+    await expect(new FeishuTaskQueueService(r, { onChanged: throwing }).cancel(1)).resolves.toBe('CANCELLED');
+    // 未注入钩子：正常返回不报错
+    await expect(new FeishuTaskQueueService(r).cancel(1)).resolves.toBe('CANCELLED');
   });
 
   it('hydrate deletes RUNNING row when message persisted, else resets to QUEUED', async () => {

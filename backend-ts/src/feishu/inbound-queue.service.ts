@@ -2,11 +2,32 @@ import type { FeishuInboundQueueRow, FeishuTaskQueuePort, FeishuCardActionPort }
 import type { FeishuInboundQueueRepository } from './inbound-queue.repository.js';
 
 /**
+ * 队列变化钩子：用于向 web/桌面端推送 `inbound_queue_updated`。
+ * 通过对象属性晚绑定（装配时先构造 service，handler 就绪后再赋值 onChanged），避免构造顺序死锁。
+ */
+export interface FeishuQueueChangeHooks {
+  onChanged?: (sessionId: number) => void;
+}
+
+/**
  * 飞书入站任务队列服务：FIFO 排队 + CAS 认领 + 跳队首 + 取消 + 启动恢复。
  * 实现 FeishuTaskQueuePort（handler 消费）与 FeishuCardActionPort（卡片按钮回调）两个端口。
  */
 export class FeishuTaskQueueService implements FeishuTaskQueuePort, FeishuCardActionPort {
-  constructor(private readonly repo: FeishuInboundQueueRepository) {}
+  constructor(
+    private readonly repo: FeishuInboundQueueRepository,
+    private readonly hooks: FeishuQueueChangeHooks = {},
+  ) {}
+
+  /** 队列变化通知（尽力而为：不阻塞队列主流程，异常只记日志）。 */
+  private notify(sessionId: number | null | undefined): void {
+    if (sessionId == null) return;
+    try {
+      this.hooks.onChanged?.(sessionId);
+    } catch (error) {
+      console.warn(`飞书队列变化通知失败, sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   async enqueue(params: {
     sessionId: number;
@@ -15,13 +36,17 @@ export class FeishuTaskQueueService implements FeishuTaskQueuePort, FeishuCardAc
     senderOpenId: string;
     maoUserId: number | null;
     payload: string;
+    summary?: string | null;
+    senderLabel?: string | null;
+    imageCount?: number;
+    fileCount?: number;
   }): Promise<number> {
     try {
-      return await this.repo.transaction(async (tx) => {
+      const id = await this.repo.transaction(async (tx) => {
         const maxRank = await tx.findMaxRankForUpdate(params.sessionId);
         const existing = await tx.findByBotAndMessage(params.botId, params.messageId);
         if (existing != null) return existing.id;
-        const id = await tx.insert({
+        return tx.insert({
           botId: params.botId,
           sessionId: params.sessionId,
           messageId: params.messageId,
@@ -31,14 +56,22 @@ export class FeishuTaskQueueService implements FeishuTaskQueuePort, FeishuCardAc
           rankNo: maxRank + 1,
           status: 'QUEUED',
           payload: params.payload,
+          summary: params.summary ?? null,
+          senderLabel: params.senderLabel ?? null,
+          imageCount: params.imageCount ?? 0,
+          fileCount: params.fileCount ?? 0,
         });
-        return id;
       });
+      this.notify(params.sessionId);
+      return id;
     } catch (error) {
       // 唯一键冲突等并发重复入队（事件重投 / 双实例竞争）：查询已有行，视为已入队（幂等）。
       console.warn(`飞书消息入队冲突，回退查找已有行, botId=${params.botId}, messageId=${params.messageId}`, error);
       const existing = await this.repo.findByBotAndMessage(params.botId, params.messageId);
-      if (existing != null) return existing.id;
+      if (existing != null) {
+        this.notify(existing.sessionId);
+        return existing.id;
+      }
       throw error;
     }
   }
@@ -47,12 +80,23 @@ export class FeishuTaskQueueService implements FeishuTaskQueuePort, FeishuCardAc
     await this.repo.setCardMessageId(id, cardMessageId);
   }
 
-  claimNext(sessionId: number): Promise<FeishuInboundQueueRow | null> {
-    return this.repo.claimNextQueued(sessionId);
+  async claimNext(sessionId: number): Promise<FeishuInboundQueueRow | null> {
+    const row = await this.repo.claimNextQueued(sessionId);
+    // 认领成功后该行从「排队」消失，面板需要刷新（与随后 user_message_saved 的顺序不作保证）。
+    if (row != null) this.notify(sessionId);
+    return row;
   }
 
-  async complete(id: number): Promise<void> {
+  async complete(id: number, sessionId?: number): Promise<void> {
+    // 调用方（executeQueued）手里有 row.sessionId，正常路径不需要额外查询；
+    // 未透传时在删行前补查一次，否则删完就取不到 sessionId 了。
+    let resolved = sessionId ?? null;
+    if (resolved == null) {
+      const row = await this.repo.findById(id).catch(() => null);
+      resolved = row?.sessionId ?? null;
+    }
     await this.repo.deleteById(id);
+    this.notify(resolved);
   }
 
   hasPending(sessionId: number): Promise<boolean> {
@@ -63,8 +107,10 @@ export class FeishuTaskQueueService implements FeishuTaskQueuePort, FeishuCardAc
     return this.repo.findByCardMessageId(cardMessageId);
   }
 
-  jumpToFront(id: number): Promise<boolean> {
-    return this.repo.jumpToFront(id);
+  async jumpToFront(id: number): Promise<boolean> {
+    const result = await this.repo.jumpToFront(id);
+    if (result.ok) this.notify(result.sessionId);
+    return result.ok;
   }
 
   async cancel(id: number): Promise<'CANCELLED' | 'ALREADY_STARTED' | 'NOT_FOUND'> {
@@ -75,6 +121,7 @@ export class FeishuTaskQueueService implements FeishuTaskQueuePort, FeishuCardAc
     const ok = await this.repo.cancelQueued(id);
     if (!ok) return 'ALREADY_STARTED';
     await this.repo.deleteById(id);
+    this.notify(row.sessionId);
     return 'CANCELLED';
   }
 

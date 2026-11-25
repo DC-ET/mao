@@ -15,6 +15,7 @@ import { parseChannelWorkspace } from '../harness/container/channel-workspace.js
 import type { SessionService } from './session.service.js';
 import type { ActivityService } from './activity.service.js';
 import type { MessageQueueService } from './message-queue.service.js';
+import type { FeishuInboundQueueViewPort } from '../feishu/types.js';
 import type { SessionCompactionEventService } from './session-compaction-event.service.js';
 import type { SessionCompactionService } from './session-compaction.service.js';
 import type { RunTraceService } from './run-trace.service.js';
@@ -53,6 +54,11 @@ export interface SessionRouteDeps {
   activityService: ActivityService;
   todoRepo: SessionTodoRepository;
   messageQueueService: MessageQueueService;
+  /**
+   * 飞书入站排队视图（只读 + 受控取消）。缺省（测试直调/旧装配）时接口返回空列表，
+   * 取消一律 NOT_FOUND——HTTP 层不直接依赖飞书域实现。
+   */
+  feishuInboundQueueView?: FeishuInboundQueueViewPort;
   pathSandbox: PathSandbox;
   subagentExecutionRepo: SubagentExecutionRepository;
   sessionCompactionEventService: SessionCompactionEventService;
@@ -772,6 +778,39 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     await requireSessionOwner(userId, id);
     const queue = await deps.messageQueueService.listPending(id);
     return sendOk(reply, queue.map(toQueueMessageVO));
+  });
+
+  /**
+   * 飞书入站排队列表（web/桌面端 QueuePanel）：只读，含队列内位次与本人可取消标记。
+   * 与 /queue（本地 message_queue）并列展示，互不影响消费语义。
+   */
+  app.get('/v1/sessions/:id/inbound-queue', async (request, reply) => {
+    const userId = requireUserId(request);
+    const id = pathId(request);
+    const session = await requireSessionOwner(userId, id);
+    const view = deps.feishuInboundQueueView;
+    if (view == null) return sendOk(reply, { runningChannel: null, lastRunFailed: false, items: [] });
+    const payload = await view.list(
+      { id: session.id!, userId: session.userId ?? null, phase: session.phase ?? null },
+      userId,
+    );
+    return sendOk(reply, payload);
+  });
+
+  /**
+   * 取消一条飞书排队消息（仅本人；发送者未绑定 mao 账号时由会话 owner 放行）。
+   * 结果统一 HTTP 200 + result（仓库 BusinessException 约定：除 401/403/413 外一律 200）：
+   * CANCELLED / ALREADY_STARTED / NOT_FOUND。403 仍走既有 FORBIDDEN 通道。
+   */
+  app.delete('/v1/sessions/:id/inbound-queue/:queueId', async (request, reply) => {
+    const userId = requireUserId(request);
+    const id = pathId(request);
+    const queueId = pathId(request, 'queueId');
+    const session = await requireSessionOwner(userId, id);
+    const view = deps.feishuInboundQueueView;
+    if (view == null) return sendOk(reply, { result: 'NOT_FOUND' });
+    const result = await view.cancel({ id: session.id!, userId: session.userId ?? null }, queueId, userId);
+    return sendOk(reply, { result });
   });
 }
 

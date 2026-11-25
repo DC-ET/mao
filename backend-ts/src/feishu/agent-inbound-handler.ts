@@ -7,6 +7,7 @@ import { CompositeAgentEventListener } from '../harness/core/composite-agent-eve
 import { NoopAgentEventListener } from '../harness/core/agent-event-listener.js';
 import { FeishuCardProgressListener, countCompletedAgentRounds, type FeishuCardProgress } from './card-progress-listener.js';
 import { inboundFileItems, isInboundAttachmentOnly } from './event-normalizer.js';
+import { buildQueueViewColumns } from './inbound-queue-view.js';
 import { parseChannelCommand, renderChannelSessionList, type ChannelCommand } from '../common/channel-command.js';
 import type { ChannelSessionBrief } from '../session/session.repository.js';
 import { toWorkspaceRelative } from '../common/workspace-path.js';
@@ -975,7 +976,7 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     } finally {
       this.removeCancelFlag(sessionId, cancelFlag);
       try {
-        await this.options.queueService?.complete(row.id);
+        await this.options.queueService?.complete(row.id, sessionId);
       } catch (error) {
         console.error(`飞书队列行清理失败, queueId=${row.id}`, error);
       }
@@ -1074,11 +1075,17 @@ export class AgentFeishuInboundHandler implements FeishuInboundHandler {
     }
     const botId = this.options.resolveBotId?.(context.accountId) ?? Number(context.accountId);
     const payload = buildQueuePayload(botId, context, message);
+    // 面板展示列：入队时一次算好（web 端读取不再解析 MEDIUMTEXT payload）。
+    const viewColumns = buildQueueViewColumns(context, message);
     let queueId: number;
     try {
       queueId = await queueService.enqueue({
         sessionId, botId, messageId: context.messageId ?? `no-id-${Date.now()}-${randomUUID()}`,
         senderOpenId: context.senderId ?? '', maoUserId: session.executionUserId ?? context.maoUserId ?? null, payload,
+        summary: viewColumns.summary,
+        senderLabel: viewColumns.senderLabel,
+        imageCount: viewColumns.imageCount,
+        fileCount: viewColumns.fileCount,
       });
     } catch (error) {
       console.error(`飞书消息入队失败, sessionId=${sessionId}`, error);

@@ -103,6 +103,8 @@ const CRITICAL_EVENT_TYPES = new Set([
   'ask_user_questions',
   'ask_user_questions_cancelled',
   'queue_updated',
+  // 飞书入站排队队列变化（web 面板可见性）：与 queue_updated 同量级，丢失会让面板停在旧状态。
+  'inbound_queue_updated',
   'queue_message_consumed',
   'session_already_running',
   // 多端审批（技术方案 2026-11-06）：卡片入场 / 撤卡与执行端放行信号。丢帧会让各端卡片

@@ -1,14 +1,24 @@
 <template>
-  <div v-if="queueMessages.length > 0" class="queue-panel">
+  <div v-if="visibleCount > 0" class="queue-panel">
     <div class="queue-header">
-      <span class="queue-title" role="status" aria-live="polite">待发送消息 ({{ queueMessages.length }})</span>
-      <button v-if="queueMessages.length > 5" class="toggle-btn" @click="expanded = !expanded">
+      <span class="queue-title" role="status" aria-live="polite">待发送消息 ({{ visibleCount }})</span>
+      <button v-if="visibleCount > 5" class="toggle-btn" @click="expanded = !expanded">
         {{ expanded ? '收起' : '展开' }}
       </button>
     </div>
 
-    <VueDraggable
-      v-if="expanded || queueMessages.length <= 5"
+    <div v-if="showBlocked" class="queue-blocked" role="status">
+      ⚠️ 上一条任务执行失败，排队消息不会自动继续。重新发送一条消息，或点击失败卡片的「重试」后恢复。
+    </div>
+
+    <template v-if="localCount > 0">
+      <div class="queue-group-header" role="group" :aria-label="`本地排队 ${localCount} 条`">
+        <span class="queue-group-title">本地排队 ({{ localCount }})</span>
+        <span v-if="nextGroup === 'local'" class="queue-next">下一组</span>
+      </div>
+
+      <VueDraggable
+      v-if="expanded || visibleCount <= 5"
       v-model="queueView"
       tag="div"
       class="queue-list"
@@ -75,19 +85,57 @@
       </div>
     </VueDraggable>
 
-    <!-- Collapsed state -->
-    <div v-else class="queue-collapsed">
-      <span class="queue-text">
-        <template v-for="(seg, segIdx) in queueView[0].segments" :key="segIdx">
-          <span v-if="seg.type === 'quote'" class="queue-quote">{{ seg.content }}</span>
-          <FileReferenceTag v-else-if="seg.type === 'file'" :file-path="seg.filePath" :line-start="seg.lineStart" :line-end="seg.lineEnd" />
-          <QuickCommandTag v-else-if="seg.type !== 'text'" :type="seg.type" :name="seg.name" />
-          <template v-else>{{ seg.content }}</template>
-        </template>
-        <span v-if="queueView[0].truncated" class="queue-ellipsis">…</span>
-      </span>
-      <span class="queue-more">还有 {{ queueMessages.length - 1 }} 条</span>
-    </div>
+      <!-- Collapsed state：本地组折叠时取本地首条，绝不在本地为空时索引 queueView[0] -->
+      <div v-else class="queue-collapsed">
+        <span class="queue-text">
+          <template v-for="(seg, segIdx) in queueView[0].segments" :key="segIdx">
+            <span v-if="seg.type === 'quote'" class="queue-quote">{{ seg.content }}</span>
+            <FileReferenceTag v-else-if="seg.type === 'file'" :file-path="seg.filePath" :line-start="seg.lineStart" :line-end="seg.lineEnd" />
+            <QuickCommandTag v-else-if="seg.type !== 'text'" :type="seg.type" :name="seg.name" />
+            <template v-else>{{ seg.content }}</template>
+          </template>
+          <span v-if="queueView[0].truncated" class="queue-ellipsis">…</span>
+        </span>
+        <span v-if="localCount > 1" class="queue-more">还有 {{ localCount - 1 }} 条</span>
+      </div>
+    </template>
+
+    <template v-if="inboundMessages.length > 0">
+      <div class="queue-group-header" role="group" :aria-label="`飞书排队 ${inboundMessages.length} 条`">
+        <span class="queue-group-title">飞书排队 ({{ inboundMessages.length }})</span>
+        <span v-if="nextGroup === 'feishu'" class="queue-next">下一组</span>
+      </div>
+      <div class="queue-list">
+        <div
+          v-for="item in visibleInboundMessages"
+          :key="item.id"
+          class="queue-item queue-item-inbound"
+          :data-queue-id="item.id"
+        >
+          <div class="queue-item-content">
+            <span class="queue-index">{{ item.queuePosition }}.</span>
+            <span class="queue-source">飞书</span>
+            <span v-if="item.senderLabel" class="queue-sender">{{ item.senderLabel }}</span>
+            <span class="queue-text">{{ item.summary }}</span>
+            <span v-if="item.imageCount > 0" class="queue-images">[{{ item.imageCount }}张图片]</span>
+            <span v-if="item.fileCount > 0" class="queue-images">[{{ item.fileCount }}个文件]</span>
+          </div>
+          <div v-if="item.cancelable" class="queue-item-actions">
+            <button
+              class="action-btn inbound-cancel-btn"
+              :disabled="cancelingInboundId !== null"
+              title="取消排队"
+              @click="handleCancelInbound(item.id)"
+            >
+              {{ cancelingInboundId === item.id ? '取消中...' : '取消排队' }}
+            </button>
+          </div>
+        </div>
+      </div>
+      <div v-if="hiddenInboundCount > 0" class="queue-more-inbound">
+        还有 {{ hiddenInboundCount }} 条飞书排队
+      </div>
+    </template>
   </div>
 </template>
 
@@ -98,7 +146,13 @@ import { VueDraggable } from 'vue-draggable-plus'
 import type { SortableEvent } from 'vue-draggable-plus'
 import { useSessionStore } from '../../stores/session'
 import type { QueueMessage } from '../../types/chat'
-import { splitUserMessageForDisplay, summarizeQuote, type DisplaySegment } from '../../utils/selection-quote'
+import {
+  nextQueueGroup,
+  shouldShowQueueBlocked,
+  truncateQueueSegments,
+  visibleQueueCount,
+  type QueueSegment,
+} from '../../utils/queue-view'
 import QuickCommandTag from './QuickCommandTag.vue'
 import FileReferenceTag from './FileReferenceTag.vue'
 
@@ -112,6 +166,7 @@ const emit = defineEmits<{
   insert: [queueId: string]
   delete: [queueId: string]
   reorder: [queueId: string, targetIndex: number]
+  cancel: [queueId: string]
 }>()
 
 const sessionStore = useSessionStore()
@@ -121,6 +176,42 @@ const queueMessages = computed(() => {
   }
   return sessionStore.activeQueueMessages
 })
+
+/** 飞书入站排队项：与本地队列并列展示，只读（取消按钮按 cancelable 控制）。 */
+const inboundMessages = computed(() => {
+  if (props.sessionId) {
+    return sessionStore.getInboundQueue(props.sessionId)
+  }
+  return sessionStore.activeInboundQueue
+})
+
+const runningChannel = computed(() => {
+  if (props.sessionId) {
+    return sessionStore.getRunningChannel(props.sessionId)
+  }
+  return sessionStore.activeRunningChannel
+})
+
+const lastRunFailed = computed(() => {
+  if (props.sessionId) {
+    return sessionStore.getLastRunFailed(props.sessionId)
+  }
+  return sessionStore.activeLastRunFailed
+})
+
+const localCount = computed(() => queueMessages.value.length)
+const visibleCount = computed(() => visibleQueueCount(localCount.value, inboundMessages.value.length))
+/** 「下一组」：显式计算（某组为空取另一组；都非空按当前执行来源；无执行在跑则不猜）。 */
+const nextGroup = computed(() => nextQueueGroup(localCount.value, inboundMessages.value.length, runningChannel.value))
+const showBlocked = computed(() => shouldShowQueueBlocked(lastRunFailed.value, visibleCount.value))
+
+/** 折叠态下飞书组只预览前 3 条（与本地组的折叠阈值一致），避免长队顶掉消息区。 */
+const INBOUND_COLLAPSED_PREVIEW = 3
+const visibleInboundMessages = computed(() => {
+  if (expanded.value || visibleCount.value <= 5) return inboundMessages.value
+  return inboundMessages.value.slice(0, INBOUND_COLLAPSED_PREVIEW)
+})
+const hiddenInboundCount = computed(() => inboundMessages.value.length - visibleInboundMessages.value.length)
 
 const expanded = ref(false)
 const insertingQueueId = ref<string | null>(null)
@@ -160,50 +251,6 @@ watch(activePhase, (phase) => {
   }
 })
 
-/** 队列行展示预算（字符数）：文本段按字符计入，Tag 段按名称长度计入，超出则截断。回复引用单独折成短标签，不占这段预算。 */
-const QUEUE_DISPLAY_BUDGET = 60
-
-type QueueSegment = DisplaySegment | { type: 'quote'; content: string }
-
-function fileTagLength(seg: Extract<DisplaySegment, { type: 'file' }>): number {
-  const name = seg.filePath.split(/[/\\]/).pop() || seg.filePath
-  if (seg.lineStart == null) return name.length
-  const end = seg.lineEnd ?? seg.lineStart
-  return (end === seg.lineStart ? `${name}:${seg.lineStart}` : `${name}:${seg.lineStart}-${end}`).length
-}
-
-function truncateSegments(content: string): { segments: QueueSegment[]; truncated: boolean } {
-  const { quotes, segments } = splitUserMessageForDisplay(content || '')
-  const out: QueueSegment[] = quotes.map(quote => ({ type: 'quote', content: summarizeQuote(quote, 24) }))
-  let budget = QUEUE_DISPLAY_BUDGET
-  let truncated = false
-  for (const seg of segments) {
-    if (budget <= 0) {
-      truncated = true
-      break
-    }
-    if (seg.type === 'text') {
-      if (seg.content.length > budget) {
-        out.push({ type: 'text', content: seg.content.slice(0, budget) })
-        truncated = true
-        break
-      }
-      out.push(seg)
-      budget -= seg.content.length
-    } else {
-      const len = seg.type === 'file' ? fileTagLength(seg) : seg.name.length
-      // 预算不足容纳整个 Tag 时不再展示，避免半个 Tag
-      if (len >= budget) {
-        truncated = true
-        break
-      }
-      out.push(seg)
-      budget -= len
-    }
-  }
-  return { segments: out, truncated }
-}
-
 /** 队列行展示模型：以本地数组承载排序，拖拽先落本地、由服务端推送 queue_updated 后对齐。 */
 interface QueueViewItem {
   msg: QueueMessage
@@ -214,7 +261,7 @@ interface QueueViewItem {
 const queueView = ref<QueueViewItem[]>([])
 watch(queueMessages, (msgs) => {
   queueView.value = msgs.map(msg => {
-    const { segments, truncated } = truncateSegments(msg.content)
+    const { segments, truncated } = truncateQueueSegments(msg.content)
     return { msg, segments, truncated }
   })
 }, { immediate: true })
@@ -263,9 +310,46 @@ function handleReorder(queueId: string, targetIndex: number) {
   emit('reorder', queueId, targetIndex)
 }
 
+/** 飞书排队项取消：确认后 emit，成功由 inbound_queue_updated 驱动列表更新。 */
+const cancelingInboundId = ref<string | null>(null)
+/** 取消 in-flight 兜底复位：emit 无法拿回执，400/失败时列表不变，不能把按钮永久禁用。 */
+let cancelResetTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearCancelingInbound() {
+  cancelingInboundId.value = null
+  if (cancelResetTimer) {
+    clearTimeout(cancelResetTimer)
+    cancelResetTimer = null
+  }
+}
+
+watch(inboundMessages, (items) => {
+  if (cancelingInboundId.value && !items.some(item => item.id === cancelingInboundId.value)) {
+    clearCancelingInbound()
+  }
+})
+
+async function handleCancelInbound(queueId: string) {
+  if (cancelingInboundId.value) return
+  try {
+    await ElMessageBox.confirm(
+      '确定取消这条飞书排队消息吗？取消后不会执行，飞书卡片的排队提示会同步更新。',
+      '确认取消',
+      { confirmButtonText: '取消排队', cancelButtonText: '保留', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  cancelingInboundId.value = queueId
+  if (cancelResetTimer) clearTimeout(cancelResetTimer)
+  cancelResetTimer = setTimeout(clearCancelingInbound, 8000)
+  emit('cancel', queueId)
+}
+
 onBeforeUnmount(() => {
   if (reorderResetTimer) clearTimeout(reorderResetTimer)
   if (insertResetTimer) clearTimeout(insertResetTimer)
+  if (cancelResetTimer) clearTimeout(cancelResetTimer)
 })
 
 async function handleDelete(queueId: string) {
@@ -308,6 +392,75 @@ async function handleDelete(queueId: string) {
   font-size: var(--aw-text-fine);
   color: var(--aw-ink-muted-80);
   font-weight: 500;
+}
+
+/* 分组头（本地 / 飞书）：组内序号各自独立，跨组顺序由「下一组」标注表达 */
+.queue-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 4px;
+  font-size: var(--aw-text-fine);
+  color: var(--aw-ink-muted-80);
+}
+
+.queue-group-title {
+  font-weight: 500;
+}
+
+.queue-next {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--aw-primary-hover);
+  color: var(--aw-primary-focus);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* 失败滞留提示：上一轮执行失败且仍有排队项时才出现（两侧失败都会拦接力） */
+.queue-blocked {
+  margin: 2px 0 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--aw-hairline);
+  border-radius: var(--aw-radius-xs);
+  background: var(--aw-canvas);
+  color: var(--aw-danger);
+  font-size: var(--aw-text-fine);
+  line-height: 1.5;
+}
+
+.queue-item-inbound {
+  border-left: 2px solid var(--aw-primary);
+}
+
+.queue-source {
+  flex-shrink: 0;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--aw-divider-soft);
+  color: var(--aw-ink-muted-80);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.queue-sender {
+  flex-shrink: 0;
+  color: var(--aw-ink-muted-64);
+  font-size: var(--aw-text-fine);
+}
+
+.queue-more-inbound {
+  margin-top: 2px;
+  font-size: var(--aw-text-fine);
+  color: var(--aw-ink-muted-48);
+}
+
+.inbound-cancel-btn {
+  width: auto;
+  padding: var(--aw-btn-padding);
+  color: var(--aw-danger);
+  font-size: var(--aw-text-fine);
+  white-space: nowrap;
 }
 
 .toggle-btn {

@@ -1,5 +1,5 @@
 import type { Db } from '../db/db.js';
-import type { FeishuInboundQueueRow } from './types.js';
+import type { FeishuInboundQueueListItem, FeishuInboundQueueRow } from './types.js';
 
 /** feishu_inbound_queue 表的 CRUD + CAS 状态变更。 */
 export class FeishuInboundQueueRepository {
@@ -20,6 +20,10 @@ export class FeishuInboundQueueRepository {
       rankNo: row.rankNo,
       status: row.status,
       payload: row.payload,
+      summary: row.summary ?? null,
+      senderLabel: row.senderLabel ?? null,
+      imageCount: row.imageCount ?? 0,
+      fileCount: row.fileCount ?? 0,
     });
   }
 
@@ -80,16 +84,16 @@ export class FeishuInboundQueueRepository {
   }
 
   /** 事务化 CAS：将 QUEUED 行的 rank_no 调整为会话内最小 rank-1（跳队首），并锁定顺序保证并发下严格单调。 */
-  async jumpToFront(id: number): Promise<boolean> {
+  async jumpToFront(id: number): Promise<{ ok: boolean; sessionId: number | null }> {
     return this.transaction(async (tx) => {
       const row = await tx.findById(id);
-      if (row == null || row.status !== 'QUEUED') return false;
+      if (row == null || row.status !== 'QUEUED') return { ok: false, sessionId: row?.sessionId ?? null };
       const minRank = await tx.findMinRankForUpdate(row.sessionId);
       const result = await tx.db.execute(
         "UPDATE feishu_inbound_queue SET rank_no = ? WHERE id = ? AND status = 'QUEUED'",
         [minRank - 1, id],
       );
-      return result.affectedRows === 1;
+      return { ok: result.affectedRows === 1, sessionId: row.sessionId };
     });
   }
 
@@ -124,6 +128,22 @@ export class FeishuInboundQueueRepository {
       "SELECT COUNT(*) AS cnt FROM feishu_inbound_queue WHERE session_id = ? AND status = 'QUEUED'",
       [sessionId],
     ).then((row) => row?.cnt ?? 0);
+  }
+
+  /**
+   * 会话内全部 QUEUED 行，按 rank 升序（web 面板展示用）。
+   * 显式列、**不查 payload**：payload 是 MEDIUMTEXT（可能含 data URI 图片），
+   * 列表展示只依赖 V210 的轻量列；存量行列值为空时由上层按 id 单查回退。
+   */
+  listQueuedBySession(sessionId: number): Promise<FeishuInboundQueueListItem[]> {
+    return this.db.query<FeishuInboundQueueListItem>(
+      `SELECT id, bot_id, session_id, message_id, card_message_id, sender_open_id, mao_user_id,
+              rank_no, status, summary, sender_label, image_count, file_count, created_at
+       FROM feishu_inbound_queue
+       WHERE session_id = ? AND status = 'QUEUED'
+       ORDER BY rank_no ASC, id ASC`,
+      [sessionId],
+    );
   }
 
   /** 列出当前所有 RUNNING 行（供 hydrate 逐行判定消息是否已落库）。 */

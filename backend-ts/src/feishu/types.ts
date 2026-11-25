@@ -60,8 +60,53 @@ export interface FeishuInboundQueueRow {
   rankNo: number;
   status: string;
   payload: string;
+  /** 面板展示列（V210 新增；存量行为 null/0，读取时按 payload 回退计算）。 */
+  summary?: string | null;
+  senderLabel?: string | null;
+  imageCount?: number | null;
+  fileCount?: number | null;
   createdAt?: string;
   updatedAt?: string;
+}
+
+/**
+ * 面板用的队列行（V210 之后）：显式列查询的结果，不含 MEDIUMTEXT payload。
+ * 与 FeishuInboundQueueRow 分开定义，避免把 payload 改为可选后污染认领/重建路径。
+ */
+export type FeishuInboundQueueListItem = Omit<FeishuInboundQueueRow, 'payload' | 'updatedAt'>;
+
+/** 当前会话执行来源：飞书 / 本地（WS 及钉钉微信等非本会话通道）/ 无执行在跑。 */
+export type RunningChannel = 'feishu' | 'local' | null;
+
+/** web 端 QueuePanel 展示的飞书排队项。 */
+export interface FeishuInboundQueueItemVO {
+  id: string;
+  senderLabel: string;
+  summary: string;
+  imageCount: number;
+  fileCount: number;
+  createdAt: string | null;
+  /** 飞书队列内位次，1 起（按 rank 排序后的序号，不直接暴露 rank_no）。 */
+  queuePosition: number;
+  /** 当前查看者能否取消（本人或发送者未绑定 mao 账号时由 owner 放行）。 */
+  cancelable: boolean;
+}
+
+/** 取消排队的业务结果（HTTP 统一 200 + result，见技术方案 4.1.7）。 */
+export type FeishuInboundQueueCancelResult = 'CANCELLED' | 'ALREADY_STARTED' | 'NOT_FOUND';
+
+/** 路由层依赖的只读视图 + 受控取消端口（不暴露飞书域内部实现）。 */
+export interface FeishuInboundQueueViewPort {
+  list(session: { id: number; userId?: number | null; phase?: string | null }, viewerUserId: number): Promise<{
+    runningChannel: RunningChannel;
+    lastRunFailed: boolean;
+    items: FeishuInboundQueueItemVO[];
+  }>;
+  cancel(
+    session: { id: number; userId?: number | null },
+    queueId: number,
+    userId: number,
+  ): Promise<FeishuInboundQueueCancelResult>;
 }
 
 /** 排队消息 payload 中存储的上下文子集（省略 rawEvent/content 等大字段）。 */
@@ -149,10 +194,23 @@ export interface FeishuCardActionResponse {
 
 /** handler 用于执行队列消费的最小端口。 */
 export interface FeishuTaskQueuePort {
-  enqueue(params: { sessionId: number; botId: number; messageId: string; senderOpenId: string; maoUserId: number | null; payload: string }): Promise<number>;
+  enqueue(params: {
+    sessionId: number;
+    botId: number;
+    messageId: string;
+    senderOpenId: string;
+    maoUserId: number | null;
+    payload: string;
+    /** 面板展示列（V210）：入队时一次算好，读取时不再解析 payload。 */
+    summary?: string | null;
+    senderLabel?: string | null;
+    imageCount?: number;
+    fileCount?: number;
+  }): Promise<number>;
   setCardMessageId(id: number, cardMessageId: string): Promise<void>;
   claimNext(sessionId: number): Promise<FeishuInboundQueueRow | null>;
-  complete(id: number): Promise<void>;
+  /** 执行收尾删行；sessionId 由调用方透传，用于队列变化通知（缺省时回退单查）。 */
+  complete(id: number, sessionId?: number): Promise<void>;
   hasPending(sessionId: number): Promise<boolean>;
 }
 

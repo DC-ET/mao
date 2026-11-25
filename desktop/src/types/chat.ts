@@ -174,6 +174,24 @@ export interface QueueMessage {
   createdAt?: string
 }
 
+/** 飞书入站排队项（后端 /sessions/:id/inbound-queue 的 items 元素）。 */
+export interface FeishuInboundQueueItem {
+  id: string
+  /** 群聊发送者展示名；私聊为空串（与飞书排队卡片同口径）。 */
+  senderLabel: string
+  summary: string
+  imageCount: number
+  fileCount: number
+  createdAt?: string | null
+  /** 飞书队列内位次（实时值；与排队卡上的入队快照可能不同）。 */
+  queuePosition: number
+  /** 当前用户能否取消（本人，或发送者未绑定 mao 账号时由 owner 放行）。 */
+  cancelable: boolean
+}
+
+/** 当前会话执行来源：飞书 / 本地（WS 等）/ 无执行在跑。 */
+export type QueueRunningChannel = 'feishu' | 'local' | null
+
 // --- Ask User Questions types ---
 
 export interface QuestionOption {

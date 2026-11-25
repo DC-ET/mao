@@ -1,5 +1,6 @@
 import { nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { api } from '../api'
 import { useStreamWS } from './useStreamWS'
 import { fetchImagesAsFiles } from '../utils/file'
 import { fetchSessionQueue } from './chatSessionActions'
@@ -99,5 +100,32 @@ export function useChatQueue(
     nextTick(() => target.focusInput())
   }
 
-  return { fetchQueue, insertQueueMessage, deleteQueueMessage, reorderQueueMessage, handleQueueEdit }
+  /**
+   * 取消一条飞书入站排队消息（与飞书卡片「取消排队」等价，成功后卡片同步为已取消）。
+   * 后端统一 200 + result：CANCELLED 静默（事件会刷新面板）；其余结果本地提示后重拉。
+   * 403 由 axios 拦截器统一提示，这里不重复 toast。
+   */
+  async function cancelInboundQueueMessage(queueId: string): Promise<boolean> {
+    const sid = getSessionId()
+    if (!sid) return false
+    try {
+      const { data } = await api.delete(`/sessions/${sid}/inbound-queue/${queueId}`)
+      const result = data?.result
+      if (result === 'ALREADY_STARTED') {
+        ElMessage.info('该消息已不在队列')
+        await fetchQueue()
+        return false
+      }
+      if (result === 'NOT_FOUND') {
+        ElMessage.info('该消息已失效')
+        await fetchQueue()
+        return false
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  return { fetchQueue, insertQueueMessage, deleteQueueMessage, reorderQueueMessage, handleQueueEdit, cancelInboundQueueMessage }
 }

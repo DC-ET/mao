@@ -25,7 +25,10 @@ import { createFeishuRoundOffsetHelper } from './feishu-client.js';
 import { createFeishuRecoveryProgressHelper } from './feishu-cards.js';
 import { createFeishuUserIdHelper } from './feishu-session.js';
 import { FeishuInboundQueueRepository } from './feishu/inbound-queue.repository.js';
-import { FeishuTaskQueueService } from './feishu/inbound-queue.service.js';
+import { FeishuTaskQueueService, type FeishuQueueChangeHooks } from './feishu/inbound-queue.service.js';
+import { createFeishuInboundQueueView, createRunningChannelResolver } from './feishu/inbound-queue-view.js';
+import { buildQueueCancelledCard } from './feishu/card-action.service.js';
+import type { FeishuInboundQueueViewPort } from './feishu/types.js';
 import { createQueuePositionHelper } from './app-utils.js';
 import { createPersistCancelledHelper } from './app-utils.js';
 import { createPlatformQueueRelay } from './app-utils.js';
@@ -85,6 +88,8 @@ export interface FeishuHandlerResult {
   feishuMonitor: FeishuMonitorService;
   dingtalk: any;
   feishuTaskQueue: FeishuTaskQueueService;
+  /** web/桌面端 QueuePanel 的飞书排队视图（只读 + 受控取消），供 session 路由注入。 */
+  feishuInboundQueueView: FeishuInboundQueueViewPort;
   feishuProgressCardRepo: MysqlFeishuProgressCardRepository;
   createFeishuRecoveryProgress: any;
   analyticsService: AnalyticsService;
@@ -111,7 +116,14 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
   ctx.notifyFeishuPendingMismatch = async (pending: any) => {
     await sendFeishuText(pending.appId, pending.event, FEISHU_ECP_IDENTITY_MISMATCH_TEXT);
   };
-  const feishuQueueCard = createFeishuQueueCardHelper({ getFeishuClient, feishuMessageService });
+  const feishuQueueCard = createFeishuQueueCardHelper({
+    getFeishuClient,
+    feishuMessageService,
+    // 卡片提示「另有 M 条本地排队」：只计数，失败不影响发卡；未装配时降级为不显示附加信息。
+    countLocalQueue: d.messageQueueService == null
+      ? undefined
+      : async (sessionId: number) => (await d.messageQueueService.listPending(sessionId)).length,
+  });
   const resolveFeishuSessionDetailUrl = createFeishuSessionUrlHelper({ settingService: d.settingService });
   const feishuCardSnapshotRepo = new MysqlFeishuCardSnapshotRepository(db);
   const feishuProgressCardRepo = new MysqlFeishuProgressCardRepository(db);
@@ -127,7 +139,9 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
   });
   const resolveFeishuUserId = createFeishuUserIdHelper({ feishuBinding: d.feishuBinding });
   const feishuInboundQueueRepo = new FeishuInboundQueueRepository(db);
-  const feishuTaskQueue = new FeishuTaskQueueService(feishuInboundQueueRepo);
+  /** 晚绑定钩子：service 先构造，handler/view 就绪后再赋 onChanged（避免构造顺序死锁）。 */
+  const queueChangeHooks: FeishuQueueChangeHooks = {};
+  const feishuTaskQueue = new FeishuTaskQueueService(feishuInboundQueueRepo, queueChangeHooks);
   const queuePositionOf = createQueuePositionHelper({ feishuInboundQueueRepo });
   const persistCancelledIfActive = createPersistCancelledHelper({ sessionService: d.sessionService, taskTerminal: d.taskTerminal, feishuProgressCardRepo });
   /**
@@ -445,6 +459,65 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
   });
   const { resolveFeishuSenderName, resolveFeishuUserNames, resolveMergeWorkspace, expandMergeForward, resolveQuotedWorkspace, downloadFeishuGroupImage, downloadFeishuImageTo, downloadFeishuGroupFile } = feishuMediaHelper;
   const threadSessionHelper = createThreadSessionHelper({ feishuMessageService });
+
+  // ─── web/桌面端队列可见性（技术方案 2026-11-25） ─────────────────────
+  /** 当前执行来源：feishu / local / null（终态 phase 直接归零，不依赖 busy 清理时序）。 */
+  const resolveRunningChannel = createRunningChannelResolver({
+    hasFeishuRunning: (sessionId: number) => feishuInboundHandler.hasRunningSession(sessionId),
+    hasLocalClaim: (sessionId: number) => d.wsHandler?.hasExecutionClaim(sessionId) === true,
+  });
+  /** 排队卡片 PATCH：卡片回调与 web 取消共用（原 cardActionService.patchCard 的内联实现抽到这里）。 */
+  const patchQueueCard = async (botId: number, cardMessageId: string, card: any): Promise<void> => {
+    const client = await getFeishuClient(botId);
+    if (client == null) throw new Error(`飞书客户端不可用, botId=${botId}, cardMessageId=${cardMessageId}`);
+    const response = await client.im.v1.message.patch({ path: { message_id: cardMessageId }, data: { content: JSON.stringify(card) } });
+    if (response?.code !== 0) {
+      throw new Error(`飞书卡片更新失败, code=${response?.code ?? 'missing'}, msg=${response?.msg ?? 'unknown'}`);
+    }
+  };
+  const feishuInboundQueueView: FeishuInboundQueueViewPort = createFeishuInboundQueueView({
+    repo: feishuInboundQueueRepo,
+    queue: feishuTaskQueue,
+    resolveRunningChannel,
+    // 与飞书按钮取消同一份终态卡（不传会话详情 URL）。
+    renderCancelledCard: () => buildQueueCancelledCard(),
+    patchQueueCard,
+  });
+  /**
+   * 队列变化推送：100ms 合并（enqueue 与紧随其后的 claimNext 常连发），推给会话 owner 的所有在线端。
+   * fire-and-forget：不阻塞入队/消费主链路；失败只记日志。
+   */
+  const pendingQueueNotify = new Set<number>();
+  let queueNotifyTimer: NodeJS.Timeout | null = null;
+  const flushInboundQueueNotifications = (): void => {
+    queueNotifyTimer = null;
+    const sessionIds = [...pendingQueueNotify];
+    pendingQueueNotify.clear();
+    for (const sessionId of sessionIds) {
+      void (async () => {
+        const session = await d.sessionService.getSession(sessionId).catch(() => null);
+        if (session?.userId == null) return;
+        const payload = await feishuInboundQueueView
+          .list({ id: sessionId, userId: session.userId, phase: session.phase ?? null }, session.userId)
+          .catch(() => null);
+        if (payload == null) return;
+        d.wsRegistry.send(session.userId, wsEvent('inbound_queue_updated', sessionId, {
+          runningChannel: payload.runningChannel,
+          lastRunFailed: payload.lastRunFailed,
+          items: payload.items,
+        }));
+      })();
+    }
+  };
+  const notifyInboundQueueChanged = (sessionId: number): void => {
+    pendingQueueNotify.add(sessionId);
+    if (queueNotifyTimer != null) return;
+    queueNotifyTimer = setTimeout(flushInboundQueueNotifications, 100);
+    // 测试/短生命周期进程里不要让定时器吊住事件循环（Node 环境才有 unref）。
+    if (typeof queueNotifyTimer.unref === 'function') queueNotifyTimer.unref();
+  };
+  queueChangeHooks.onChanged = notifyInboundQueueChanged;
+
   const feishuInboundProcessor = new FeishuInboundProcessor(feishuInboundHandler, {
     messageService: feishuMessageService,
     mergeWindowMs: cfg.feishu.bot.mergeWindowMs,
@@ -526,14 +599,7 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
         );
       });
     },
-    patchCard: async (botId: number, cardMessageId: string, card: any) => {
-      const client = await getFeishuClient(botId);
-      if (client == null) throw new Error(`飞书客户端不可用, botId=${botId}, cardMessageId=${cardMessageId}`);
-      const response = await client.im.v1.message.patch({ path: { message_id: cardMessageId }, data: { content: JSON.stringify(card) } });
-      if (response?.code !== 0) {
-        throw new Error(`飞书卡片更新失败, code=${response?.code ?? 'missing'}, msg=${response?.msg ?? 'unknown'}`);
-      }
-    },
+    patchCard: patchQueueCard,
     sessionDetailUrl: (sessionId: number) => resolveFeishuSessionDetailUrl(sessionId),
     askForms: d.feishuAskFormStore,
     renderProgressCard: (sessionId: number) => d.feishuActiveProgress.render(sessionId),
@@ -617,6 +683,7 @@ export function assembleFeishuHandler(deps: FeishuHandlerDeps): FeishuHandlerRes
     feishuMonitor,
     dingtalk,
     feishuTaskQueue,
+    feishuInboundQueueView,
     feishuProgressCardRepo,
     createFeishuRecoveryProgress,
     analyticsService,

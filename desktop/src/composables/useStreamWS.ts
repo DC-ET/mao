@@ -18,6 +18,7 @@ import { ensureDesktopShellBridgeFromWs } from './useDesktopShell'
 import { resolveFileChangeWorkspace } from '../utils/file-change-workspace'
 import { getToolInputPreview } from '../utils/toolDisplay'
 import { handleLocalFileFetch } from '../utils/local-file-fetch'
+import { readInboundQueueSnapshot } from '../utils/queue-view'
 import { handleDeliveryRead } from '../utils/delivery-fetch'
 import { executeLocalFileOp } from '../utils/local-file-op'
 import {
@@ -160,9 +161,18 @@ const STREAM_EVENT_TYPES = new Set([
 
 function refreshQueue(sessionId: string) {
   const store = useSessionStore()
+  // 两侧独立拉取：一个端点慢/失败不影响另一侧落地（失败侧保留旧值，后续事件/下次刷新会再收敛）。
   api.get(`/sessions/${sessionId}/queue`)
-    .then(({ data }) => store.setQueueMessages(sessionId, data || []))
-    .catch(() => {})
+    .then(({ data }) => { store.setQueueMessages(sessionId, data || []) })
+    .catch(() => { /* ignore */ })
+  api.get(`/sessions/${sessionId}/inbound-queue`)
+    .then(({ data }) => {
+      const snapshot = readInboundQueueSnapshot(data)
+      store.setInboundQueue(sessionId, snapshot.items)
+      store.setRunningChannel(sessionId, snapshot.runningChannel)
+      store.setLastRunFailed(sessionId, snapshot.lastRunFailed)
+    })
+    .catch(() => { /* ignore */ })
 }
 const pendingCallbacks = new Map<string, {
   onSending?: () => void
@@ -966,6 +976,8 @@ export function useStreamWS() {
             }
           }
           if (terminalPhases.includes(phase)) {
+            // 终态兜底：队列项可能在本次执行中被消费/失败滞留，事件丢失时靠这里收敛。
+            refreshQueue(sessionId)
             releaseApprovalsOnTerminal(sessionId)
             // 服务端对被中止的轮次不会补发工具结果（agent-loop 命中 cancelFlag 后直接丢弃），
             // CANCELLED/FAILED 必须就地终结仍在 running 的工具，否则转圈永久残留
@@ -996,6 +1008,8 @@ export function useStreamWS() {
               cb.resolve?.()
             }
           } else if (phase === 'RUNNING' || phase === 'WAITING_APPROVAL') {
+            // 接力开始（飞书→本地或反之）时纠正「当前执行来源」，否则「下一组」徽标会停在上一帧。
+            refreshQueue(sessionId)
             if (!pendingCallbacks.has(sessionId)) {
               pendingCallbacks.set(sessionId, {
                 resolve: () => {},
@@ -1584,6 +1598,19 @@ export function useStreamWS() {
       case 'queue_updated': {
         if (sessionId && data?.queue) {
           sessionStore.setQueueMessages(sessionId, data.queue)
+        }
+        // 两个队列共用「当前执行来源」：本地队列变化时同步刷新，避免接力后徽标停在旧值。
+        if (sessionId && data && 'runningChannel' in data) {
+          sessionStore.setRunningChannel(sessionId, (data.runningChannel as 'feishu' | 'local' | null) ?? null)
+        }
+        break
+      }
+
+      case 'inbound_queue_updated': {
+        if (sessionId) {
+          sessionStore.setInboundQueue(sessionId, data?.items || [])
+          sessionStore.setRunningChannel(sessionId, (data?.runningChannel as 'feishu' | 'local' | null) ?? null)
+          sessionStore.setLastRunFailed(sessionId, data?.lastRunFailed === true)
         }
         break
       }

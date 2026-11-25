@@ -1,5 +1,5 @@
 import { computed, ref } from 'vue'
-import type { ChatMessage, TodoItem, ContextWindowInfo, CompactionEvent, QueueMessage, FileChange, PendingQuestion } from '../../types/chat'
+import type { ChatMessage, TodoItem, ContextWindowInfo, CompactionEvent, QueueMessage, FileChange, PendingQuestion, FeishuInboundQueueItem, QueueRunningChannel } from '../../types/chat'
 import { appendTextDelta, appendThinkingDelta as appendThinkingDeltaUtil, appendToolCallStart as appendToolCallStartUtil, discardAbortedStreamTail } from '../../utils/chatMessage'
 import { elapsedBaseMs } from '../../utils/elapsed'
 import { stripImageUrlLines } from '../../utils/imageUrlAnnotation'
@@ -82,6 +82,12 @@ export function createMessageRuntimeModule(ctx: {
   const sessionLlmRetry = ref<Map<string, LlmRetryInfo>>(new Map())
   const sessionPendingApprovals = ref<Map<string, number>>(new Map())
   const sessionQueueMessages = ref<Map<string, QueueMessage[]>>(new Map())
+  /** 飞书入站排队项（与本地 message_queue 并排展示，互不影响消费语义）。 */
+  const sessionInboundQueue = ref<Map<string, FeishuInboundQueueItem[]>>(new Map())
+  /** 会话上一轮执行是否失败（决定排队面板的滞留提示条）。 */
+  const sessionLastRunFailed = ref<Map<string, boolean>>(new Map())
+  /** 当前执行来源（飞书 / 本地 / 无），用于两组队列的「下一组」标注。 */
+  const sessionRunningChannel = ref<Map<string, QueueRunningChannel>>(new Map())
   const sessionFileChanges = ref<Map<string, FileChange[]>>(new Map())
   /** 工作区 → 相对路径 → 实时变更修订号。只在 appendFileChange 时递增。 */
   const fileQuoteRevisions = ref<Map<string, Map<string, number>>>(new Map())
@@ -134,6 +140,18 @@ export function createMessageRuntimeModule(ctx: {
 
   const activeQueueMessages = computed(() =>
     sessionQueueMessages.value.get(getActiveSessionId() ?? '') ?? []
+  )
+
+  const activeInboundQueue = computed(() =>
+    sessionInboundQueue.value.get(getActiveSessionId() ?? '') ?? []
+  )
+
+  const activeLastRunFailed = computed(() =>
+    sessionLastRunFailed.value.get(getActiveSessionId() ?? '') ?? false
+  )
+
+  const activeRunningChannel = computed<QueueRunningChannel>(() =>
+    sessionRunningChannel.value.get(getActiveSessionId() ?? '') ?? null
   )
 
   const activeFileChanges = computed(() =>
@@ -869,6 +887,35 @@ export function createMessageRuntimeModule(ctx: {
     sessionQueueMessages.value.delete(String(sessionId))
   }
 
+  /** 飞书入站排队项：id 统一成字符串（REST 与 WS 两种来源口径一致）。 */
+  function setInboundQueue(sessionId: string, items: FeishuInboundQueueItem[]) {
+    const normalized = (items ?? []).map((item) => ({
+      ...item,
+      id: item.id == null ? '' : String(item.id),
+    }))
+    sessionInboundQueue.value.set(String(sessionId), normalized)
+  }
+
+  function getInboundQueue(sessionId: string): FeishuInboundQueueItem[] {
+    return sessionInboundQueue.value.get(String(sessionId)) ?? []
+  }
+
+  function setLastRunFailed(sessionId: string, failed: boolean) {
+    sessionLastRunFailed.value.set(String(sessionId), failed === true)
+  }
+
+  function getLastRunFailed(sessionId: string): boolean {
+    return sessionLastRunFailed.value.get(String(sessionId)) ?? false
+  }
+
+  function setRunningChannel(sessionId: string, channel: QueueRunningChannel) {
+    sessionRunningChannel.value.set(String(sessionId), channel)
+  }
+
+  function getRunningChannel(sessionId: string): QueueRunningChannel {
+    return sessionRunningChannel.value.get(String(sessionId)) ?? null
+  }
+
   function appendFileChange(sessionId: string, change: FileChange, workspace?: string | null) {
     const key = String(sessionId)
     const changes = sessionFileChanges.value.get(key) || []
@@ -1000,6 +1047,9 @@ export function createMessageRuntimeModule(ctx: {
     sessionContextWindow.value.delete(sid)
     sessionCompactionEvents.value.delete(sid)
     sessionQueueMessages.value.delete(sid)
+    sessionInboundQueue.value.delete(sid)
+    sessionLastRunFailed.value.delete(sid)
+    sessionRunningChannel.value.delete(sid)
     sessionFileChanges.value.delete(sid)
     clearMessagePageState(sid)
     sessionCompacting.value.delete(sid)
@@ -1032,6 +1082,9 @@ export function createMessageRuntimeModule(ctx: {
     sessionFileChanges.value = new Map()
     fileQuoteRevisions.value = new Map()
     sessionQueueMessages.value = new Map()
+    sessionInboundQueue.value = new Map()
+    sessionLastRunFailed.value = new Map()
+    sessionRunningChannel.value = new Map()
     sessionPendingQuestions.value = new Map()
     sessionExecutionErrors.value = new Map()
     sessionMessageHasMore.value = new Map()
@@ -1058,6 +1111,9 @@ export function createMessageRuntimeModule(ctx: {
     sessionLlmRetry,
     sessionPendingApprovals,
     sessionQueueMessages,
+    sessionInboundQueue,
+    sessionLastRunFailed,
+    sessionRunningChannel,
     sessionFileChanges,
     fileQuoteRevisions,
     sessionPendingQuestions,
@@ -1077,6 +1133,9 @@ export function createMessageRuntimeModule(ctx: {
     activeStreaming,
     activeLlmRetry,
     activeQueueMessages,
+    activeInboundQueue,
+    activeLastRunFailed,
+    activeRunningChannel,
     activeFileChanges,
     activePendingQuestions,
     activeExecutionError,
@@ -1143,6 +1202,12 @@ export function createMessageRuntimeModule(ctx: {
     setQueueMessages,
     getQueueMessages,
     clearQueueMessages,
+    setInboundQueue,
+    getInboundQueue,
+    setLastRunFailed,
+    getLastRunFailed,
+    setRunningChannel,
+    getRunningChannel,
     appendFileChange,
     fileQuoteRevision,
     setFileChanges,
