@@ -402,6 +402,8 @@ private List<ChatRequest.ToolDefinition> buildToolDefinitions(AgentExecutionCont
 - `agent_tool` 表：Agent 与可执行 Tool 的关联（数据库，不变逻辑）
 - Agent 表新增 `skill_names` 字段：JSON 数组，指定该 Agent 可用的 Skill 知识文档名称列表，为空则加载全部
 
+> 勘误（2026-11-25）：上述「为空则加载全部」已不再成立。2026-08 起 `skill_names` 为空（NULL / 空数组）表示该 Agent 没有任何共用系统技能；2026-11 起会话可用技能还会叠加角色按 Agent 的追加授权（`role_skill_grant`）。当前口径以 `backend-ts/src/harness/skill/skill-sync-service.ts` 的 `resolveSystemSkillNames()` 为准，列注释已由 `V209__fix_agent_skill_names_comment.sql` 校正。
+
 #### 5.2 HarnessService 上下文构建修改
 
 ```java
