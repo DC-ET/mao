@@ -104,7 +104,7 @@ onUnmounted(() => {
 <style scoped>
 .round-directory {
   position: absolute;
-  right: 2px;
+  right: -20px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 5;
