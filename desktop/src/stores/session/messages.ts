@@ -96,6 +96,18 @@ export function createMessageRuntimeModule(ctx: {
   // Phase cache for sessions not in the main list (e.g. side tasks)
   const sessionPhases = ref<Map<string, TaskPhase>>(new Map())
 
+  /**
+   * 暂存的落库通知（后台子代理完成卡片等），按会话排队。
+   *
+   * 后端把流式事件广播给该用户的所有连接（不按 subscribe 过滤），一个「已经跑起来、
+   * 但本端没打开过」的会话，本地列表在 REST 历史到达前可能只有流式占位气泡，
+   * 还没有启动本轮的用户消息。那种情况下通知没有锚点：按「插在流式气泡之前」的
+   * 旧规则会落到 index 0，卡片整批串到时间线最前面，用户的问题反而被挤到回复下面
+   * （useMessageRounds 还会把首个 user 之前的助手消息整批丢掉）。
+   * 先在这里暂存，等用户消息或 REST 历史落地后按锚点补插。
+   */
+  const pendingNoticeMessages = ref<Map<string, ChatMessage[]>>(new Map())
+
   const activeMessages = computed(() =>
     sessionMessages.value.get(getActiveSessionId() ?? '') ?? []
   )
@@ -178,6 +190,8 @@ export function createMessageRuntimeModule(ctx: {
     } else {
       streamingAssistantMessageIds.delete(sid)
     }
+    // 占位 key → 真实 sid 迁移时，用户消息随消息一起到位，暂存的通知可以补插了
+    flushPendingNotices(sid)
   }
 
   /**
@@ -263,6 +277,8 @@ export function createMessageRuntimeModule(ctx: {
     } else {
       streamingAssistantMessageIds.delete(sid)
     }
+    // REST 历史带回本轮用户消息：暂存的通知在这里拿到锚点
+    flushPendingNotices(sid)
   }
 
   function prependMessages(sessionId: string, messages: ChatMessage[]) {
@@ -271,6 +287,7 @@ export function createMessageRuntimeModule(ctx: {
     const existingIds = new Set(existing.map(m => String(m.id)))
     const older = messages.filter(m => !existingIds.has(String(m.id)))
     sessionMessages.value.set(sid, [...older, ...existing])
+    flushPendingNotices(sid)
   }
 
   function setMessagePageState(sessionId: string, hasMore: boolean, nextBeforeId: string | null) {
@@ -325,13 +342,34 @@ export function createMessageRuntimeModule(ctx: {
     historyAnchored.value = next
   }
 
-  function addUserMessage(sessionId: string, msg: ChatMessage) {
+  /**
+   * 追加用户消息。
+   *
+   * options.beforeLiveStream：远端回显专用（user_message_saved 里无本端乐观消息可匹配的
+   * 分支）。后端广播不按 subscribe 过滤，这条消息在本端可能先由流式 delta 建出了本轮气泡，
+   * 追加会把提问排到回复下面；插到气泡之前，还能让随后的 ensureStreamingAssistantMessage
+   * 认出尾部就是本轮气泡、继续往里追加，而不是另起一个空气泡。
+   * 本端发送链路（先加乐观消息、后建气泡）不能用这个选项：那时尾部的 tracked 气泡属于
+   * 上一轮，插到它前面会让两轮回复并进同一条气泡。
+   */
+  function addUserMessage(sessionId: string, msg: ChatMessage, options?: { beforeLiveStream?: boolean }) {
     const sid = String(sessionId)
     if (isHistoryAnchored(sid)) return
     const list = sessionMessages.value.get(sid) ?? []
     const msgId = String(msg.id)
     if (list.some(m => String(m.id) === msgId)) return
-    sessionMessages.value.set(sid, [...list, msg])
+    let next = [...list, msg]
+    if (options?.beforeLiveStream) {
+      const liveId = streamingAssistantMessageIds.get(sid)
+      const tailIndex = list.length - 1
+      if (liveId != null && tailIndex >= 0 && String(list[tailIndex].id) === liveId) {
+        next = [...list]
+        next.splice(tailIndex, 0, msg)
+      }
+    }
+    sessionMessages.value.set(sid, next)
+    // 用户消息就是通知的锚点：之前暂存的卡片到这里才能定位
+    flushPendingNotices(sid)
   }
 
   function addAssistantMessage(sessionId: string, msg: ChatMessage) {
@@ -350,23 +388,71 @@ export function createMessageRuntimeModule(ctx: {
    * 把同一轮回复劈成「历史一段 + 新起一段」，时间线与回合分组都会错乱。
    *
    * 这正是后台子代理在主会话执行中完成时的真实时序：通知插入时主线还在流式输出。
+   *
+   * 锚点是列表里最后一条 user 消息（启动本轮的那条提问），通知绝不能插到它之前。
+   * 广播不按 subscribe 过滤，进行中会话被打开/刷新时本地可能只有流式气泡、用户消息
+   * 还没落地，此时 list.length - 1 === 0，按上面的规则插就是把卡片顶到时间线最前面。
+   * 没有锚点时暂存进 pendingNoticeMessages，等用户消息/历史落地后由 flushPendingNotices 补插。
    */
   function insertPersistedAssistantMessage(sessionId: string, msg: ChatMessage) {
     const sid = String(sessionId)
     if (isHistoryAnchored(sid)) return
     const list = sessionMessages.value.get(sid) ?? []
+    const msgId = String(msg.id)
+    // REST 历史已带回该通知时不再插（WS 广播与 fetch 两条路径都会到）
+    if (list.some(m => String(m.id) === msgId)) return
+
+    let lastUserIndex = -1
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i]!.role === 'user') { lastUserIndex = i; break }
+    }
+    if (lastUserIndex < 0) {
+      const pending = pendingNoticeMessages.value.get(sid) ?? []
+      if (!pending.some(m => String(m.id) === msgId)) {
+        pendingNoticeMessages.value.set(sid, [...pending, msg])
+      }
+      return
+    }
+
     const liveId = streamingAssistantMessageIds.get(sid)
     const streamTailIndex = list.length - 1
     const hasStreamTail = liveId != null
       && streamTailIndex >= 0
       && String(list[streamTailIndex].id) === liveId
-    if (hasStreamTail) {
-      const next = [...list]
-      next.splice(streamTailIndex, 0, msg)
-      sessionMessages.value.set(sid, next)
+    // 流式气泡排在本轮提问之前（用户消息迟到的竞态残留）时，退到提问之后，
+    // 保证通知永远不属于「首个 user 之前」的那批消息。
+    const insertIndex = hasStreamTail
+      ? Math.max(streamTailIndex, lastUserIndex + 1)
+      : list.length
+    const next = [...list]
+    next.splice(insertIndex, 0, msg)
+    sessionMessages.value.set(sid, next)
+  }
+
+  /**
+   * 用户消息/REST 历史落地后，把暂存的通知按锚点补插进列表。
+   *
+   * options.allowTailAppend：本轮提问本端始终没见过（进行中会话被打开、跑完都没等到
+   * 用户消息落地）时的兜底。此时锚点永远不出现，继续暂存等于卡片一直不显示，退化为
+   * 直接追加；顺序不理想，但后续重拉历史会按服务端顺序归位。
+   */
+  function flushPendingNotices(sessionId: string, options?: { allowTailAppend?: boolean }) {
+    const sid = String(sessionId)
+    const pending = pendingNoticeMessages.value.get(sid)
+    if (pending == null || pending.length === 0) return
+    pendingNoticeMessages.value.delete(sid)
+    if (options?.allowTailAppend
+      && !(sessionMessages.value.get(sid) ?? []).some(m => m.role === 'user')) {
+      const list = sessionMessages.value.get(sid) ?? []
+      const known = new Set(list.map(m => String(m.id)))
+      const fresh = pending.filter(m => !known.has(String(m.id)))
+      if (fresh.length > 0) sessionMessages.value.set(sid, [...list, ...fresh])
       return
     }
-    sessionMessages.value.set(sid, [...list, msg])
+    // 仍然没有锚点时会重新暂存，等下一次落地
+    for (const msg of pending) {
+      insertPersistedAssistantMessage(sid, msg)
+    }
   }
 
   function ensureStreamingAssistantMessage(sessionId: string): ChatMessage {
@@ -648,6 +734,8 @@ export function createMessageRuntimeModule(ctx: {
     streamingAssistantMessageIds.delete(sid)
     sessionStreaming.value.set(sid, false)
     sessionThinking.value.set(sid, false)
+    // 本轮结束：锚点始终没出现就不等了，兜底把暂存的通知放出来（见 flushPendingNotices）
+    flushPendingNotices(sid, { allowTailAppend: true })
     // Message end — the full assistant message is now persisted server-side
     // Refresh will pick it up via fetchMessages
   }
@@ -656,6 +744,8 @@ export function createMessageRuntimeModule(ctx: {
     const sid = String(sessionId)
     streamingAssistantMessageIds.delete(sid)
     sessionMessages.value.delete(sid)
+    // 缓存连内容一起清空，暂存的通知没有意义（重新拉取时 REST 历史会带回）
+    pendingNoticeMessages.value.delete(sid)
   }
 
   /**
@@ -1040,6 +1130,7 @@ export function createMessageRuntimeModule(ctx: {
     historyAnchored.value = new Set()
     historyAnchorEpoch.value = new Map()
     sessionPhases.value = new Map()
+    pendingNoticeMessages.value = new Map()
     streamingAssistantMessageIds.clear()
     filteredToolCallIds.clear()
   }

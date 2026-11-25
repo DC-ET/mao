@@ -843,6 +843,98 @@ describe('session store 实体/投影模型', () => {
     })
     expect(store.getMessages('1').map(m => m.id)).toEqual(['u1', '902'])
   })
+
+  // 回归（用户截图反馈）：后台子代理完成卡片整批出现在时间线最前面、提问被挤到回复下面。
+  // 成因：后端把流式事件广播给该用户所有连接（不按 subscribe 过滤），一个「已经跑起来、
+  // 但本端没打开过」的会话，本地列表在 REST 历史到达前只有流式占位气泡，还没有本轮提问。
+  // 旧规则按 list.length - 1 插，此时就是 0，卡片全部落到提问之前。
+  it('insertPersistedAssistantMessage 列表里还没有本轮提问时不插到最前面，先暂存', () => {
+    const store = useSessionStore()
+    const streaming = store.ensureStreamingAssistantMessage('1')
+    store.appendDelta('1', '主线输出')
+
+    for (const id of ['901', '902', '903', '904']) {
+      store.insertPersistedAssistantMessage('1', {
+        id,
+        role: 'assistant',
+        content: '后台子代理（reviewer）已完成 · 点击查看详情',
+        createdAt: '2026-11-25 10:00:00',
+      })
+    }
+
+    // 没有锚点：卡片暂存，列表仍然只有流式气泡，没有一条落到 index 0
+    expect(store.getMessages('1').map(m => m.id)).toEqual([streaming.id])
+  })
+
+  // 锚点落地后补插：远端回显的提问插到本轮流式气泡之前，暂存的通知补到提问与回复之间。
+  it('提问落地后暂存的通知补插到提问与流式回复之间，delta 仍在同一气泡追加', () => {
+    const store = useSessionStore()
+    const streaming = store.ensureStreamingAssistantMessage('1')
+    store.appendDelta('1', '主线输出')
+
+    store.insertPersistedAssistantMessage('1', {
+      id: '901', role: 'assistant', content: '通知1', createdAt: '2026-11-25 10:00:00',
+    })
+    store.insertPersistedAssistantMessage('1', {
+      id: '902', role: 'assistant', content: '通知2', createdAt: '2026-11-25 10:01:00',
+    })
+
+    // user_message_saved 的远端回显分支：提问必须先于本轮流式气泡落位
+    store.addUserMessage('1', {
+      id: 'u1', role: 'user', content: '审查一下当前 mao 项目未提交的代码。', createdAt: '2026-11-25 09:59:00',
+    }, { beforeLiveStream: true })
+    store.appendDelta('1', '，后续')
+
+    const msgs = store.getMessages('1')
+    expect(msgs.map(m => m.id)).toEqual(['u1', '901', '902', streaming.id])
+    // 提问之后才是助手消息：useMessageRounds 的分组不会丢卡片
+    expect(msgs[0].role).toBe('user')
+    // 同一轮回复仍在同一条 tracked 气泡里追加，没有被拆成两段
+    const liveBubbles = msgs.filter(m => m.id === streaming.id)
+    expect(liveBubbles).toHaveLength(1)
+    expect(liveBubbles[0].content).toBe('主线输出，后续')
+  })
+
+  it('本轮跑完都没等到提问落地时，暂存的通知兜底放出，不会一直藏着', () => {
+    const store = useSessionStore()
+    const streaming = store.ensureStreamingAssistantMessage('1')
+    store.insertPersistedAssistantMessage('1', {
+      id: '901', role: 'assistant', content: '通知', createdAt: '2026-11-25 10:00:00',
+    })
+    // 进行中会话被打开、跑完都没等到用户消息：锚点永远不出现
+    store.markMessageComplete('1', {})
+
+    expect(store.getMessages('1').map(m => m.id)).toEqual([streaming.id, '901'])
+  })
+
+  it('addUserMessage 的 beforeLiveStream 只用于远端回显；没有流式气泡时照常追加', () => {
+    const store = useSessionStore()
+    store.addUserMessage('1', { id: 'u1', role: 'user', content: '第一轮', createdAt: '2026-11-25 10:00:00' })
+    store.addUserMessage('1', {
+      id: 'u2', role: 'user', content: '第二轮', createdAt: '2026-11-25 10:01:00',
+    }, { beforeLiveStream: true })
+    expect(store.getMessages('1').map(m => m.id)).toEqual(['u1', 'u2'])
+  })
+
+  // 边路任务 Tab 打开进行中会话时 fetchMessages 迟到：通知先暂存，REST 历史（已含这些卡片）
+  // 落地后必须按服务端顺序归位，且不能因为暂存的副本重复上屏。
+  it('REST 历史带回通知后，暂存的副本不重复上屏', () => {
+    const store = useSessionStore()
+    const streaming = store.ensureStreamingAssistantMessage('1')
+    store.insertPersistedAssistantMessage('1', {
+      id: '901', role: 'assistant', content: '通知', createdAt: '2026-11-25 10:00:00',
+    })
+
+    store.applyFetchedMessages('1', [
+      { id: 'u1', role: 'user', content: '提问', createdAt: '2026-11-25 09:59:00' },
+      { id: '901', role: 'assistant', content: '通知', createdAt: '2026-11-25 10:00:00' },
+      { id: 'a1', role: 'assistant', content: '回复', createdAt: '2026-11-25 10:02:00' },
+    ], { preserveStreamingAssistant: true })
+
+    const msgs = store.getMessages('1')
+    expect(msgs.map(m => m.id)).toEqual(['u1', '901', 'a1', streaming.id])
+    expect(msgs.filter(m => m.id === '901')).toHaveLength(1)
+  })
 })
 
 describe('session store 边路任务待处理计数同步', () => {

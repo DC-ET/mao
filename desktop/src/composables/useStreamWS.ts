@@ -1160,14 +1160,17 @@ export function useStreamWS() {
               callback(sid, remoteMsgId, true)
             })
           } else if (hasRemoteEcho) {
-            // 远端消息（无本端乐观消息可匹配）：追加回显并占位流式 assistant 消息。
+            // 远端消息（无本端乐观消息可匹配）：按内容回显新消息并占位流式 assistant 消息。
+            // beforeLiveStream：这条消息在本端可能已由广播 delta 先建出本轮流式气泡，
+            // 追加会把提问排到回复下面；插到气泡之前，随后的 ensureStreamingAssistantMessage
+            // 才能认出尾部就是本轮气泡、继续往里追加。
             sessionStore.addUserMessage(sid, {
               id: remoteMsgId ?? `msg_${Date.now()}_user`,
               role: 'user',
               content,
               createdAt: nowDateTime(),
               images
-            })
+            }, { beforeLiveStream: true })
             sessionStore.ensureStreamingAssistantMessage(sid)
           }
         }
@@ -1185,8 +1188,10 @@ export function useStreamWS() {
           // 仅处理带后台子代理标记的通知；其他来源的助手消息不在这里插入
           if (metadata?.backgroundSubagentCompletion != null
             && !sessionStore.getMessages(sessionId).some(m => String(m.id) === noticeId)) {
-            // 插在流式气泡之前：通知到达时主线往往还在流式输出，append 到尾部会让
-            // 下一个 delta 新建空气泡，把同一轮回复劈成两段。
+            // 插在本轮提问之后、流式气泡之前：通知到达时主线往往还在流式输出，append 到
+            // 尾部会让下一个 delta 新建空气泡，把同一轮回复劈成两段；提问还没落地时
+            // （广播不按 subscribe 过滤，进行中会话被打开就会这样）store 会先暂存，
+            // 否则卡片会顶到时间线最前面。
             sessionStore.insertPersistedAssistantMessage(sessionId, {
               id: noticeId,
               role: 'assistant',
