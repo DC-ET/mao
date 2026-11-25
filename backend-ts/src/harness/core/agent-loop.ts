@@ -32,6 +32,7 @@ import type { Tool } from '../tool/tool.js';
 import type { ShellSessionManager } from '../shell/shell-session-manager.js';
 import type { McpClientManager } from '../mcp/mcp-client-manager.js';
 import { NoProgressGuard, NoProgressLoopException } from './no-progress-guard.js';
+import { noticeFromTaskToolResult } from './todo-state-notice.js';
 import type { InFlightToolRegistry } from './in-flight-tool-registry.js';
 
 /**
@@ -739,6 +740,7 @@ export class AgentLoop {
       const tc = pendingCalls[0];
       const result = await runOne(tc);
       const rawResult = result.content;
+      this.observeTodoStateNotice(tc, rawResult, context);
       const toolSave = this.processToolResult(rawResult, tc, context, result.approvalMark);
       if (cancelFlag?.get()) return;
       tc.summary = ToolResultSummarizer.summarize(
@@ -759,6 +761,7 @@ export class AgentLoop {
       const tc = pendingCalls[i];
       const result = results[i];
       const rawResult = result.content;
+      this.observeTodoStateNotice(tc, rawResult, context);
       const toolSave = this.processToolResult(rawResult, tc, context, result.approvalMark);
       tc.summary = ToolResultSummarizer.summarize(
         tc.function?.name ?? '', tc.function?.arguments ?? '', toolSave.content,
@@ -784,6 +787,18 @@ export class AgentLoop {
       resultContent: toolSave.content,
       attachment: tc.id ? context.toolAttachments.get(tc.id) ?? null : null,
     });
+  }
+
+  /**
+   * task_* 工具执行后重建台账 notice（技术方案 2026-11-25 §3.2.3 刷新点 2）。
+   * 解析对象取 processToolResult 改写前的 rawResult 原始 JSON；解析成功（外层非 null）
+   * 才赋值，且 notice 为 null 时同样赋值（台账删空 → 清空旧值，勿留幽灵台账）；
+   * 解析失败 / 非 task 工具不赋值，保留旧值。并发时序注：同轮多个 task_* 并发执行，
+   * 最后处理的调用未必对应最后一次 DB 操作，notice 可能落后一个操作，下一轮自愈。
+   */
+  private observeTodoStateNotice(tc: ToolCall, rawResult: string, context: AgentExecutionContext): void {
+    const parsed = noticeFromTaskToolResult(tc.function?.name ?? '', rawResult);
+    if (parsed != null) context.todoStateNotice = parsed.notice;
   }
 
   private processToolResult(

@@ -9,6 +9,8 @@ import { MessageHistoryNormalizer } from './message-history-normalizer.js';
 import { PersistedChatMessage } from './persisted-chat-message.js';
 import { ToolAttachmentLoader } from './tool-attachment-loader.js';
 import { scanNoProgressNotices } from './no-progress-notice.js';
+import { buildTodoStateNotice } from './todo-state-notice.js';
+import type { SessionTodoMapper } from '../todo/session-todo.mapper.js';
 import { harnessLog } from '../log.js';
 
 export interface HistorySnapshot {
@@ -22,6 +24,10 @@ export class SessionHistoryLoader {
     private readonly sessionService: SessionService,
     private readonly contextManager: ContextManager,
     private readonly compactionArchiveService: CompactionArchiveService,
+    // 任务台账 notice 的查库依赖（技术方案 2026-11-25 §3.2.3）。可选依赖：缺省时
+    // applyHistory 不重建 notice（保持 null），既有测试一行不用改——与 PromptEngine 的
+    // workspaceRulesSnapshot 可选注入先例同款处理。
+    private readonly sessionTodoMapper: SessionTodoMapper | null = null,
   ) {}
 
   async loadHistoryAfterBoundary(sessionId: number, boundary: number): Promise<HistorySnapshot> {
@@ -72,6 +78,22 @@ export class SessionHistoryLoader {
     context.noProgressNotices = noProgress.notices;
     context.noProgressTail = noProgress.tail;
     context.noProgressEpoch += 1;
+    // 任务台账 notice（技术方案 2026-11-25 §3.2.3 刷新点 1）：本函数同时被执行开始
+    // （harness-service）与压缩重载（session-compaction-orchestrator）调用，一个钩子覆盖
+    // 两条路径。以 DB 为权威重建；查库失败降级为 null 不阻断（与 resolvePreviousUserYmdBefore
+    // 同构容错）——这是提示增强，不能因 DB 抖动打挂 buildContext 与压缩重载。
+    context.todoStateNotice = await this.resolveTodoStateNotice(context);
+  }
+
+  private async resolveTodoStateNotice(context: AgentExecutionContext): Promise<string | null> {
+    if (context.sessionId == null || this.sessionTodoMapper == null) return null;
+    try {
+      return buildTodoStateNotice(await this.sessionTodoMapper.listBySession(context.sessionId));
+    } catch (e) {
+      harnessLog('warn',
+        `Failed to rebuild todo state notice for session ${context.sessionId}: ${(e as Error).message}`);
+      return null;
+    }
   }
 
   private async resolveLatestUserMessage(

@@ -27,6 +27,10 @@ function makeService(overrides: Record<string, unknown> = {}) {
     getValue: vi.fn(async () => ''),
     ...overrides.settings as object,
   };
+  const agents = {
+    findById: vi.fn(async () => ({ id: 5, defaultModelId: null as number | null })),
+    ...overrides.agents as object,
+  };
   const registry = { send: vi.fn() };
   const tasks: Array<() => void | Promise<void>> = [];
   const executor = vi.fn((fn: () => void | Promise<void>) => tasks.push(fn));
@@ -37,10 +41,11 @@ function makeService(overrides: Record<string, unknown> = {}) {
     llm as never,
     models as never,
     settings as never,
+    agents as never,
     registry as never,
     executor,
   );
-  return { service, sessionRepo, messageRepo, userCommands, llm, models, settings, registry, executor, tasks };
+  return { service, sessionRepo, messageRepo, userCommands, llm, models, settings, agents, registry, executor, tasks };
 }
 
 describe('cleanModelTitle', () => {
@@ -76,7 +81,7 @@ describe('SessionTitleService', () => {
       reasoning: { effort: 'none' },
       thinking: { type: 'disabled' },
       enableThinking: false,
-    }), expect.objectContaining({ id: 9 }), expect.anything());
+    }), expect.objectContaining({ id: 3 }), expect.anything());
     expect(ctx.sessionRepo.updateTitleIfPlaceholder).toHaveBeenCalledWith(
       11, 'NORMAL', '未命名会话', '排查登录接口超时', expect.any(String),
     );
@@ -96,13 +101,17 @@ describe('SessionTitleService', () => {
     expect(ctx.llm.chat).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 3 }), expect.anything());
   });
 
-  it('falls back to the default model when the configured title model is missing', async () => {
+  it('falls back to the session model when the configured title model is missing', async () => {
     const ctx = makeService({ settings: { getValue: vi.fn(async () => '999') } });
-    ctx.models.selectById.mockResolvedValue(null);
+    ctx.models.selectById.mockImplementation(async (id: number) => (
+      id === 3 ? { id: 3, name: 'session', modelId: 'session' } : null
+    ));
     await ctx.service.generateAndApply(11, 21, '请排查登录超时');
     expect(ctx.models.selectById).toHaveBeenCalledWith(999);
-    expect(ctx.models.selectDefault).toHaveBeenCalled();
-    expect(ctx.llm.chat).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 9 }), expect.anything());
+    expect(ctx.models.selectById).toHaveBeenCalledWith(3);
+    expect(ctx.models.selectDefault).not.toHaveBeenCalled();
+    expect(ctx.agents.findById).not.toHaveBeenCalled();
+    expect(ctx.llm.chat).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 3 }), expect.anything());
   });
 
   it('preprocesses commands, skills and file references before invoking the model', async () => {
@@ -125,23 +134,83 @@ describe('SessionTitleService', () => {
   it('continues with raw command markers when command lookup fails', async () => {
     const ctx = makeService();
     ctx.userCommands.listAvailableForUser.mockRejectedValue(new Error('database unavailable'));
-    ctx.models.selectDefault.mockResolvedValue(null);
+    ctx.models.selectById.mockResolvedValue(null);
     await ctx.service.generateAndApply(11, 21, '${review}$ #{fix}# @{secret.ts}@');
     expect(ctx.sessionRepo.updateTitleIfPlaceholder).toHaveBeenCalledWith(
       11, 'NORMAL', '未命名会话', '#{fix}#', expect.any(String),
     );
   });
 
-  it('uses the default model when no title model is configured', async () => {
+  it('uses the session model when no title model is configured', async () => {
     const ctx = makeService();
     await ctx.service.generateAndApply(11, 21, 'hello');
     expect(ctx.settings.getValue).toHaveBeenCalledWith('session.titleModelId');
+    expect(ctx.models.selectById).toHaveBeenCalledWith(3);
+    expect(ctx.models.selectDefault).not.toHaveBeenCalled();
+    expect(ctx.agents.findById).not.toHaveBeenCalled();
+    expect(ctx.llm.chat).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 3 }), expect.anything());
+  });
+
+  it('uses the agent default model when the session has no explicit model', async () => {
+    const ctx = makeService({
+      sessionRepo: { findById: vi.fn(async () => ({
+        id: 11, userId: 7, agentId: 5, title: '未命名会话', sessionType: 'NORMAL', modelId: null,
+      })) },
+      agents: { findById: vi.fn(async () => ({ id: 5, defaultModelId: 8 })) },
+    });
+    ctx.models.selectById.mockImplementation(async (id: number) => (
+      id === 8 ? { id: 8, name: 'agent-default', modelId: 'agent' } : null
+    ));
+    await ctx.service.generateAndApply(11, 21, 'hello');
+    expect(ctx.agents.findById).toHaveBeenCalledWith(5);
+    expect(ctx.models.selectById).toHaveBeenCalledWith(8);
+    expect(ctx.models.selectDefault).not.toHaveBeenCalled();
+    expect(ctx.llm.chat).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 8 }), expect.anything());
+  });
+
+  it('uses the system default model when the session and its agent have no model', async () => {
+    const ctx = makeService({
+      sessionRepo: { findById: vi.fn(async () => ({
+        id: 11, userId: 7, agentId: 5, title: '未命名会话', sessionType: 'NORMAL', modelId: null,
+      })) },
+    });
+    await ctx.service.generateAndApply(11, 21, 'hello');
+    expect(ctx.agents.findById).toHaveBeenCalledWith(5);
     expect(ctx.models.selectDefault).toHaveBeenCalled();
-    expect(ctx.models.selectById).not.toHaveBeenCalled();
+    expect(ctx.llm.chat).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 9 }), expect.anything());
+  });
+
+  it('skips a missing agent default model and uses the system default', async () => {
+    const ctx = makeService({
+      sessionRepo: { findById: vi.fn(async () => ({
+        id: 11, userId: 7, agentId: 5, title: '未命名会话', sessionType: 'NORMAL', modelId: null,
+      })) },
+      agents: { findById: vi.fn(async () => ({ id: 5, defaultModelId: 8 })) },
+    });
+    ctx.models.selectById.mockResolvedValue(null);
+    await ctx.service.generateAndApply(11, 21, 'hello');
+    expect(ctx.models.selectById).toHaveBeenCalledWith(8);
+    expect(ctx.models.selectDefault).toHaveBeenCalled();
+    expect(ctx.llm.chat).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 9 }), expect.anything());
+  });
+
+  it('does not replace a missing explicit session model with the system default', async () => {
+    const ctx = makeService();
+    ctx.models.selectById.mockResolvedValue(null);
+    await ctx.service.generateAndApply(11, 21, '  fallback title  ');
+    expect(ctx.models.selectDefault).not.toHaveBeenCalled();
+    expect(ctx.llm.chat).not.toHaveBeenCalled();
+    expect(ctx.sessionRepo.updateTitleIfPlaceholder).toHaveBeenCalledWith(
+      11, 'NORMAL', '未命名会话', 'fallback title', expect.any(String),
+    );
   });
 
   it('falls back to the preprocessed prefix when model resolution or output fails', async () => {
-    const ctx = makeService();
+    const ctx = makeService({
+      sessionRepo: { findById: vi.fn(async () => ({
+        id: 11, userId: 7, title: '未命名会话', sessionType: 'NORMAL', modelId: null,
+      })) },
+    });
     ctx.models.selectDefault.mockResolvedValue(null);
     await ctx.service.generateAndApply(11, 21, '  fallback title  ');
     expect(ctx.sessionRepo.updateTitleIfPlaceholder).toHaveBeenCalledWith(
@@ -233,7 +302,7 @@ describe('SessionTitleService', () => {
         { role: 'user', content: '帮我把这份需求文档整理成任务拆解清单' },
       ],
       tools: [], stream: false, temperature: 0.2,
-    }), expect.objectContaining({ id: 9 }), expect.anything());
+    }), expect.objectContaining({ id: 3 }), expect.anything());
     // 落库与 WS 推送由调用方（飞书 finalizeNewSessionTitle）按待命名标志决定。
     expect(ctx.sessionRepo.updateTitleIfPlaceholder).not.toHaveBeenCalled();
     expect(ctx.registry.send).not.toHaveBeenCalled();
@@ -251,7 +320,7 @@ describe('SessionTitleService', () => {
 
   it('falls back to the local heuristic for external titles when the model is unavailable or fails', async () => {
     const noModel = makeService();
-    noModel.models.selectDefault.mockResolvedValue(null);
+    noModel.models.selectById.mockResolvedValue(null);
     expect(await noModel.service.generateExternalTitle(11, '  整理需求文档  ')).toBe('整理需求文档');
     expect(noModel.llm.chat).not.toHaveBeenCalled();
 

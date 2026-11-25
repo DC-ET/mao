@@ -5,13 +5,13 @@ import { CompactionConfig } from './compaction-config.js';
 import { CompactionSignalBus } from './compaction-signal-bus.js';
 import { AtomicBoolean } from '../atomic-boolean.js';
 import type { AgentEventListener } from './agent-event-listener.js';
-import type { PromptEngine } from './prompt-engine.js';
+import { PromptEngine } from './prompt-engine.js';
 import type { ContextManager } from './context-manager.js';
 import type { BackgroundTaskManager } from './background-task-manager.js';
 import type { SessionCompactionOrchestrator } from './session-compaction-orchestrator.js';
 import type { ActiveContextCalculator } from './active-context-calculator.js';
 import type { ToolDispatcher } from '../tool/tool-dispatcher.js';
-import type { LlmAdapter, StreamCallback, StreamChunk, ToolCall } from '../llm/chat-request.js';
+import type { ChatRequest, LlmAdapter, StreamCallback, StreamChunk, ToolCall } from '../llm/chat-request.js';
 import type { ShellSessionManager } from '../shell/shell-session-manager.js';
 
 import type { SessionService } from '../deps.js';
@@ -20,6 +20,8 @@ import type { Tool } from '../tool/tool.js';
 import { ToolCallContext } from '../tool/tool-call-context.js';
 import { NoProgressLoopException } from './no-progress-guard.js';
 import { roundSignature, type NoProgressCall } from './no-progress-notice.js';
+import { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
+import { resetPrefixMonitorForTest } from './prompt-prefix-monitor.js';
 
 describe('AgentLoop', () => {
   const llmAdapter = { stream: vi.fn(), chat: vi.fn() } as unknown as LlmAdapter & { stream: ReturnType<typeof vi.fn> };
@@ -1501,5 +1503,162 @@ describe('AgentLoop', () => {
     // 每轮压缩后 streak 都按重放结果归零，不会在第 15 轮误中止
     expect(toolDispatcher.dispatchInvocation).toHaveBeenCalledTimes(16);
     expect(ctx.noProgressNotices).toEqual([]);
+  });
+
+  describe('任务台账 notice（技术方案 2026-11-25 §3.2.3 刷新点 2）', () => {
+    /** 真实 PromptEngine：让请求副本的尾部 notice 真实渲染，而非 mock 直通。 */
+    function makeRealLoop(): AgentLoop {
+      const engine = new PromptEngine(
+        { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+        { getWorkspaceRoot: () => '/repo' } as never,
+        RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+        { getByUserIdAndName: async () => null } as never,
+        { getUserSkillDocuments: () => [] } as never,
+      );
+      return new AgentLoop(
+        llmAdapter, engine, contextManager, toolDispatcher, backgroundTaskManager,
+        shellSessionManager, activityHeartbeat, sessionService, sessionCompactionOrchestrator,
+        activeContextCalculator, mcpClientManager,
+      );
+    }
+
+    /** 捕获第二个 LLM 请求（工具轮之后的下一请求副本）。 */
+    function stubToolThenCaptureRequest(toolName: string, args: string): ChatRequest[] {
+      const captured: ChatRequest[] = [];
+      let call = 0;
+      llmAdapter.stream.mockImplementation(async (request: unknown, _c: unknown, cb: StreamCallback) => {
+        call += 1;
+        if (call === 1) {
+          cb.onChunk(toolChunk({ id: 'call-1', function: { name: toolName, arguments: args } }));
+          cb.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+        } else {
+          captured.push(request as ChatRequest);
+          cb.onChunk(contentChunk(null, 'done'));
+          cb.onComplete({ promptTokens: 4, completionTokens: 1, totalTokens: 5 });
+        }
+      });
+      return captured;
+    }
+
+    it('task_update 执行后下一请求副本尾部出现 <system-notice> 台账（含 id/status）', async () => {
+      resetPrefixMonitorForTest();
+      const realLoop = makeRealLoop();
+      const l = listener();
+      const p = persistence();
+      stubActiveContext(42);
+      backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+      toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult(JSON.stringify({
+        todos: [
+          { id: 1, sessionId: 11, content: '任务 A', status: 'completed', sortOrder: 0 },
+          { id: 2, sessionId: 11, content: '任务 B', status: 'in_progress', sortOrder: 1 },
+        ],
+      })));
+      const captured = stubToolThenCaptureRequest(
+        'task_update', '{"items":[{"id":1,"status":"completed"}]}',
+      );
+      const ctx = context();
+      ctx.tools = [namedTool('task_update')];
+
+      await realLoop.execute(ctx, l, p);
+
+      expect(ctx.todoStateNotice).toContain('#2 in_progress 任务 B');
+      expect(captured).toHaveLength(1);
+      const last = captured[0]!.messages[captured[0]!.messages.length - 1];
+      expect(last.role).toBe('user');
+      expect(String(last.content)).toContain('<system-notice>');
+      expect(String(last.content)).toContain('#2 in_progress 任务 B');
+      // 台账只在请求尾部出现一次（请求副本逐轮重建，不随轮累积）
+      const ledgerMessages = captured[0]!.messages
+        .filter((m) => typeof m.content === 'string' && (m.content as string).includes('任务台账'));
+      expect(ledgerMessages).toHaveLength(1);
+    });
+
+    it('非 task 工具轮 notice 保持不变', async () => {
+      const l = listener();
+      const p = persistence();
+      promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+      stubActiveContext(42);
+      backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+      toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult('{"ok":true}'));
+      let call = 0;
+      llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, cb: StreamCallback) => {
+        call += 1;
+        if (call === 1) {
+          cb.onChunk(toolChunk({ id: 'call-1', function: { name: 'read_file', arguments: '{"path":"a"}' } }));
+          cb.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+        } else {
+          cb.onChunk(contentChunk(null, 'done'));
+          cb.onComplete({ promptTokens: 4, completionTokens: 1, totalTokens: 5 });
+        }
+      });
+      const ctx = context();
+      ctx.todoStateNotice = '旧台账（不受非 task 工具影响）';
+
+      await agentLoop.execute(ctx, l, p);
+
+      expect(ctx.todoStateNotice).toBe('旧台账（不受非 task 工具影响）');
+    });
+
+    it('task_delete 删光全部待办后 notice 清空（解析成功一律覆盖，勿留幽灵台账）', async () => {
+      const l = listener();
+      const p = persistence();
+      promptEngine.buildRequest.mockResolvedValue({ messages: [], stream: true });
+      stubActiveContext(42);
+      backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+      toolDispatcher.dispatchInvocation.mockResolvedValue(
+        toolResult(JSON.stringify({ todos: [], message: '已删除 2 个事项' })),
+      );
+      let call = 0;
+      llmAdapter.stream.mockImplementation(async (_r: unknown, _c: unknown, cb: StreamCallback) => {
+        call += 1;
+        if (call === 1) {
+          cb.onChunk(toolChunk({ id: 'call-1', function: { name: 'task_delete', arguments: '{"items":[{"id":1},{"id":2}]}' } }));
+          cb.onComplete({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
+        } else {
+          cb.onChunk(contentChunk(null, 'done'));
+          cb.onComplete({ promptTokens: 4, completionTokens: 1, totalTokens: 5 });
+        }
+      });
+      const ctx = context();
+      ctx.tools = [namedTool('task_delete')];
+      ctx.todoStateNotice = '旧台账（将被删光）';
+
+      await agentLoop.execute(ctx, l, p);
+
+      expect(ctx.todoStateNotice).toBeNull();
+    });
+
+    it('mid-loop 压缩重建的请求携带刷新后的台账 notice（applyHistory 以 DB 为权威）', async () => {
+      resetPrefixMonitorForTest();
+      const realLoop = makeRealLoop();
+      const ctx = contextWithMidLoopConfig(100, 0.5);
+      ctx.tools = [namedTool('task_update')];
+      const l = listener();
+      const p = persistence();
+      stubActiveContext(80);
+      backgroundTaskManager.consumeCompletedResults.mockReturnValue({});
+      toolDispatcher.dispatchInvocation.mockResolvedValue(toolResult(JSON.stringify({
+        todos: [{ id: 9, sessionId: 11, content: '旧任务', status: 'pending', sortOrder: 0 }],
+      })));
+      sessionCompactionOrchestrator.compact.mockImplementation(
+        async (_sid: number, compacted: AgentExecutionContext) => {
+          // 模拟压缩重载路径的 applyHistory：以 DB 为权威重建 notice（评审 P1 语义：一律覆盖）
+          compacted.todoStateNotice = '压缩后重建的台账（DB 权威）';
+          return true;
+        },
+      );
+      const captured = stubToolThenCaptureRequest(
+        'task_update', '{"items":[{"id":9,"status":"completed"}]}',
+      );
+
+      await realLoop.execute(ctx, l, p);
+
+      expect(sessionCompactionOrchestrator.compact).toHaveBeenCalled();
+      // 第二轮请求用的是压缩后重建的 preparedRequest：notice 是刷新值，不是工具轮的旧值
+      expect(captured).toHaveLength(1);
+      const last = captured[0]!.messages[captured[0]!.messages.length - 1];
+      expect(String(last.content)).toContain('压缩后重建的台账（DB 权威）');
+      expect(String(last.content)).not.toContain('#9 pending 旧任务');
+    });
   });
 });

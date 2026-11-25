@@ -720,6 +720,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     harnessTuning, llmCallService, skillLoader, pathSandbox, runtimeResolver,
     commandService, skillSync, workspaceRulesSnapshotService, sessionSvc,
     compactionSvc, sessionCompactionEventService, settingService, modelRepo,
+    todoMapper,
     authResolver: llmAuthResolver,
   });
   const { openAiLlmAdapter, anthropicLlmAdapter, responsesLlmAdapter, llmAdapter, promptEngine, tokenEstimator, compactionService, contextManager, compactionArchiveService, compactionConfig, historyLoader, activeContext, compactionModelResolver, orchestrator } = llmEngine;
@@ -998,6 +999,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       selectDefault: () => modelRepo.findDefault(),
     },
     { getValue: (key: string) => settingService.getValue(key) },
+    { findById: (id: number) => agentRepo.findById(id) },
     wsRegistry,
     (fn) => agentExecutor.submit(fn),
   );

@@ -40,6 +40,10 @@ interface SettingLookup {
   getValue(key: string): Promise<string | null>;
 }
 
+interface AgentLookup {
+  findById(id: number): Promise<{ defaultModelId?: number | null } | null>;
+}
+
 export class SessionTitleService {
   constructor(
     private readonly sessionRepo: SessionRepository,
@@ -48,6 +52,7 @@ export class SessionTitleService {
     private readonly llmAdapter: LlmAdapter,
     private readonly modelLookup: ModelLookup,
     private readonly settingLookup: SettingLookup,
+    private readonly agentLookup: AgentLookup,
     private readonly registry: TitleRegistry,
     private readonly executor: (fn: () => void | Promise<void>) => unknown,
   ) {}
@@ -80,7 +85,7 @@ export class SessionTitleService {
         return;
       }
 
-      const model = await this.resolveTitleModel();
+      const model = await this.resolveTitleModel(session);
       modelId = model?.id ?? null;
 
       let title: string | null = null;
@@ -116,7 +121,7 @@ export class SessionTitleService {
     if (session == null) return null;
     const preprocessed = await this.preprocess(text, session.userId);
     if (preprocessed === '') return null;
-    const model = await this.resolveTitleModel();
+    const model = await this.resolveTitleModel(session);
     if (model != null) {
       try {
         const title = cleanModelTitle(await this.invoke(preprocessed, model, session));
@@ -128,16 +133,52 @@ export class SessionTitleService {
     return TitleGenerator.generate(preprocessed);
   }
 
-  private async resolveTitleModel(): Promise<LlmModel | null> {
+  /**
+   * 显式标题模型优先。留空、无效或模型已不在时，使用这场会话实际对话的模型：
+   * 会话 modelId →（列为空时）Agent 默认模型 → 系统默认模型。
+   * 会话列上的模型已不可解析时不改用别的模型，与 HarnessService.buildContext 一致。
+   */
+  private async resolveTitleModel(session: Session): Promise<LlmModel | null> {
+    const configured = await this.lookupConfiguredTitleModel();
+    if (configured) return configured;
+    return this.resolveConversationModel(session);
+  }
+
+  private async lookupConfiguredTitleModel(): Promise<LlmModel | null> {
     const configured = await this.settingLookup.getValue(SESSION_TITLE_MODEL_ID_KEY);
-    if (hasText(configured)) {
-      const parsed = Number(configured!.trim());
-      if (Number.isSafeInteger(parsed)) {
-        const model = await this.modelLookup.selectById(parsed);
-        if (model) return model;
-        console.warn(`[session-title] configured title model ${configured} not found, fallback to default`);
-      } else {
-        console.warn(`[session-title] invalid title model config: ${configured}, fallback to default`);
+    if (!hasText(configured)) return null;
+    const parsed = Number(configured!.trim());
+    if (!Number.isSafeInteger(parsed)) {
+      console.warn(`[session-title] invalid title model config: ${configured}, fallback to session model`);
+      return null;
+    }
+    const model = await this.modelLookup.selectById(parsed);
+    if (!model) {
+      console.warn(`[session-title] configured title model ${configured} not found, fallback to session model`);
+    }
+    return model;
+  }
+
+  private async resolveConversationModel(session: Session): Promise<LlmModel | null> {
+    if (session.modelId != null) {
+      const model = await this.modelLookup.selectById(session.modelId);
+      if (!model) {
+        console.warn(`[session-title] session model ${session.modelId} not found`);
+      }
+      return model;
+    }
+    const agentId = session.agentId;
+    if (agentId != null) {
+      try {
+        const agent = await this.agentLookup.findById(agentId);
+        const defaultModelId = agent?.defaultModelId;
+        if (defaultModelId != null) {
+          const model = await this.modelLookup.selectById(defaultModelId);
+          if (model) return model;
+          console.warn(`[session-title] agent default model ${defaultModelId} not found, fallback to system default`);
+        }
+      } catch (error) {
+        console.warn(`[session-title] agent lookup failed agentId=${agentId}: ${errorMessage(error)}`);
       }
     }
     return this.modelLookup.selectDefault();

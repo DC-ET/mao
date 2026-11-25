@@ -197,7 +197,7 @@
                           :disabled="!canWrite"
                           clearable
                           filterable
-                          placeholder="默认模型"
+                          :placeholder="modelSelectPlaceholder(row.settingKey)"
                           style="width: 100%"
                         >
                           <el-option v-for="model in models" :key="model.id" :label="modelLabel(model)" :value="String(model.id)" />
@@ -643,6 +643,11 @@ function isSwitchOn(key: string): boolean {
 
 function isModelSetting(key: string | undefined | null) {
   return !!key && MODEL_SELECT_KEYS.has(key)
+}
+
+/** 标题模型留空表示跟随当前会话所用模型，其余模型项留空仍是系统默认模型。 */
+function modelSelectPlaceholder(key: string | undefined | null): string {
+  return key === 'session.titleModelId' ? '当前会话模型' : '默认模型'
 }
 
 /** 邮件 SMTP 设置 key：表单值与 test/smtp overrides 的映射口径集中在此。 */
