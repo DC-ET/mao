@@ -196,4 +196,36 @@ describe('useTerminal 关闭最后一个 tab 自动收起面板', () => {
     expect(focusMock.mock.calls).toHaveLength(0)
     vi.unstubAllGlobals()
   })
+
+  it('首帧序号超过 attached 基线时自动请求全量回放', async () => {
+    useCloudSession()
+    const terminal = useTerminal()
+    terminal.isOpen.value = true
+    apiMock.post.mockResolvedValue({ data: remoteInfo('t1') })
+    await terminal.createTerminal()
+    const handlers = wsMock.registerTerminal.mock.calls.find((call) => call[0] === 't1')![1]
+    wsMock.attach.mockClear()
+
+    handlers.onAttached(80, 24, { replay: 'full', seq: 10 })
+    handlers.onOutput('x', { seq: 12, endSeq: 13 })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(wsMock.attach).toHaveBeenCalledWith('t1', { fromSeq: null })
+  })
+
+  it('空 delta 之后首帧序号等于基线时不误判缺口', async () => {
+    useCloudSession()
+    const terminal = useTerminal()
+    terminal.isOpen.value = true
+    apiMock.post.mockResolvedValue({ data: remoteInfo('t1') })
+    await terminal.createTerminal()
+    const handlers = wsMock.registerTerminal.mock.calls.find((call) => call[0] === 't1')![1]
+    wsMock.attach.mockClear()
+
+    handlers.onAttached(80, 24, { replay: 'delta', seq: 10 })
+    handlers.onOutput('x', { seq: 10, endSeq: 11 })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(wsMock.attach).not.toHaveBeenCalled()
+  })
 })

@@ -12,6 +12,7 @@ import { useSessionStore } from '../stores/session'
 import { installImeTextareaSweeper, shouldInstallImeSweeper } from '../utils/terminal-ime-guard'
 import { installTouchScroll } from '../utils/terminal-touch-scroll'
 import { isTouchTerminal } from '../utils/terminal-touch'
+import { evaluateOutputSeq } from '../utils/terminal-seq'
 import { useTerminalWS, type TerminalAttachedMeta, type TerminalOutputMeta } from './useTerminalWS'
 import { useTerminalModifiers } from './useTerminalModifiers'
 
@@ -85,6 +86,8 @@ interface TerminalInstance {
   lastSeq: number | null
   /** 下一帧应出现的帧首序号；null 表示尚未建立序号基线（全量回放中）。 */
   expectedSeq: number | null
+  /** attached 帧给出的当前累计序号：首帧 seq 超过它即说明回放帧被丢弃。 */
+  attachBaseline: number | null
   /** 收到过背压缺口：下次 attach 不带 fromSeq，强制全量回放。 */
   needsFullReplay: boolean
 }
@@ -338,6 +341,7 @@ export function useTerminal() {
       webglState,
       lastSeq: null,
       expectedSeq: null,
+      attachBaseline: null,
       needsFullReplay: false,
     })
 
@@ -348,33 +352,67 @@ export function useTerminal() {
     return id
   }
 
+  /** 正在请求全量回放的终端：避免缺口持续出现时反复 attach。 */
+  const replayRequested = new Set<string>()
+
   /** 增量回放：根据 attached / output 帧维护本地的序号基线。 */
-  function applyRemoteOutput(inst: TerminalInstance, data: string, meta?: TerminalOutputMeta): void {
+  function applyRemoteOutput(
+    id: string,
+    inst: TerminalInstance,
+    data: string,
+    meta?: TerminalOutputMeta,
+  ): void {
     if (meta && typeof meta.seq === 'number' && typeof meta.endSeq === 'number') {
-      if (inst.expectedSeq != null && meta.seq !== inst.expectedSeq) {
-        // 背压丢帧（或服务端补发不连续）：本地内容已有缺口，下次 attach 强制全量
-        inst.needsFullReplay = true
-        inst.lastSeq = null
+      if (evaluateOutputSeq(inst.expectedSeq, inst.attachBaseline, { seq: meta.seq, endSeq: meta.endSeq }) === 'gap') {
+        // 背压丢帧（或服务端补发不连续）：本地内容已有缺口，立即请求全量回放。
+        // 只置标志不够——WS 活着时没有其他路径会再次 attach，缺口会一直留在屏幕上。
+        if (!inst.needsFullReplay) {
+          inst.needsFullReplay = true
+          inst.lastSeq = null
+          inst.expectedSeq = null
+        }
+        // 重试：上一次 attach 超时后 replayRequested 已解锁，继续来的缺口帧要能再次触发
+        requestFullReplay(id)
+      } else {
+        inst.expectedSeq = meta.endSeq
+        if (!inst.needsFullReplay) inst.lastSeq = meta.endSeq
       }
-      inst.expectedSeq = meta.endSeq
-      if (!inst.needsFullReplay) inst.lastSeq = meta.endSeq
     }
     inst.terminal.write(data)
   }
 
+  /**
+   * 缺口检测后自动重绑全量回放。attach 的 attached(full) 会先清屏再补发缓冲；
+   * 请求在途期间不再重复 attach，收到 attached 后解锁。
+   */
+  function requestFullReplay(id: string): void {
+    if (replayRequested.has(id)) return
+    replayRequested.add(id)
+    setTimeout(() => {
+      const inst = instances.get(id)
+      if (!inst || inst.mode !== 'remote' || !inst.needsFullReplay) {
+        replayRequested.delete(id)
+        return
+      }
+      attachRemote(id)
+      // 兜底：attach 超时 / 失败时允许后续缺口再次触发。unref 避免单测进程等这个 15s 定时器
+      const retryTimer = setTimeout(() => replayRequested.delete(id), 15_000)
+      ;(retryTimer as unknown as { unref?: () => void }).unref?.()
+    }, 0)
+  }
+
   function handleAttached(inst: TerminalInstance, meta?: TerminalAttachedMeta): void {
+    inst.attachBaseline = typeof meta?.seq === 'number' ? meta.seq : null
+    // 首帧序号要按 attachBaseline 校验：回放帧 seq <= 基线，实时帧从基线开始。
+    // 不能预置 expectedSeq = lastSeq：空回放时没有 output 帧，下一帧实时输出会被误判缺口。
+    inst.expectedSeq = null
     if ((meta?.replay ?? 'full') === 'full') {
       // 全量回放前清屏，避免与已显示内容重复。用 RIS（ESC c）而非 reset()：
       // 清屏要排在写队列里，否则清不掉尚未落屏的上一段回放。
       inst.terminal.write('\x1bc')
       inst.lastSeq = null
-      inst.expectedSeq = null
       inst.needsFullReplay = false
-      return
     }
-    // 增量：回放帧的帧首序号应等于上次写到的位置；空回放时没有 output 帧，
-    // 下一次实时帧从同一位置继续，基线不变。
-    inst.expectedSeq = inst.lastSeq
   }
 
   /** 把后端已存在的终端接入前端（新建与恢复共用）。 */
@@ -392,6 +430,7 @@ export function useTerminal() {
       webglState,
       lastSeq: null,
       expectedSeq: null,
+      attachBaseline: null,
       needsFullReplay: false,
     }
 
@@ -408,9 +447,11 @@ export function useTerminal() {
     instances.set(id, inst)
 
     terminalWS.registerTerminal(id, {
-      onOutput: (data, meta) => applyRemoteOutput(inst, data, meta),
+      onOutput: (data, meta) => applyRemoteOutput(id, inst, data, meta),
       onAttached: (_cols, _rows, meta) => {
         handleAttached(inst, meta)
+        // 只认全量回放：缺口请求在途时可能先收到上一次 attach 的 delta 应答，不能提前解锁
+        if ((meta?.replay ?? 'full') === 'full') replayRequested.delete(id)
         clearTakenOver(id)
       },
       onExit: () => removeTab(id),
@@ -664,6 +705,7 @@ export function useTerminal() {
   }
 
   function removeTab(id: string) {
+    replayRequested.delete(id)
     const inst = instances.get(id)
     if (inst) {
       if (inst.mode === 'remote') terminalWS.unregisterTerminal(id)
@@ -733,6 +775,7 @@ export function useTerminal() {
 
   /** 登出时清空模块级状态，避免重新登录后残留失效 tab。 */
   function reset() {
+    replayRequested.clear()
     for (const [id, inst] of [...instances]) {
       inst.disposers.forEach((d) => d())
       inst.terminal.dispose()

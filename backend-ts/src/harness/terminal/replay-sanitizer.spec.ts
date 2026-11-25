@@ -143,6 +143,17 @@ describe('sanitizeReplayData', () => {
       expect(sanitizeReplayData('text\x1b[6')).toBe('text');
     });
 
+    it('keeps an incomplete tail for incremental replay so the live stream can complete it', () => {
+      expect(sanitizeReplayData('text\x1b[6', { keepIncompleteTail: true })).toBe('text\x1b[6');
+      expect(sanitizeReplayData('text\x1b', { keepIncompleteTail: true })).toBe('text\x1b');
+      expect(sanitizeReplayData('text\x1b]11;?', { keepIncompleteTail: true })).toBe('text\x1b]11;?');
+      expect(sanitizeReplayData('text\x1bP$qm', { keepIncompleteTail: true })).toBe('text\x1bP$qm');
+    });
+
+    it('still drops a complete query at the tail with keepIncompleteTail', () => {
+      expect(sanitizeReplayData('text\x1b[6n', { keepIncompleteTail: true })).toBe('text');
+    });
+
     it('drops an unterminated DCS query', () => {
       expect(sanitizeReplayData('text\x1bP$qm')).toBe('text');
     });

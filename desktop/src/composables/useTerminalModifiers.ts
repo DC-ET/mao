@@ -27,8 +27,9 @@ function cycle(state: ModifierState): ModifierState {
  *
  * - Ctrl 只对**单字符**生效：Gboard 等会把预测词整词提交（如 `cat`），按首字符转成
  *   `^C` + `at` 会把一条命令直接变成中断。
- * - Alt 只对**原始首字符是可打印 ASCII** 的数据加前缀：xterm 对硬件键盘的 Alt 已经
- *   自己编了 ESC，鼠标 / 焦点上报也以 ESC 开头，再套一层会发出两条序列。
+ * - Alt 只对**单个可打印 ASCII 字符**加前缀：多字符 payload（输入法整词提交、
+ *   带文本的 input）整体加 ESC 会被 shell 解析成 Alt+首字符 + 余下字符；硬件键盘的
+ *   Alt 序列、鼠标 / 焦点上报本身就以 ESC 开头，再套一层会发出两条序列。
  * - Ctrl 与 Alt 同时置位时先做 Ctrl 转换、再按原始字符加 Alt 前缀（Alt+Ctrl+C = ESC + ^C）。
  */
 export function applyModifierToData(
@@ -42,7 +43,7 @@ export function applyModifierToData(
     const mapped = ctrlChar(data)
     if (mapped != null) out = mapped
   }
-  if (altOn) {
+  if (altOn && [...data].length === 1) {
     const first = data.charCodeAt(0)
     if (first >= 0x20 && first <= 0x7e) out = `\x1b${out}`
   }

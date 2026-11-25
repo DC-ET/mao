@@ -84,6 +84,7 @@ export class OutputRingBuffer {
   clear(): void {
     this.chunks = [];
     this.bytes = 0;
+    this.nextSeq = 0;
     this.truncated = false;
   }
 }

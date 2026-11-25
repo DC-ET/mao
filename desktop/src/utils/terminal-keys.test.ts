@@ -52,6 +52,8 @@ describe('terminal-keys 方向键 / Home / End / Page', () => {
     expect(encodePage('up', { ctrl: true, alt: false })).toBe('\x1b[5;5~')
     expect(encodeTab()).toBe('\t')
     expect(encodeTab({ ctrl: false, alt: false, shift: true })).toBe('\x1b[Z')
+    expect(encodeTab({ ctrl: false, alt: true })).toBe('\x1b\t')
+    expect(encodeTab({ ctrl: false, alt: true, shift: true })).toBe('\x1b\x1b[Z')
   })
 })
 
@@ -82,6 +84,8 @@ describe('terminal-keys 可打印键与 Ctrl/Alt', () => {
     expect(encodeKey('esc', false, { ctrl: false, alt: true })).toBe('\x1b\x1b')
     expect(encodeKey('tab', false)).toBe('\t')
     expect(encodeKey('backtab', false)).toBe('\x1b[Z')
+    expect(encodeKey('tab', false, { ctrl: false, alt: true })).toBe('\x1b\t')
+    expect(encodeKey('backtab', false, { ctrl: false, alt: true })).toBe('\x1b\x1b[Z')
   })
 })
 

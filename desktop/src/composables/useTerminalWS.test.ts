@@ -253,4 +253,20 @@ describe('useTerminalWS', () => {
     expect(sockets).toHaveLength(2)
     connectAndAuth()
   })
+
+  it('连接建立中重复 attach 不会重复建连', () => {
+    const ws = useTerminalWS()
+    void ws.attach('t1')
+    void ws.attach('t1')
+    expect(sockets).toHaveLength(1)
+    // 收尾：清掉 attach 等待器的 15s 超时定时器，避免拖住测试进程
+    ws.disconnect()
+  })
+
+  it('没有在册终端时回前台不会建连', () => {
+    const ws = useTerminalWS()
+    ws.disconnect()
+    ws.resumeAfterForeground()
+    expect(sockets).toHaveLength(0)
+  })
 })

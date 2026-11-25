@@ -307,15 +307,19 @@ export class TerminalWsHandler {
     if (delta) {
       const replay = terminal.readBufferedFrom(fromSeq);
       if (replay) {
-        // 增量帧即使被 sanitize 清空也要发：客户端靠 endSeq 推进 lastSeq，
-        // 否则下一帧会被误判成缺口、触发不必要的全量回放。
-        this.send(conn.socket, {
-          type: 'output',
-          terminalId,
-          data: sanitizeReplayData(replay.data),
-          seq: replay.startSeq,
-          endSeq: replay.endSeq,
-        });
+        // 增量段的末尾可能正好切在转义序列中间：保留半条，让实时流的下一个字节补全，
+        // 不能像全量回放那样丢弃（否则前半个 CSI 没了，后半个会以裸字节落屏）。
+        const data = sanitizeReplayData(replay.data, { keepIncompleteTail: true });
+        // 空回放不发 output 帧：attached.seq 已给出基线，客户端不会把下一帧实时输出误判成缺口。
+        if (data !== '') {
+          this.send(conn.socket, {
+            type: 'output',
+            terminalId,
+            data,
+            seq: replay.startSeq,
+            endSeq: replay.endSeq,
+          });
+        }
       }
     } else {
       // 回放的是历史字节：先剔除会引发 xterm 自动应答的序列（旧查询被重新应答后，

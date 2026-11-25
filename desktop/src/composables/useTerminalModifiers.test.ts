@@ -30,6 +30,11 @@ describe('applyModifierToData', () => {
     expect(applyModifierToData('中', false, true)).toBe('中')
   })
 
+  it('Alt 不对多字符 payload 整体加前缀', () => {
+    expect(applyModifierToData('cat', false, true)).toBe('cat')
+    expect(applyModifierToData('中文', false, true)).toBe('中文')
+  })
+
   it('Ctrl + Alt 先转 Ctrl 再按原始字符加 Alt 前缀', () => {
     expect(applyModifierToData('c', true, true)).toBe('\x1b\x03')
     expect(applyModifierToData('|', true, true)).toBe('\x1b\x1c')

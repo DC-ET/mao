@@ -47,4 +47,26 @@ describe('extractBufferText', () => {
     const snapshot = extractBufferText(buffer([line('tail', true), line('next')]))
     expect(snapshot.text).toBe('tail\nnext')
   })
+
+  it('尾部未使用的空行不计入快照', () => {
+    const snapshot = extractBufferText(buffer([line('a'), line('b'), line(''), line('')]))
+    expect(snapshot.text).toBe('a\nb')
+    expect(snapshot.endLine).toBe(2)
+  })
+
+  it('视口逻辑行号合并软换行续行', () => {
+    const snapshot = extractBufferText(buffer([
+      line('long '),
+      line('wrapped', true),
+      line('next'),
+      line('last'),
+    ], 2))
+    // 第 0/1 行是同一个逻辑行，视口在物理行 2 = 逻辑行 1
+    expect(snapshot.viewportLogicalLine).toBe(1)
+  })
+
+  it('视口在尾部空白区时定位到文本末尾', () => {
+    const snapshot = extractBufferText(buffer([line('a'), line('b'), line(''), line('')], 3))
+    expect(snapshot.viewportLogicalLine).toBe(2)
+  })
 })

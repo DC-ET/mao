@@ -1,7 +1,10 @@
 <template>
   <div class="terminal-copy-overlay">
     <div class="terminal-copy-bar">
-      <span class="terminal-copy-title">选择文本（快照，进入后新输出不会更新）</span>
+      <span class="terminal-copy-title">
+        选择文本（快照，进入后新输出不会更新）
+        <span v-if="alternate" class="terminal-copy-hint">· 全屏程序只能复制当前一屏</span>
+      </span>
       <button type="button" class="terminal-copy-btn" aria-label="复制全部快照文本" @click="$emit('copy', text)">复制全部</button>
       <button type="button" class="terminal-copy-btn" aria-label="关闭选择文本" @click="$emit('close')">完成</button>
     </div>
@@ -23,6 +26,8 @@ const props = defineProps<{
   lineHeight: number
   letterSpacing: number
   initialScrollTop: number
+  /** 备用缓冲区（vim / less）：只有当前一屏，没有 scrollback。 */
+  alternate?: boolean
 }>()
 
 defineEmits<{
@@ -74,6 +79,10 @@ onMounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.terminal-copy-hint {
+  color: var(--aw-ink-muted-40);
 }
 
 .terminal-copy-btn {

@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   classifyScrollTarget,
+  installTouchScroll,
   linesFromPixels,
   velocityFromSamples,
 } from './terminal-touch-scroll'
@@ -78,5 +79,94 @@ describe('velocityFromSamples', () => {
 
   it('向上拖动为负速度', () => {
     expect(velocityFromSamples([{ t: 0, y: 100 }, { t: 100, y: 0 }], 100)).toBe(-1)
+  })
+})
+
+/** 只实现 installTouchScroll 用到的 addEventListener / removeEventListener / querySelector。 */
+class FakeElement {
+  clientHeight = 240
+  private listeners = new Map<string, Array<(event: any) => void>>()
+
+  addEventListener(type: string, handler: (event: any) => void): void {
+    const list = this.listeners.get(type) ?? []
+    list.push(handler)
+    this.listeners.set(type, list)
+  }
+
+  removeEventListener(type: string, handler: (event: any) => void): void {
+    this.listeners.set(type, (this.listeners.get(type) ?? []).filter((h) => h !== handler))
+  }
+
+  querySelector(): null {
+    return null
+  }
+
+  dispatch(type: string, event: Record<string, unknown> = {}): void {
+    const base = { preventDefault: vi.fn(), ...event }
+    for (const handler of this.listeners.get(type) ?? []) handler(base)
+  }
+}
+
+function touch(x: number, y: number) {
+  return { clientX: x, clientY: y }
+}
+
+function setup() {
+  const element = new FakeElement()
+  const scrollLines = vi.fn()
+  const onPinchSteps = vi.fn()
+  const terminal = {
+    element: element as unknown as HTMLElement,
+    rows: 24,
+    buffer: { active: { type: 'normal' as const } },
+    modes: { mouseTrackingMode: 'none', applicationCursorKeysMode: false },
+    scrollLines,
+  }
+  const dispose = installTouchScroll(terminal, {
+    onPinchSteps,
+    now: () => 0,
+    scheduleFrame: () => 1,
+    cancelFrame: () => {},
+  })
+  return { element, scrollLines, onPinchSteps, dispose }
+}
+
+describe('installTouchScroll 手势状态机', () => {
+  it('单指滑动滚 viewport，第二指落下后切到捏合字号', () => {
+    const { element, scrollLines, onPinchSteps, dispose } = setup()
+    element.dispatch('touchstart', { touches: [touch(100, 0)] })
+    element.dispatch('touchmove', { touches: [touch(100, 30)] })
+    expect(scrollLines).toHaveBeenCalledWith(-3)
+
+    element.dispatch('touchstart', { touches: [touch(100, 0), touch(200, 0)] })
+    element.dispatch('touchmove', { touches: [touch(100, 0), touch(220, 0)] })
+    expect(onPinchSteps).toHaveBeenCalledWith(1)
+    dispose()
+  })
+
+  it('iOS gesture 事件激活时 touchmove 不再重复调字号', () => {
+    const { element, onPinchSteps, dispose } = setup()
+    element.dispatch('touchstart', { touches: [touch(100, 0), touch(200, 0)] })
+    element.dispatch('gesturestart', { scale: 1 })
+    element.dispatch('touchmove', { touches: [touch(100, 0), touch(300, 0)] })
+    expect(onPinchSteps).not.toHaveBeenCalled()
+
+    element.dispatch('gesturechange', { scale: 1.2 })
+    expect(onPinchSteps).toHaveBeenCalledWith(1)
+
+    element.dispatch('gestureend', {})
+    element.dispatch('touchmove', { touches: [touch(100, 0), touch(320, 0)] })
+    expect(onPinchSteps).toHaveBeenCalledTimes(1)
+    dispose()
+  })
+
+  it('touchcancel 终止滚动与惯性', () => {
+    const { element, scrollLines, dispose } = setup()
+    element.dispatch('touchstart', { touches: [touch(100, 0)] })
+    element.dispatch('touchmove', { touches: [touch(100, 30)] })
+    element.dispatch('touchcancel', { touches: [] })
+    element.dispatch('touchmove', { touches: [touch(100, 60)] })
+    expect(scrollLines).toHaveBeenCalledTimes(1)
+    dispose()
   })
 })

@@ -3,7 +3,7 @@
     v-show="isOpen"
     ref="panelRef"
     class="terminal-panel"
-    :class="{ 'terminal-panel--touch': isTouch, 'terminal-panel--maximized': isMaximized }"
+    :class="{ 'terminal-panel--touch': isTouch }"
     :style="{ height: effectiveHeight + 'px' }"
   >
     <div class="terminal-resize-handle" @mousedown="startResize" @touchstart.prevent="startResize" />
@@ -114,6 +114,7 @@
         :line-height="copyLineHeight"
         :letter-spacing="copyLetterSpacing"
         :initial-scroll-top="copyScrollTop"
+        :alternate="copyAlternate"
         @copy="copySnapshot"
         @close="closeCopyOverlay"
       />
@@ -248,7 +249,7 @@ let preMaximizeHeight = 0
 const effectiveHeight = computed(() => {
   const max = maxHeight.value
   if (isMaximized.value) return Math.max(MIN_HEIGHT, max)
-  if (!isTouch) return panelHeight.value
+  if (!isTouch) return Math.max(MIN_HEIGHT, Math.min(panelHeight.value, max))
   const desired = panelHeight.value > 0 ? panelHeight.value : Math.round(max * 0.5)
   return Math.max(MIN_HEIGHT, Math.min(desired, max))
 })
@@ -256,7 +257,9 @@ const effectiveHeight = computed(() => {
 const keyBarVisible = ref(readStoredBoolean(KEYBAR_KEY, true))
 
 const reconnecting = computed(
-  () => isOpen.value && visibleTabs.value.length > 0 && !terminalWS.connected.value,
+  () => isOpen.value
+    && visibleTabs.value.some((tab) => tab.mode === 'remote')
+    && !terminalWS.connected.value,
 )
 
 const containerRefs = new Map<string, HTMLElement>()
@@ -359,6 +362,7 @@ function startResize(e: MouseEvent | TouchEvent) {
     document.removeEventListener('mouseup', onUp)
     document.removeEventListener('touchmove', onTouchMove)
     document.removeEventListener('touchend', onUp)
+    document.removeEventListener('touchcancel', onUp)
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
     if (isTouch) writeStorage(HEIGHT_KEY, String(Math.round(panelHeight.value)))
@@ -368,6 +372,7 @@ function startResize(e: MouseEvent | TouchEvent) {
   document.addEventListener('mouseup', onUp)
   document.addEventListener('touchmove', onTouchMove, { passive: true })
   document.addEventListener('touchend', onUp)
+  document.addEventListener('touchcancel', onUp)
   document.body.style.cursor = 'row-resize'
   document.body.style.userSelect = 'none'
 }
@@ -378,12 +383,17 @@ const atBottom = ref(true)
 const hasNewOutput = ref(false)
 let scrollDisposer: (() => void) | null = null
 let writeParsedDisposer: (() => void) | null = null
+let scrollFrame: number | null = null
 
 function subscribeScrollState(): void {
   scrollDisposer?.()
   writeParsedDisposer?.()
   scrollDisposer = null
   writeParsedDisposer = null
+  if (scrollFrame != null) {
+    cancelAnimationFrame(scrollFrame)
+    scrollFrame = null
+  }
   const inst = getActiveInstance()
   if (!inst) {
     atBottom.value = true
@@ -396,11 +406,25 @@ function subscribeScrollState(): void {
     atBottom.value = bottom
     if (bottom) hasNewOutput.value = false
   }
-  const scrollSub = inst.terminal.onScroll(update)
+  // 惯性滚动期间 onScroll 每帧触发，写 Vue ref 会连带重渲染按钮；合并到一帧一次
+  const scheduleUpdate = () => {
+    if (scrollFrame != null) return
+    scrollFrame = requestAnimationFrame(() => {
+      scrollFrame = null
+      update()
+    })
+  }
+  const scrollSub = inst.terminal.onScroll(scheduleUpdate)
   const writeSub = inst.terminal.onWriteParsed(() => {
     if (!atBottom.value) hasNewOutput.value = true
   })
-  scrollDisposer = () => scrollSub.dispose()
+  scrollDisposer = () => {
+    scrollSub.dispose()
+    if (scrollFrame != null) {
+      cancelAnimationFrame(scrollFrame)
+      scrollFrame = null
+    }
+  }
   writeParsedDisposer = () => writeSub.dispose()
   update()
 }
@@ -497,7 +521,8 @@ async function pasteIntoTerminal(text: string): Promise<void> {
   const inst = getActiveInstance()
   if (!inst || text === '') return
   if (/[\r\n]/.test(text) && !inst.terminal.modes.bracketedPasteMode) {
-    const lines = text.split(/\r?\n/).length
+    // 末尾换行不算额外一行：`cmd\n` 是 1 行命令，不是 2 行
+    const lines = text.replace(/\r?\n$/, '').split(/\r?\n/).length
     try {
       await ElMessageBox.confirm(
         `将粘贴 ${lines} 行，每行会立即执行。`,
@@ -529,6 +554,7 @@ const copyFontFamily = ref('Menlo, Monaco, "Courier New", monospace')
 const copyFontSize = ref(fontSize.value)
 const copyLineHeight = ref(1.2)
 const copyLetterSpacing = ref(0.3)
+const copyAlternate = ref(false)
 
 function openCopyOverlay(): void {
   const inst = getActiveInstance()
@@ -541,7 +567,8 @@ function openCopyOverlay(): void {
   copyLineHeight.value = options.lineHeight ?? 1.2
   copyLetterSpacing.value = options.letterSpacing ?? 0
   const lineHeightPx = copyFontSize.value * copyLineHeight.value
-  copyScrollTop.value = Math.max(0, (snapshot.viewportLine - snapshot.startLine) * lineHeightPx)
+  copyScrollTop.value = Math.max(0, snapshot.viewportLogicalLine * lineHeightPx)
+  copyAlternate.value = inst.terminal.buffer.active.type === 'alternate'
   copyOverlayVisible.value = true
   const activeElement = document.activeElement as HTMLElement | null
   activeElement?.blur()

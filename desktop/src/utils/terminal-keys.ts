@@ -75,7 +75,8 @@ export function encodePage(dir: 'up' | 'down', mods: ModifierFlags = NO_MODIFIER
 }
 
 export function encodeTab(mods: ModifierFlags = NO_MODIFIERS): string {
-  return mods.shift ? '\x1b[Z' : '\t'
+  const base = mods.shift ? '\x1b[Z' : '\t'
+  return mods.alt ? `\x1b${base}` : base
 }
 
 const CTRL_PRINTABLE: Record<string, string> = {
@@ -120,7 +121,7 @@ export function encodeKey(id: KeyId, decCkm: boolean, mods: ModifierFlags = NO_M
     case 'tab':
       return encodeTab(mods)
     case 'backtab':
-      return '\x1b[Z'
+      return withAlt('\x1b[Z', mods)
     case 'up':
     case 'down':
     case 'left':

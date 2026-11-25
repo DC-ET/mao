@@ -108,6 +108,8 @@ export function installTouchScroll(
   let inertiaFrame: number | null = null
   let pinchStartDistance = 0
   let gestureScale = 1
+  /** iOS Safari 双指手势会同时派发 touchmove 与 gesturechange，只让一条路径调字号。 */
+  let gestureActive = false
 
   function lineHeight(): number {
     return Math.max(1, element!.clientHeight / Math.max(1, terminal.rows))
@@ -200,6 +202,7 @@ export function installTouchScroll(
       event.preventDefault()
       scrolling = false
       tracking = false
+      if (gestureActive) return
       if (pinchStartDistance <= 0) {
         pinchStartDistance = distance(event.touches[0], event.touches[1])
         return
@@ -248,12 +251,14 @@ export function installTouchScroll(
     tracking = false
     scrolling = false
     pinchStartDistance = 0
+    gestureActive = false
     stopInertia()
   }
 
   /** iOS Safari 的页面 pinch 由 WebKit 的 gesture 事件驱动；不拦会同时缩放整页。 */
   function onGestureStart(event: Event): void {
     event.preventDefault()
+    gestureActive = true
     gestureScale = 1
   }
 
@@ -268,12 +273,19 @@ export function installTouchScroll(
     }
   }
 
+  function onGestureEnd(event: Event): void {
+    event.preventDefault()
+    gestureActive = false
+    pinchStartDistance = 0
+  }
+
   element.addEventListener('touchstart', onTouchStart, { passive: true })
   element.addEventListener('touchmove', onTouchMove, { passive: false })
   element.addEventListener('touchend', onTouchEnd, { passive: true })
   element.addEventListener('touchcancel', onTouchCancel, { passive: true })
   element.addEventListener('gesturestart', onGestureStart, { passive: false })
   element.addEventListener('gesturechange', onGestureChange, { passive: false })
+  element.addEventListener('gestureend', onGestureEnd, { passive: false })
 
   return () => {
     stopInertia()
@@ -283,5 +295,6 @@ export function installTouchScroll(
     element.removeEventListener('touchcancel', onTouchCancel)
     element.removeEventListener('gesturestart', onGestureStart)
     element.removeEventListener('gesturechange', onGestureChange)
+    element.removeEventListener('gestureend', onGestureEnd)
   }
 }

@@ -25,7 +25,7 @@
     </div>
 
     <div v-if="moreOpen" class="terminal-keybar-backdrop" @click="moreOpen = false" />
-    <div v-if="moreOpen" class="terminal-keybar-more" role="menu" aria-label="更多按键">
+    <div v-if="moreOpen" class="terminal-keybar-more" role="group" aria-label="更多按键">
       <button
         v-for="key in moreKeys"
         :key="key.label"
@@ -233,8 +233,18 @@ function handleMoreAction(action: Exclude<KeyBarAction, 'keyboard' | 'paste'>): 
 }
 
 @media (max-width: 360px) {
+  .terminal-keybar {
+    padding: 6px 4px;
+  }
+
+  .terminal-keybar-row {
+    gap: 2px;
+  }
+
   .terminal-keybar-btn {
-    font-size: 10px;
+    height: 34px;
+    font-size: 9px;
+    padding: 0 1px;
   }
 }
 </style>

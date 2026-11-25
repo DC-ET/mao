@@ -135,7 +135,7 @@ function settleAttach(terminalId: string, error?: Error) {
 
 function onAuthenticated() {
   // 已认证状态下再收到 connected（服务端对重复 auth 的幂等应答）：只 flush，不重排 attach，
-  // 否则会对所有终端重复 attach → 清屏 + 全量回放
+  // 否则会对所有终端重复 attach，打断增量回放（甚至触发不必要的全量清屏）
   if (authenticated) {
     flushPending()
     return

@@ -34,7 +34,7 @@ type Decision =
   /** 原样保留，跳过整条序列。 */
   | { action: 'keep'; end: number }
   /** 整条剔除。 */
-  | { action: 'drop'; end: number }
+  | { action: 'drop'; end: number; incomplete?: boolean }
   /** 剔除部分参数后按 text 重写（如 CSI ? 1004;1049 h → CSI ? 1049 h）。 */
   | { action: 'rewrite'; end: number; text: string };
 
@@ -51,8 +51,14 @@ interface StringSpan {
 /**
  * 剔除回放数据里会引发终端自动应答的序列。
  * 纯文本、SGR、光标移动、OSC 8 超链接、标题等可见或无害序列原样保留。
+ *
+ * @param options.keepIncompleteTail 增量回放用：段尾不完整的转义序列原样保留，
+ *   等实时流的下一个字节补全。全量回放不用（后面可能永远没有续接字节，留着会吞掉实时流）。
  */
-export function sanitizeReplayData(data: string): string {
+export function sanitizeReplayData(
+  data: string,
+  options: { keepIncompleteTail?: boolean } = {},
+): string {
   if (data === '') return '';
   const parts: string[] = [];
   const n = data.length;
@@ -65,6 +71,13 @@ export function sanitizeReplayData(data: string): string {
     }
     const decision = classifyEscape(data, i);
     if (decision.action !== 'keep') {
+      // 增量回放的段尾可能正好切在序列中间：保留半条，让实时流把它补全
+      if (decision.action === 'drop' && decision.incomplete && options.keepIncompleteTail) {
+        if (copied < i) parts.push(data.slice(copied, i));
+        parts.push(data.slice(i));
+        copied = n;
+        break;
+      }
       if (copied < i) parts.push(data.slice(copied, i));
       if (decision.action === 'rewrite') parts.push(decision.text);
       copied = decision.end;
@@ -79,7 +92,7 @@ export function sanitizeReplayData(data: string): string {
 function classifyEscape(data: string, i: number): Decision {
   const next = data[i + 1];
   // 末尾裸 ESC：半条序列，丢弃（否则回放后解析器停在转义态，实时流的后续字节会被吞或补全成查询）
-  if (next === undefined) return { action: 'drop', end: data.length };
+  if (next === undefined) return { action: 'drop', end: data.length, incomplete: true };
   switch (next) {
     case '[':
       return classifyCsi(data, i);
@@ -124,7 +137,7 @@ function classifyCsi(data: string, i: number): Decision {
   }
   const intermediates = data.slice(intermediateStart, p);
   // 半条 CSI 被 chunk 边界切断：丢弃尾部，避免实时流的后续字节把它补全成查询
-  if (p >= n) return { action: 'drop', end: n };
+  if (p >= n) return { action: 'drop', end: n, incomplete: true };
   const finalCode = data.charCodeAt(p);
   // C0 控制或非 ASCII 字节落在终字节位（畸形序列）：整条剔除。既避免回放留下悬空的
   // ESC [ 吞掉实时流字节，也避免剩下的 "6n" 之类被实时流补全成 DSR 查询
@@ -159,7 +172,7 @@ function classifyCsi(data: string, i: number): Decision {
 function classifyOsc(data: string, i: number): Decision {
   const span = scanStringSpan(data, i + 2);
   // 未闭合：整条剔除，避免回放后解析器停在 OSC 字符串态吞掉实时流的后续字节
-  if (!span) return { action: 'drop', end: data.length };
+  if (!span) return { action: 'drop', end: data.length, incomplete: true };
   if (span.unterminated) return { action: 'drop', end: span.end };
   const payload = data.slice(i + 2, span.contentEnd);
   const separator = payload.indexOf(';');
@@ -178,7 +191,7 @@ function classifyOsc(data: string, i: number): Decision {
 /** DCS（ESC P ... ST|BEL）：DECRQSS（$ q）与 XTGETTCAP（+ q）查询。 */
 function classifyDcs(data: string, i: number): Decision {
   const span = scanStringSpan(data, i + 2);
-  if (!span) return { action: 'drop', end: data.length };
+  if (!span) return { action: 'drop', end: data.length, incomplete: true };
   if (span.unterminated) return { action: 'drop', end: span.end };
   const payload = data.slice(i + 2, span.contentEnd);
   // xterm.js 6.0.0 只实现了 DECRQSS，XTGETTCAP 暂不应答；两者都按查询剔除，防止升级后复活

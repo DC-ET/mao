@@ -432,7 +432,18 @@ describe('TerminalWsHandler attach', () => {
     expect(socket.frames('output')[0]).toMatchObject({ data: 'def', seq: 3, endSeq: 6 });
   });
 
-  it('sends an empty delta frame when fromSeq equals the current seq', async () => {
+  it('keeps an incomplete escape sequence at the delta tail for the live stream', async () => {
+    const harness = newHarness();
+    const terminal = harness.registry.add(new FakeTerminal('t1', 3, 7));
+    terminal.buffered = 'abc\x1b[6';
+    const socket = await authed(harness);
+    await harness.handler.handleTextMessage(socket, JSON.stringify({ type: 'attach', terminalId: 't1', fromSeq: 3 }));
+
+    // 半条 CSI 不能丢：丢掉后实时流的 "n" 会以裸字节落屏
+    expect(socket.frames('output')[0]).toMatchObject({ data: '\x1b[6', seq: 3, endSeq: 6 });
+  });
+
+  it('does not send an empty delta frame when fromSeq equals the current seq', async () => {
     const harness = newHarness();
     const terminal = harness.registry.add(new FakeTerminal('t1', 3, 7));
     terminal.buffered = 'abcdef';
@@ -440,8 +451,8 @@ describe('TerminalWsHandler attach', () => {
     await harness.handler.handleTextMessage(socket, JSON.stringify({ type: 'attach', terminalId: 't1', fromSeq: 6 }));
 
     expect(socket.frames('attached')[0]).toMatchObject({ replay: 'delta', seq: 6 });
-    // 即使 data 为空也要发：客户端靠 endSeq 推进 lastSeq，否则下一帧会被误判成缺口
-    expect(socket.frames('output')[0]).toMatchObject({ data: '', seq: 6, endSeq: 6 });
+    // attached.seq 已经是基线，客户端不需要空 output 帧推进序号
+    expect(socket.frames('output')).toHaveLength(0);
   });
 
   it('falls back to a full replay for invalid or too-old fromSeq', async () => {

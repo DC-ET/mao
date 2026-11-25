@@ -96,6 +96,17 @@ describe('OutputRingBuffer 输出序号', () => {
     expect(buffer.getStartSeq()).toBe(3);
     expect(buffer.readSince(3)).toEqual({ data: '中', startSeq: 3, endSeq: 6 });
   });
+
+  it('clear 重置序号，复用缓冲时从 0 重新累计', () => {
+    const buffer = new OutputRingBuffer(10);
+    buffer.append('abc');
+    buffer.clear();
+    expect(buffer.getSeq()).toBe(0);
+    expect(buffer.getStartSeq()).toBe(0);
+    buffer.append('xy');
+    expect(buffer.getSeq()).toBe(2);
+    expect(buffer.readSince(0)).toEqual({ data: 'xy', startSeq: 0, endSeq: 2 });
+  });
 });
 
 describe('RemoteTerminal 输出序号', () => {
