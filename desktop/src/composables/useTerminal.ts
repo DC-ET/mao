@@ -143,6 +143,8 @@ const isOpen = ref(false)
 const takenOverTabs = ref<string[]>([])
 
 const instances = new Map<string, TerminalInstance>()
+/** 面板刚打开 / 新建终端后请求过聚焦：终端挂载完成时消费一次（触屏端据此弹软键盘）。 */
+let pendingFocus = false
 /** 上次 fit 时的容器尺寸：半列 / 半行以内的变化不改 PTY 尺寸，避免视口抖动反复触发 SIGWINCH。 */
 const lastFitSize = new Map<string, { width: number; height: number }>()
 /** 同一任务的 restoreRemoteTabs 去重（togglePanel 与 watch(isOpen) 会并发触发）。 */
@@ -639,8 +641,13 @@ export function useTerminal() {
       } else {
         terminalWS.sendResize(id, inst.terminal.cols, inst.terminal.rows)
       }
-      // 触屏端不自动聚焦：只想看输出时不该被软键盘顶掉半屏
+      // 触屏端默认不自动聚焦（只想看输出时不该被软键盘顶掉半屏）；
+      // 面板刚打开 / 新建终端请求过聚焦时，挂载完成后才把焦点交过去。
       if (!isTouchTerminal()) inst.terminal.focus()
+      else if (pendingFocus) {
+        pendingFocus = false
+        inst.terminal.focus()
+      }
     })
   }
 
@@ -765,6 +772,11 @@ export function useTerminal() {
       detachRemoteTerminals(null)
       return
     }
+    if (isOpen.value) {
+      // 面板打开即进入输入态：等 v-show 生效后立刻聚焦（microtask 仍在用户手势激活窗口内，
+      // 安卓 / iOS 才会弹软键盘）；恢复 / 新建 tab 后再由 focusActiveTerminal 补一次。
+      nextTick(() => focusActiveTerminal())
+    }
     if (session?.executionMode === 'CLOUD') {
       await restoreRemoteTabs(session.id)
     } else if (session?.executionMode === 'LOCAL') {
@@ -773,14 +785,13 @@ export function useTerminal() {
     }
     if (visibleTabs.value.length === 0) {
       await createTerminal(cwd)
+      focusActiveTerminal()
       return
     }
     if (!activeTabId.value || !visibleTabs.value.some((t) => t.id === activeTabId.value)) {
       activeTabId.value = visibleTabs.value[0].id
     }
-    const inst = activeTabId.value ? instances.get(activeTabId.value) : null
-    // 触屏端不自动弹键盘（§4.5）；桌面保持原行为
-    if (inst && !isTouchTerminal()) nextTick(() => inst.terminal.focus())
+    focusActiveTerminal()
   }
 
   function getActiveInstance(): TerminalInstance | null {
@@ -792,10 +803,25 @@ export function useTerminal() {
     return instances.get(id) || null
   }
 
+  /**
+   * 请求把焦点交给当前终端（触屏端据此弹出软键盘）。
+   * 终端还没 open 时先记下标记，由 mountTerminal 在挂载完成后消费。
+   */
+  function focusActiveTerminal(): void {
+    const inst = getActiveInstance()
+    if (inst?.terminal.element) {
+      pendingFocus = false
+      nextTick(() => inst.terminal.focus())
+      return
+    }
+    pendingFocus = true
+  }
+
   /** 登出时清空模块级状态，避免重新登录后残留失效 tab。 */
   function reset() {
     replayRequested.clear()
     lastFitSize.clear()
+    pendingFocus = false
     for (const [id, inst] of [...instances]) {
       inst.disposers.forEach((d) => d())
       inst.terminal.dispose()
@@ -837,6 +863,7 @@ export function useTerminal() {
     togglePanel,
     getActiveInstance,
     getInstance,
+    focusActiveTerminal,
     reset,
   }
 }

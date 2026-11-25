@@ -184,6 +184,7 @@ const {
   togglePanel,
   getActiveInstance,
   getInstance,
+  focusActiveTerminal,
   fontSize,
 } = useTerminal()
 
@@ -808,7 +809,10 @@ function handleCreate() {
   if (session?.executionMode === 'LOCAL' && session.workspace) {
     cwd = session.workspace
   }
-  void createTerminal(cwd)
+  void createTerminal(cwd).then((id) => {
+    // 新建完直接进输入态（点「+」本身就是用户手势）
+    if (id) focusActiveTerminal()
+  })
 }
 
 function handleSwitch(id: string) {
@@ -912,7 +916,11 @@ watch(isOpen, async (open) => {
   if (session && (session.executionMode === 'CLOUD' || session.executionMode === 'LOCAL')) {
     await restoreRemoteTabs(session.id)
   }
-  nextTick(() => subscribeScrollState())
+  nextTick(() => {
+    subscribeScrollState()
+    // 面板打开即进入输入态（触屏端借此弹出软键盘）
+    focusActiveTerminal()
+  })
 })
 
 onMounted(() => {
@@ -986,6 +994,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   flex-shrink: 0;
+  /* 与标签栏、图标按钮同底色：触屏标签栏 40px 比按钮高，留白处不再露出面板底色（两条白边） */
+  background: var(--aw-terminal-header-bg);
 }
 
 .terminal-header .terminal-tabs {
@@ -998,7 +1008,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   width: 32px;
-  height: 36px;
+  /* 跟随 header 高度（桌面 36px / 触屏 40px），上下不留白 */
+  align-self: stretch;
   border: none;
   background: var(--aw-terminal-header-bg);
   color: var(--aw-ink-muted-48);
@@ -1018,7 +1029,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   width: 32px;
-  height: 36px;
+  /* 跟随 header 高度（桌面 36px / 触屏 40px），上下不留白 */
+  align-self: stretch;
   border: none;
   background: var(--aw-terminal-header-bg);
   color: var(--aw-ink-muted-48);

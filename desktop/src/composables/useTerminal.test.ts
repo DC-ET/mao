@@ -197,6 +197,44 @@ describe('useTerminal 关闭最后一个 tab 自动收起面板', () => {
     vi.unstubAllGlobals()
   })
 
+  it('触屏端打开面板后聚焦当前终端（据此弹出软键盘）', async () => {
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) })
+    useCloudSession()
+    const terminal = useTerminal()
+    apiMock.post.mockResolvedValue({ data: remoteInfo('t1') })
+    await terminal.createTerminal()
+    apiMock.get.mockResolvedValue({ data: [remoteInfo('t1')] })
+
+    const inst = terminal.getInstance('t1')!
+    // 伪造已挂载：focusActiveTerminal 走立即聚焦分支
+    ;(inst.terminal as unknown as { element: unknown }).element = {}
+    await terminal.togglePanel()
+    await nextTick()
+    await nextTick()
+
+    const focusMock = inst.terminal.focus as unknown as { mock: { calls: unknown[] } }
+    expect(focusMock.mock.calls.length).toBeGreaterThan(0)
+    vi.unstubAllGlobals()
+  })
+
+  it('挂载前请求过聚焦时，挂载完成后消费一次', async () => {
+    vi.stubGlobal('window', { matchMedia: () => ({ matches: true }) })
+    useCloudSession()
+    const terminal = useTerminal()
+    apiMock.post.mockResolvedValue({ data: remoteInfo('t1') })
+    await terminal.createTerminal()
+
+    terminal.focusActiveTerminal()
+    terminal.mountTerminal('t1', {} as HTMLElement)
+    await nextTick()
+    await nextTick()
+
+    const inst = terminal.getInstance('t1')!
+    const focusMock = inst.terminal.focus as unknown as { mock: { calls: unknown[] } }
+    expect(focusMock.mock.calls.length).toBeGreaterThan(0)
+    vi.unstubAllGlobals()
+  })
+
   it('首帧序号超过 attached 基线时自动请求全量回放', async () => {
     useCloudSession()
     const terminal = useTerminal()
