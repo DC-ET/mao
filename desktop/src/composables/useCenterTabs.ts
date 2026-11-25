@@ -509,16 +509,21 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
   /**
    * 打开 Git 管理器 Tab（单例 id 'git'，每会话一个）。
    * 已存在则直接激活；不随刷新重建（与 file/diff/trace 一致，恢复激活态匹配不到就留 chat）。
+   * repoPath 来自多仓库摘要里点中的子仓库：记在 Tab 上，由 Git 管理器选中该仓库。
    */
-  function openGitTab() {
+  function openGitTab(repoPath?: string) {
     const state = getSessionState()
     const existing = state.tabs.find(t => t.type === 'git')
+    const focus = repoPath
+      ? { path: repoPath, nonce: (existing?.gitRepoFocus?.nonce ?? 0) + 1 }
+      : undefined
     if (existing) {
+      if (focus) existing.gitRepoFocus = focus
       state.activeTabId = existing.id
       notifyTabsChanged()
       return
     }
-    state.tabs.push({ id: 'git', type: 'git', title: 'Git' })
+    state.tabs.push({ id: 'git', type: 'git', title: 'Git', gitRepoFocus: focus })
     state.activeTabId = 'git'
     notifyTabsChanged()
   }

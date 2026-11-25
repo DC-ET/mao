@@ -64,6 +64,11 @@ export interface Tab {
    */
   deliveryUrl?: string
   deliveryMime?: string
+  /**
+   * 从检查器摘要点某个子仓库打开 Git Tab 时的选中请求。
+   * nonce 每次点击加一，同一个仓库再点一次也会重新选中。
+   */
+  gitRepoFocus?: { path: string; nonce: number }
 }
 
 export interface SessionTabState {
