@@ -326,6 +326,13 @@ describe('CompactionService', () => {
     expect(instruction).toContain('摘要中不要出现「交接」「接手」「下一个 Agent」等字样');
     expect(instruction).toContain('系统会在摘要消息后自动附上被压缩原始消息的归档目录说明');
     expect(instruction).toContain('不要编造归档路径');
+    // 任务台账保留条目（技术方案 2026-11-25 §3.1）：压缩后模型补标 task_update 需要 id
+    expect(instruction).toContain('task_* 待办工具');
+    expect(instruction).toContain('最近一次 task_* 工具结果为准');
+    expect(instruction).toContain('原样保留当前任务台账');
+    expect(instruction).toContain('id、content、status');
+    expect(instruction).toContain('in_progress');
+    expect(instruction).toContain('会话未使用过待办工具时省略本节');
     expect(isRealUserMessage({ role: 'user', content: instruction })).toBe(false);
   });
 

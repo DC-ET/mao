@@ -15,7 +15,7 @@ import { harnessLog } from '../log.js';
 import type { AgentExecutionContext } from './agent-execution-context.js';
 import { MessageHistoryNormalizer } from './message-history-normalizer.js';
 import { applyDateChangeNotices, formatChineseWeekday } from './session-date-notice.js';
-import { applyNoProgressNotices } from './no-progress-notice.js';
+import { applyNoProgressNotices, wrapNotice } from './no-progress-notice.js';
 import { ToolMediaInjector } from './tool-media-injector.js';
 import { TokenEstimator } from './token-estimator.js';
 import { RequestSizeEstimator } from './request-size.js';
@@ -226,6 +226,13 @@ export class PromptEngine {
     // 无进展提醒（技术方案 2026-10-21 §4.4）：在归一化之后按 tool_call_id 锚点插入，
     // 只作用于请求副本——不写回 context.messages，也就不会落库、不会进压缩边界判定。
     const rendered = applyNoProgressNotices(normalized, context.noProgressNotices);
+    // 任务台账 notice（技术方案 2026-11-25 §3.2.4）：请求副本尾部追加，不写回
+    // context.messages、不落库。notice 以 `<system-notice>` 开头 → isRealUserMessage 判
+    // false，不进压缩边界判定；处于请求尾部且确定性生成，状态不变时逐字节稳定，
+    // prefix-monitor 的「尾部追加不告警」约定沿用。
+    if (context.todoStateNotice != null) {
+      rendered.push({ role: 'user', content: wrapNotice(context.todoStateNotice) });
+    }
     const tools = this.buildToolDefinitions(context);
     const request: ChatRequest = {
       messages: rendered,

@@ -26,6 +26,7 @@ import { ContextManager } from './harness/core/context-manager.js';
 import { CompactionArchiveService } from './harness/core/compaction-archive.service.js';
 import { CompactionConfig } from './harness/core/compaction-config.js';
 import { SessionHistoryLoader } from './harness/core/session-history-loader.js';
+import type { SessionTodoMapper } from './harness/todo/session-todo.mapper.js';
 import { ActiveContextCalculator } from './harness/core/active-context-calculator.js';
 import { CompactionModelResolver } from './harness/tool/compaction-model-resolver.js';
 import { SessionCompactionOrchestrator } from './harness/core/session-compaction-orchestrator.js';
@@ -44,6 +45,8 @@ export interface LlmEngineDeps {
   sessionCompactionEventService: SessionCompactionEventService;
   settingService: SystemSettingService;
   modelRepo: MysqlLlmModelRepository;
+  /** 任务台账 notice 的查库依赖（技术方案 2026-11-25 §3.2.3）：SessionHistoryLoader 构造注入。 */
+  todoMapper: SessionTodoMapper;
   /** LLM 出站凭证解析器（ecp 模式解析当前用户 ECP Token）；缺省时各适配器只用固定 API Key。 */
   authResolver?: LlmAuthResolver;
 }
@@ -66,7 +69,7 @@ export interface LlmEngineResult {
 }
 
 export function assembleLlmEngine(deps: LlmEngineDeps): LlmEngineResult {
-  const { harnessTuning, llmCallService, skillLoader, pathSandbox, runtimeResolver, commandService, skillSync, workspaceRulesSnapshotService, sessionSvc, compactionSvc, sessionCompactionEventService, settingService, modelRepo, authResolver } = deps;
+  const { harnessTuning, llmCallService, skillLoader, pathSandbox, runtimeResolver, commandService, skillSync, workspaceRulesSnapshotService, sessionSvc, compactionSvc, sessionCompactionEventService, settingService, modelRepo, todoMapper, authResolver } = deps;
 
   const openAiLlmAdapter = new OpenAiLlmAdapter({
     rateLimitMaxRetries: harnessTuning.llm.rateLimitMaxRetries,
@@ -117,7 +120,7 @@ export function assembleLlmEngine(deps: LlmEngineDeps): LlmEngineResult {
   compactionConfig.triggerPayloadBytes = harnessTuning.compaction.triggerPayloadBytes;
   compactionConfig.maxSummaryTokens = harnessTuning.compaction.maxSummaryTokens;
   compactionConfig.loopMidwayCompact = harnessTuning.compaction.loopMidwayCompact;
-  const historyLoader = new SessionHistoryLoader(sessionSvc as never, contextManager, compactionArchiveService);
+  const historyLoader = new SessionHistoryLoader(sessionSvc as never, contextManager, compactionArchiveService, todoMapper);
   const activeContext = new ActiveContextCalculator(tokenEstimator);
   const compactionModelResolver = new CompactionModelResolver(
     (key) => settingService.getValue(key),

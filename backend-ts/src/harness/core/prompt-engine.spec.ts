@@ -1532,3 +1532,68 @@ describe('PromptEngine runtime identity', () => {
     expect(system).not.toContain('## 执行身份');
   });
 });
+
+describe('PromptEngine 任务台账 notice 注入（技术方案 2026-11-25 §3.2.4）', () => {
+  function makeNoticeEngine() {
+    return new PromptEngine(
+      { hasSkill: () => false, getAllNames: () => [], getAllDocuments: () => [] } as never,
+      { getWorkspaceRoot: () => '/ws' } as never,
+      RuntimeDataResolver.forTest('/tmp/rt', '/tmp/home'),
+      { getByUserIdAndName: async () => null } as never,
+      { getUserSkillDocuments: () => [] } as never,
+    );
+  }
+
+  function noticeContext(messages: ChatMessageLike[]): AgentExecutionContext {
+    const context = new AgentExecutionContext();
+    context.sessionId = 9;
+    context.executionMode = 'CLOUD';
+    context.messages = messages;
+    return context;
+  }
+
+  type ChatMessageLike = AgentExecutionContext['messages'][number];
+
+  it('notice 非空时作为 user 消息追加在请求最后，且为 <system-notice> 包裹', async () => {
+    const engine = makeNoticeEngine();
+    const context = noticeContext([{ role: 'user', content: '继续' }]);
+    context.todoStateNotice = '当前任务台账（系统注入的权威状态，不要向用户复述本条）：\n- #1 pending a\n进度：0/1 已完成。';
+    const request = await engine.buildRequest(context);
+    const last = request.messages[request.messages.length - 1];
+    expect(last.role).toBe('user');
+    expect(last.content).toBe(
+      '<system-notice>\n当前任务台账（系统注入的权威状态，不要向用户复述本条）：\n- #1 pending a\n进度：0/1 已完成。\n</system-notice>',
+    );
+  });
+
+  it('notice 为 null 时不追加消息（无台账请求与现状一致，回归兜底）', async () => {
+    const engine = makeNoticeEngine();
+    const context = noticeContext([{ role: 'user', content: '普通问题' }]);
+    const request = await engine.buildRequest(context);
+    expect(request.messages[request.messages.length - 1].content).toBe('普通问题');
+    expect(request.messages.some((m) => typeof m.content === 'string' && m.content.includes('任务台账'))).toBe(false);
+  });
+
+  it('notice 状态不变时两次 buildRequest 渲染逐字节一致（前缀缓存验证）', async () => {
+    const engine = makeNoticeEngine();
+    const context = noticeContext([{ role: 'user', content: '继续' }]);
+    context.todoStateNotice = '任务台账：3/3 已完成。';
+    const first = await engine.buildRequest(context);
+    const second = await engine.buildRequest(context);
+    expect(second.messages).toEqual(first.messages);
+  });
+
+  it('notice 内容变化时只有尾部一条变化（前缀保持）', async () => {
+    const engine = makeNoticeEngine();
+    const context = noticeContext([{ role: 'user', content: '继续' }]);
+    context.todoStateNotice = '进度：0/2 已完成。';
+    const first = await engine.buildRequest(context);
+    const firstLen = first.messages.length;
+    context.todoStateNotice = '进度：1/2 已完成。';
+    const second = await engine.buildRequest(context);
+    expect(second.messages.length).toBe(firstLen);
+    // 共同前缀逐字节一致：notice 只在尾部，不重写历史
+    expect(second.messages.slice(0, -1)).toEqual(first.messages.slice(0, -1));
+  });
+});
+

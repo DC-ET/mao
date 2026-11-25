@@ -108,6 +108,13 @@ export class AgentExecutionContext {
    * 压缩前后都为 null 会让 resetFrom 被跳过，运行时 streak 与重放结果分叉。
    */
   noProgressEpoch = 0;
+  /**
+   * 当前任务台账 notice 文案（null = 无待办 / 尚未构建）。请求副本注入用，不落库
+   * （技术方案 2026-11-25 §3.2.2）。刷新点：applyHistory（执行开始 + 压缩重载，以 DB
+   * 为权威）与 agent-loop task_* 工具执行后（以最近一次工具结果为权威，解析成功一律
+   * 覆盖，台账删空置 null）；PromptEngine.buildRequest 在请求尾部追加，不改本字段。
+   */
+  todoStateNotice: string | null = null;
   agentsMdContent?: string | null;
 
   addUserMessage(content: string | ContentPart[]): void {

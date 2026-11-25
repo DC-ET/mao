@@ -719,6 +719,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     harnessTuning, llmCallService, skillLoader, pathSandbox, runtimeResolver,
     commandService, skillSync, workspaceRulesSnapshotService, sessionSvc,
     compactionSvc, sessionCompactionEventService, settingService, modelRepo,
+    todoMapper,
     authResolver: llmAuthResolver,
   });
   const { openAiLlmAdapter, anthropicLlmAdapter, responsesLlmAdapter, llmAdapter, promptEngine, tokenEstimator, compactionService, contextManager, compactionArchiveService, compactionConfig, historyLoader, activeContext, compactionModelResolver, orchestrator } = llmEngine;
