@@ -1,7 +1,6 @@
 import { createReadStream, existsSync, statSync, unlinkSync } from 'node:fs';
 import { Buffer } from 'node:buffer';
 import { resolve, sep, isAbsolute, relative } from 'node:path';
-import type { Readable } from 'node:stream';
 import { lookup as mimeLookup } from 'mime-types';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import '@fastify/multipart';
@@ -19,6 +18,7 @@ import type { Session } from '../session/types.js';
 import type { SessionService } from '../session/session.service.js';
 import type { FileEntity, FileService } from './file.service.js';
 import type { SendFileEntity, SendFileDownloadTarget, SendFileService } from './send-file.service.js';
+import type { SendDownloadTicketService } from './send-download-ticket.service.js';
 import type { WorkspaceBrowseService } from './workspace-browse.service.js';
 import type { WorkspaceGitService } from './workspace-git.service.js';
 import type { GitCommitMessageService } from './git-commit-message.service.js';
@@ -44,6 +44,8 @@ export interface FileRouteDeps {
   pathSandbox: PathSandbox;
   /** 发送附件快照（技术方案 2026-11-24 D3）：本地 / 云代读在实现里，路由只做鉴权与响应头。 */
   sendFileService: SendFileService;
+  /** 快照下载的短时票据（2026-11-25 R6）：1GB 下载直接导航，不把 JWT 放进 URL。 */
+  sendDownloadTickets: SendDownloadTicketService;
   /**
    * LOCAL 会话文件浏览的 WS 代理（技术方案 2026-11-17）：未注入时 LOCAL browse 直接报
    * 服务不可用，绝不回落 WorkspaceBrowseService——LOCAL 的 workspace 是设备上的绝对路径，
@@ -874,30 +876,66 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
   });
 
   /**
-   * 发送附件快照下载（技术方案 2026-11-24-send-file-snapshot D3/D5）。
+   * 发送快照下载票据（技术方案 2026-11-25-send-file-1gb R6）：
+   * 属主鉴权后签发绑定 `文件 id + userId` 的无状态 HMAC 票据，有效期 24 小时
+   * （Range 续传会重用同一个 URL，短票据续传必失败）。不入库、不落盘。
+   */
+  app.post('/v1/files/send-download-ticket', async (request, reply) => {
+    const userId = requireUserId(request);
+    const body = bodyOf(request) as { id?: unknown } | null;
+    const id = typeof body?.id === 'string' ? body.id.trim() : '';
+    if (id === '') {
+      throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数: id');
+    }
+    const row = await deps.sendFileService.findById(id);
+    if (row == null || !(await canReadSendFile(row, userId, sessionService))) {
+      return sendJson(reply, 404, fail(ErrorCode.PARAM_INVALID.code, '附件不存在'));
+    }
+    const issued = deps.sendDownloadTickets.issue(id, userId);
+    return sendOk(reply, { ticket: issued.ticket, expiresAt: issued.expiresAt });
+  });
+
+  /**
+   * 发送附件快照下载（技术方案 2026-11-24-send-file-snapshot D3/D5；2026-11-25 R6/R7）。
    *
    * 消息里只记快照 id，不记磁盘路径、不记云厂商 URL、不记 token；本地读 sendDir，
-   * 云模式由服务端签 GET 后代读，浏览器不接触云地址。鉴权复用现有 JWT
+   * 云模式由服务端签 GET 后代读，浏览器不接触云地址。
+   *
+   * 鉴权二选一：`ticket`（短时票据，绑定文件 + 用户）或既有 JWT
    * （`Authorization` 头或 query `token`，`<img>` 带不了请求头；query 通道的
-   * `mao_` API Token 由 jwt-hook 统一拒绝）。
+   * `mao_` API Token 由 jwt-hook 统一拒绝）。票据无效时回落 JWT 口径。
    *
    * 授权口径：属主本人，**或**发送时所在会话的归属人（二轮评审 §9.3 口径 A）——
    * 群聊里非归属成员发言时运行身份是发言者，少了后半条会话归属人自己会打不开。
    * 不设「仅会话归属人」：会话删除后附件仍属于属主本人，授权自动退回仅属主。
    * 行不存在与不属于你一律 404，不区分。
+   *
+   * `Range`（R7）：1GB 原生下载断线后可续传。本地 `createReadStream({start,end})`
+   * 回 206；云把 Range 透传预签名 GET，原样转发 206 / Content-Range。
    */
   app.get('/v1/files/send-download', async (request, reply) => {
-    const userId = requireUserId(request);
     const id = queryOptStr(request, 'id')?.trim();
     if (id == null || id === '') {
       throw new BusinessException(ErrorCode.PARAM_MISSING, '缺少必要参数: id');
     }
+    const ticket = queryOptStr(request, 'ticket')?.trim() ?? '';
+    const claims = ticket !== '' ? deps.sendDownloadTickets.verify(ticket) : null;
+    const userId = claims != null && claims.fileId === id ? claims.userId : requireUserId(request);
     const row = await deps.sendFileService.findById(id);
     if (row == null || !(await canReadSendFile(row, userId, sessionService))) {
       return reply.status(404).send();
     }
-    const target = await deps.sendFileService.openDownload(row);
+    const rangeHeader = normalizeRangeHeader(request.headers.range);
+    const target = await deps.sendFileService.openDownload(row, rangeHeader);
     if (!target.ok) {
+      // 云代读的 416 要按协议回 416：映射成 404 会让下载器判定文件不存在、续传无法重启
+      if (target.status === 416) {
+        return reply
+          .status(416)
+          .header('Content-Range', target.contentRange ?? `bytes */${row.bytes}`)
+          .header('Accept-Ranges', 'bytes')
+          .send();
+      }
       return sendJson(reply, 404, fail(ErrorCode.PARAM_INVALID.code, target.error));
     }
     // 图片 inline 供卡片与灯箱直接显示；其余一律 attachment。`.bin` 的 mime 是
@@ -908,12 +946,31 @@ export function registerFileRoutes(app: FastifyInstance, deps: FileRouteDeps): v
       .type(row.mime)
       .header('X-Content-Type-Options', 'nosniff')
       // 快照不可变；private 是因为内容是属主鉴权数据，不得进共享缓存
-      .header('Cache-Control', 'private, max-age=604800, immutable');
+      .header('Cache-Control', 'private, max-age=604800, immutable')
+      .header('Accept-Ranges', 'bytes');
     if ('localPath' in target) {
+      if (rangeHeader != null) {
+        const range = parseByteRange(rangeHeader, target.size);
+        if (range === 'invalid') {
+          return reply
+            .status(416)
+            .header('Content-Range', `bytes */${target.size}`)
+            .send();
+        }
+        if (range != null) {
+          return reply
+            .status(206)
+            .header('Content-Range', `bytes ${range.start}-${range.end}/${target.size}`)
+            .header('Content-Length', String(range.end - range.start + 1))
+            .send(createReadStream(target.localPath, { start: range.start, end: range.end }));
+        }
+      }
       reply.header('Content-Length', String(target.size));
       return reply.send(createReadStream(target.localPath));
     }
-    const cloud = target as { stream: Readable; size: number | null };
+    const cloud = target as Exclude<SendFileDownloadTarget, { ok: false } | { localPath: string }>;
+    if (cloud.status === 206) reply.status(206);
+    if (cloud.contentRange != null) reply.header('Content-Range', cloud.contentRange);
     if (cloud.size != null) reply.header('Content-Length', String(cloud.size));
     return reply.send(cloud.stream);
   });
@@ -938,6 +995,43 @@ function requireFileOwner(file: FileEntity, userId: number): void {
 
 /** 快照下载允许 inline 的 mime：与落盘时的字节嗅探同表（send_file.mime 就是嗅探结果）。 */
 const SEND_FILE_INLINE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp']);
+
+/**
+ * Range 头收口（R7）：只支持单段，且必须是规范形态。
+ * - 多段（`bytes=0-99,200-299`）忽略并回整份 200：云代读会返回 multipart/byteranges，
+ *   而路由按文件 mime 覆写 Content-Type 且不带 boundary，客户端拿到的是坏文件；
+ *   本地分支同样忽略多段，两边口径一致。
+ * - 畸形单段（`bytes=abc`）同样忽略：原样透传给云可能被上游判 400，最后被映射成 404。
+ */
+function normalizeRangeHeader(raw: string | null | undefined): string | null {
+  if (typeof raw !== 'string') return null;
+  const value = raw.trim();
+  if (!/^bytes=\d*-\d*$/.test(value) || value === 'bytes=-') return null;
+  return value;
+}
+
+/**
+ * 单段 `Range` 解析（R7）：只认 `bytes=start-end` / `bytes=start-` / `bytes=-suffix`。
+ * 返回 null = 头不可解析（按整份响应，RFC 允许忽略）；'invalid' = 范围越界（回 416）。
+ * 多段 Range 不支持：快照下载是单文件直传，多段（multipart/byteranges）没有浏览器场景。
+ */
+function parseByteRange(header: string, size: number): { start: number; end: number } | 'invalid' | null {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (match == null) return null;
+  const [, rawStart, rawEnd] = match;
+  if (rawStart === '' && rawEnd === '') return null;
+  if (size <= 0) return 'invalid';
+  if (rawStart === '') {
+    const suffix = Number(rawEnd);
+    if (!Number.isSafeInteger(suffix) || suffix <= 0) return 'invalid';
+    return { start: Math.max(0, size - suffix), end: size - 1 };
+  }
+  const start = Number(rawStart);
+  if (!Number.isSafeInteger(start) || start >= size) return 'invalid';
+  const end = rawEnd === '' ? size - 1 : Math.min(Number(rawEnd), size - 1);
+  if (!Number.isSafeInteger(end) || end < start) return 'invalid';
+  return { start, end };
+}
 
 /**
  * `file_path` 相对上传根目录的 POSIX 相对路径（2026-11-24 D7）：新上传是

@@ -147,10 +147,18 @@ const activeProvider = computed(() => {
   if (deliveryUrl) {
     const filename = activeTab.value?.title || activeTab.value?.filePath || 'attachment'
     const mime = activeTab.value?.deliveryMime
-    const cacheKey = `${deliveryUrl}\0${filename}\0${mime ?? ''}`
+    const bytes = activeTab.value?.deliveryBytes
+    const fileId = activeTab.value?.deliveryFileId
+    const cacheKey = `${deliveryUrl}\0${filename}\0${mime ?? ''}\0${bytes ?? ''}\0${fileId ?? ''}`
     let provider = deliveryProviders.get(cacheKey)
     if (!provider) {
-      provider = createDeliveryFileProvider({ url: deliveryUrl, filename, mime })
+      provider = createDeliveryFileProvider({
+        url: deliveryUrl,
+        filename,
+        mime,
+        ...(bytes != null ? { bytes } : {}),
+        ...(fileId != null ? { fileId } : {}),
+      })
       deliveryProviders.set(cacheKey, provider)
     }
     return provider

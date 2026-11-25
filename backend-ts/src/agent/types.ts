@@ -9,6 +9,7 @@ export interface Agent {
   systemPrompt: string;
   creatorId?: number | null;
   configJson?: string | null;
+  /** 该 Agent 共用的系统技能名（JSON 数组字符串）；null / '[]' 表示无共用系统技能，不回退加载全量 */
   skillNames?: string | null;
   mcpServerIds?: string | null;
   /** 关联的自定义 HTTP 工具 ID 列表（JSON 数组字符串），为空表示不启用 */

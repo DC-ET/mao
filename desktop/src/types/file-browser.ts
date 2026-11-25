@@ -64,6 +64,10 @@ export interface Tab {
    */
   deliveryUrl?: string
   deliveryMime?: string
+/** 快照字节数（send_file 投递）：预览超过 20MB 时只提示下载，不 arrayBuffer 整份。 */
+  deliveryBytes?: number
+  /** 快照 id（send-file ref）：下载时换短时票据，不把 JWT 放进 URL。 */
+  deliveryFileId?: string
   /**
    * 从检查器摘要点某个子仓库打开 Git Tab 时的选中请求。
    * nonce 每次点击加一，同一个仓库再点一次也会重新选中。

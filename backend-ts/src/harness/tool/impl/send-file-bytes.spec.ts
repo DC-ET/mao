@@ -1,18 +1,29 @@
 import { describe, expect, it, vi } from 'vitest';
 import { mcpWhitelistEnv } from '../../mcp/mcp-client-manager.js';
 import { loadSendFileBytes, readLocalBytes } from './send-file-bytes.js';
-import { fetchBytesWithContentType } from './fetch-bytes.js';
+import { fetchBytesStreamWithContentType } from './fetch-bytes.js';
 import { StrictPathResolver } from '../../safety/strict-path.js';
 import { SecurityException } from '../../safety/path-sandbox.js';
 import { useTmpDir } from '../../../testing/tmp-dir.js';
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 
 // URL 源不发真实网络请求：只验证「预检不误拦 URL、也不走容器」的顺序不变量。
 vi.mock('./fetch-bytes.js', () => ({
   fetchBytesWithLimits: vi.fn(async () => Buffer.from('url-bytes')),
   fetchBytesWithContentType: vi.fn(async () => ({ bytes: Buffer.from('url-bytes'), contentType: 'image/png' })),
+  fetchBytesStreamWithContentType: vi.fn(async () => ({
+    stream: Readable.from([Buffer.from('url-bytes')]),
+    size: 9,
+    contentType: 'image/png',
+  })),
 }));
+
+/** 容器 / 执行端流式来源的测试替身：把整块字节包成单块流。 */
+function streamOf(bytes: Buffer) {
+  return { stream: Readable.from([bytes]), size: bytes.length, contentType: null };
+}
 
 describe('mcp stdio env whitelist', () => {
   it('inheritsOnlyWhitelistedKeysAndMergesServerEnv', () => {
@@ -77,9 +88,10 @@ describe('send-file bytes loading', () => {
     const workspace = join(base, 'workspace', '7');
     mkdirSync(workspace, { recursive: true });
     const sandbox = { getEffectiveWorkspaceRoot: () => workspace } as never;
-    const readBytes = vi.fn(async () => Buffer.from('should-not-be-read'));
+    const openStream = vi.fn(async () => streamOf(Buffer.from('should-not-be-read')));
     const support = {
-      readBytes,
+      openStream,
+      readBytes: vi.fn(async () => Buffer.from('should-not-be-read')),
       extraRoots: vi.fn(() => []),
       foreignPathMessage: vi.fn(async () => 'FOREIGN-MEMBER-MESSAGE'),
     };
@@ -88,14 +100,14 @@ describe('send-file bytes loading', () => {
     await expect(loadSendFileBytes(foreignPath, sandbox, support, { userId: 67, sessionId: 11, workspace }, 1024))
       .rejects.toThrow('FOREIGN-MEMBER-MESSAGE');
     // 关键不变量：命中预检时容器读取不得被调用（否则 docker 用户先拿容器通用错误）
-    expect(readBytes).not.toHaveBeenCalled();
+    expect(openStream).not.toHaveBeenCalled();
     expect(support.foreignPathMessage).toHaveBeenCalledWith(foreignPath, 67, null);
 
     // 预检不命中时才走容器读取
     support.foreignPathMessage.mockResolvedValue(null);
     const bytes = await loadSendFileBytes('a.txt', sandbox, support, { userId: 67, sessionId: 11, workspace }, 1024);
     expect(bytes.toString()).toBe('should-not-be-read');
-    expect(readBytes).toHaveBeenCalled();
+    expect(openStream).toHaveBeenCalled();
   });
 
   it('预检透传 pathPolicyHint（edit_image 的行为提示）', async () => {
@@ -104,6 +116,7 @@ describe('send-file bytes loading', () => {
     mkdirSync(workspace, { recursive: true });
     const sandbox = { getEffectiveWorkspaceRoot: () => workspace } as never;
     const support = {
+      openStream: vi.fn(async () => streamOf(Buffer.from('x'))),
       readBytes: vi.fn(async () => Buffer.from('x')),
       extraRoots: vi.fn(() => []),
       foreignPathMessage: vi.fn(async () => 'MSG'),
@@ -121,9 +134,10 @@ describe('send-file bytes loading', () => {
     const workspace = join(base, 'workspace', '7');
     mkdirSync(workspace, { recursive: true });
     const sandbox = { getEffectiveWorkspaceRoot: () => workspace } as never;
-    const readBytes = vi.fn(async () => Buffer.from('container'));
+    const openStream = vi.fn(async () => streamOf(Buffer.from('container')));
     const support = {
-      readBytes,
+      openStream,
+      readBytes: vi.fn(async () => Buffer.from('container')),
       extraRoots: vi.fn(() => []),
       // 模拟真实 bridge：只对绝对本地路径做跨成员判定（URL 返回 null）
       foreignPathMessage: vi.fn(async (src: string) => (src.startsWith('/') ? 'FOREIGN' : null)),
@@ -132,9 +146,10 @@ describe('send-file bytes loading', () => {
       'https://cdn.example.com/a.png', sandbox, support, { userId: 67, sessionId: 11, workspace }, 1024,
     );
     expect(bytes.toString()).toBe('url-bytes');
-    expect(vi.mocked(fetchBytesWithContentType)).toHaveBeenCalledWith('https://cdn.example.com/a.png', 1024);
+    expect(vi.mocked((await import('./fetch-bytes.js')).fetchBytesStreamWithContentType))
+      .toHaveBeenCalledWith('https://cdn.example.com/a.png', 1024);
     // URL 不应落到容器读取分支
-    expect(readBytes).not.toHaveBeenCalled();
+    expect(openStream).not.toHaveBeenCalled();
   });
 
   it('loadSendFileBytesPrefersContainerAndKeepsUrlOnHost', async () => {
@@ -146,15 +161,17 @@ describe('send-file bytes loading', () => {
 
     // 容器分支命中：不落本地读取
     const support = {
+      openStream: vi.fn(async () => streamOf(Buffer.from('container-bytes'))),
       readBytes: vi.fn(async () => Buffer.from('container-bytes')),
       extraRoots: vi.fn(() => []),
     };
     const bytes = await loadSendFileBytes('a.txt', sandbox, support, { userId: 7, sessionId: 11, workspace }, 1024);
     expect(bytes.toString()).toBe('container-bytes');
-    expect(support.readBytes).toHaveBeenCalled();
+    expect(support.openStream).toHaveBeenCalled();
 
-    // 非容器用户：readBytes 返回 null → 降级本地严格读
+    // 非容器用户：openStream 返回 null → 降级本地严格读
     const hostSupport = {
+      openStream: vi.fn(async () => null),
       readBytes: vi.fn(async () => null),
       extraRoots: vi.fn(() => []),
     };
@@ -163,6 +180,7 @@ describe('send-file bytes loading', () => {
 
     // 容器分支抛错（容器内文件缺失）不静默降级
     const failingSupport = {
+      openStream: vi.fn(async () => { throw new Error('文件不存在：/tmp/none.txt'); }),
       readBytes: vi.fn(async () => { throw new Error('文件不存在：/tmp/none.txt'); }),
       extraRoots: vi.fn(() => []),
     };

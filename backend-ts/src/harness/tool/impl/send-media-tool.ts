@@ -1,14 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { statSync } from 'node:fs';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { lookup as mimeLookup } from 'mime-types';
 import type { DeliveryRef } from '@mao/contracts';
 import { BaseTool } from '../tool.js';
 import { asText, errorJson, parseObject, toJson } from '../json.js';
 import { ImageFileSupport } from '../image-file-support.js';
 import {
-  loadSendFileBytesDetailed,
+  openSendBytesStream,
   SendBytesNotFoundError,
+  type SendBytesStream,
   type SendBytesSupport,
 } from './send-file-bytes.js';
 import { toStaticUploadBase } from './generate-image-tool.js';
@@ -26,6 +28,7 @@ import type { DingtalkMediaSendSupport, DingtalkSendTarget } from './dingtalk-to
 import type { LocalDeliveryFetchService } from '../../local/delivery-fetch.service.js';
 import { DINGTALK_FILE_EXTENSIONS } from '../../../dingtalk/send.service.js';
 import { harnessLog } from '../../log.js';
+import { ToolCancelContext } from '../tool-cancel-context.js';
 
 /**
  * 统一发送图片 / 文件（技术方案 2026-11-18-unified-send-media + 2026-11-24-send-file-snapshot）：
@@ -38,7 +41,12 @@ import { harnessLog } from '../../log.js';
  */
 
 export const SEND_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
-export const SEND_FILE_MAX_BYTES = 30 * 1024 * 1024;
+/**
+ * 对话页快照上限（技术方案 2026-11-25-send-file-1gb）：1GB 只抬「发给用户的那一份」，
+ * 图片仍 20MB，微信 / 钉钉 20MB、飞书 30MB 的通道上限不动。三端同名常量必须同值
+ * （backend-ts / 桌面 delivery-fetch / agent-cli file-fetch）。
+ */
+export const SEND_FILE_MAX_BYTES = 1024 * 1024 * 1024;
 
 /** 副本图片格式 = 三通道并集（微信 / 飞书 png/jpeg/gif/webp + 钉钉 bmp）。 */
 const COPY_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp']);
@@ -74,8 +82,30 @@ export interface SendFileStore {
     filename: string;
     mime: string;
     ext: string;
-    bytes: Buffer;
-  }): Promise<{ ok: true; id: string; mime: string; bytes: number } | { ok: false; error: string }>;
+    /** 源端声明大小；未知长度（http 无 Content-Length）为 null，边写边计。 */
+    declaredSize: number | null;
+    /** 来源流：失败时服务侧会销毁它（调用方也可自行销毁，destroy 幂等）。 */
+    body: Readable;
+    /** 声明大小与实际读出字节必须一致（宿主机 / Docker / LOCAL 来源）。 */
+    verifySize?: boolean;
+    /** 需要回传给通道推送的字节上限（chat 会话 / 超过通道上限时为 0）。 */
+    captureBytes?: number;
+    /** 大文件并发闸（R5）：通道会话超过通道上限、对话页超过 20MB 时置 true。 */
+    gateLargeFile?: boolean;
+    /** 本轮取消信号（R4）。 */
+    cancel?: { get(): boolean } | null;
+    /**
+     * 完整性校验（R8）：设置后边写边算 sha256，提交前调用；抛错即按校验失败收口
+     * （删除临时文件、不插表）。http / 宿主机来源不传。
+     */
+    verifyDigest?: (sha256: string) => Promise<void>;
+  }): Promise<{
+    ok: true;
+    id: string;
+    mime: string;
+    bytes: number;
+    captured?: Buffer;
+  } | { ok: false; error: string }>;
 }
 
 export interface ChannelPushInput {
@@ -170,6 +200,47 @@ function sniffImageMime(bytes: Buffer): string | null {
   return null;
 }
 
+/** 通道侧超限文案：与各策略内部同口径（图片 / 文件 + MB 数）。 */
+function overloadError(kind: 'image' | 'file', channelMax: number): string {
+  const label = kind === 'image' ? '图片' : '文件';
+  return `${label}超过 ${Math.floor(channelMax / (1024 * 1024))}MB 上限`;
+}
+
+/**
+ * 取流的前 headBytes 字节用于魔数嗅探，再返回一个「头 + 剩余」的续接流（D2）。
+ * 不缓冲剩余部分：`Readable.from` 按需从同一迭代器拉取，下游 pipe 的背压原样生效。
+ * 首块可能大于 headBytes（http / 文件流常见 64KB），整块保留在 head 里，不重复消费。
+ */
+async function splitStreamHead(
+  stream: Readable,
+  headBytes: number,
+): Promise<{ head: Buffer; rest: Readable }> {
+  const iterator = stream[Symbol.asyncIterator]() as AsyncIterator<Buffer>;
+  const chunks: Buffer[] = [];
+  let total = 0;
+  while (total < headBytes) {
+    const { value, done } = await iterator.next();
+    if (done) break;
+    const buf = Buffer.isBuffer(value) ? value : Buffer.from(value as Uint8Array);
+    chunks.push(buf);
+    total += buf.length;
+  }
+  const head = Buffer.concat(chunks);
+  const rest = Readable.from((async function* replay() {
+    try {
+      if (head.length > 0) yield head;
+      while (true) {
+        const { value, done } = await iterator.next();
+        if (done) return;
+        yield value;
+      }
+    } finally {
+      await iterator.return?.(undefined);
+    }
+  })(), { highWaterMark: 64 * 1024 });
+  return { head, rest };
+}
+
 /**
  * 副本 mime：图片一律以字节嗅探为准（扩展名 / content-type 都不能把非图片伪装成图片）；
  * 其它优先响应 content-type，再按扩展名，未知 octet-stream。
@@ -208,10 +279,27 @@ const CHANNEL_LABELS: Record<Exclude<SendChannel, 'chat'>, string> = {
 const WECHAT_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const FEISHU_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const DINGTALK_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/bmp']);
-const WECHAT_MAX_BYTES = 20 * 1024 * 1024;
-const DINGTALK_MAX_BYTES = 20 * 1024 * 1024;
-const FEISHU_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
-const FEISHU_FILE_MAX_BYTES = 30 * 1024 * 1024;
+export const WECHAT_MAX_BYTES = 20 * 1024 * 1024;
+export const DINGTALK_MAX_BYTES = 20 * 1024 * 1024;
+export const FEISHU_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+export const FEISHU_FILE_MAX_BYTES = 30 * 1024 * 1024;
+
+/**
+ * 通道侧单文件上限（技术方案 2026-11-25 D1）：大于它的文件不读一份字节去推通道，
+ * 直接 `channelStatus = failed`；对话页快照照常成功。chat 会话返回 0（不需要推送）。
+ */
+export function channelMaxBytes(kind: 'image' | 'file', channel: SendChannel): number {
+  if (channel === 'chat') return 0;
+  if (channel === 'wechat') return WECHAT_MAX_BYTES;
+  if (channel === 'dingtalk') return DINGTALK_MAX_BYTES;
+  return kind === 'image' ? FEISHU_IMAGE_MAX_BYTES : FEISHU_FILE_MAX_BYTES;
+}
+
+/**
+ * 大文件并发闸阈值（R5）：通道会话按自身通道上限判定，对话页没有通道上限，
+ * 按三家通道里最严的 20MB 判定——1GB 发送的主战场正是对话页，整类跳过等于 R5 对大文件失效。
+ */
+export const LARGE_SEND_GATE_BYTES = WECHAT_MAX_BYTES;
 
 export class WechatSendStrategy implements SendChannelStrategy {
   readonly channel = 'wechat' as const;
@@ -490,13 +578,25 @@ const SEND_TOOL_BASE_PROMPT = '网页、桌面、安卓打开这条会话时，�
 
 /** LOCAL 读本机文件的执行端拉取（D10）：缺省 null（未装配时 LOCAL 本机路径直接失败）。 */
 export interface SendDeliveryFetcher {
-  fetch(
+  /**
+   * 打开发送字节流（2026-11-25 R2）：执行端按服务端区间请求逐片回传，
+   * `size` 为执行端 open 时 stat 的大小，用于写入前的磁盘 / 上限判断。
+   */
+  openStream(
     sessionId: number,
     userId: number | null,
     filePath: string,
     workspace: string | null | undefined,
     maxBytes: number,
-  ): Promise<{ ok: true; bytes: Buffer } | { ok: false; error: string }>;
+  ): Promise<{
+    ok: true;
+    stream: Readable;
+    size: number;
+    /** 执行端整份 sha256（R8）：写入完成后比对。 */
+    digest: () => Promise<string>;
+    /** 释放执行端句柄（摘要比对后显式调用）。 */
+    close: () => void;
+  } | { ok: false; error: string }>;
 }
 
 abstract class SendMediaToolBase extends BaseTool {
@@ -525,29 +625,77 @@ abstract class SendMediaToolBase extends BaseTool {
   }
 
   /**
-   * 读一次字节（读取上限 = 副本上限，§5.1-1）；LOCAL 会话非 http(s) 且**宿主机没有这份文件**
-   * 时回退执行端拉取（D10，§6.1）。跨成员预检、容器读失败、超限、符号链接越界不回退，
+   * 打开发送来源的流（2026-11-25 D2）：本地路径优先容器，宿主机读不到且是 LOCAL 会话时
+   * 回退执行端按区间拉取（R2）。跨成员预检、容器读失败、超限、符号链接越界不回退，
    * 避免把安全 / 大小问题掩盖成执行端超时。
+   *
+   * `verifySize` 表示「源端声明的大小与读出字节必须一致」：宿主机 / Docker / LOCAL 置 true，
+   * http 来源不校验（对端可能压缩或谎报长度）。
    */
+  protected async openSource(
+    source: string,
+    ctx: { userId: number | null; sessionId: number | null; workspace: string | null },
+    maxBytes: number,
+    executionMode: string | null | undefined,
+  ): Promise<{
+    stream: Readable;
+    size: number | null;
+    contentType: string | null;
+    verifySize: boolean;
+    digest?: () => Promise<string>;
+    close?: () => void | Promise<void>;
+  }> {
+    const isHttp = /^https?:\/\//i.test(source);
+    try {
+      const opened: SendBytesStream = await openSendBytesStream(
+        source, this.pathSandbox, this.sendBytesSupport ?? null, ctx, maxBytes,
+      );
+      return { ...opened, verifySize: !isHttp };
+    } catch (e) {
+      // 宿主机文件不存在 / 路径在服务端沙箱根外（LOCAL 本机路径在服务器上必然如此）才回退
+      const hostMissing = e instanceof SendBytesNotFoundError || e instanceof SecurityException;
+      if (executionMode === 'LOCAL' && !isHttp && hostMissing && ctx.sessionId != null && this.deliveryFetch != null) {
+        const sid = ctx.sessionId as number;
+        const opened = await this.deliveryFetch.openStream(sid, ctx.userId, source, ctx.workspace, maxBytes);
+        if (opened.ok) {
+          return {
+            stream: opened.stream,
+            size: opened.size,
+            contentType: null,
+            verifySize: true,
+            digest: opened.digest,
+            close: opened.close,
+          };
+        }
+        throw new Error(opened.error);
+      }
+      throw e;
+    }
+  }
+
+  /** 读一次完整字节（上限 = 调用方给的 maxBytes）；只服务通道推送等小文件场景。 */
   protected async loadBytes(
     source: string,
     ctx: { userId: number | null; sessionId: number | null; workspace: string | null },
     maxBytes: number,
     executionMode: string | null | undefined,
   ): Promise<{ bytes: Buffer; contentType: string | null }> {
+    const opened = await this.openSource(source, ctx, maxBytes, executionMode);
     try {
-      return await loadSendFileBytesDetailed(source, this.pathSandbox, this.sendBytesSupport ?? null, ctx, maxBytes);
-    } catch (e) {
-      const isHttp = /^https?:\/\//i.test(source);
-      // 宿主机文件不存在 / 路径在服务端沙箱根外（LOCAL 本机路径在服务器上必然如此）才回退
-      const hostMissing = e instanceof SendBytesNotFoundError || e instanceof SecurityException;
-      if (executionMode === 'LOCAL' && !isHttp && hostMissing && ctx.sessionId != null && this.deliveryFetch != null) {
-        const sid = ctx.sessionId as number;
-        const fetched = await this.deliveryFetch.fetch(sid, ctx.userId, source, ctx.workspace, maxBytes);
-        if (fetched.ok) return { bytes: fetched.bytes, contentType: null };
-        throw new Error(fetched.error);
+      const chunks: Buffer[] = [];
+      let total = 0;
+      for await (const chunk of opened.stream) {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+        total += buf.length;
+        if (total > maxBytes) {
+          opened.stream.destroy();
+          throw new Error(`文件过大，上限 ${Math.floor(maxBytes / (1024 * 1024))}MB`);
+        }
+        chunks.push(buf);
       }
-      throw e;
+      return { bytes: Buffer.concat(chunks), contentType: opened.contentType };
+    } finally {
+      await opened.close?.();
     }
   }
 
@@ -652,6 +800,7 @@ abstract class SendMediaToolBase extends BaseTool {
     const kind = this.kind();
     const argName = this.sourceArgName();
     try {
+      if (ToolCancelContext.current()?.get()) return errorJson('发送已取消');
       const args = parseObject(argumentsJson) ?? {};
       const source = asText(args[argName]);
       if (!source) return errorJson(`缺少必填参数: ${argName}`);
@@ -670,18 +819,24 @@ abstract class SendMediaToolBase extends BaseTool {
       }
       const channel = detectSendChannel(session);
       const filename = asText(args.filename) || basenameOfSource(source);
+      const channelMax = channelMaxBytes(kind, channel);
       const decision = await this.decideLiveRef(source, { userId, sessionId, workspace });
       if (decision.action === 'ref') {
-        // 原地引用分支（形态 B）：chat-only 不读全量字节；绑通道仍读全量推送（推送需要），
+        // 原地引用分支（形态 B）：chat-only 不读全量字节；绑通道仍读一份推送（≤ 通道上限），
         // loadBytes 失败只算通道侧失败（§4.2 评审补充），两侧都不落快照
         const delivery = this.buildRefDelivery(decision.live, filename);
         let push: ChannelPushResult = { ok: true, error: null };
         const strategy = this.strategyFor(channel);
         if (strategy != null) {
           try {
-            const loaded = await this.loadBytes(source, { userId, sessionId, workspace }, this.maxBytes(), session?.executionMode ?? null);
-            const pushInput = { sessionId, parentSessionId: session?.parentSessionId ?? null, userId, bytes: loaded.bytes, filename };
-            push = kind === 'image' ? await strategy.pushImage(pushInput) : await strategy.pushFile(pushInput);
+            if (decision.live.bytes != null && decision.live.bytes > channelMax) {
+              push = { ok: false, error: overloadError(kind, channelMax) };
+            } else {
+              // 已知大小已过闸；URL 形态大小未知，按通道上限读，超限文案落到通道侧
+              const loaded = await this.loadBytes(source, { userId, sessionId, workspace }, channelMax, session?.executionMode ?? null);
+              const pushInput = { sessionId, parentSessionId: session?.parentSessionId ?? null, userId, bytes: loaded.bytes, filename };
+              push = kind === 'image' ? await strategy.pushImage(pushInput) : await strategy.pushFile(pushInput);
+            }
           } catch (e) {
             harnessLog('warn', `send ${kind} channel push bytes failed channel=${channel}`, e);
             push = { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -693,41 +848,113 @@ abstract class SendMediaToolBase extends BaseTool {
       if (userId == null) {
         return errorJson('对话页没有可打开的附件地址，保存失败');
       }
-      let loaded: { bytes: Buffer; contentType: string | null };
+      let opened: Awaited<ReturnType<SendMediaToolBase['openSource']>>;
       try {
-        loaded = await this.loadBytes(source, { userId, sessionId, workspace }, this.maxBytes(), session?.executionMode ?? null);
+        opened = await this.openSource(source, { userId, sessionId, workspace }, this.maxBytes(), session?.executionMode ?? null);
       } catch (e) {
-        // 读字节失败：还没有两侧，只有 error（§4.3）
+        // 打开来源失败：还没有两侧，只有 error（§4.3）
         return errorJson(e instanceof Error ? e.message : String(e));
       }
-      const bytes = loaded.bytes;
-      if (bytes.length === 0) return errorJson(this.emptyBytesError());
-      const ext = deriveSendCopyExtension(source, loaded.contentType);
-      // 图片一律以字节嗅探为准（扩展名 / content-type 都不能把非图片伪装成图片）；
-      // 文件类回落 .bin 时 mime 收敛为 octet-stream，避免客户端按 mime 内联预览绕开扩展名限制
-      let mime: string;
-      if (kind === 'image') {
-        const imageMime = sniffImageMime(bytes);
-        if (imageMime == null || !COPY_IMAGE_MIMES.has(imageMime)) {
-          return errorJson('不支持的图片格式（快照支持 PNG/JPG/JPEG/GIF/WebP/BMP）');
+      try {
+        // 头部 64 字节用于图片魔数嗅探与空文件判定；剩余部分原样接回写入流（D2）
+        const { head, rest } = await splitStreamHead(opened.stream, 64);
+        if (head.length === 0) {
+          opened.stream.destroy();
+          return errorJson(this.emptyBytesError());
         }
-        mime = imageMime;
-      } else {
-        mime = ext === '.bin' ? 'application/octet-stream' : mimeForSendCopy(ext, bytes, loaded.contentType);
-      }
-      const snapshot = await this.sendFileStore.save({ userId, sessionId, filename, mime, ext, bytes });
-      const strategy = this.strategyFor(channel);
-      let push: ChannelPushResult = { ok: true, error: null };
-      if (strategy != null) {
-        const pushInput = { sessionId, parentSessionId: session?.parentSessionId ?? null, userId, bytes, filename };
+        const ext = deriveSendCopyExtension(source, opened.contentType);
+        // 图片一律以字节嗅探为准（扩展名 / content-type 都不能把非图片伪装成图片）；
+        // 文件类回落 .bin 时 mime 收敛为 octet-stream，避免客户端按 mime 内联预览绕开扩展名限制
+        let mime: string;
+        if (kind === 'image') {
+          const imageMime = sniffImageMime(head);
+          if (imageMime == null || !COPY_IMAGE_MIMES.has(imageMime)) {
+            rest.destroy();
+            return errorJson('不支持的图片格式（快照支持 PNG/JPG/JPEG/GIF/WebP/BMP）');
+          }
+          mime = imageMime;
+        } else {
+          mime = ext === '.bin' ? 'application/octet-stream' : mimeForSendCopy(ext, head, opened.contentType);
+        }
+        // 超过通道上限：不读那一份推送字节（R1 第 4 步），直接按通道失败收口
+        const capturedLimit = channel === 'chat' ? 0 : channelMax;
+        const willCapture = channel !== 'chat' && (opened.size == null || opened.size <= channelMax);
+        // 大文件并发闸（R5）：chat 没有通道上限，按最严通道上限判定，避免对话页 1GB 并发绕过
+        const gateThreshold = channel === 'chat' ? LARGE_SEND_GATE_BYTES : channelMax;
+        let snapshot: Awaited<ReturnType<SendFileStore['save']>>;
         try {
-          push = kind === 'image' ? await strategy.pushImage(pushInput) : await strategy.pushFile(pushInput);
+          snapshot = await this.sendFileStore.save({
+            userId,
+            sessionId,
+            filename,
+            mime,
+            ext,
+            declaredSize: opened.size,
+            body: rest,
+            verifySize: opened.verifySize,
+            captureBytes: willCapture ? capturedLimit : 0,
+            gateLargeFile: opened.size == null || opened.size > gateThreshold,
+            cancel: ToolCancelContext.current(),
+            // R8：容器 / 执行端来源比对整份 sha256；宿主机与 http 来源不提供 digest
+            verifyDigest: opened.digest != null
+              ? async (sha256: string) => {
+                const remote = await opened.digest!();
+                if (remote !== sha256) throw new Error('文件校验失败，请重试');
+              }
+              : undefined,
+          });
         } catch (e) {
-          harnessLog('warn', `send ${kind} channel push failed channel=${channel}`, e);
-          push = { ok: false, error: e instanceof Error ? e.message : String(e) };
+          rest.destroy();
+          harnessLog('warn', `send ${kind} snapshot failed`, e);
+          return errorJson(e instanceof Error ? e.message : String(e));
         }
+        if (!snapshot.ok) {
+          // save 提前返回（并发闸拒绝 / 磁盘不足 / 声明超限）时来源流可能一次都没被读过，
+          // 宿主机 createReadStream 的 fd 在嗅探头部时已分配，必须显式销毁
+          rest.destroy();
+          if (snapshot.error === '发送已取消') return errorJson('发送已取消');
+          // 完整性校验失败是硬失败：不再回源重读去推通道（对话页这份都不可信）
+          if (snapshot.error === '文件校验失败，请重试') return errorJson(snapshot.error);
+        }
+        const strategy = this.strategyFor(channel);
+        let push: ChannelPushResult = { ok: true, error: null };
+        if (strategy != null) {
+          if (ToolCancelContext.current()?.get()) {
+            return errorJson('发送已取消');
+          }
+          if (snapshot.ok && snapshot.captured != null) {
+            const pushInput = {
+              sessionId, parentSessionId: session?.parentSessionId ?? null, userId,
+              bytes: snapshot.captured, filename,
+            };
+            try {
+              push = kind === 'image' ? await strategy.pushImage(pushInput) : await strategy.pushFile(pushInput);
+            } catch (e) {
+              harnessLog('warn', `send ${kind} channel push failed channel=${channel}`, e);
+              push = { ok: false, error: e instanceof Error ? e.message : String(e) };
+            }
+          } else if (snapshot.ok) {
+            // 快照成功但没有回传字节：只可能是超过了通道上限（或空 capture 上限）
+            push = { ok: false, error: overloadError(kind, channelMax) };
+          } else if (opened.size != null && opened.size > channelMax) {
+            push = { ok: false, error: overloadError(kind, channelMax) };
+          } else {
+            // 快照失败时通道侧仍可能读到同一份来源：小文件才回源重试（≤ 通道上限）
+            try {
+              const loaded = await this.loadBytes(source, { userId, sessionId, workspace }, channelMax, session?.executionMode ?? null);
+              const pushInput = { sessionId, parentSessionId: session?.parentSessionId ?? null, userId, bytes: loaded.bytes, filename };
+              push = kind === 'image' ? await strategy.pushImage(pushInput) : await strategy.pushFile(pushInput);
+            } catch (e) {
+              harnessLog('warn', `send ${kind} channel push bytes failed channel=${channel}`, e);
+              push = { ok: false, error: e instanceof Error ? e.message : String(e) };
+            }
+          }
+        }
+        return combineSendResult(kind, filename, channel, snapshot, push);
+      } finally {
+        // 释放容器 / 执行端句柄（摘要比对已由 save 的 verifyDigest 在提交前完成）
+        await opened.close?.();
       }
-      return combineSendResult(kind, filename, channel, snapshot, push);
     } catch (e) {
       harnessLog('warn', `send_${kind} failed`, e);
       return errorJson(e instanceof Error ? e.message : String(e));
@@ -828,7 +1055,7 @@ export class SendFileTool extends SendMediaToolBase {
     };
   }
   getToolPrompt(): string | null {
-    return `send_file：把一份文件发到当前会话。${SEND_TOOL_BASE_PROMPT}文件大小不超过 30MB，扩展名不限；绑定的通道可能更严（如钉钉的扩展名白名单），不符合时对话里仍能看到、通道不会收到。`;
+    return `send_file：把一份文件发到当前会话。${SEND_TOOL_BASE_PROMPT}文件大小不超过 1GB，扩展名不限；绑定的通道可能更严（微信 / 钉钉 20MB、飞书 30MB，钉钉还有扩展名白名单），超过通道上限时对话里仍能看到、通道不会收到。较大的文件可能需要数分钟，请等待结果，不要重复调用。`;
   }
   protected kind(): 'image' | 'file' { return 'file'; }
   protected maxBytes(): number { return SEND_FILE_MAX_BYTES; }

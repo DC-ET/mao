@@ -97,7 +97,7 @@ describe('ChatDeliveryBar 模板绑定与预览/下载双动作卡片', () => {
 
     // 脚本层接线：优先注入 openDeliveryFile 进中心预览 Tab，只读分享页回落下载
     expect(scriptContent).toContain("inject<((delivery: SendDelivery) => void) | null>('openDeliveryFile', null)")
-    expect(scriptContent).toContain('downloadDeliveryUrl(srcOf(d), d.filename)')
+    expect(scriptContent).toContain('downloadDeliveryUrl(srcOf(d), d.filename, fileId != null ? { fileId } : undefined)')
     // 稳定 key：形态 A 用 ref、形态 B/C 用 url，不用含 token 的 resolved URL（评审补充 §5.2）
     expect(scriptContent).toContain("from '../../utils/deliveryUrl'")
     expect(propExp(card, 'key')).toBe('keyOf(d)')

@@ -17,6 +17,15 @@ describe('jwt-hook public paths', () => {
     expect(isPublicPath('POST', '/api/v1/health')).toBe(true);
     expect(isPublicPath('GET', '/api/v1/healthy')).toBe(true);
   });
+
+  it('快照下载：带 ticket 的 GET 免 JWT 门槛，不带票据仍要求登录（2026-11-25 R6）', () => {
+    expect(isPublicPath('GET', '/api/v1/files/send-download?id=x&ticket=abc.def')).toBe(true);
+    expect(isPublicPath('GET', '/api/v1/files/send-download?ticket=abc.def&id=x')).toBe(true);
+    expect(isPublicPath('GET', '/api/v1/files/send-download?id=x')).toBe(false);
+    expect(isPublicPath('GET', '/api/v1/files/send-download?id=x&token=jwt')).toBe(false);
+    // 只有 GET 放开；POST（换票据）仍需 JWT
+    expect(isPublicPath('POST', '/api/v1/files/send-download?id=x&ticket=abc')).toBe(false);
+  });
 });
 
 

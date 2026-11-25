@@ -68,33 +68,35 @@ describe('BUG-1: grep_search rg 分支把以 - 开头的 pattern 当成 flag', (
 });
 
 // ---------------------------------------------------------------------------
-// BUG-2 容器 read_bytes 对 0 字节文件误判失败
-// 位置：backend-ts/src/harness/container/docker-tool-router.ts:131（!response.ok || !response.base64）
-// 容器侧 container-tool-executor.ts:207 对空文件返回 { ok: true, base64: '' }；
-// `''` 是 base64 的合法编码结果，`!response.base64` 把空串当失败 → 抛「容器内文件读取失败」。
-// 期望：与 host 模式一致返回空 Buffer。实际：send/edit_image 等读 0 字节文件直接报错。
-// 修复（2026-11-08）：判空改为 `response.base64 == null`（空串是 0 字节文件的合法编码）。
+// BUG-2（2026-11-25 区间协议回归）容器 0 字节文件读取
+// 历史问题：旧 read_bytes 用 `!response.base64` 判失败，把 0 字节文件误判成读取失败。
+// 2026-11-25 全面换成区间协议（R2）：open 返回 size=0，流不发起任何 read，结果必须是空 Buffer。
+// 这里锁定「不再用空串 truthiness 判失败」这条回归。
 // ---------------------------------------------------------------------------
-describe('BUG-2: 容器 read_bytes 对 0 字节文件误判失败', () => {
-  bugIt('ok=true 且 base64 为空串时应返回空 Buffer，而不是抛「容器内文件读取失败」', async () => {
+describe('BUG-2: 容器 0 字节文件走区间协议必须返回空 Buffer', () => {
+  bugIt('open 回 size=0 时不发起 read，流正常结束为空', async () => {
     const ensureRunning = vi.fn(async () => ({
       userId: 7, containerName: 'mao-user-7-agent-5', state: 'running', startedAtMs: 1, lastUsedAtMs: 1,
       inContainer: { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 },
       connectionDead: false, mountedPaths: new Set<string>(), sessionWorkspaces: [],
     }));
-    const request = vi.fn(async () => ({ v: 1, type: 'read_bytes_result', id: 'x', ok: true, base64: '' }));
+    const request = vi.fn(async () => ({ v: 1, type: 'read_bytes_range_result', id: 'x', ok: true, data: '', size: 0, mtimeMs: 1 }));
     const router = new DockerToolRouter({
       containerRegistry: { ensureRunning } as never,
-      channelServer: { getConnection: () => ({ request }) } as never,
+      channelServer: { getConnection: () => ({ request, send: () => undefined }) } as never,
       envelopeBuilder: { build: async () => ({ userId: 7 }) } as never,
       runtimeModeLookup: { runtimeModeOf: async () => 'docker' },
       globalMode: async () => 'docker',
     });
-    const bytes = await router.readBytes({
+    const opened = await router.openReadStream({
       userId: 7, agentId: 5, sessionId: 11, workspace: null, path: 'chat-files/empty.txt', maxBytes: 1024,
     });
-    expect(bytes).toBeInstanceOf(Buffer);
-    expect(bytes!.length).toBe(0);
+    expect(opened?.size).toBe(0);
+    const chunks: Buffer[] = [];
+    for await (const chunk of opened!.stream) chunks.push(chunk as Buffer);
+    expect(Buffer.concat(chunks).length).toBe(0);
+    // 只有 open 一帧，没有任何 read
+    expect(request).toHaveBeenCalledTimes(1);
   });
 });
 

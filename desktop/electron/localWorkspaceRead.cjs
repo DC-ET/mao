@@ -16,9 +16,7 @@ const path = require('path')
 const { readFileBytes } = require('./localFileBytes.cjs')
 
 /** file_fetch 功能上限（与 backend-ts FILE_FETCH_MAX_BYTES / 渲染层同表）；默认收紧 localFileBytes 的 64MB 通用上限。 */
-/** delivery_fetch 功能上限（与 backend-ts SEND_FILE_MAX_BYTES 同表）；图片 20MB / 文件 30MB 的并集取文件侧。 */
 const FILE_FETCH_MAX_BYTES = 10 * 1024 * 1024
-const DELIVERY_FETCH_MAX_BYTES = 30 * 1024 * 1024
 
 /**
  * 相对路径 → workspace 内绝对路径。
@@ -68,12 +66,13 @@ function readWorkspaceBytes(workspace, relativePath, options) {
 }
 
 /**
- * delivery_fetch 的执行端路径解析（方案 2026-11-18-unified-send-media §6.2）：相对路径，
+ * delivery_read 的执行端路径解析（方案 2026-11-18-unified-send-media §6.2）：相对路径，
  * 或「解析后仍在该会话 workspace 内」的绝对路径（send 工具允许 absolute-within-workspace）。
  * containment 是 realpath 口径（`..` / 父级目录 symlink 逃逸都靠 realpath 比对拒绝）；
  * 相对路径的反斜杠与 NUL 直接拒绝，目标本身是符号链接也拒绝（工具约定「非符号链接」）。
  * 反斜杠按平台语义放行：相对路径 `/` 为唯一分隔符；绝对路径在 Windows 上必然含反斜杠，
  * 放行交给 realpath containment 兜底（agent-cli file-fetch.ts 同构，改动须双端同步）。
+ * 字节读取改由 localDeliveryStream.cjs 持有句柄按区间读（2026-11-25 R2），这里只做路径解析。
  * @returns {{ path: string } | { error: string }}
  */
 function resolveDeliveryWorkspacePath(workspace, filePath) {
@@ -106,15 +105,4 @@ function resolveDeliveryWorkspacePath(workspace, filePath) {
   return { path: targetReal }
 }
 
-/**
- * delivery_fetch 委托读取：containment + readFileBytes（普通文件 / 符号链接 / 上限校验）。
- * 上限取副本文件上限 30MB（与 backend-ts SEND_FILE_MAX_BYTES / 渲染层同表）。
- * @returns {{ bytes: Buffer, size: number } | { error: string }}
- */
-function readDeliveryWorkspaceBytes(workspace, filePath, options) {
-  const resolved = resolveDeliveryWorkspacePath(workspace, filePath)
-  if (resolved.error) return resolved
-  return readFileBytes(resolved.path, { maxBytes: DELIVERY_FETCH_MAX_BYTES, ...options })
-}
-
-module.exports = { resolveContainedWorkspacePath, readWorkspaceBytes, readDeliveryWorkspaceBytes, FILE_FETCH_MAX_BYTES, DELIVERY_FETCH_MAX_BYTES }
+module.exports = { resolveContainedWorkspacePath, readWorkspaceBytes, resolveDeliveryWorkspacePath, FILE_FETCH_MAX_BYTES }

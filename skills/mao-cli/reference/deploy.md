@@ -219,6 +219,21 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 86400s;
     }
+    # 1GB 附件快照下载（2026-11-25 send_file 1GB R7）：单独一个精确 location，
+    # 关闭响应缓冲——默认开启时 Nginx 会把上游 1GB 响应落到网关临时盘（proxy_max_temp_file_size
+    # 默认 1024MB），既占网关磁盘又拖慢首字节。proxy_read_timeout / send_timeout 是相邻读写
+    # 之间的间隔（不是整次传输时长），持续有数据即可，保持 300s 覆盖上游 60 秒空闲。
+    location = /api/v1/files/send-download {
+        proxy_pass http://mao_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_buffering off;
+        proxy_max_temp_file_size 0;
+    }
     location /api/ {
         proxy_pass http://mao_backend;
         proxy_set_header Host $host;
@@ -438,7 +453,9 @@ FROM message WHERE deleted = 0;
    **镜像依赖集必须覆盖 `runtime-agent` 的 import 闭包**（当前为 `sharp` / `node-pty` / `@modelcontextprotocol/sdk` / `minimatch` / `yaml`）：容器只挂载宿主机 `dist`（代码），第三方包全部来自镜像的 `node_modules`。backend-ts 新增进入该闭包的 npm 包后，必须同步加进 `Dockerfile.runtime` 并重建镜像，否则容器内 agent 启动即 `ERR_MODULE_NOT_FOUND` 退出，表现为每个用户的任务等满 15 秒后报「容器运行时通道连接超时」（0.0.379 前的 `yaml` 缺失即此形态）。0.0.379 起预检会用当前 dist 在镜像里实际加载一次 agent，漏依赖会直接拒绝切换并提示重建镜像。
 3. **数据目录**：`/opt/mao-data/runtime/channels`（socket 根）与 `/opt/mao-data/deps`（持久依赖）需存在且后端进程可写（首次启动预检会校验，不满足直接启动失败，不静默降级）。
 4. **上传目录**：图片产物（`generate_image` / `edit_image`）落 `{FILE_UPLOAD_DIR}/{userId}/`（宿主机按用户隔离、同名挂入容器），外网经 Nginx `^~ /uploads/` 与 `^~ /api/uploads/` 两个前缀访问；按用户隔离后请确认 Nginx 配置含这两个 location（见上文 Nginx 片段），否则图片类 `file.url` 会被扩展名正则 location 吞掉变 404。
-5. **发送附件快照目录**：`/opt/mao-data/send-files`（`FILE_SEND_DIR`）由后端启动自动创建，需存在且后端进程可写。快照只经 `/api/v1/files/send-download` 属主鉴权下发：**不要**给它加 Nginx `alias`（见上文 Nginx 片段注释），也不要挂进工具容器（挂载清单变化会让存量容器按指纹重建，且可写挂载会让 Agent 删掉刚发出的附件）。目录不计入用户配额、只增不减，建议纳入 `df` 监控并定期清理。`FILE_SEND_DIR` 不得配在 `FILE_UPLOAD_DIR` 之内，误配启动即拒。
+5. **发送附件快照目录**：`/opt/mao-data/send-files`（`FILE_SEND_DIR`）由后端启动自动创建，需存在且后端进程可写。快照只经 `/api/v1/files/send-download` 属主鉴权下发：**不要**给它加 Nginx `alias`（见上文 Nginx 片段注释），也不要挂进工具容器（挂载清单变化会让存量容器按指纹重建，且可写挂载会让 Agent 删掉刚发出的附件）。目录不计入用户配额、只增不减，**必须纳入 `df` 告警**并定期清理。`FILE_SEND_DIR` 不得配在 `FILE_UPLOAD_DIR` 之内，误配启动即拒。
+   - 2026-11-25 起单文件上限 1GB：写入先落 `FILE_SEND_DIR/.tmp/`，本地 `rename` 原子入位、云模式单次流式 PUT；进程启动只清理 6 小时前的残片（蓝绿双进程共用目录，不能清对方的在途写入）。磁盘余量检查要求「剩余 − 已预留 ≥ 文件大小 + 1GB」，大文件发送另有每用户 1 路 / 全局 4 路并发闸。
+   - 下载接口支持 `Range`（断点续传）与 `POST /api/v1/files/send-download-ticket` 换 24 小时无状态票据；票据 URL 不进 JWT。云模式下载经服务端代读（Mao 出口出流量 = 文件大小）。
 6. **share 目录（按 Agent 隔离，0.0.489 起）**：`/opt/mao-data/share`（`MAO_SHARE_DIR` 可覆盖）由后端启动自动创建。目录结构 = `agent-experience/<agentId>/`（各 Agent 团队经验库）+ `agents/<agentId>/`（各 Agent 私有区：投放品、脚本、产物）。**容器内每个 Agent 只挂载自己的这两条子路径**（rw 同名挂载），其他 Agent 目录在容器文件系统层面不存在。管理员投放：把文件放到目标 Agent 的 `agents/<目标AgentId>/`，目录级挂载即时生效（无需重启/重建容器）；多 Agent 需同一文件时逐个复制（无公共投放区）。建议属主与后端运行用户一致、权限 755（`settings.xml` 等含凭据文件建议 600）。目录不计入用户配额、占满磁盘影响全体服务，建议纳入 `df` 监控；经验库由 Agent 自动写入，建议每日快照兜底（示例：`0 3 * * * tar -czf /opt/mao-data/backup/share-$(date +%F).tgz -C /opt/mao-data share && find /opt/mao-data/backup -name 'share-*.tgz' -mtime +14 -delete`）。存量容器升级后随挂载指纹漂移一次性自动重建。
 
 ### 配置（环境变量，见 config.md）

@@ -41,6 +41,33 @@ function envelopeOf(
   };
 }
 
+/**
+ * 用 2026-11-25 的区间协议读完整份字节（测试辅助）：open（length=0）+ 逐片 read + close。
+ * 返回与旧 handleReadBytes 近似的结果形状，便于断言沙箱 / 上限。
+ */
+async function readBytesViaRange(
+  executor: ContainerToolExecutor,
+  path: string,
+  maxBytes: number,
+  env: Parameters<ContainerToolExecutor['handleReadBytesRange']>[0]['envelope'],
+): Promise<{ ok: true; bytes: Buffer } | { ok: false; error: string }> {
+  const streamId = `spec-${Math.random().toString(36).slice(2)}`;
+  const opened = await executor.handleReadBytesRange({ streamId, offset: 0, length: 0, path, maxBytes, envelope: env });
+  if (!opened.ok) return { ok: false, error: opened.error };
+  const chunks: Buffer[] = [];
+  try {
+    for (let offset = 0; offset < opened.size; offset += 512 * 1024) {
+      const length = Math.min(512 * 1024, opened.size - offset);
+      const chunk = await executor.handleReadBytesRange({ streamId, offset, length });
+      if (!chunk.ok) return { ok: false, error: chunk.error };
+      chunks.push(Buffer.from(chunk.data, 'base64'));
+    }
+    return { ok: true, bytes: Buffer.concat(chunks) };
+  } finally {
+    executor.closeReadStream(streamId);
+  }
+}
+
 describe('container tool executor', () => {
   it('executesFileToolsInsideSandboxAndRejectsEscapes', async () => {
     const base = useTmpDir('mao-exec-');
@@ -153,7 +180,7 @@ describe('container tool executor', () => {
     expect(genericError).not.toContain('其他成员');
   });
 
-  it('readBytesEnforcesSandboxAndSizeLimit', () => {
+  it('readBytesEnforcesSandboxAndSizeLimit', async () => {
     const base = useTmpDir('mao-exec-bytes-');
     const workspaceRoot = join(base, 'workspace');
     const userWorkspace = join(workspaceRoot, '7');
@@ -169,20 +196,20 @@ describe('container tool executor', () => {
       shareDir: join(base, 'share') }), USER_ID);
     const env = envelopeOf(userWorkspace);
 
-    const ok = executor.handleReadBytes('pic.txt', 1000, env);
+    const ok = await readBytesViaRange(executor, 'pic.txt', 1000, env);
     expect(ok.ok).toBe(true);
-    expect(Buffer.from((ok as { base64: string }).base64, 'base64').length).toBe(100);
+    expect(ok.ok && ok.bytes.length).toBe(100);
 
-    const tooBig = executor.handleReadBytes('pic.txt', 10, env);
+    const tooBig = await readBytesViaRange(executor, 'pic.txt', 10, env);
     expect(tooBig.ok).toBe(false);
 
-    const missing = executor.handleReadBytes('nope.txt', 1000, env);
+    const missing = await readBytesViaRange(executor, 'nope.txt', 1000, env);
     expect(missing.ok).toBe(false);
 
     // /tmp 在容器内允许根（§5.6）
     writeFileSync('/tmp/mao-exec-tmpfile', 'tmp-bytes');
     try {
-      const tmp = executor.handleReadBytes('/tmp/mao-exec-tmpfile', 1000, env);
+      const tmp = await readBytesViaRange(executor, '/tmp/mao-exec-tmpfile', 1000, env);
       expect(tmp.ok).toBe(true);
     } finally {
       rmSync('/tmp/mao-exec-tmpfile', { force: true });
@@ -217,10 +244,10 @@ describe('container tool executor', () => {
     const other = await executor.handleToolCall('read_file', JSON.stringify({ path: join(uploadDir, '8', 'gen-y.txt') }), env);
     expect(JSON.parse(other).error).toBeDefined();
 
-    // read_bytes 桥（外部发送工具容器读字节）同口径
-    const ownBytes = executor.handleReadBytes(join(uploadDir, '7', 'gen-x.txt'), 1000, env);
+    // readBytesRange 桥（外部发送工具容器读字节）同口径
+    const ownBytes = await readBytesViaRange(executor, join(uploadDir, '7', 'gen-x.txt'), 1000, env);
     expect(ownBytes.ok).toBe(true);
-    const otherBytes = executor.handleReadBytes(join(uploadDir, '8', 'gen-y.txt'), 1000, env);
+    const otherBytes = await readBytesViaRange(executor, join(uploadDir, '8', 'gen-y.txt'), 1000, env);
     expect(otherBytes.ok).toBe(false);
   });
 
@@ -263,16 +290,16 @@ describe('container tool executor', () => {
     expect(JSON.parse(own).content).toBe('shared-content');
     const ownPrivate = await executor.handleToolCall('read_file', JSON.stringify({ path: join(agentPrivateDir, 'tool.txt') }), env);
     expect(JSON.parse(ownPrivate).content).toBe('private-content');
-    // read_bytes 桥同口径
-    expect(executor.handleReadBytes(join(experienceAgentDir, 'doc.md'), 1000, env).ok).toBe(true);
-    expect(executor.handleReadBytes(join(agentPrivateDir, 'tool.txt'), 1000, env).ok).toBe(true);
+    // readBytesRange 桥同口径
+    expect((await readBytesViaRange(executor, join(experienceAgentDir, 'doc.md'), 1000, env)).ok).toBe(true);
+    expect((await readBytesViaRange(executor, join(agentPrivateDir, 'tool.txt'), 1000, env)).ok).toBe(true);
     // 跨 Agent 目录：不在允许根内 → 拒绝
     const otherAgent = await executor.handleToolCall('read_file', JSON.stringify({ path: join(otherAgentDir, 'doc.md') }), env);
     expect(JSON.parse(otherAgent).error).toBeDefined();
     // share 根公共文件：公共投放区已取消 → 拒绝
     const publicFile = await executor.handleToolCall('read_file', JSON.stringify({ path: join(shareDir, 'public.txt') }), env);
     expect(JSON.parse(publicFile).error).toBeDefined();
-    expect(executor.handleReadBytes(join(shareDir, 'public.txt'), 1000, env).ok).toBe(false);
+    expect((await readBytesViaRange(executor, join(shareDir, 'public.txt'), 1000, env)).ok).toBe(false);
     // 本 Agent 子树内指向外部的 symlink 被逃逸检测拒绝
     const escape = await executor.handleToolCall('read_file', JSON.stringify({ path: join(experienceAgentDir, 'escape.txt') }), env);
     expect(JSON.parse(escape).error).toBeDefined();
@@ -317,7 +344,7 @@ describe('container tool executor', () => {
     // read_file / read_bytes 同口径放行（技能 SKILL.md 在系统提示词里就是这条绝对路径）
     const read = await executor.handleToolCall('read_file', JSON.stringify({ path: join(sessionSkillsDir, 'bigdata-cli', 'SKILL.md') }), env);
     expect(JSON.parse(read).content).toContain('name: bigdata-cli');
-    const bytes = executor.handleReadBytes(join(sessionSkillsDir, 'bigdata-cli', 'SKILL.md'), 1000, env);
+    const bytes = await readBytesViaRange(executor, join(sessionSkillsDir, 'bigdata-cli', 'SKILL.md'), 1000, env);
     expect(bytes.ok).toBe(true);
 
     // 只放行本人视图：指向其他用户视图 / 视图之外的会话技能链接仍按符号链接逃逸拒绝

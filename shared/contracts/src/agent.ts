@@ -37,6 +37,7 @@ export interface AgentVO {
   experienceLibraryEnabled?: boolean;
   /** Agent 默认模型 ID：会话未显式选模型时的优先回退（null=未配置，再回退全局默认模型） */
   defaultModelId?: number | null;
+  /** 该 Agent 共用的系统技能名（管理员在 Agent 表单多选）；空 = 无共用系统技能，不回退全量；实际可用还会叠加角色授权 */
   skillNames?: string[];
   mcpServerIds?: number[];
   /** 关联的自定义 HTTP 工具 ID 列表（管理员在 Agent 表单多选；该 Agent 的会话可调用） */

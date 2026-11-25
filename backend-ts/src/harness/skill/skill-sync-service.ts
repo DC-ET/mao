@@ -174,6 +174,10 @@ export class SkillSyncService {
     return result;
   }
 
+  /**
+   * Agent 侧共用系统技能名。空（NULL / 空数组 / 非法 JSON）一律返回空清单，
+   * 不回退「加载全部」——2026-08 已按此口径修复，DB 列注释由 V209 同步校正。
+   */
   resolveSkillNames(agent: Agent): string[] {
     const raw = agent.skillNames ?? agent.skills;
     if (!raw || raw.trim() === '') return [];

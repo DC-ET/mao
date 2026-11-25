@@ -18,7 +18,7 @@ import { ensureDesktopShellBridgeFromWs } from './useDesktopShell'
 import { resolveFileChangeWorkspace } from '../utils/file-change-workspace'
 import { getToolInputPreview } from '../utils/toolDisplay'
 import { handleLocalFileFetch } from '../utils/local-file-fetch'
-import { handleDeliveryFetch } from '../utils/delivery-fetch'
+import { handleDeliveryRead } from '../utils/delivery-fetch'
 import { executeLocalFileOp } from '../utils/local-file-op'
 import {
   clearApprovalVoted,
@@ -1428,14 +1428,17 @@ export function useStreamWS() {
         break
       }
 
-      case 'delivery_fetch': {
-        // LOCAL 发送字节委托读取（统一发送媒体方案 2026-11-18 §6.2）：send_image / send_file
-        // 读不到本机文件时服务端发起；浏览器标签页不会收到该帧，保留 electronAPI 存在性守卫。
-        // fire-and-forget：最多 60 片发送循环不得阻塞同连接后续帧；失败静默，服务端 20s 超时收敛。
+      case 'delivery_read': {
+        // LOCAL 发送字节委托读取（2026-11-25 send_file 1GB R2）：服务端按区间拉取，
+        // open / read / close 三段。浏览器标签页不会收到该帧，保留 electronAPI 存在性守卫。
+        // fire-and-forget：单片读取不得阻塞同连接后续帧。
         if (!sessionId || !data) break
-        if (typeof window === 'undefined' || !(window as any).electronAPI?.localDeliveryReadFile) break
-        void handleDeliveryFetch(data, Number(sessionId), {
-          readBytes: (payload) => (window as any).electronAPI.localDeliveryReadFile(payload),
+        if (typeof window === 'undefined' || !(window as any).electronAPI?.localDeliveryOpen) break
+        void handleDeliveryRead(data, Number(sessionId), {
+          open: (payload) => (window as any).electronAPI.localDeliveryOpen(payload),
+          read: (payload) => (window as any).electronAPI.localDeliveryRead(payload),
+          digest: (payload) => (window as any).electronAPI.localDeliveryDigest(payload),
+          close: (payload) => (window as any).electronAPI.localDeliveryClose(payload),
           send: sendReliable,
         })
         break

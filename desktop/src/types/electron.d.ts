@@ -414,8 +414,16 @@ interface ElectronAPI {
   localReadBytes(args: { path: string }): Promise<{ bytes?: Uint8Array; size?: number; error?: string }>
   /** file_fetch 委托读取（方案 2026-11-18）：workspace + 相对路径，主进程 containment 校验后读字节。 */
   localReadWorkspaceBytes?(args: { workspace: string; path: string }): Promise<{ bytes?: Uint8Array; size?: number; error?: string }>
-  /** delivery_fetch 委托读取（统一发送媒体方案 §6.2）：workspace + 相对或 workspace 内绝对路径；maxBytes 为帧内副本上限。 */
-  localDeliveryReadFile?(args: { workspace: string; path: string; maxBytes?: number }): Promise<{ bytes?: Uint8Array; size?: number; error?: string }>
+  /**
+   * delivery_read 委托读取（2026-11-25 send_file 1GB R2）：open 校验路径并返回 size / mtimeMs，
+   * read 按 offset 读一片（512KB），close 释放句柄。
+   */
+  localDeliveryOpen?(args: { workspace: string; path: string; maxBytes?: number }): Promise<{ ok?: boolean; openId?: string; size?: number; mtimeMs?: number; error?: string }>
+  localDeliveryRead?(args: { openId: string; offset: number; length: number }): Promise<{ ok?: boolean; bytes?: Uint8Array; size?: number; mtimeMs?: number; error?: string }>
+  localDeliveryDigest?(args: { openId: string }): Promise<{ ok?: boolean; sha256?: string; size?: number; mtimeMs?: number; error?: string }>
+  localDeliveryClose?(args: { openId: string }): Promise<{ ok?: boolean; error?: string }>
+  /** 大文件下载（R6）：票据 URL 交给 Chromium 下载，不 fetch 成 Blob。 */
+  downloadUrl?(url: string): Promise<boolean>
   localWriteFile(args: any): Promise<any>
   localEditFile(args: any): Promise<any>
   listWorkspaceFiles(workspace: string, filter?: string, limit?: number): Promise<WorkspaceFile[]>

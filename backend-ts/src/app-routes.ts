@@ -152,6 +152,7 @@ import { WorkspaceWriteService } from './file/workspace-write.service.js';
 import { WorkspaceOverviewService } from './file/workspace-overview.service.js';
 import { registerFileRoutes } from './file/file.routes.js';
 import type { SendFileService } from './file/send-file.service.js';
+import type { SendDownloadTicketService } from './file/send-download-ticket.service.js';
 import { registerUploadTicketRoutes } from './upload/upload-ticket.routes.js';
 import { registerSkillBundleRoutes } from './skill/skill-bundle.routes.js';
 import { registerSkillRoutes } from './skill/skill.routes.js';
@@ -293,6 +294,8 @@ export interface RouteDeps {
   uploadTicketService: UploadTicketService;
   /** 发送附件快照（技术方案 2026-11-24 D3）：下载端点 + 发送工具写入口共用。 */
   sendFileService: SendFileService;
+  /** 快照下载的短时票据（2026-11-25 R6）。 */
+  sendDownloadTickets: SendDownloadTicketService;
 
   // skill
   skillBundleService: SkillBundleService;
@@ -381,6 +384,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     httpToolValidator,
     fileService, agentService, experienceService, experienceIndexService, suggestedQuestionService,
     sendFileService,
+    sendDownloadTickets,
     mcpValidator,
     modelService,
     settingService, activateContainerRuntime, runtimeModeResolver, containerHostsResolver, containerAutoUpgradeResolver, containerOps,
@@ -643,6 +647,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
       getUploadBaseUrl: async () => (await settingService.getUploadConfig()).baseUrl,
       runtimeDataResolver: runtimeResolver,
       sendFileService,
+      sendDownloadTickets,
     });
     registerUploadTicketRoutes(api, { uploadTicketService });
     registerSkillBundleRoutes(api, { skillBundleService, permissionService });

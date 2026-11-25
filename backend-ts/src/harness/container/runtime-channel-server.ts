@@ -363,7 +363,7 @@ class ConnectionImpl implements ChannelConnection {
         this.missedPongs = 0;
         break;
       case 'tool_result':
-      case 'read_bytes_result':
+      case 'read_bytes_range_result':
       case 'mcp_result':
       case 'pty_open_result':
       case 'shutdown_ack':

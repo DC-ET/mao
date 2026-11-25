@@ -548,6 +548,26 @@ export class StreamingWsRegistry {
     return result;
   }
 
+  /**
+   * 定向投递到指定连接（按 `socket.id` 精确匹配，同步直发）。
+   *
+   * 用途：未绑定设备的会话（`target_device_id` 为空）走用户级广播，`open` 帧由首个
+   * 成功的执行端认领之后，`read` / `digest` / `close` 必须只发给这一条连接——
+   * 否则另一台在线设备（没有该 streamId）回的「读取流已关闭或不存在」会抢先结算，
+   * 把一次正常的发送打断（2026-11-25 send_file 1GB R2）。
+   */
+  sendToLocalSocket(userId: number, socketId: string, event: WsEvent): boolean {
+    if (userId == null || socketId === '') return false;
+    const socket = [...(this.userSessions.get(userId) ?? [])].find((candidate) => candidate.id === socketId);
+    if (socket == null || socket.readyState !== WS_OPEN || !this.isConnectionAuthorized(socket)) return false;
+    try {
+      socket.send(JSON.stringify(event));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** 连接自报的设备 id（浏览器 / 旧客户端返回 null）。 */
   getDeviceId(session: WsSocket): string | null {
     return this.connectionDevice.get(session.id)?.id ?? null;

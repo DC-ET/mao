@@ -50,7 +50,7 @@ export interface WsHandlerDeps {
   embedPageToolRegistry: EmbedPageToolRegistry;
   /** LOCAL 正文图片按需委托读取（方案 2026-11-18） */
   localFileFetch: import('./harness/local/local-file-fetch.service.js').LocalFileFetchService;
-  /** LOCAL 发送字节委托读取（统一发送媒体方案 2026-11-18 §6）：delivery_fetch_result 拼装 */
+  /** LOCAL 发送字节委托读取（2026-11-25 R2 拉取协议）：delivery_read_result 交由 LocalDeliveryFetchService 处理 */
   localDeliveryFetch: import('./harness/local/delivery-fetch.service.js').LocalDeliveryFetchService;
   localToolSessions: LocalToolSessionRegistry;
   /** LOCAL 会话文件树远程代理（技术方案 2026-11-17）：file_op_result 入站完成 + 断线清理。 */

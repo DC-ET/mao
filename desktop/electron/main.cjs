@@ -1627,6 +1627,21 @@ ipcMain.handle('open-external', async (event, url) => {
   await shell.openExternal(parsed.toString())
 })
 
+// 大文件下载（2026-11-25 send_file 1GB D6 / R6）：票据 URL 直接交给 webContents 下载，
+// 不再 fetch 成 Blob 塞进页面内存，也不 window.open（setWindowOpenHandler 会交给系统浏览器，
+// 票据会落到外部浏览器）。默认走 Chromium 下载（弹保存框）。
+ipcMain.handle('download-url', (event, url) => {
+  if (typeof url !== 'string' || !url.trim()) {
+    throw new Error('URL is required')
+  }
+  const parsed = new URL(url)
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('Unsupported download URL protocol')
+  }
+  event.sender.downloadURL(parsed.toString())
+  return true
+})
+
 ipcMain.handle('open-feishu-auth-window', async (event, payload) => {
   const authUrl = typeof payload === 'string' ? payload : payload?.authUrl
   const callbackPath = typeof payload === 'object' && payload?.callbackPath

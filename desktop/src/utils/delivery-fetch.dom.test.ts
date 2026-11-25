@@ -1,12 +1,12 @@
-// delivery_fetch 执行端处理（utils/delivery-fetch，统一发送媒体方案 2026-11-18 §6.2）：分片、maxBytes、静默失败。
+// delivery_read 执行端处理（utils/delivery-fetch，2026-11-25 send_file 1GB R2）：
+// open / read / close 三段、区间上限、错误显式回包。
 // btoa 依赖浏览器全局：单开 DOM 环境（jsdom 自带 btoa/atob）。
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
 import {
-  DELIVERY_FETCH_CHUNK_BASE64_MAX,
-  DELIVERY_FETCH_CHUNK_BYTES,
-  DELIVERY_FETCH_MAX_BYTES,
-  handleDeliveryFetch,
+  DELIVERY_READ_CHUNK_BYTES,
+  DELIVERY_READ_MAX_BYTES,
+  handleDeliveryRead,
 } from './delivery-fetch'
 
 function bytesOf(byteLength: number, fill = 1): Uint8Array {
@@ -23,126 +23,131 @@ function collectSender() {
   return { frames, send }
 }
 
-describe('handleDeliveryFetch', () => {
-  it('按 512KB 分片回传 delivery_fetch_result，seq/total/data 正确', async () => {
-    const { frames, send } = collectSender()
-    const byteLength = DELIVERY_FETCH_CHUNK_BYTES + 1024 // 2 片
-    const bytes = bytesOf(byteLength, 7)
-    await handleDeliveryFetch(
-      { requestId: 'r1', workspace: '/repo', path: 'screenshots/a.png', maxBytes: DELIVERY_FETCH_MAX_BYTES },
-      42,
-      { readBytes: async () => ({ bytes }), send },
-    )
-    expect(frames).toHaveLength(2)
-    const [first, second] = frames
-    expect(first).toMatchObject({ type: 'delivery_fetch_result', sessionId: 42, requestId: 'r1', seq: 1, total: 2 })
-    expect(second).toMatchObject({ seq: 2, total: 2 })
-    const decode = (frame: Record<string, unknown>) =>
-      Uint8Array.from(atob(frame.data as string), (c) => c.charCodeAt(0))
-    expect(decode(first).byteLength).toBe(DELIVERY_FETCH_CHUNK_BYTES)
-    expect(decode(second).byteLength).toBe(1024)
-    expect(decode(first)[0]).toBe(7)
-  })
+function depsOf(overrides: Partial<Parameters<typeof handleDeliveryRead>[2]> = {}) {
+  const { frames, send } = collectSender()
+  const open = vi.fn(async () => ({ ok: true, openId: 'open-1', size: DELIVERY_READ_CHUNK_BYTES + 1024, mtimeMs: 123 }))
+  const read = vi.fn(async () => ({
+    ok: true,
+    bytes: bytesOf(DELIVERY_READ_CHUNK_BYTES, 7),
+    size: DELIVERY_READ_CHUNK_BYTES + 1024,
+    mtimeMs: 123,
+  }))
+  const digest = vi.fn(async () => ({ ok: true, sha256: 'abc123', size: DELIVERY_READ_CHUNK_BYTES + 1024, mtimeMs: 123 }))
+  const close = vi.fn(async () => ({ ok: true }))
+  const deps = { open, read, digest, close, send, ...overrides }
+  return { frames, send, open, read, digest, close, deps }
+}
 
-  it('帧 maxBytes 生效：超过服务端副本上限 → 静默不回包（图片会话 20MB）', async () => {
-    const { frames, send } = collectSender()
-    const reads: Array<{ maxBytes: number }> = []
-    const twenty = 20 * 1024 * 1024
-    await handleDeliveryFetch(
-      { requestId: 'r1', workspace: '/repo', path: 'a.png', maxBytes: twenty },
-      42,
-      { readBytes: async (payload) => { reads.push(payload); return { bytes: bytesOf(twenty + 1) } }, send },
-    )
-    // 帧内上限下传到主进程，避免按 30MB 读整份后才丢弃
-    expect(reads[0]!.maxBytes).toBe(twenty)
-    expect(frames).toHaveLength(0)
-  })
+const OPEN_FRAME = {
+  requestId: 'r-open',
+  action: 'open',
+  streamId: 's1',
+  workspace: '/repo',
+  path: 'big.bin',
+  maxBytes: DELIVERY_READ_MAX_BYTES,
+}
 
-  it('maxBytes 非法时按 30MB 兜底；30MB 上限生效', async () => {
-    const { frames, send } = collectSender()
-    await handleDeliveryFetch(
-      { requestId: 'r1', workspace: '/repo', path: 'big.bin' },
+describe('handleDeliveryRead', () => {
+  it('open 回 size / mtimeMs，read 按 offset 取一片并以 base64 回包', async () => {
+    const { frames, deps, open, read } = depsOf()
+    await handleDeliveryRead(OPEN_FRAME, 42, deps)
+    await handleDeliveryRead(
+      { requestId: 'r1', action: 'read', streamId: 's1', offset: 0, length: DELIVERY_READ_CHUNK_BYTES },
       42,
-      { readBytes: async () => ({ bytes: bytesOf(DELIVERY_FETCH_MAX_BYTES + 1) }), send },
+      deps,
     )
-    await handleDeliveryFetch(
-      { requestId: 'r2', workspace: '/repo', path: 'big.bin', maxBytes: Number.NaN },
-      42,
-      { readBytes: async () => ({ bytes: bytesOf(DELIVERY_FETCH_MAX_BYTES + 1) }), send },
-    )
-    expect(frames).toHaveLength(0)
-    expect(send).not.toHaveBeenCalled()
-  })
-
-  it('读失败 / 空 bytes → 静默不回包（含 workspace 内绝对路径入参透传）', async () => {
-    const { frames, send } = collectSender()
-    const reads: Array<{ workspace: string; path: string; maxBytes: number }> = []
-    const readBytes = vi.fn(async (payload: { workspace: string; path: string; maxBytes: number }) => {
-      reads.push(payload)
-      return { error: '不是普通文件或为符号链接，拒绝读取' }
+    expect(open).toHaveBeenCalledWith({
+      workspace: '/repo',
+      path: 'big.bin',
+      maxBytes: DELIVERY_READ_MAX_BYTES,
     })
-    await handleDeliveryFetch(
-      { requestId: 'r1', workspace: '/repo', path: '/repo/inside/a.png', maxBytes: DELIVERY_FETCH_MAX_BYTES },
-      42,
-      { readBytes, send },
-    )
-    await handleDeliveryFetch(
-      { requestId: 'r2', workspace: '/repo', path: 'a.png', maxBytes: DELIVERY_FETCH_MAX_BYTES },
-      42,
-      { readBytes: async () => ({ bytes: bytesOf(0) }), send },
-    )
-    expect(reads[0]).toEqual({ workspace: '/repo', path: '/repo/inside/a.png', maxBytes: DELIVERY_FETCH_MAX_BYTES })
+    expect(frames[0]).toMatchObject({ type: 'delivery_read_result', sessionId: 42, requestId: 'r-open', ok: true, size: DELIVERY_READ_CHUNK_BYTES + 1024, mtimeMs: 123 })
+    expect(frames[1]).toMatchObject({ type: 'delivery_read_result', requestId: 'r1', ok: true, size: DELIVERY_READ_CHUNK_BYTES + 1024 })
+    const decoded = Uint8Array.from(atob(frames[1]!.data as string), (c) => c.charCodeAt(0))
+    expect(decoded.byteLength).toBe(DELIVERY_READ_CHUNK_BYTES)
+    expect(decoded[0]).toBe(7)
+    expect(read).toHaveBeenCalledWith({ openId: 'open-1', offset: 0, length: DELIVERY_READ_CHUNK_BYTES })
+  })
+
+  it('open 失败（如文件过大）显式回 ok:false，服务端据此给准确文案', async () => {
+    const { frames, deps } = depsOf({
+      open: vi.fn(async () => ({ error: '文件过大（2048MB），上限 1024MB' })),
+    })
+    await handleDeliveryRead(OPEN_FRAME, 42, deps)
+    expect(frames).toHaveLength(1)
+    expect(frames[0]).toMatchObject({ ok: false, error: '文件过大（2048MB），上限 1024MB' })
+  })
+
+  it('maxBytes 钳制到 1GB 上限后再下传主进程', async () => {
+    const { deps, open } = depsOf()
+    await handleDeliveryRead({ ...OPEN_FRAME, maxBytes: 8 * 1024 * 1024 * 1024 }, 42, deps)
+    expect((open.mock.calls[0] as unknown[])[0]).toMatchObject({ maxBytes: DELIVERY_READ_MAX_BYTES })
+  })
+
+  it('未 open 就 read / 区间非法 / 超过单片上限 → 回错误', async () => {
+    const { frames, deps } = depsOf()
+    await handleDeliveryRead({ requestId: 'r1', action: 'read', streamId: 'missing', offset: 0, length: 1 }, 42, deps)
+    await handleDeliveryRead(OPEN_FRAME, 42, deps)
+    await handleDeliveryRead({ requestId: 'r2', action: 'read', streamId: 's1', offset: -1, length: 1 }, 42, deps)
+    await handleDeliveryRead({ requestId: 'r3', action: 'read', streamId: 's1', offset: 0, length: DELIVERY_READ_CHUNK_BYTES + 1 }, 42, deps)
+    expect(frames.filter((f) => f.ok === false)).toHaveLength(3)
+  })
+
+  it('digest：按 streamId 找回句柄并回整份 sha256（R8），不把文件读进渲染进程', async () => {
+    const { frames, deps, digest } = depsOf()
+    await handleDeliveryRead(OPEN_FRAME, 42, deps)
+    await handleDeliveryRead({ requestId: 'r-digest', action: 'digest', streamId: 's1' }, 42, deps)
+    expect(digest).toHaveBeenCalledWith({ openId: 'open-1' })
+    expect(frames.at(-1)).toMatchObject({ type: 'delivery_read_result', ok: true, sha256: 'abc123' })
+  })
+
+  it('open 回包发送失败（连接不可写）：立刻关闭刚打开的句柄', async () => {
+    const { deps, close } = depsOf({ send: vi.fn(async () => false) })
+    await handleDeliveryRead(OPEN_FRAME, 42, deps)
+    expect(close).toHaveBeenCalledWith({ openId: 'open-1' })
+  })
+
+  it('read / digest 回包发送失败：同样当场关闭句柄，不等 60 秒空闲回收', async () => {
+    for (const action of ['read', 'digest'] as const) {
+      // open 的回包正常，只有本次 read/digest 的回包失败
+      const send = vi.fn(async (payload: Record<string, unknown>) => payload.requestId !== 'r-test')
+      const { deps, close } = depsOf({ send })
+      await handleDeliveryRead(OPEN_FRAME, 42, deps)
+      expect(close).not.toHaveBeenCalled()
+      await handleDeliveryRead(
+        { requestId: 'r-test', action, streamId: 's1', offset: 0, length: 8 },
+        42,
+        deps,
+      )
+      expect(close).toHaveBeenCalledWith({ openId: 'open-1' })
+    }
+  })
+
+  it('close 释放句柄；close 后 read 回「已关闭」', async () => {
+    const { frames, deps, close } = depsOf()
+    await handleDeliveryRead(OPEN_FRAME, 42, deps)
+    await handleDeliveryRead({ requestId: 'r-close', action: 'close', streamId: 's1' }, 42, deps)
+    await handleDeliveryRead({ requestId: 'r2', action: 'read', streamId: 's1', offset: 0, length: 4 }, 42, deps)
+    expect(close).toHaveBeenCalledWith({ openId: 'open-1' })
+    const last = frames.at(-1)!
+    expect(last).toMatchObject({ ok: false })
+  })
+
+  it('read 抛异常 → 回 ok:false 不冒泡', async () => {
+    const { frames, deps } = depsOf({
+      read: vi.fn(async () => { throw new Error('IPC boom') }),
+    })
+    await handleDeliveryRead(OPEN_FRAME, 42, deps)
+    await handleDeliveryRead({ requestId: 'r1', action: 'read', streamId: 's1', offset: 0, length: 4 }, 42, deps)
+    expect(frames.at(-1)).toMatchObject({ ok: false, error: 'IPC boom' })
+  })
+
+  it('帧字段缺失（requestId / streamId / workspace / path）→ 静默不回包', async () => {
+    const { frames, deps } = depsOf()
+    await handleDeliveryRead({ action: 'open', streamId: 's1', workspace: '/repo', path: 'a' }, 42, deps)
+    await handleDeliveryRead({ requestId: 'r1', action: 'open', workspace: '/repo', path: 'a' }, 42, deps)
+    await handleDeliveryRead({ requestId: 'r1', action: 'open', streamId: 's1', path: 'a' }, 42, deps)
+    await handleDeliveryRead({ requestId: 'r1', action: 'open', streamId: 's1', workspace: '/repo' }, 42, deps)
     expect(frames).toHaveLength(0)
-    expect(send).not.toHaveBeenCalled()
-  })
-
-  it('帧字段缺失（requestId/workspace/path）→ 静默不回包', async () => {
-    const { frames, send } = collectSender()
-    await handleDeliveryFetch({ workspace: '/repo', path: 'a.png' }, 42, {
-      readBytes: async () => ({ bytes: bytesOf(4) }),
-      send,
-    })
-    await handleDeliveryFetch({ requestId: 'r1', path: 'a.png' }, 42, {
-      readBytes: async () => ({ bytes: bytesOf(4) }),
-      send,
-    })
-    await handleDeliveryFetch({ requestId: 'r1', workspace: '/repo' }, 42, {
-      readBytes: async () => ({ bytes: bytesOf(4) }),
-      send,
-    })
-    expect(frames).toHaveLength(0)
-  })
-
-  it('send 中途失败 → 立即停止（服务端超时收敛），已发分片不回滚', async () => {
-    let calls = 0
-    const send = vi.fn(async () => {
-      calls += 1
-      return calls < 2 // 第 2 片发送失败
-    })
-    await handleDeliveryFetch(
-      { requestId: 'r1', workspace: '/repo', path: 'a.bin', maxBytes: DELIVERY_FETCH_MAX_BYTES },
-      42,
-      { readBytes: async () => ({ bytes: bytesOf(DELIVERY_FETCH_CHUNK_BYTES + 8) }), send },
-    )
-    expect(calls).toBe(2)
-  })
-
-  it('readBytes 抛异常 → 静默吞掉不冒泡', async () => {
-    const { frames, send } = collectSender()
-    await handleDeliveryFetch(
-      { requestId: 'r1', workspace: '/repo', path: 'a.png', maxBytes: DELIVERY_FETCH_MAX_BYTES },
-      42,
-      { readBytes: async () => { throw new Error('IPC boom') }, send },
-    )
-    expect(frames).toHaveLength(0)
-  })
-
-  it('单片 base64 尺寸断言与 512KB 实际 base64 长度的关系（防截断回归护栏）', () => {
-    expect(DELIVERY_FETCH_CHUNK_BASE64_MAX).toBe(900_000)
-    const bytes = bytesOf(DELIVERY_FETCH_CHUNK_BYTES)
-    let binary = ''
-    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
-    const base64 = btoa(binary)
-    expect(base64.length).toBeLessThan(DELIVERY_FETCH_CHUNK_BASE64_MAX)
   })
 })

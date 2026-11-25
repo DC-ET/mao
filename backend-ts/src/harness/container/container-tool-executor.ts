@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, openSync, read as readAsync, readSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { PathSandbox } from '../safety/path-sandbox.js';
 import { RuntimeDataResolver } from '../runtime/runtime-data-resolver.js';
@@ -15,6 +16,23 @@ import { harnessLog } from '../log.js';
 import { ExperienceIndexService, EXPERIENCE_ROOT_SUBDIR } from '../experience/experience-index.service.js';
 import type { GitTokenResolver } from '../../session/types.js';
 import type { RuntimeEnvelope } from './runtime-channel-protocol.js';
+
+/**
+ * 外部发送工具容器读字节的单片上限（宿主机按 512KB 拉取；base64 后 ≈683KB，
+ * 远小于 96MB 帧上限）。容器侧按此值拒绝异常大请求。
+ */
+const MAX_READ_RANGE_BYTES = 512 * 1024;
+/** 发送读取流的空闲回收：60 秒没有新片即关闭句柄（R2）。 */
+const READ_RANGE_IDLE_MS = 60_000;
+const READ_RANGE_SWEEP_MS = 30_000;
+
+/** 发送读取流句柄：size / mtimeMs 在 open 时定，每次读取都复核。 */
+interface ReadRangeHandle {
+  fd: number;
+  size: number;
+  mtimeMs: number;
+  lastUsedAt: number;
+}
 
 /** 容器内允许根清单（技术方案 §5.5）。 */
 export interface ContainerRoots {
@@ -56,6 +74,9 @@ export class ContainerToolExecutor {
   private readonly outputManager: OutputManager;
   private readonly backgroundTasks: BackgroundTaskManager;
   private readonly tools = new Map<string, Tool>();
+  /** 发送读取流（streamId → 已打开的句柄与校验基准）。 */
+  private readonly readRanges = new Map<string, ReadRangeHandle>();
+  private readRangeCleanupTimer: NodeJS.Timeout | null = null;
   /** 当前请求的 envelope（单用户容器：userId 恒定，凭据按次刷新）。 */
   private currentEnvelope: RuntimeEnvelope | null = null;
   /**
@@ -168,6 +189,8 @@ export class ContainerToolExecutor {
     this.shellManager.stopCleanup();
     // 逐会话关闭由 ShellSessionManager 内部表驱动；直接遍历关闭
     this.shellManager.closeAllSessions();
+    // 发送读取流句柄一并释放（容器停机 / 连接断开时不留 fd）
+    this.closeReadStreams();
   }
 
   /** 工具调用入口：tool_name 必须在容器内执行器注册表中。 */
@@ -191,8 +214,64 @@ export class ContainerToolExecutor {
     }
   }
 
-  /** 外部发送工具的容器读字节（§5.8）：严格 sandbox 校验 + 大小上限。 */
-  handleReadBytes(filePath: string, maxBytes: number, envelope: RuntimeEnvelope): { ok: true; base64: string } | { ok: false; error: string } {
+  /**
+   * 容器内按区间读取（技术方案 2026-11-25-send-file-1gb D3 / R2）：首帧（length=0）打开句柄并
+   * 返回 size / mtimeMs，后续帧只带 streamId 与 offset / length。**不再整份 readFileSync +
+   * base64 一帧返回**——那条路 96MB 帧上限与 V8 单字符串上限（约 400MB 原始字节）都过不去。
+   * 每次读取都 fstat 校验 size / mtime，发送期间被改写即失败（避免撕裂快照）。
+   */
+  async handleReadBytesRange(input: {
+    streamId: string;
+    offset: number;
+    length: number;
+    path?: string;
+    maxBytes?: number;
+    envelope?: RuntimeEnvelope;
+    digest?: boolean;
+  }): Promise<{ ok: true; data: string; size: number; mtimeMs: number; sha256?: string } | { ok: false; error: string }> {
+    const existing = this.readRanges.get(input.streamId);
+    if (input.digest === true) {
+      if (existing == null) return { ok: false, error: '读取流已关闭或不存在' };
+      return this.digestReadRange(existing);
+    }
+    if (input.length === 0) {
+      if (existing != null) return { ok: true, data: '', size: existing.size, mtimeMs: existing.mtimeMs };
+      return this.openReadRange(input);
+    }
+    if (existing == null) {
+      return { ok: false, error: '读取流已关闭或不存在' };
+    }
+    return this.readRangeChunk(existing, input.offset, input.length);
+  }
+
+  /** 关闭单个发送读取流（正常完成 / 失败由宿主机发 `read_bytes_close`）。 */
+  closeReadStream(streamId: string): void {
+    const entry = this.readRanges.get(streamId);
+    if (entry == null) return;
+    this.readRanges.delete(streamId);
+    try { closeSync(entry.fd); } catch { /* 已关闭 */ }
+  }
+
+  /** 连接断开 / 容器停机：关闭全部读取流，避免 fd 泄漏。 */
+  closeReadStreams(): void {
+    for (const streamId of [...this.readRanges.keys()]) this.closeReadStream(streamId);
+    if (this.readRangeCleanupTimer != null) {
+      clearInterval(this.readRangeCleanupTimer);
+      this.readRangeCleanupTimer = null;
+    }
+  }
+
+  private openReadRange(input: {
+    streamId: string;
+    path?: string;
+    maxBytes?: number;
+    envelope?: RuntimeEnvelope;
+  }): { ok: true; data: string; size: number; mtimeMs: number } | { ok: false; error: string } {
+    const envelope = input.envelope;
+    const filePath = input.path;
+    if (envelope == null || filePath == null || filePath === '') {
+      return { ok: false, error: '读取流缺少 path / envelope' };
+    }
     this.currentEnvelope = envelope;
     this.envelopeRef += 1;
     try {
@@ -204,22 +283,115 @@ export class ContainerToolExecutor {
       if (!existsSync(resolved) || !statSync(resolved).isFile()) {
         return { ok: false, error: '文件不存在或不是普通文件：' + filePath };
       }
-      const size = statSync(resolved).size;
-      if (size > maxBytes) {
-        return { ok: false, error: `文件过大：${size} > ${maxBytes}` };
+      const st = statSync(resolved);
+      const maxBytes = input.maxBytes ?? 1024 * 1024 * 1024;
+      if (st.size > maxBytes) {
+        return { ok: false, error: `文件过大（${Math.floor(st.size / (1024 * 1024))}MB），上限 ${Math.floor(maxBytes / (1024 * 1024))}MB` };
       }
-      const bytes = readFileSync(resolved);
-      return { ok: true, base64: bytes.toString('base64') };
+      const fd = openSync(resolved, 'r');
+      const fst = fstatSync(fd);
+      this.readRanges.set(input.streamId, {
+        fd,
+        size: fst.size,
+        mtimeMs: Number(fst.mtimeMs),
+        lastUsedAt: Date.now(),
+      });
+      this.ensureReadRangeCleanup();
+      return { ok: true, data: '', size: fst.size, mtimeMs: Number(fst.mtimeMs) };
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     } finally {
-      // 与 handleToolCall 同口径：并行调用共享 envelope，最后一个结束才清
       this.envelopeRef -= 1;
       if (this.envelopeRef <= 0) {
         this.envelopeRef = 0;
         this.currentEnvelope = null;
       }
     }
+  }
+
+  private readRangeChunk(
+    entry: { fd: number; size: number; mtimeMs: number; lastUsedAt: number },
+    offset: number,
+    length: number,
+  ): { ok: true; data: string; size: number; mtimeMs: number } | { ok: false; error: string } {
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length < 0) {
+      return { ok: false, error: '读取区间不合法' };
+    }
+    // 单片上限（宿主机固定 512KB）：超出说明请求被篡改，直接拒绝，不做大块分配
+    if (length > MAX_READ_RANGE_BYTES) return { ok: false, error: '读取区间超过单片上限' };
+    let st: { size: number; mtimeMs: number };
+    try {
+      const fst = fstatSync(entry.fd);
+      st = { size: fst.size, mtimeMs: Number(fst.mtimeMs) };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+    if (st.size !== entry.size || st.mtimeMs !== entry.mtimeMs) {
+      return { ok: false, error: '文件在发送期间被修改，请重试' };
+    }
+    entry.lastUsedAt = Date.now();
+    const want = Math.min(length, Math.max(0, entry.size - offset));
+    const buffer = Buffer.allocUnsafe(want);
+    let filled = 0;
+    try {
+      while (filled < want) {
+        const n = readSync(entry.fd, buffer, filled, want - filled, offset + filled);
+        if (n <= 0) break;
+        filled += n;
+      }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+    return { ok: true, data: buffer.subarray(0, filled).toString('base64'), size: entry.size, mtimeMs: entry.mtimeMs };
+  }
+
+  /**
+   * 整份 sha256（R8）：在已打开的句柄上顺序读取并哈希，前后各 fstat 一次；
+   * 发送期间文件被改写即失败。失败 / 成功都不关闭句柄（由 close 帧负责）。
+   */
+  private async digestReadRange(
+    entry: ReadRangeHandle,
+  ): Promise<{ ok: true; data: string; size: number; mtimeMs: number; sha256: string } | { ok: false; error: string }> {
+    const before = fstatSync(entry.fd);
+    if (Number(before.size) !== entry.size || Number(before.mtimeMs) !== entry.mtimeMs) {
+      return { ok: false, error: '文件在发送期间被修改，请重试' };
+    }
+    const hash = createHash('sha256');
+    const buffer = Buffer.allocUnsafe(MAX_READ_RANGE_BYTES);
+    let offset = 0;
+    try {
+      while (offset < entry.size) {
+        // 哈希期间同样算「在用」：1GB 顺序读可能超过 60 秒空闲回收窗口，被 sweep 关掉会读失败
+        entry.lastUsedAt = Date.now();
+        const length = Math.min(buffer.length, entry.size - offset);
+        const n = await readFromFd(entry.fd, buffer, 0, length, offset);
+        if (n <= 0) break;
+        hash.update(buffer.subarray(0, n));
+        offset += n;
+      }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+    const after = fstatSync(entry.fd);
+    if (Number(after.size) !== entry.size || Number(after.mtimeMs) !== entry.mtimeMs) {
+      return { ok: false, error: '文件在发送期间被修改，请重试' };
+    }
+    if (offset !== entry.size) {
+      return { ok: false, error: `读取中断（期望 ${entry.size} 字节，实际 ${offset}）` };
+    }
+    entry.lastUsedAt = Date.now();
+    return { ok: true, data: '', size: entry.size, mtimeMs: entry.mtimeMs, sha256: hash.digest('hex') };
+  }
+
+  private ensureReadRangeCleanup(): void {
+    if (this.readRangeCleanupTimer != null) return;
+    this.readRangeCleanupTimer = setInterval(() => {
+      const now = Date.now();
+      for (const [streamId, entry] of [...this.readRanges]) {
+        if (now - entry.lastUsedAt > READ_RANGE_IDLE_MS) this.closeReadStream(streamId);
+      }
+    }, READ_RANGE_SWEEP_MS);
+    this.readRangeCleanupTimer.unref?.();
   }
 
   private envelopeTokenIssuer(): ShellTokenIssuer {
@@ -263,4 +435,15 @@ export class ContainerToolExecutor {
       getSiteBaseUrl: async () => this.currentEnvelope?.maoBaseUrl ?? null,
     };
   }
+}
+
+
+/** fs.read 的 Promise 包装（容器内整份摘要用，避免同步读阻塞 event loop）。 */
+function readFromFd(fd: number, buffer: Buffer, offset: number, length: number, position: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    readAsync(fd, buffer, offset, length, position, (err, bytesRead) => {
+      if (err) reject(err);
+      else resolve(bytesRead);
+    });
+  });
 }

@@ -8,7 +8,11 @@ import { harnessLog } from '../log.js';
  * `v` 字段为协议版本号，便于将来演进。
  */
 export const PROTOCOL_VERSION = 1;
-/** 超长帧拒绝上限：pty 输出与 read_bytes（30MB base64≈40MB）之外不应出现更大帧。 */
+/**
+ * 超长帧拒绝上限：pty 输出与 read_bytes_range（单片 512KB，base64 后 ≈683KB）之外
+ * 不应出现更大帧。1GB 文件靠分片传输，**不放大本上限**——放大等于让任意运行时帧
+ * 都能一次撑爆进程。
+ */
 export const MAX_FRAME_BYTES = 96 * 1024 * 1024;
 
 export interface RuntimeEnvelope {
@@ -91,7 +95,25 @@ export interface ScriptProbeFrameDeps {
 /** 宿主机 → 容器请求帧统一载荷（按 type 取相应字段）。 */
 export type RuntimeRequestFrame =
   | { v: number; type: 'tool_call'; id: string; tool: string; args: string; envelope: RuntimeEnvelope }
-  | { v: number; type: 'read_bytes'; id: string; path: string; maxBytes: number; envelope: RuntimeEnvelope }
+  /**
+   * 外部发送工具的按区间读取（技术方案 2026-11-25-send-file-1gb R2/D3）：
+   * 首帧带 `path` + `maxBytes` + `envelope`（length=0，只打开句柄、返回 size / mtimeMs），
+   * 后续帧只带 `streamId` + `offset` + `length`，容器按 streamId 复用已打开的句柄。
+   */
+  | {
+    v: number;
+    type: 'read_bytes_range';
+    id: string;
+    streamId: string;
+    offset: number;
+    length: number;
+    path?: string;
+    maxBytes?: number;
+    envelope?: RuntimeEnvelope;
+    /** true = 只计算整份文件的 sha256（R8 完整性校验），不返回数据。 */
+    digest?: boolean;
+  }
+  | { v: number; type: 'read_bytes_close'; streamId: string }
   | { v: number; type: 'mcp_connect'; id: string; sessionId: number; server: McpServerSpec; env: Record<string, string>; envelope: RuntimeEnvelope }
   | { v: number; type: 'mcp_call'; id: string; sessionId: number; serverId: number; toolName: string; argumentsJson: string }
   | { v: number; type: 'mcp_close_session'; id: string; sessionId: number }
@@ -118,7 +140,20 @@ export type RuntimeResponseFrame =
   | { v: number; type: 'hello'; userId: number; token: string; /** 容器内运行时闭包版本（runtime-build.json；旧 agent 可能缺省）。 */ build?: string }
   | { v: number; type: 'hello_result' }
   | { v: number; type: 'tool_result'; id: string; ok: boolean; result: string | null; error?: string; durationMs: number }
-  | { v: number; type: 'read_bytes_result'; id: string; ok: boolean; base64?: string; error?: string }
+  | {
+    v: number;
+    type: 'read_bytes_range_result';
+    id: string;
+    ok: boolean;
+    /** 原始字节的 base64；length=0 的打开帧为空串。 */
+    data?: string;
+    /** 打开时 stat 的大小与 mtimeMs；后续帧重复携带，宿主机据此发现发送期间的文件变更。 */
+    size?: number;
+    mtimeMs?: number;
+    /** digest 请求的结果（hex）。 */
+    sha256?: string;
+    error?: string;
+  }
   | { v: number; type: 'mcp_result'; id: string; ok: boolean; payload?: unknown; error?: string }
   | { v: number; type: 'pty_open_result'; id: string; ok: boolean; pid?: number; error?: string }
   | { v: number; type: 'pty_data'; ptyId: string; data: string }

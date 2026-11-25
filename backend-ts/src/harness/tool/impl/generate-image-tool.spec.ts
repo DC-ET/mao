@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { existsSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
 import { basename, join, sep } from 'node:path';
+import { Readable } from 'node:stream';
 import { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { useTmpDir } from '../../../testing/tmp-dir.js';
@@ -410,7 +411,11 @@ describe('EditImageTool', () => {
     writeFileSync(join(uploads, '7', 'gen-own.png'), PNG_BYTES);
     writeFileSync(join(uploads, '8', 'gen-other.png'), PNG_BYTES);
     const bridge: SendBytesSupport | null = support === 'host-bridge'
-      ? { readBytes: async () => null, extraRoots: (userId) => ['/tmp', join(uploads, String(userId))] }
+      ? {
+        openStream: async () => null,
+        readBytes: async () => null,
+        extraRoots: (userId) => ['/tmp', join(uploads, String(userId))],
+      }
       : (support ?? null);
     const tool = new EditImageTool(
       { findFirstActiveImageModel: async () => model(extra) as never },
@@ -489,6 +494,10 @@ describe('EditImageTool', () => {
     const seen: Array<{ userId: number | null; sessionId: number | null; path: string }> = [];
     const support: SendBytesSupport = {
       // 宿主机上不存在的容器内路径也能编辑：字节全部由容器桥提供
+      openStream: async (input) => {
+        seen.push({ userId: input.userId, sessionId: input.sessionId, path: input.path });
+        return { stream: Readable.from([PNG_BYTES]), size: PNG_BYTES.length, contentType: null };
+      },
       readBytes: async (input) => {
         seen.push({ userId: input.userId, sessionId: input.sessionId, path: input.path });
         return PNG_BYTES;

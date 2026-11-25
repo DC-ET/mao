@@ -15,7 +15,7 @@ export const DAEMON_ROUTED_EVENTS = new Set([
   'file_op_request',
   // 正文图片 / 发送字节的委托读取：只读工作区文件、失败静默，不进审批也不进工具时间线
   'file_fetch',
-  'delivery_fetch',
+  'delivery_read',
   'skill_sync_required',
   'mcp_sync_required',
   'tool_approval_resolved',

@@ -15,7 +15,8 @@ const {
   writeEditedFile,
 } = require('./fileChangeDiff.cjs')
 const { readFileBytes } = require('./localFileBytes.cjs')
-const { readWorkspaceBytes, readDeliveryWorkspaceBytes, DELIVERY_FETCH_MAX_BYTES } = require('./localWorkspaceRead.cjs')
+const { readWorkspaceBytes } = require('./localWorkspaceRead.cjs')
+const { openDeliveryFile, readDeliveryChunk, closeDeliveryFile, digestDeliveryFile } = require('./localDeliveryStream.cjs')
 const promptImageResizer = require('./promptImageResizer.cjs')
 
 const IMAGE_EXTENSIONS = {
@@ -267,18 +268,38 @@ function registerLocalFileIpc(ipcMain, deps) {
     }
   })
 
-  // delivery_fetch 委托读取（统一发送媒体方案 2026-11-18 §6.2）：send_image / send_file 在
-  // LOCAL 会话读不到本机文件时由服务端发起。执行端允许根只有本机会话 workspace（相对路径或
-  // workspace 内绝对路径）；只读操作，不写 currentWorkspace、不走审批。
-  ipcMain.handle('local-delivery-read-bytes', async (event, { workspace, path: filePath, maxBytes }) => {
+  // delivery_read 委托读取（2026-11-25 R2）：send_image / send_file 在 LOCAL 会话读不到本机
+  // 文件时由服务端发起。open 只校验路径 + stat 并持有句柄，read 按 offset 读一片，close 释放；
+  // 不再整份读入主进程内存。允许根只有本机会话 workspace（相对路径或 workspace 内绝对路径）。
+  ipcMain.handle('local-delivery-open', async (event, { workspace, path: filePath, maxBytes }) => {
     try {
-      // 帧内 maxBytes（图片 20MB / 文件 30MB）作读取上限，避免按 30MB 读整份后才丢弃；主进程再兜一次 30MB 上限
-      const requested = typeof maxBytes === 'number' && Number.isFinite(maxBytes) && maxBytes > 0
-        ? Math.floor(maxBytes)
-        : DELIVERY_FETCH_MAX_BYTES
-      return readDeliveryWorkspaceBytes(workspace, filePath, {
-        maxBytes: Math.min(requested, DELIVERY_FETCH_MAX_BYTES),
-      })
+      return openDeliveryFile(workspace, filePath, maxBytes)
+    } catch (e) {
+      return { error: e.message }
+    }
+  })
+
+  ipcMain.handle('local-delivery-read', async (event, { openId, offset, length }) => {
+    try {
+      return readDeliveryChunk(openId, offset, length)
+    } catch (e) {
+      return { error: e.message }
+    }
+  })
+
+  // 整份 sha256（R8）：发送完成后、关闭句柄前比对；1GB 也不进渲染进程内存
+  ipcMain.handle('local-delivery-digest', async (event, { openId }) => {
+    try {
+      return await digestDeliveryFile(openId)
+    } catch (e) {
+      return { error: e.message }
+    }
+  })
+
+  ipcMain.handle('local-delivery-close', async (event, { openId }) => {
+    try {
+      closeDeliveryFile(openId)
+      return { ok: true }
     } catch (e) {
       return { error: e.message }
     }

@@ -15,11 +15,12 @@ afterEach(() => {
 
 describe('structured logger', () => {
   it('redacts credentials in request URLs without logging headers', () => {
-    const raw = '/api/v1/auth/sso/exchange?token=secret&token=other&access_token=third&page=2';
+    const raw = '/api/v1/auth/sso/exchange?token=secret&token=other&access_token=third&ticket=tkt&page=2';
     const safe = redactCredentialQuery(raw);
     expect(safe).not.toContain('secret');
     expect(safe).not.toContain('other');
     expect(safe).not.toContain('third');
+    expect(safe).not.toContain('tkt');
     expect(safe).toContain('page=2');
     const serializer = fastifyLoggerOptions.serializers!.req!;
     const request = serializer({ id: '1', method: 'POST', url: raw, ip: '127.0.0.1', headers: { authorization: 'Bearer hidden' } });

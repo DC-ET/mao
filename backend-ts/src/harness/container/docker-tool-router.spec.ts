@@ -110,19 +110,35 @@ describe('docker tool router', () => {
       inContainer: { shellSessions: 0, pendingTasks: 0, attachedTerminals: 0 },
       connectionDead: false, mountedPaths: new Set<string>(), sessionWorkspaces: [],
     }));
-    const request = vi.fn(async () => ({ v: 1, type: 'read_bytes_result', id: 'x', ok: true, base64: Buffer.from('hi').toString('base64') }));
+    const sent: Array<Record<string, unknown>> = [];
+    const request = vi.fn(async (frame: { type: string; length?: number }) => {
+      if (frame.type === 'read_bytes_range' && frame.length === 0) {
+        return { v: 1, type: 'read_bytes_range_result', id: 'x', ok: true, data: '', size: 2, mtimeMs: 1 };
+      }
+      return {
+        v: 1, type: 'read_bytes_range_result', id: 'x', ok: true,
+        data: Buffer.from('hi').toString('base64'), size: 2, mtimeMs: 1,
+      };
+    });
     const router = new DockerToolRouter({
       containerRegistry: { ensureRunning } as never,
-      channelServer: { getConnection: () => ({ request }) } as never,
+      channelServer: { getConnection: () => ({ request, send: (f: Record<string, unknown>) => sent.push(f) }) } as never,
       envelopeBuilder: { build: async () => ({ userId: 7 }) } as never,
       runtimeModeLookup: { runtimeModeOf: async () => 'docker' },
       globalMode: async () => 'docker',
     });
-    const bytes = await router.readBytes({
-      userId: 7, agentId: 5, sessionId: 11, workspace: '/opt/mao-data/workspace/dingtalk-chat/bot-1/p2p-7',
+    const opened = await router.openReadStream({
+      userId: 7, agentId: 3, sessionId: 11, workspace: '/opt/mao-data/workspace/dingtalk-chat/bot-1/p2p-7',
       path: 'chat-files/a.png', maxBytes: 1024,
     });
-    expect(bytes?.toString()).toBe('hi');
-    expect(ensureRunning).toHaveBeenCalledWith(7, 5, '/opt/mao-data/workspace/dingtalk-chat/bot-1/p2p-7');
+    expect(opened?.size).toBe(2);
+    const chunks: Buffer[] = [];
+    for await (const chunk of opened!.stream) chunks.push(chunk as Buffer);
+    expect(Buffer.concat(chunks).toString()).toBe('hi');
+    // 正常读完不自动关闭（R8 先比对摘要），由调用方显式 close
+    expect(sent.some((f) => f.type === 'read_bytes_close')).toBe(false);
+    opened!.close();
+    expect(sent.some((f) => f.type === 'read_bytes_close')).toBe(true);
+    expect(ensureRunning).toHaveBeenCalledWith(7, 3, '/opt/mao-data/workspace/dingtalk-chat/bot-1/p2p-7');
   });
 });

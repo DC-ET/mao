@@ -21,6 +21,7 @@ import { BusinessException } from '../../common/business-exception.js';
 import { ErrorCode } from '../../common/error-code.js';
 import { FileChangeDiffUtil } from '../tool/file-change-diff-util.js';
 import { ToolCallContext } from '../tool/tool-call-context.js';
+import { ToolCancelContext } from '../tool/tool-cancel-context.js';
 import { LLM_CALL_SCENES, LlmCallContext } from '../../usage/llm-call-context.js';
 import type { ToolDispatcher } from '../tool/tool-dispatcher.js';
 import { ToolImageResultProcessor } from '../tool/tool-image-result-processor.js';
@@ -722,7 +723,11 @@ export class AgentLoop {
         });
       }
       try {
-        return await ToolCallContext.run(tc.id, () => Promise.resolve(this.dispatchTool(tc, context)));
+        // 1GB 发送（2026-11-25 R4）：本轮取消信号随工具调用下传，send_file 逐块检查
+        return await ToolCancelContext.run(
+          cancelFlag,
+          () => ToolCallContext.run(tc.id, () => Promise.resolve(this.dispatchTool(tc, context))),
+        );
       } finally {
         // 同步抛错 / 异步失败 / 正常返回都要注销，否则后台会一直挂着「执行中」卡片
         if (sessionId != null && tc.id) this.inFlightTools?.finish(sessionId, tc.id);

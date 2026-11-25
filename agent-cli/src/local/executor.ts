@@ -12,11 +12,13 @@ import { isWorkspaceWithin } from './sandbox';
 import {
   chunkBuffer,
   FILE_FETCH_MAX_CHUNKS,
-  DELIVERY_FETCH_CHUNK_BYTES,
-  DELIVERY_FETCH_MAX_BYTES,
-  DELIVERY_FETCH_MAX_CHUNKS,
-  readDeliveryFileBytes,
+  DELIVERY_READ_CHUNK_BYTES,
+  DELIVERY_READ_MAX_BYTES,
+  digestDeliveryFile,
+  openDeliveryFile,
+  readDeliveryChunk,
   readWorkspaceImageBytes,
+  type DeliveryOpenHandle,
 } from './file-fetch';
 import { persistToolResult } from './truncate';
 import { executeFileOp } from './file-ops';
@@ -150,6 +152,9 @@ export class LocalExecutor {
   private readonly approvalRemoteChoices = new Map<string, ApprovalChoice>();
   /** `--on-approval=remote`：还没投票、只等别人的 tool_approval_resolved。 */
   private readonly remoteWaiters = new Map<string, RemoteWaiter>();
+  /** delivery_read：streamId → 已打开的句柄（服务端按区间拉取，空闲 60 秒关闭）。 */
+  private readonly deliveryHandles = new Map<string, DeliveryOpenHandle & { lastUsedAt: number }>();
+  private deliverySweep: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly opts: LocalExecutorOptions) {}
 
@@ -181,12 +186,25 @@ export class LocalExecutor {
   async shutdown(): Promise<void> {
     this.closed = true;
     this.failRemoteWaits();
+    this.closeDeliveryHandles();
     try {
       this.shell?.closeAll();
     } catch {
       // ignore
     }
     await this.mcp.closeAll();
+  }
+
+  /** 关闭全部 delivery_read 句柄（断开 / 退出时调用）。 */
+  closeDeliveryHandles(): void {
+    for (const entry of this.deliveryHandles.values()) {
+      void entry.handle.close().catch(() => undefined);
+    }
+    this.deliveryHandles.clear();
+    if (this.deliverySweep != null) {
+      clearInterval(this.deliverySweep);
+      this.deliverySweep = null;
+    }
   }
 
   /** 服务端能力位（connected 帧）同步：false = 旧后端 / 未连接。 */
@@ -206,8 +224,8 @@ export class LocalExecutor {
         await this.onToolExecute(sessionId, d);
       } else if (evt.type === 'file_fetch') {
         await this.onFileFetch(sessionId, d);
-      } else if (evt.type === 'delivery_fetch') {
-        await this.onDeliveryFetch(sessionId, d);
+      } else if (evt.type === 'delivery_read') {
+        await this.onDeliveryRead(sessionId, d);
       } else if (evt.type === 'file_op_request') {
         await this.onFileOpRequest(sessionId, d);
       } else if (evt.type === 'skill_sync_required') {
@@ -299,41 +317,90 @@ export class LocalExecutor {
   }
 
   /**
-   * LOCAL 发送字节委托读取（统一发送媒体方案 2026-11-18 §6.2）：send_image / send_file 在
-   * 服务端读不到本机文件时下发 delivery_fetch，这里在信任工作区内读文件并分片回传。
-   * 失败一律静默（同 onFileFetch）：未绑定会话是用户级广播，异机多执行端都可能收到本帧，
-   * 错误回包会与合法执行端的分片竞争；服务端 20 秒超时后统一回「执行端不在线或版本过旧」。
+   * LOCAL 发送字节委托读取（2026-11-25 send_file 1GB R2）：服务端按区间拉取。
+   * open 校验路径并回 size / mtimeMs，read 按 offset 读一片，close 释放句柄。
+   * 错误显式回包（`ok:false`）——服务端要区分「文件过大」和「执行端版本过旧」；
+   * 旧执行端不认识新帧，静默不回到服务端 10 秒首帧超时。
    */
-  private async onDeliveryFetch(sessionId: number, d: Record<string, unknown>): Promise<void> {
+  private async onDeliveryRead(sessionId: number, d: Record<string, unknown>): Promise<void> {
+    const requestId = typeof d.requestId === 'string' ? d.requestId : '';
+    const action = typeof d.action === 'string' ? d.action : '';
+    const streamId = typeof d.streamId === 'string' ? d.streamId : '';
+    if (!requestId || !streamId) return;
+    const reply = (payload: Record<string, unknown>) =>
+      this.opts.ws.sendReliable({ type: 'delivery_read_result', sessionId, requestId, ...payload });
     try {
-      const requestId = typeof d.requestId === 'string' ? d.requestId : '';
-      const filePath = typeof d.path === 'string' ? d.path : '';
-      if (!requestId || filePath.trim() === '') return;
-      const maxBytes = typeof d.maxBytes === 'number' && Number.isInteger(d.maxBytes) && d.maxBytes > 0
-        ? Math.min(d.maxBytes, DELIVERY_FETCH_MAX_BYTES)
-        : DELIVERY_FETCH_MAX_BYTES;
-      const workspace = this.resolveWorkspace(d.workspace);
-      const bytes = await readDeliveryFileBytes(workspace, filePath, maxBytes);
-      const chunks = chunkBuffer(bytes, DELIVERY_FETCH_CHUNK_BYTES);
-      const maxChunks = Math.min(
-        Math.ceil(maxBytes / DELIVERY_FETCH_CHUNK_BYTES),
-        DELIVERY_FETCH_MAX_CHUNKS,
-      );
-      if (chunks.length === 0 || chunks.length > maxChunks) return;
-      for (let seq = 1; seq <= chunks.length; seq++) {
-        const sent = await this.opts.ws.sendReliable({
-          type: 'delivery_fetch_result',
-          sessionId,
-          requestId,
-          seq,
-          total: chunks.length,
-          data: chunks[seq - 1].toString('base64'),
+      if (action === 'open') {
+        const filePath = typeof d.path === 'string' ? d.path : '';
+        if (filePath.trim() === '') return;
+        const maxBytes = typeof d.maxBytes === 'number' && Number.isInteger(d.maxBytes) && d.maxBytes > 0
+          ? Math.min(d.maxBytes, DELIVERY_READ_MAX_BYTES)
+          : DELIVERY_READ_MAX_BYTES;
+        const workspace = this.resolveWorkspace(d.workspace);
+        const opened = await openDeliveryFile(workspace, filePath, maxBytes);
+        this.deliveryHandles.set(streamId, { ...opened, lastUsedAt: Date.now() });
+        this.ensureDeliverySweep();
+        await reply({ ok: true, size: opened.size, mtimeMs: opened.mtimeMs });
+        return;
+      }
+      if (action === 'read') {
+        const opened = this.deliveryHandles.get(streamId);
+        if (opened == null) {
+          await reply({ ok: false, error: '读取流已关闭或不存在' });
+          return;
+        }
+        const offset = typeof d.offset === 'number' && Number.isFinite(d.offset) ? Math.floor(d.offset) : -1;
+        const length = typeof d.length === 'number' && Number.isFinite(d.length) ? Math.floor(d.length) : -1;
+        if (offset < 0 || length < 0 || length > DELIVERY_READ_CHUNK_BYTES) {
+          await reply({ ok: false, error: '读取区间不合法' });
+          return;
+        }
+        const chunk = await readDeliveryChunk(opened, offset, length);
+        opened.lastUsedAt = Date.now();
+        await reply({
+          ok: true,
+          data: chunk.bytes.toString('base64'),
+          size: chunk.size,
+          mtimeMs: chunk.mtimeMs,
         });
-        if (!sent) return;
+        return;
+      }
+      if (action === 'digest') {
+        const opened = this.deliveryHandles.get(streamId);
+        if (opened == null) {
+          await reply({ ok: false, error: '读取流已关闭或不存在' });
+          return;
+        }
+        const sha256 = await digestDeliveryFile(opened, () => { opened.lastUsedAt = Date.now(); });
+        opened.lastUsedAt = Date.now();
+        await reply({ ok: true, sha256, size: opened.size, mtimeMs: opened.mtimeMs });
+        return;
+      }
+      if (action === 'close') {
+        const opened = this.deliveryHandles.get(streamId);
+        this.deliveryHandles.delete(streamId);
+        if (opened != null) await opened.handle.close().catch(() => undefined);
+        // close 的回包服务端不等待；仍回一帧便于排障
+        await reply({ ok: true });
       }
     } catch (e) {
-      console.warn(`[delivery_fetch] ignored: ${e instanceof Error ? e.message : String(e)}`);
+      const message = e instanceof Error ? e.message : String(e);
+      console.warn(`[delivery_read] ${action || 'unknown'}: ${message}`);
+      await reply({ ok: false, error: message });
     }
+  }
+
+  private ensureDeliverySweep(): void {
+    if (this.deliverySweep != null) return;
+    this.deliverySweep = setInterval(() => {
+      const now = Date.now();
+      for (const [streamId, entry] of [...this.deliveryHandles]) {
+        if (now - entry.lastUsedAt <= 60_000) continue;
+        this.deliveryHandles.delete(streamId);
+        void entry.handle.close().catch(() => undefined);
+      }
+    }, 30_000);
+    this.deliverySweep.unref?.();
   }
 
   private async onToolExecute(sessionId: number, d: Record<string, unknown>): Promise<void> {
