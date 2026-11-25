@@ -8,6 +8,10 @@
 
 - **新发送的附件卡片改走快照取数**：附件卡片、图片网格与下载按钮按快照 id 拼 `send-download` 地址（渲染期才追加登录 token），同一轮发多个附件各自独立，不再共用同一个 key 导致重复加载。历史消息里的旧地址与旧工作区引用照常可看。
 
+### Embed SDK
+
+- **嵌入浮窗的附件卡片同步按发送快照取数**：浮窗里的 `send_image` / `send_file` 快照按快照 id 拼 `send-download`（渲染期才追加登录 token），同一轮多个附件各自独立。补交与当前 SDK 源码一致的 `mao-chat.js` 与 `mao-chat.v0.3.4.js`。
+
 ### 管理后台
 
 - **智能体头像上传地址带上用户目录段**：头像上传落在 `uploads/{userId}/` 后，返回的 `/uploads/{uuid}.png` 旧格式地址一律按 `uploads/{数字用户 id}/{uuid}.png` 接受，存量头像不受影响。
