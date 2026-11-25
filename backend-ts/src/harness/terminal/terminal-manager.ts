@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, chmodSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { harnessLog } from '../log.js';
@@ -16,9 +16,20 @@ export const MAX_TERMINAL_COLS = 500;
 export const MIN_TERMINAL_ROWS = 1;
 export const MAX_TERMINAL_ROWS = 200;
 
+/** PS1 模板：tag 是 bash 参数展开表达式，如 `MAO_SESSION_ID:-session`。 */
+function defaultPromptLine(tag: string): string {
+  return `PS1='\\[\\e[36m\\][\${${tag}}]\\[\\e[0m\\] \\w \\$ '`;
+}
+
+/** 旧默认提示符里的前缀（工作区名 + 任务标题）：rc 里出现时升级成会话 ID。 */
+const LEGACY_PROMPT_TAG = '[mao ${MAO_TASK_NAME:-task}]';
+
+/** 当前提示符前缀：只留会话 ID，避免工作区名 + 长标题把整行占满。 */
+const CURRENT_PROMPT_TAG = '[${MAO_SESSION_ID:-session}]';
+
 /** 首次创建终端时写入虚拟 HOME 的默认 rc（已存在则不覆盖）。 */
 export const DEFAULT_BASHRC = `# Mao 云端终端默认配置（首次创建终端时自动生成，可自行修改；删除后会重新生成）
-PS1='\\[\\e[36m\\][mao \${MAO_TASK_NAME:-task}]\\[\\e[0m\\] \\w \\$ '
+${defaultPromptLine('MAO_SESSION_ID:-session')}
 alias ll='ls -alF'
 alias la='ls -A'
 alias ls='ls --color=auto'
@@ -436,6 +447,7 @@ export class TerminalManager {
       COLORTERM: 'truecolor',
       LANG: process.env.LANG ?? 'en_US.UTF-8',
       MAO_TASK_NAME: normalizeTaskName(params.taskName, sessionId),
+      MAO_SESSION_ID: String(sessionId),
     };
     const home = this.configureUserHome(env, userId);
     if (this.deps.depsEnvProvider) {
@@ -557,7 +569,10 @@ export class TerminalManager {
   private ensureDefaultRc(home: string): void {
     const rcPath = path.join(home, '.bashrc');
     try {
-      if (existsSync(rcPath)) return;
+      if (existsSync(rcPath)) {
+        this.upgradeLegacyPrompt(rcPath);
+        return;
+      }
       writeFileSync(rcPath, DEFAULT_BASHRC, 'utf8');
       try {
         chmodSync(rcPath, 0o600);
@@ -565,6 +580,20 @@ export class TerminalManager {
     } catch (e) {
       // rc 写入失败只影响提示符美观，不阻断终端创建
       harnessLog('warn', `Failed to write default .bashrc at ${rcPath}`, e);
+    }
+  }
+
+  /**
+   * 旧 rc 的提示符升级：只替换旧前缀 `[mao 任务名]`，其余行（别名、自定义配置）原样保留。
+   */
+  private upgradeLegacyPrompt(rcPath: string): void {
+    try {
+      const content = readFileSync(rcPath, 'utf8');
+      const next = content.replace(LEGACY_PROMPT_TAG, CURRENT_PROMPT_TAG);
+      if (next === content) return;
+      writeFileSync(rcPath, next, 'utf8');
+    } catch (e) {
+      harnessLog('warn', `Failed to upgrade legacy .bashrc at ${rcPath}`, e);
     }
   }
 }
