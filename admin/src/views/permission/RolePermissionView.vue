@@ -101,7 +101,24 @@
             </el-tab-pane>
             <el-tab-pane label="技能" name="skills">
               <p class="skill-hint">这里追加的是岗位专属系统技能，会叠在 Agent 表单里的共用技能之上。ADMIN、USER 这类人人都有的角色不要配岗位技能，否则等于全员可见。</p>
-              <el-table :data="skillGrants" v-loading="loadingSkills" size="small" empty-text="尚未追加技能">
+              <div v-if="canWrite && canSaveSkills" class="skill-toolbar">
+                <el-button
+                  type="danger"
+                  link
+                  :disabled="selectedSkillGrants.length === 0"
+                  @click="removeSelectedSkillGrants"
+                >移除所选{{ selectedSkillGrants.length ? `（${selectedSkillGrants.length}）` : '' }}</el-button>
+              </div>
+              <el-table
+                ref="skillTableRef"
+                :data="skillGrants"
+                v-loading="loadingSkills"
+                size="small"
+                empty-text="尚未追加技能"
+                :row-key="grantKey"
+                @selection-change="onSkillSelectionChange"
+              >
+                <el-table-column v-if="canWrite" type="selection" width="42" />
                 <el-table-column prop="skillName" label="技能" min-width="140" />
                 <el-table-column label="范围" min-width="160">
                   <template #default="{ row }">{{ agentLabel(row.agentId) }}</template>
@@ -113,10 +130,28 @@
                 </el-table-column>
               </el-table>
               <div v-if="canWrite && canSaveSkills" class="skill-add">
-                <el-select v-model="draftSkillName" filterable placeholder="选择技能" style="width: 180px">
-                  <el-option v-for="skill in skillOptions" :key="skill.name" :label="skill.name" :value="skill.name" />
+                <el-select
+                  v-model="draftSkillName"
+                  filterable
+                  :filter-method="onSkillFilter"
+                  :no-data-text="skillFilterQuery.trim() ? '无匹配数据' : '无数据'"
+                  placeholder="选择技能"
+                  style="width: 180px"
+                  @visible-change="onSkillSelectVisible"
+                >
+                  <el-option v-for="skill in filteredSkillOptions" :key="skill.name" :label="skill.name" :value="skill.name" />
                 </el-select>
-                <el-select v-model="draftAgentId" filterable placeholder="范围" style="width: 180px">
+                <el-select
+                  :model-value="draftAgentIds"
+                  multiple
+                  filterable
+                  collapse-tags
+                  collapse-tags-tooltip
+                  placeholder="选择 Agent，可多选"
+                  style="width: 240px"
+                  @update:model-value="onDraftAgentsChange"
+                  @visible-change="onAgentSelectVisible"
+                >
                   <el-option :value="0" label="全部 Agent" />
                   <el-option
                     v-for="agent in agentOptions"
@@ -156,7 +191,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, onActivated, onMounted, onUnmounted } from 'vue'
+import { computed, nextTick, reactive, ref, watch, onActivated, onMounted, onUnmounted } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -164,6 +199,13 @@ import { api } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
 import RoleMemberDialog from './RoleMemberDialog.vue'
+import {
+  addSkillGrants,
+  grantKey,
+  reconcileAgentSelection,
+  removeSkillGrants,
+  type SkillGrant,
+} from './roleSkillGrantEdit'
 
 interface Role {
   id: number
@@ -198,13 +240,12 @@ const skillGrants = ref<SkillGrant[]>([])
 const skillOptions = ref<{ name: string }[]>([])
 const agentOptions = ref<{ id: number; name: string; enabled: boolean }[]>([])
 const draftSkillName = ref('')
-const draftAgentId = ref(0)
+const draftAgentIds = ref<number[]>([])
+const selectedSkillGrants = ref<SkillGrant[]>([])
+const skillTableRef = ref<{ clearSelection: () => void } | null>(null)
+const skillFilterQuery = ref('')
 let skillLoadSeq = 0
-
-interface SkillGrant {
-  skillName: string
-  agentId: number
-}
+let skillOptionsSeq = 0
 const dialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit'>('create')
 const deletingRoleId = ref<number | null>(null)
@@ -368,28 +409,59 @@ function markSkillsDirty() {
   dirtySkills.value = true
 }
 
+function onDraftAgentsChange(value: number[]) {
+  draftAgentIds.value = reconcileAgentSelection(draftAgentIds.value, value)
+}
+
+function onSkillSelectionChange(rows: SkillGrant[]) {
+  selectedSkillGrants.value = rows
+}
+
+function clearSkillSelection() {
+  selectedSkillGrants.value = []
+  void nextTick(() => skillTableRef.value?.clearSelection())
+}
+
 function addSkillGrant() {
   const skillName = draftSkillName.value.trim()
   if (!skillName) {
     ElMessage.warning('请选择技能')
     return
   }
-  const agentId = draftAgentId.value
-  if (skillGrants.value.some((grant) => grant.skillName === skillName && grant.agentId === agentId)) {
-    ElMessage.warning('这条授权已经在列表里')
+  if (draftAgentIds.value.length === 0) {
+    ElMessage.warning('请选择范围')
     return
   }
-  if (skillGrants.value.some((grant) => grant.skillName === skillName && (grant.agentId === 0 || agentId === 0))) {
+  const result = addSkillGrants(skillGrants.value, skillName, draftAgentIds.value)
+  if (result.blocked) {
     ElMessage.warning('同一技能不能同时授权给全部 Agent 和某个 Agent')
     return
   }
-  skillGrants.value = [...skillGrants.value, { skillName, agentId }]
+  if (result.added === 0) {
+    ElMessage.warning('这些授权已经在列表里')
+    return
+  }
+  skillGrants.value = result.grants
   draftSkillName.value = ''
   markSkillsDirty()
+  if (result.skipped > 0) {
+    ElMessage.info(`已添加 ${result.added} 条，${result.skipped} 条已在列表里`)
+  }
 }
 
 function removeSkillGrant(index: number) {
+  const removed = skillGrants.value[index]
   skillGrants.value = skillGrants.value.filter((_, i) => i !== index)
+  if (removed) {
+    selectedSkillGrants.value = selectedSkillGrants.value.filter((row) => grantKey(row) !== grantKey(removed))
+  }
+  markSkillsDirty()
+}
+
+function removeSelectedSkillGrants() {
+  if (selectedSkillGrants.value.length === 0) return
+  skillGrants.value = removeSkillGrants(skillGrants.value, selectedSkillGrants.value)
+  clearSkillSelection()
   markSkillsDirty()
 }
 
@@ -406,6 +478,7 @@ async function loadSkillGrants(roleId: number) {
     skillGrantsRoleId.value = roleId
     skillGrantsReady.value = true
     dirtySkills.value = false
+    clearSkillSelection()
   } catch {
     if (seq === skillLoadSeq && currentRole.value?.id === roleId) {
       skillGrantsReady.value = false
@@ -416,14 +489,43 @@ async function loadSkillGrants(roleId: number) {
   }
 }
 
+const filteredSkillOptions = computed(() => {
+  const query = skillFilterQuery.value.trim().toLowerCase()
+  if (!query) return skillOptions.value
+  return skillOptions.value.filter((skill) => skill.name.toLowerCase().includes(query))
+})
+
+function onSkillFilter(query: string) {
+  skillFilterQuery.value = query
+}
+
+/** 下拉打开时重拉目录。搜索词挂在本地，新技能回来后不用关掉下拉就能匹配到。 */
+function onSkillSelectVisible(visible: boolean) {
+  if (!visible) {
+    skillFilterQuery.value = ''
+    return
+  }
+  void loadSkillEditorOptions()
+}
+
+function onAgentSelectVisible(visible: boolean) {
+  if (visible) void loadSkillEditorOptions()
+}
+
+function refreshSkillCatalogIfEditing() {
+  if (rightTab.value === 'skills') void loadSkillEditorOptions()
+}
+
 async function loadSkillEditorOptions() {
+  const seq = ++skillOptionsSeq
   try {
     const [skills, agents] = await Promise.all([
       api.get('/skill-docs'),
       api.get('/agents', { params: { includeDisabled: true } }),
     ])
+    if (seq !== skillOptionsSeq) return
     skillOptions.value = (Array.isArray(skills.data) ? skills.data : [])
-      .filter((row: { name?: string }) => typeof row?.name === 'string')
+      .filter((row: { name?: string }) => typeof row?.name === 'string' && row.name !== '')
       .map((row: { name: string }) => ({ name: row.name }))
     agentOptions.value = (Array.isArray(agents.data) ? agents.data : [])
       .map((row: Record<string, unknown>) => ({
@@ -433,8 +535,7 @@ async function loadSkillEditorOptions() {
       }))
       .filter((agent) => Number.isInteger(agent.id) && agent.id > 0 && agent.name !== '')
   } catch {
-    skillOptions.value = []
-    agentOptions.value = []
+    // 刷新失败保留上一次的选项。清空会让正在搜索的下拉变成「无匹配数据」。
   }
 }
 
@@ -619,6 +720,12 @@ onMounted(() => {
   window.addEventListener('beforeunload', handleBeforeUnload)
 })
 
+// 技能目录不能只在首次挂载拉一次：本页 keep-alive，去「Skills 管理」增删后再回来，
+// 下拉仍是旧列表。停在「技能」页签时重拉；从权限页签切过来同样重拉。
+watch(rightTab, (tab) => {
+  if (tab === 'skills') void loadSkillEditorOptions()
+})
+
 // keep-alive 切回时刷新：离开时的路由守卫已对未保存修改强制确认，回到这里重拉是安全的；
 // selectRole 会重置 dirty 状态
 onActivated(async () => {
@@ -628,9 +735,11 @@ onActivated(async () => {
     const updated = roles.value.find((r) => r.id === id)
     if (updated) selectRole(updated)
   }
+  refreshSkillCatalogIfEditing()
 })
 
 onUnmounted(() => {
+  skillOptionsSeq++
   window.removeEventListener('beforeunload', handleBeforeUnload)
 })
 
@@ -658,11 +767,18 @@ onBeforeRouteLeave(async () => confirmDiscard('离开'))
   line-height: 1.5;
 }
 
+.skill-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 24px;
+}
+
 .skill-add {
   display: flex;
   gap: 8px;
   margin-top: 12px;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .permission-grid {
