@@ -49,10 +49,20 @@ describe('UserService', () => {
     vi.mocked(userRepo.selectPage).mockClear();
     vi.mocked(userRepo.selectPage).mockResolvedValue({ records: [], total: 0 });
     await service.listUsers(2, 10, 'bob', 1, 'ECP', 4);
-    expect(userRepo.selectPage).toHaveBeenCalledWith(2, 10, 'bob', 1, 'ECP', 4);
+    expect(userRepo.selectPage).toHaveBeenCalledWith(2, 10, 'bob', 1, 'ECP', 4, null);
     await expect(service.listUsers(1, 10, undefined, undefined, undefined, 0)).rejects.toBeInstanceOf(BusinessException);
     await expect(service.listUsers(1, 10, undefined, undefined, undefined, -3)).rejects.toBeInstanceOf(BusinessException);
     await expect(service.listUsers(1, 10, undefined, undefined, undefined, 1.5)).rejects.toBeInstanceOf(BusinessException);
+    expect(userRepo.selectPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('listUsersForwardsExcludeRoleIdAndRejectsNonPositive', async () => {
+    vi.mocked(userRepo.selectPage).mockClear();
+    vi.mocked(userRepo.selectPage).mockResolvedValue({ records: [], total: 0 });
+    await service.listUsers(1, 20, 'ann', undefined, undefined, undefined, 6);
+    expect(userRepo.selectPage).toHaveBeenCalledWith(1, 20, 'ann', undefined, undefined, null, 6);
+    await expect(service.listUsers(1, 10, undefined, undefined, undefined, undefined, 0))
+      .rejects.toThrow('excludeRoleId 必须为正整数');
     expect(userRepo.selectPage).toHaveBeenCalledTimes(1);
   });
 

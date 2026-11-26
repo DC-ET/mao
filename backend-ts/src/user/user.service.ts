@@ -13,10 +13,10 @@ const AVATAR_URL_PATTERN = /^(?=.{1,512}$)(https?:\/\/|\/)[^\s]+$/;
 const DEFAULT_USER_ROLE_ID = 2;
 
 /** 列表按角色筛选：缺省不过滤；出现则必须是正整数，避免 0 / 小数被当成「不筛选」。 */
-function normalizeListRoleId(roleId: number | null | undefined): number | null {
+function normalizeListRoleId(roleId: number | null | undefined, field = 'roleId'): number | null {
   if (roleId == null) return null;
   if (!Number.isInteger(roleId) || roleId <= 0) {
-    throw new BusinessException(ErrorCode.PARAM_INVALID, 'roleId 必须为正整数');
+    throw new BusinessException(ErrorCode.PARAM_INVALID, `${field} 必须为正整数`);
   }
   return roleId;
 }
@@ -60,8 +60,12 @@ export class UserService {
     status?: number | null,
     authSource?: string | null,
     roleId?: number | null,
+    excludeRoleId?: number | null,
   ): Promise<MpPage<User>> {
-    const { records, total } = await this.userRepo.selectPage(page, size, keyword, status, authSource, normalizeListRoleId(roleId));
+    const { records, total } = await this.userRepo.selectPage(
+      page, size, keyword, status, authSource,
+      normalizeListRoleId(roleId), normalizeListRoleId(excludeRoleId, 'excludeRoleId'),
+    );
     return mpPage(records, total, page, size);
   }
 

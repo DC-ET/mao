@@ -72,6 +72,21 @@ describe('MysqlUserRepository identity email serialization', () => {
     expect(calls[0]?.sql).not.toContain('user_role');
   });
 
+  it('excludes members of a role for the candidate list', async () => {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const db = {
+      queryOne: vi.fn(async (sql: string, params: unknown[] = []) => { calls.push({ sql, params }); return { cnt: 0 }; }),
+      query: vi.fn(async (sql: string, params: unknown[] = []) => { calls.push({ sql, params }); return []; }),
+    };
+    const repo = new MysqlUserRepository(db as unknown as Db);
+    await repo.selectPage(2, 20, 'ann', null, null, null, 6);
+    for (const call of calls) {
+      expect(call.sql).toContain('NOT EXISTS (SELECT 1 FROM user_role ur WHERE ur.user_id = `user`.id AND ur.role_id = ?)');
+    }
+    expect(calls[0]?.params).toEqual(['%ann%', '%ann%', '%ann%', 6]);
+    expect(calls[1]?.params).toEqual(['%ann%', '%ann%', '%ann%', 6, 20, 20]);
+  });
+
   it('reads the external provider alongside the user row', async () => {
     const sqls: string[] = [];
     const db = {

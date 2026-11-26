@@ -65,7 +65,7 @@ export interface UserRepository {
   insert(user: User): Promise<number>;
   updateById(user: User): Promise<void>;
   updateFields(id: number, fields: Record<string, unknown>): Promise<void>;
-  selectPage(page: number, size: number, keyword?: string, status?: number | null, authSource?: string | null, roleId?: number | null): Promise<{ records: User[]; total: number }>;
+  selectPage(page: number, size: number, keyword?: string, status?: number | null, authSource?: string | null, roleId?: number | null, excludeRoleId?: number | null): Promise<{ records: User[]; total: number }>;
 }
 
 /** 软删结果：预置角色、仍有成员、角色已不存在，或已删除。 */

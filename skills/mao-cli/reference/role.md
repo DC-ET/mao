@@ -2,7 +2,7 @@
 
 ## 用途
 
-管理角色、给角色赋权限点、列出全部权限点。用户绑角色见 `reference/user.md` 的 `user assign-roles`。查看某角色下有哪些用户：`mao user list --role-id <id>`。管理后台角色列表的「成员」打开弹窗，默认用同一 `roleId` 条件只列出当前成员。
+管理角色、给角色赋权限点、列出全部权限点。用户绑角色见 `reference/user.md` 的 `user assign-roles`。查看某角色下有哪些用户：`mao user list --role-id <id>`。查看还没有该角色的用户：`mao user list --exclude-role-id <id>`。管理后台角色列表的「成员」打开左右两栏弹窗，左栏用 `excludeRoleId`、右栏用 `roleId`。
 
 ## 命令选择
 

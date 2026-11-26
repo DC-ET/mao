@@ -137,6 +137,7 @@ export class MysqlUserRepository implements UserRepository {
     status?: number | null,
     authSource?: string | null,
     roleId?: number | null,
+    excludeRoleId?: number | null,
   ): Promise<{ records: User[]; total: number }> {
     const where: string[] = [notDeleted()];
     const params: unknown[] = [];
@@ -161,6 +162,10 @@ export class MysqlUserRepository implements UserRepository {
     if (roleId != null) {
       where.push('EXISTS (SELECT 1 FROM user_role ur WHERE ur.user_id = `user`.id AND ur.role_id = ?)');
       params.push(roleId);
+    }
+    if (excludeRoleId != null) {
+      where.push('NOT EXISTS (SELECT 1 FROM user_role ur WHERE ur.user_id = `user`.id AND ur.role_id = ?)');
+      params.push(excludeRoleId);
     }
     const whereSql = where.join(' AND ');
     const countRow = await this.db.queryOne<{ cnt: number }>(`SELECT COUNT(*) AS cnt FROM \`user\` WHERE ${whereSql}`, params);
