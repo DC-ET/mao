@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { LlmCallRepository } from './llm-call.repository.js';
+import { hashLlmCallSystemPrompt, LlmCallRepository, type LlmCallRow } from './llm-call.repository.js';
 
 describe('LlmCallRepository 用户维度聚合', () => {
   function build(rows: Record<string, unknown>[] = [], one: Record<string, unknown> | null = null) {
@@ -287,5 +287,101 @@ describe('LlmCallRepository 大字段不泄入列表与窗口查询（技术方�
     await repo.selectById(9);
     const [sql] = queryOne.mock.calls[0] as [string, unknown[]];
     expect(sql).toContain('SELECT *');
+  });
+});
+
+describe('LlmCallRepository 系统提示词内容寻址（V212）', () => {
+  function build() {
+    const execute = vi.fn(async () => ({ insertId: 0 }));
+    const insert = vi.fn(async () => 11);
+    const queryOne = vi.fn(async () => null as Record<string, unknown> | null);
+    const repo = new LlmCallRepository({ execute, insert, queryOne } as never);
+    return { repo, execute, insert, queryOne };
+  }
+
+  function row(over: Partial<LlmCallRow> = {}): LlmCallRow {
+    return { userId: 7, sessionId: 8, scene: 'agent', durationMs: 10, ...over };
+  }
+
+  it('有原文时 INSERT IGNORE 进正文表，调用行只记哈希、system_prompt 列为 NULL', async () => {
+    const { repo, execute, insert } = build();
+    await repo.insert(row({ systemPrompt: '你是运维助手', toolsJson: '["shell"]' }));
+    const sha = hashLlmCallSystemPrompt('你是运维助手');
+    expect(sha).toHaveLength(64);
+    const [sql, params] = execute.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('INSERT IGNORE INTO `llm_call_system_prompt`');
+    expect(sql).not.toContain('ON DUPLICATE KEY UPDATE');
+    expect(params).toEqual([sha, '你是运维助手']);
+    expect(insert).toHaveBeenCalledWith('llm_call', expect.objectContaining({
+      systemPrompt: null,
+      systemPromptSha: sha,
+      toolsJson: '["shell"]',
+    }));
+  });
+
+  it('相同原文两次插入共用一个哈希', async () => {
+    const { repo, execute } = build();
+    await repo.insert(row({ systemPrompt: '你是运维助手' }));
+    await repo.insert(row({ systemPrompt: '你是运维助手' }));
+    const first = (execute.mock.calls[0] as [string, unknown[]])[1][0];
+    const second = (execute.mock.calls[1] as [string, unknown[]])[1][0];
+    expect(first).toBe(second);
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it('不同原文哈希不同', async () => {
+    const { repo, execute } = build();
+    await repo.insert(row({ systemPrompt: '甲' }));
+    await repo.insert(row({ systemPrompt: '乙' }));
+    const first = (execute.mock.calls[0] as [string, unknown[]])[1][0];
+    const second = (execute.mock.calls[1] as [string, unknown[]])[1][0];
+    expect(first).not.toBe(second);
+  });
+
+  it('无 system 消息不写正文表，哈希为 NULL', async () => {
+    const { repo, execute, insert } = build();
+    await repo.insert(row({ systemPrompt: null }));
+    await repo.insert(row());
+    expect(execute).not.toHaveBeenCalled();
+    expect(insert).toHaveBeenNthCalledWith(1, 'llm_call', expect.objectContaining({
+      systemPrompt: null,
+      systemPromptSha: null,
+    }));
+    expect(insert).toHaveBeenNthCalledWith(2, 'llm_call', expect.objectContaining({
+      systemPrompt: null,
+      systemPromptSha: null,
+    }));
+  });
+
+  it('selectById：新行按哈希把正文填回 systemPrompt', async () => {
+    const sha = hashLlmCallSystemPrompt('你是运维助手');
+    const { repo, queryOne } = build();
+    queryOne.mockImplementation(async (sql: string) => {
+      if (sql.includes('llm_call_system_prompt')) return { body: '你是运维助手' };
+      return { id: 9, sessionId: 1, systemPrompt: null, systemPromptSha: sha, toolsJson: '["shell"]' };
+    });
+    const row = await repo.selectById(9);
+    expect(row?.systemPrompt).toBe('你是运维助手');
+    expect(row?.toolsJson).toBe('["shell"]');
+    const blobCall = queryOne.mock.calls[1] as [string, unknown[]];
+    expect(blobCall[0]).toContain('llm_call_system_prompt');
+    expect(blobCall[1]).toEqual([sha]);
+  });
+
+  it('selectById：历史行哈希为空，直接用原列，不查正文表', async () => {
+    const { repo, queryOne } = build();
+    queryOne.mockResolvedValue({ id: 9, systemPrompt: '旧全文', systemPromptSha: null });
+    const row = await repo.selectById(9);
+    expect(row?.systemPrompt).toBe('旧全文');
+    expect(queryOne).toHaveBeenCalledTimes(1);
+  });
+
+  it('selectById：哈希在但正文缺失时留着原列（新行原列是 NULL）', async () => {
+    const { repo, queryOne } = build();
+    queryOne.mockImplementation(async (sql: string) => {
+      if (sql.includes('llm_call_system_prompt')) return null;
+      return { id: 9, systemPrompt: null, systemPromptSha: 'a'.repeat(64) };
+    });
+    expect((await repo.selectById(9))?.systemPrompt).toBeNull();
   });
 });

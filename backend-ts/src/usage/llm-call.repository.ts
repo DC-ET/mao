@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Db } from '../db/db.js';
 import { CANCELLED_SQL, NOT_CANCELLED_SQL } from '../common/llm-cancel.js';
 import type {
@@ -10,12 +11,21 @@ import type {
 } from '@mao/contracts';
 
 /**
- * 轻列清单：除 system_prompt / tools_json（V172 请求构成采集，单行最坏 ~256K 字符）外的
- * 全部业务列。列表（list）与轨迹窗口查询（selectBySessionWindow）只走轻列——大字段只随
- * 记录详情的 selectById 按需读取（技术方案 2026-10-25-run-trace-content-and-prompt §5.7 /
- * 2026-10-22-run-trace-deep-dive 决策 9 的防膨胀口径），否则每页列表与每次开轨迹面板都会
- * 把全会话提示词全文拉进内存。db 层统一做 snake→camel 映射，无需逐列别名。
+ * 轻列清单：除 system_prompt / system_prompt_sha / tools_json 外的全部业务列。
+ * system_prompt 是 V172 请求构成原文（单行最坏 ~256K 字符）；V212 起新行改为只存
+ * system_prompt_sha，正文在 llm_call_system_prompt。列表（list）与轨迹窗口查询
+ * （selectBySessionWindow）只走轻列——原文只随记录详情的 selectById 按需读取
+ * （技术方案 2026-10-25-run-trace-content-and-prompt §5.7 / 2026-10-22-run-trace-deep-dive
+ * 决策 9 的防膨胀口径），否则每页列表与每次开轨迹面板都会把全会话提示词全文拉进内存。
+ * sha 本身不大，但列表用不到，留在轻列外也避免 SQL 断言把 system_prompt_sha 误当成原文列。
+ * db 层统一做 snake→camel 映射，无需逐列别名。
  */
+
+/** 系统提示词正文的内容寻址键：UTF-8 字节的 SHA-256，小写 hex（64 字符）。 */
+export function hashLlmCallSystemPrompt(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
 const LLM_CALL_LIGHT_COLUMNS = [
   'id', 'user_id', 'session_id', 'agent_id', 'model_id', 'model_name', 'provider', 'provider_model_id',
   'scene', 'stream', 'effort', 'protocol', 'prompt_tokens', 'completion_tokens', 'cached_tokens',
@@ -49,8 +59,14 @@ export interface LlmCallRow {
   firstTokenMs?: number | null;
   durationMs?: number | null;
   retryCount?: number | null;
-  /** 请求构成采集（V172）：系统提示词原文（截断带标记）；历史行 / 无 system 消息为 NULL。 */
+  /**
+   * 请求构成采集（V172）：系统提示词原文（截断带标记）。
+   * V212 起新行此列为 NULL，原文在 llm_call_system_prompt，由 selectById 按 sha 填回。
+   * 历史行仍直接带原文。无 system 消息时为 NULL。
+   */
   systemPrompt?: string | null;
+  /** 指向 llm_call_system_prompt.sha。NULL = 未走去重（历史行读 system_prompt / 无 system 消息）。 */
+  systemPromptSha?: string | null;
   /** 请求的工具名清单（JSON 字符串数组）；历史行 / 无工具为 NULL。 */
   toolsJson?: string | null;
   createdAt?: string | null;
@@ -153,6 +169,16 @@ export class LlmCallRepository {
   }
 
   async insert(row: LlmCallRow): Promise<number> {
+    // 新行不写 system_prompt 全文。相同原文 INSERT IGNORE 只留一行；哈希冲突在 SHA-256 下忽略。
+    // 调用行插入失败时可能留下无人引用的正文，体积是一份原文，下次相同内容会命中已有行。
+    const systemPrompt = row.systemPrompt ?? null;
+    const systemPromptSha = systemPrompt != null ? hashLlmCallSystemPrompt(systemPrompt) : null;
+    if (systemPrompt != null && systemPromptSha != null) {
+      await this.db.execute(
+        'INSERT IGNORE INTO `llm_call_system_prompt` (`sha`, `body`) VALUES (?, ?)',
+        [systemPromptSha, systemPrompt],
+      );
+    }
     return this.db.insert('llm_call', {
       userId: row.userId ?? null,
       sessionId: row.sessionId ?? null,
@@ -176,7 +202,8 @@ export class LlmCallRepository {
       firstTokenMs: row.firstTokenMs ?? null,
       durationMs: row.durationMs ?? 0,
       retryCount: row.retryCount ?? 0,
-      systemPrompt: row.systemPrompt ?? null,
+      systemPrompt: null,
+      systemPromptSha,
       toolsJson: row.toolsJson ?? null,
     });
   }
@@ -270,8 +297,20 @@ export class LlmCallRepository {
    * 主键查询（运行轨迹记录详情下钻用）：llm_call 行按 id 取，会话归属由调用方校验
    * （row.sessionId 与路径 sessionId 不一致即视为不存在，防越权读他人会话的调用行）。
    */
-  selectById(id: number): Promise<LlmCallRow | null> {
-    return this.db.queryOne<LlmCallRow>(`SELECT * FROM llm_call WHERE id = ?`, [id]);
+  async selectById(id: number): Promise<LlmCallRow | null> {
+    const row = await this.db.queryOne<LlmCallRow>(`SELECT * FROM llm_call WHERE id = ?`, [id]);
+    if (row == null) return null;
+    // 新行：按哈希取去重正文，填回 systemPrompt，调用方（轨迹详情）不用知道存储拆分。
+    // 正文缺失时留着原列——新行原列是 NULL，历史行哈希为空、不会进这个分支。
+    const sha = row.systemPromptSha;
+    if (sha != null && sha !== '') {
+      const blob = await this.db.queryOne<{ body?: string | null }>(
+        'SELECT `body` FROM `llm_call_system_prompt` WHERE `sha` = ?',
+        [sha],
+      );
+      if (blob?.body != null) row.systemPrompt = blob.body;
+    }
+    return row;
   }
 
   /** 用户维度窗口总览：一次取调用数/成败/token 四项/成本（走 user_created 索引）。 */
