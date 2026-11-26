@@ -4,7 +4,22 @@
 import { nextTick, h, ref } from 'vue'
 import { createApp } from 'vue'
 import ElementPlus from 'element-plus'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const renderControl = vi.hoisted(() => ({
+  impl: null as null | ((text: string, isDark?: boolean, citeMap?: Record<number, number>) => Promise<string>),
+}))
+
+vi.mock('../../composables/useMarkdown', async () => {
+  const actual = await vi.importActual<typeof import('../../composables/useMarkdown')>('../../composables/useMarkdown')
+  return {
+    ...actual,
+    renderMarkdown: (text: string, isDark?: boolean, citeMap?: Record<number, number>) => {
+      if (renderControl.impl) return renderControl.impl(text, isDark, citeMap)
+      return actual.renderMarkdown(text, isDark, citeMap)
+    },
+  }
+})
 
 // MarkdownContent → renderMarkdown 依赖链：theme 读 window.matchMedia（jsdom 无实现）、
 // monaco-colorize 会真加载 monaco-editor——两者都 mock（ToolCallCard.test.ts 同款）
@@ -35,9 +50,10 @@ function mount(options: MountOptions) {
   const el = document.createElement('div')
   document.body.appendChild(el)
   const streaming = ref(options.streaming ?? false)
+  const content = ref(options.content)
   const app = createApp({
     render: () => h(MarkdownContent, {
-      content: options.content,
+      content: content.value,
       streaming: streaming.value,
       codeBlockEnhance: options.codeBlockEnhance ?? false,
     }),
@@ -47,12 +63,18 @@ function mount(options: MountOptions) {
   app.mount(el)
   return {
     streaming,
+    content,
     destroy() {
       app.unmount()
       el.remove()
     },
   }
 }
+
+afterEach(() => {
+  renderControl.impl = null
+  vi.useRealTimers()
+})
 
 function bodyImg(): HTMLImageElement | null {
   return document.querySelector('.markdown-body img')
@@ -164,6 +186,71 @@ describe('MarkdownContent 正文图片点击放大', () => {
     expect(img!.classList.contains('md-img-zoom')).toBe(true)
     await clickAndFlush(img!)
     expect(viewer()).toBeTruthy()
+    mounted.destroy()
+  })
+})
+
+describe('MarkdownContent 慢渲染提示', () => {
+  it('超过阈值仍未渲完时显示正在渲染，完成后消失', async () => {
+    vi.useFakeTimers()
+    let resolveRender: (html: string) => void = () => {}
+    renderControl.impl = () => new Promise(resolve => { resolveRender = resolve })
+    const mounted = mount({ content: '很长的最终回复' })
+    await nextTick()
+    expect(document.querySelector('.md-render-pending')).toBeNull()
+
+    await vi.advanceTimersByTimeAsync(200)
+    await nextTick()
+    expect(document.querySelector('.md-render-pending')?.textContent).toContain('正在渲染…')
+
+    resolveRender('<p>很长的最终回复</p>')
+    await vi.advanceTimersByTimeAsync(0)
+    await nextTick()
+    expect(document.querySelector('.md-render-pending')).toBeNull()
+    expect(document.querySelector('.markdown-body')?.textContent).toContain('很长的最终回复')
+    mounted.destroy()
+  })
+
+  it('短内容在阈值内渲完，不出现正在渲染', async () => {
+    vi.useFakeTimers()
+    const mounted = mount({ content: '短回复' })
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(0)
+    await nextTick()
+    expect(document.body.textContent).toContain('短回复')
+
+    await vi.advanceTimersByTimeAsync(500)
+    await nextTick()
+    expect(document.querySelector('.md-render-pending')).toBeNull()
+    mounted.destroy()
+  })
+
+  it('流式输出不显示正在渲染', async () => {
+    vi.useFakeTimers()
+    renderControl.impl = () => new Promise(() => {})
+    const mounted = mount({ content: '流式中的回复', streaming: true })
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(500)
+    await nextTick()
+    expect(document.querySelector('.md-render-pending')).toBeNull()
+    mounted.destroy()
+  })
+
+  it('已有正文后再渲染，继续显示旧内容，不换成正在渲染', async () => {
+    vi.useFakeTimers()
+    const mounted = mount({ content: '第一版' })
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(0)
+    await nextTick()
+    expect(document.body.textContent).toContain('第一版')
+
+    renderControl.impl = () => new Promise(() => {})
+    mounted.content.value = '第二版很长'
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(500)
+    await nextTick()
+    expect(document.querySelector('.md-render-pending')).toBeNull()
+    expect(document.body.textContent).toContain('第一版')
     mounted.destroy()
   })
 })

@@ -4,6 +4,12 @@
        两个根，data-v 标记挂不上，字号会掉回 body 的 17px，表格回到浏览器默认的居中加粗。
        查看器放在根内且 teleported：不占第二个根，fixed 层也不会被裁剪，点击不冒泡回正文。 -->
   <div :class="bodyClass" @click="onBodyClick">
+    <!-- 首屏 html 仍空时，长回复的高亮要等一两秒，步骤摘要已经在上面，空白会被看成没有回复。
+         短内容在阈值内渲完，计时器被清掉，不会闪一下。流式输出不走这里（已有流式指示）。 -->
+    <div v-if="showRenderPending" class="md-render-pending" role="status" aria-live="polite">
+      <span class="md-render-spinner" aria-hidden="true"></span>
+      <span>正在渲染…</span>
+    </div>
     <div ref="root" v-html="html"></div>
     <!-- teleported 必须显式：默认 false 原地渲染，fixed 定位会被 overflow/transform 祖先裁剪
          （ToolCallCard el-image preview-teleported 同口径）；hide-on-click-modal 显式开
@@ -19,7 +25,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { renderMarkdown } from '../../composables/useMarkdown'
 import { insertMermaidDiagrams } from '../../utils/mermaid-renderer'
 import { enhanceCodeBlocks, ensureCodeBlockDelegation } from '../../utils/codeBlockCollapse'
@@ -53,6 +59,24 @@ const props = withDefaults(defineProps<{
 const { isDark } = useTheme()
 const html = ref('')
 const root = ref<HTMLElement | null>(null)
+/** 慢渲染提示延迟：短内容通常一次微任务就渲完，立刻出转圈会闪一下 */
+const RENDER_PENDING_DELAY_MS = 200
+const showRenderPending = ref(false)
+let pendingTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearPendingTimer() {
+  if (pendingTimer != null) {
+    clearTimeout(pendingTimer)
+    pendingTimer = null
+  }
+}
+
+function hideRenderPending() {
+  showRenderPending.value = false
+  clearPendingTimer()
+}
+
+onBeforeUnmount(clearPendingTimer)
 /** 正文图片解析上下文：没有会话 ID 时传 null（保持原 src，交给失败回退） */
 const imageContext = computed<MarkdownImageContext | null>(() =>
   props.sessionId ? { sessionId: props.sessionId, executionMode: props.sessionExecutionMode } : null,
@@ -79,9 +103,21 @@ watch(
   [() => props.content, isDark, () => props.citeMap, () => props.streaming],
   async ([content, , citeMap, streaming]) => {
     const gen = ++renderGen
+    // 已有上一帧 html 时继续显示旧内容，不插提示（主题切换、流式增量都走这条）
+    if (content && !html.value && !streaming) {
+      if (pendingTimer == null && !showRenderPending.value) {
+        pendingTimer = setTimeout(() => {
+          pendingTimer = null
+          if (!html.value) showRenderPending.value = true
+        }, RENDER_PENDING_DELAY_MS)
+      }
+    } else if (!content || streaming) {
+      hideRenderPending()
+    }
     const next = content ? await renderMarkdown(content, isDark.value, citeMap) : ''
     if (gen !== renderGen) return
     html.value = next
+    hideRenderPending()
     // renderMarkdown 为异步渲染（含代码块高亮），渲染完成后内容高度才最终确定。
     // 派发事件供外层（如会话恢复后的自动滚动）在高度变化后重新测量/滚动到底部。
     nextTick(() => {
@@ -118,3 +154,29 @@ watch([() => props.sessionId, () => props.sessionExecutionMode], async () => {
   if (root.value) decorateMarkdownImages(root.value, imageContext.value)
 })
 </script>
+
+<style scoped>
+.md-render-pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  line-height: 1.5;
+  color: var(--aw-ink-muted-48);
+  font-size: var(--aw-text-caption);
+}
+
+.md-render-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--aw-hairline);
+  border-top-color: var(--aw-primary);
+  border-radius: 50%;
+  animation: md-render-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes md-render-spin {
+  to { transform: rotate(360deg); }
+}
+</style>
