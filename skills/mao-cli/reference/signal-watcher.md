@@ -112,7 +112,7 @@ update 为部分更新：未传的字段保持原值；`--headers '{}'`、`--bod
 
 ## 指定执行会话（0.0.526）
 
-`--trigger-mode SPECIFIED_SESSION` + `--session-id`（CLI 单传 `--session-id` 即隐含指定模式）：变化触发在指定的会话中执行，飞书/钉钉通道会话的最终回复会推回聊天，其余会话在任务面板可见。与复用指针相反，会话由**用户指定**：
+`--trigger-mode SPECIFIED_SESSION` + `--session-id`（CLI 单传 `--session-id` 即隐含指定模式）：变化触发在指定的会话中执行，飞书/钉钉通道会话的最终回复会推回聊天，其余会话在任务面板可见。想让变化回到**你正在用的会话**（如当前对话）用本节；上一节的 `REUSE_SESSION` 是哨兵首次触发时自建的专属会话，不是当前会话。与复用指针相反，这里的会话由**用户指定**：
 
 | 项 | 规则 |
 |----|------|
@@ -120,7 +120,8 @@ update 为部分更新：未传的字段保持原值；`--headers '{}'`、`--bod
 | 失效策略 | 指定会话在触发时被删/归档 → 本次触发判失败（轮询记录 error 给具体原因）并计入连续失败，**不自动降级新建**；连续 5 次失败自动停用 |
 | 编辑沿用 | `specifiedSessionId` 键未下发 = 沿用库值；非指定模式下服务端单侧归空（切走模式即清列） |
 | 复制继承 | CLI `--copy-from` 不继承指定会话，副本须显式 `--session-id` 重指定 |
-| Agent 工具 | 会话内通过 `create_signal_watcher` 创建时默认指定当前会话（LOCAL/边路会话回退每次新建并在结果中写明） |
+| Agent 工具 | 会话内通过 `create_signal_watcher` 创建时**默认指定当前会话**（等价 `SPECIFIED_SESSION` + 当前会话 id；LOCAL/边路会话回退每次新建并在结果中写明）。除非用户明确要求每次触发开新会话，Agent 不应主动传 `NEW_SESSION`——注意 CLI `mao signal-watcher create` 的 `--trigger-mode` 缺省值才是 `NEW_SESSION`，两者默认不同 |
+| 用例提醒 | 用户说「变化后复用/回到当前会话」时用本节（`SPECIFIED_SESSION`）；`REUSE_SESSION` 是哨兵专属会话，不是当前对话 |
 
 ## 轮询记录字段
 
@@ -139,7 +140,7 @@ update 为部分更新：未传的字段保持原值；`--headers '{}'`、`--bod
 
 ## Shell 脚本探针（V189）
 
-脚本哨兵的判定对象是**本人项目工作区内**的脚本文件：路径为相对路径 `<项目slug>/<子路径>`，保存与执行前都做属主校验（resolve + realpath 后必须落在本人 projects 根内，软链逃逸直接拒绝），保存时要求文件已存在且 ≤256KB。
+脚本哨兵的判定对象是**本人项目工作区内**的脚本文件：路径为相对路径 `<项目slug>/<子路径>`，以 `{workspaceRoot}/{userId}/projects` 为解析根——**不是相对当前项目工作区根**。例如项目工作区是 `<projectsRoot>/mao`、脚本放在该项目的 `.mao/sentinels/probe.sh`，`--script-path` 必须写 `mao/.mao/sentinels/probe.sh`；只写 `.mao/sentinels/probe.sh` 会被服务端判为「脚本文件不存在」。隐藏目录（`.` 开头）不影响校验。保存与执行前都做属主校验（resolve + realpath 后必须落在本人 projects 根内，软链逃逸直接拒绝），保存时要求文件已存在且 ≤256KB。
 
 - **执行模型**：以 `bash <脚本绝对路径>` 执行（不要求可执行位）。哨兵属主的有效运行模式为 Docker 时，在该用户该 Agent 的 `mao-runtime` 容器内执行，可见范围与该容器里的 Shell 一致；为 host 时在后端宿主执行。执行帧下发的绝对路径是**配置视角**（`workspaceRoot` 原样、与容器内挂载点逐字节一致），不经 realpath 解析为宿主真实路径——存储根是挂载软链（如 `/opt/mao-data -> /data/mao-data`）时，也不会把容器内不存在的路径带进去（探针报「脚本文件不存在」的已知坑）。容器起不来、运行时版本未对齐或通道断开时本轮记失败并顺延到下个轮询间隔，不回退宿主，也不计入连续五次停用。cwd 为脚本所在目录；stdin 关闭（脚本读 stdin 得 EOF）；执行「当前内容生效」，改脚本即改哨兵行为，删除脚本 → 探针失败走退避。
 - **脚本契约**：stdout 是判定值（HASH=全文哈希，JSON_FIELD=按提取路径取值）；exit code 0=成功，非 0 记一次失败（error 取 stderr 尾部 200 字符）；超时按进程组 SIGKILL 判失败（含脚本派生的全部子进程）。后台常驻子进程会在脚本退出后被整组回收，脚本不要依赖子进程存活。
