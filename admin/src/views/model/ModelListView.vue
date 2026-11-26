@@ -107,7 +107,7 @@
                 :loading="testingId === row.id"
                 :disabled="testingId != null"
                 @click="handleTest(row)"
-              >测试</el-button>
+              >{{ testButtonLabel(row) }}</el-button>
               <el-button type="primary" link size="small" @click="handleCopy(row)">复制</el-button>
               <el-button type="primary" link size="small" @click="handleEdit(row)">编辑</el-button>
               <el-button
@@ -147,7 +147,7 @@
           </div>
           <div class="mobile-card-actions">
             <template v-if="canWrite">
-              <el-button type="primary" link :loading="testingId === row.id" :disabled="testingId != null" @click="handleTest(row)">测试</el-button>
+              <el-button type="primary" link :loading="testingId === row.id" :disabled="testingId != null" @click="handleTest(row)">{{ testButtonLabel(row) }}</el-button>
               <el-button type="primary" link @click="handleCopy(row)">复制</el-button>
               <el-button type="primary" link @click="handleEdit(row)">编辑</el-button>
               <el-button :type="row.status === 1 ? 'danger' : 'success'" link @click="handleToggleStatus(row)">
@@ -216,8 +216,8 @@
           </div>
         </template>
 
-        <!-- 文本模型：连通性输出 -->
-        <template v-else>
+        <!-- 文本模型：连通性输出。文生图试生成不进这里，只留上方耗时与失败原因 -->
+        <template v-else-if="!testResult.imageTest">
           <div class="test-result-section">
             <div class="test-result-section__header">
               <span class="test-result-section__title">连通性</span>
@@ -317,12 +317,22 @@ function isAnthropicProtocol(row: any): boolean {
   return (row.apiProtocol || '').trim().toLowerCase() === 'anthropic'
 }
 
+function isImageModel(row: any): boolean {
+  return row.modelType === 'image'
+}
+
 function protocolIconPath(row: any): string {
+  if (isImageModel(row)) return OPENAI_ICON_PATH
   return isAnthropicProtocol(row) ? ANTHROPIC_ICON_PATH : OPENAI_ICON_PATH
 }
 
 function protocolLabel(row: any): string {
+  if (isImageModel(row)) return 'OpenAI Images'
   return isAnthropicProtocol(row) ? 'Anthropic（Messages）协议' : 'OpenAI 兼容（ChatCompletions）协议'
+}
+
+function testButtonLabel(row: any): string {
+  return isImageModel(row) ? '试生成' : '测试'
 }
 
 const dialogVisible = ref(false)
@@ -464,6 +474,9 @@ function formatDuration(ms: number) {
 const testResultType = computed(() => testResult.value?.connectivity ? 'success' : 'error')
 
 const testResultTitle = computed(() => {
+  if (testResult.value?.imageTest) {
+    return testResultType.value === 'success' ? '生成成功' : '生成失败'
+  }
   if (testResultType.value === 'success') {
     return testResult.value?.audioTest ? '合成成功' : '测试通过'
   }

@@ -49,6 +49,8 @@ export interface ModelTestResult {
   error?: string | null;
   durationMs: number;
   audioTest?: boolean;
+  /** 文生图试生成：真实调用 /images/generations，成功只带回耗时，不回图片字节。 */
+  imageTest?: boolean;
   audioFormat?: string | null;
   audioData?: string | null;
   audioSizeBytes?: number | null;

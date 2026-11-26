@@ -5,7 +5,7 @@ ALTER TABLE llm_model
 
 -- 新增 GPT image 2 文生图模型（API 地址同 GPT-5.6，mikiko；使用图片专用 key）
 INSERT INTO llm_model (name, provider, base_url, api_key, model_id, model_type, context_window_tokens, status, supports_vision, is_default)
-SELECT 'GPT image 2', 'mikiko', 'https://mikiko.cc/v1',
+SELECT 'gpt-image-2.5-flare', 'openai', 'https://api.openai.com/v1',
        'sk-xxxxxxxxxxxx',
-       'gpt-image-2', 'image', NULL, 1, 0, 0
-WHERE NOT EXISTS (SELECT 1 FROM llm_model WHERE model_id = 'gpt-image-2');
+       'gpt-image-2.5-flare', 'image', NULL, 1, 0, 0
+WHERE NOT EXISTS (SELECT 1 FROM llm_model WHERE model_id = 'gpt-image-2.5-flare');

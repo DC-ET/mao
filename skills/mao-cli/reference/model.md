@@ -263,7 +263,7 @@ mao model set-status --id 1 --status 1
 
 ### 用途
 
-测试模型连通性。需要管理权限。文本模型仅发送一条 `Hi` 用户消息进行基础调用，不探测 mid system message 支持；返回 `connectivity`、`connectivityOutput`、`durationMs`，失败时包含 `error`。语音模型仍执行语音合成测试。
+测试模型连通性。需要管理权限。文本模型仅发送一条 `Hi` 用户消息进行基础调用，不探测 mid system message 支持；返回 `connectivity`、`connectivityOutput`、`durationMs`，失败时包含 `error`。语音模型仍执行语音合成测试。文生图模型调用 `POST {baseUrl}/images/generations`（提示词 `a white square`、`quality=low`），返回 `imageTest: true`，成功只带耗时，失败带 `error`；会真实出图并消耗额度。文生图模型的 `apiProtocol` / `effort` 在创建和更新时被忽略并清空。
 
 | 参数 | 必填 | 类型 | 含义 |
 |------|------|------|------|

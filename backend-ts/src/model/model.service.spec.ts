@@ -1,5 +1,7 @@
+import { Buffer } from 'node:buffer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BusinessException } from '../common/business-exception.js';
+import { ImageApiError } from '../harness/tool/image-api-client.js';
 import { LlmCallContext } from '../usage/llm-call-context.js';
 import { ModelService } from './model.service.js';
 import type {
@@ -418,6 +420,45 @@ describe('ModelService', () => {
     expect(modelRepo.updateById).toHaveBeenCalledWith(existing);
   });
 
+  it('imageModelDropsChatProtocolAndEffort', async () => {
+    const created = await service.createModel(
+      'img', 'p', 'https://x', 'k', 'gpt-image', null, 0, null, 'image', null, 'anthropic', 'high',
+      undefined, undefined, undefined, undefined,
+    );
+    expect(created.modelType).toBe('image');
+    expect(created.apiProtocol).toBe('');
+    expect(created.effort).toBe('');
+
+    const bogus = await service.createModel(
+      'img2', 'p', 'https://x', 'k', 'gpt-image', null, 0, null, 'image', null, 'bogus', 'ultra',
+      undefined, undefined, undefined, undefined,
+    );
+    expect(bogus.apiProtocol).toBe('');
+    expect(bogus.effort).toBe('');
+
+    const existing = model(21, 'old-image', 0, 1);
+    existing.modelType = 'image';
+    existing.apiProtocol = 'anthropic';
+    existing.effort = 'high';
+    vi.mocked(modelRepo.findById).mockResolvedValue(existing);
+    await service.updateModel(21, 'renamed', null, null, null, null, null, null, null, null, null, null, null, undefined, undefined, undefined, undefined);
+    expect(existing.apiProtocol).toBe('');
+    expect(existing.effort).toBe('');
+
+    existing.modelType = 'text';
+    existing.apiProtocol = 'openai-responses';
+    existing.effort = 'low';
+    await service.updateModel(21, null, null, null, null, null, null, null, null, 'image', null, 'anthropic', 'max', undefined, undefined, undefined, undefined);
+    expect(existing.modelType).toBe('image');
+    expect(existing.apiProtocol).toBe('');
+    expect(existing.effort).toBe('');
+
+    await service.updateModel(21, null, null, null, null, null, null, null, null, 'text', null, 'anthropic', 'low', undefined, undefined, undefined, undefined);
+    expect(existing.modelType).toBe('text');
+    expect(existing.apiProtocol).toBe('anthropic');
+    expect(existing.effort).toBe('low');
+  });
+
   it('createModelValidatesEffortAndNormalizesBlankToEmptyString', async () => {
     await expect(
       service.createModel('n', 'p', 'https://x', 'k', 'm', null, 0, null, 'text', null, 'openai-responses', 'bogus', undefined, undefined, undefined, undefined),
@@ -450,6 +491,121 @@ describe('ModelService', () => {
     await service.updateModel(13, null, null, null, null, null, null, null, null, null, null, null, 'high', undefined, undefined, undefined, undefined);
     expect(existing.effort).toBe('high');
     expect(modelRepo.updateById).toHaveBeenCalledWith(existing);
+  });
+
+  it('testConnectivityForImageCallsGenerationsNotChat', async () => {
+    const callGenerations = vi.fn(async () => ({
+      images: [{
+        bytes: Buffer.from('png'),
+        mime: 'image/png',
+        source: 'b64_json' as const,
+        fileName: 'a.png',
+      }],
+      usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 },
+    }));
+    const recorder = { record: vi.fn(async () => {}) };
+    const authResolver = {
+      resolveApiKey: vi.fn(async (_target: { apiKey?: string }, userId?: number | null) => `token-${userId}`),
+    };
+    const imageService = new ModelService(modelRepo, sessionRepo, llmClient, undefined, undefined, {
+      authResolver,
+      callGenerations,
+      recorder,
+    });
+    const imageModel = model(31, 'flare', 0, 1);
+    imageModel.modelType = 'image';
+    imageModel.modelId = 'flare';
+    imageModel.apiProtocol = 'anthropic';
+    imageModel.authType = 'ecp';
+    imageModel.baseUrl = 'https://img.example.test/v1/';
+    imageModel.clientImpersonation = 'codex';
+    vi.mocked(modelRepo.findById).mockResolvedValue(imageModel);
+
+    const result = await imageService.testConnectivity(31, 7);
+
+    expect(llmClient.chat).not.toHaveBeenCalled();
+    expect(authResolver.resolveApiKey).toHaveBeenCalledWith(
+      expect.objectContaining({ authType: 'ecp', modelId: 'flare' }),
+      7,
+    );
+    expect(callGenerations).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: 'https://img.example.test/v1/',
+        apiKey: 'token-7',
+        model: 'gpt-image-2.5-flare',
+        clientImpersonation: 'codex',
+      }),
+      { prompt: 'a white square', n: 1, size: '1024x1024', quality: 'low' },
+    );
+    expect(result).toEqual({
+      connectivity: true,
+      imageTest: true,
+      durationMs: expect.any(Number),
+    });
+    expect(result).not.toHaveProperty('connectivityOutput');
+    expect(recorder.record).toHaveBeenCalledWith(expect.objectContaining({
+      resolvedModelName: 'gpt-image-2.5-flare',
+      success: true,
+      usage: { promptTokens: 3, completionTokens: 4, totalTokens: 7 },
+      userId: 7,
+      sessionId: null,
+      agentId: null,
+    }));
+  });
+
+  it('testConnectivityForImageReportsUpstreamErrorAndSkipsChat', async () => {
+    const callGenerations = vi.fn(async () => {
+      throw new ImageApiError('upstream rejected', 'invalid_request', 400, {
+        promptTokens: 2, completionTokens: 0, totalTokens: 2,
+      });
+    });
+    const recorder = { record: vi.fn(async () => {}) };
+    const imageService = new ModelService(modelRepo, sessionRepo, llmClient, undefined, undefined, {
+      callGenerations,
+      recorder,
+    });
+    const imageModel = model(32, 'img', 0, 1);
+    imageModel.modelType = 'image';
+    imageModel.baseUrl = 'https://img.example.test/v1';
+    vi.mocked(modelRepo.findById).mockResolvedValue(imageModel);
+
+    const result = await imageService.testConnectivity(32, 9);
+
+    expect(llmClient.chat).not.toHaveBeenCalled();
+    expect(result.connectivity).toBe(false);
+    expect(result.imageTest).toBe(true);
+    expect(result.error).toBe('试生成失败: upstream rejected');
+    expect(recorder.record).toHaveBeenCalledWith(expect.objectContaining({
+      success: false,
+      errorMessage: 'upstream rejected',
+      usage: { promptTokens: 2, completionTokens: 0, totalTokens: 2 },
+      userId: 9,
+    }));
+  });
+
+  it('testConnectivityForImageDoesNotCallUpstreamWhenBaseUrlMissing', async () => {
+    const callGenerations = vi.fn();
+    const recorder = { record: vi.fn() };
+    const imageService = new ModelService(modelRepo, sessionRepo, llmClient, undefined, undefined, {
+      callGenerations,
+      recorder,
+    });
+    const imageModel = model(33, 'img', 0, 1);
+    imageModel.modelType = 'image';
+    imageModel.baseUrl = '   ';
+    vi.mocked(modelRepo.findById).mockResolvedValue(imageModel);
+
+    const result = await imageService.testConnectivity(33);
+
+    expect(callGenerations).not.toHaveBeenCalled();
+    expect(recorder.record).not.toHaveBeenCalled();
+    expect(llmClient.chat).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      connectivity: false,
+      imageTest: true,
+      error: '文生图模型未配置 base_url',
+      durationMs: expect.any(Number),
+    });
   });
 
   it('testConnectivityRoutesByApiProtocolNotProvider', async () => {

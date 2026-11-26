@@ -14,10 +14,49 @@ import type {
   ModelTestResult,
   SessionModelRepository,
 } from './types.js';
+import { createStaticOnlyAuthResolver, type LlmAuthResolver } from '../harness/llm/llm-auth.js';
+import {
+  callImageGenerations,
+  normalizeImageModelName,
+  normalizeImageUsage,
+  toImageApiError,
+  type ImageApiConfig,
+  type ImageApiResult,
+} from '../harness/tool/image-api-client.js';
 import { LLM_CALL_SCENES, LlmCallContext } from '../usage/llm-call-context.js';
 
 const TTS_TEST_TEXT = '你好，欢迎使用 Mao 语音合成测试。';
 const TTS_TEST_AUDIO = { format: 'wav' };
+/** 文生图试生成：短提示 + 低质量，验证 /images/generations，不走聊天补全。 */
+const IMAGE_PROBE_PROMPT = 'a white square';
+const IMAGE_PROBE_SIZE = '1024x1024';
+const IMAGE_PROBE_QUALITY = 'low';
+
+/** 试生成记账端口，与图片工具的 ImageCallRecorder 同结构；未注入则不记流水。 */
+interface ImageProbeRecorder {
+  record(input: {
+    model: LlmModel | null;
+    resolvedModelName: string;
+    usage: ReturnType<typeof normalizeImageUsage>;
+    success: boolean;
+    errorMessage?: string | null;
+    durationMs: number;
+    userId: number | null;
+    sessionId: number | null;
+    agentId: number | null;
+  }): Promise<void>;
+}
+
+export interface ImageModelProbe {
+  authResolver?: LlmAuthResolver;
+  callGenerations?: (cfg: ImageApiConfig, params: {
+    prompt: string;
+    n?: number;
+    size?: string;
+    quality?: string;
+  }) => Promise<ImageApiResult>;
+  recorder?: ImageProbeRecorder | null;
+}
 
 const CLIENT_IMPERSONATION_VALUES = ['none', 'codex', 'claude_code'] as const;
 const AUTH_TYPE_VALUES = ['api_key', 'ecp'] as const;
@@ -157,7 +196,17 @@ export class ModelService {
     private readonly llmClients?: Map<string, LlmChatClient>,
     /** ECP 登录开关判定（写侧校验 ecp 凭证方式；未注入时视为未启用，fail-closed）。 */
     private readonly isEcpEnabled?: () => Promise<boolean>,
-  ) {}
+    /** 文生图试生成依赖；缺省用固定 Key 解析器 + 真实 Images API，不记流水。 */
+    imageProbe?: ImageModelProbe,
+  ) {
+    this.imageAuthResolver = imageProbe?.authResolver ?? createStaticOnlyAuthResolver();
+    this.imageCallGenerations = imageProbe?.callGenerations ?? callImageGenerations;
+    this.imageRecorder = imageProbe?.recorder ?? null;
+  }
+
+  private readonly imageAuthResolver: LlmAuthResolver;
+  private readonly imageCallGenerations: NonNullable<ImageModelProbe['callGenerations']>;
+  private readonly imageRecorder: ImageProbeRecorder | null;
 
   /** ecp 凭证方式要求系统已启用 ECP 飞书登录。 */
   private async requireEcpEnabled(): Promise<void> {
@@ -267,16 +316,19 @@ export class ModelService {
     if (isDefaultValue === 1) {
       await this.modelRepo.clearDefaultFlag();
     }
+    const modelTypeValue = hasText(modelType) ? modelType!.trim() : 'text';
+    // 文生图只走 Images API，不保存聊天协议与推理力度（提交值一律忽略）。
+    const imageModel = modelTypeValue === 'image';
     const model: LlmModel = {
       name,
       provider,
-      apiProtocol: normalizeApiProtocol(apiProtocol) ?? '',
-      effort: normalizeEffort(effort) ?? '',
+      apiProtocol: imageModel ? '' : (normalizeApiProtocol(apiProtocol) ?? ''),
+      effort: imageModel ? '' : (normalizeEffort(effort) ?? ''),
       baseUrl,
       // api_key 列 NOT NULL：ecp 模式（或未提供 Key 的创建请求）统一写空串占位。
       apiKey: apiKey ?? '',
       modelId,
-      modelType: hasText(modelType) ? modelType!.trim() : 'text',
+      modelType: modelTypeValue,
       clientImpersonation: normalizeClientImpersonation(clientImpersonation) ?? 'none',
       authType: authTypeValue,
       supportsVision: supportsVision != null ? supportsVision : 0,
@@ -327,14 +379,20 @@ export class ModelService {
     requireDefaultModelVisible(nextIsDefault, nextClientVisible);
     if (name != null) model.name = name;
     if (provider != null) model.provider = provider;
-    const apiProtocolValue = normalizeApiProtocol(apiProtocol);
-    if (apiProtocolValue != null) model.apiProtocol = apiProtocolValue;
-    const effortValue = normalizeEffort(effort);
-    if (effortValue != null) model.effort = effortValue;
     if (baseUrl != null) model.baseUrl = baseUrl;
     if (apiKey != null) model.apiKey = apiKey;
     if (modelId != null) model.modelId = modelId;
     if (hasText(modelType)) model.modelType = modelType!.trim();
+    if ((model.modelType ?? '').trim() === 'image') {
+      // 文生图没有聊天协议：无论本次是否提交，都清掉已存的协议与推理力度。
+      model.apiProtocol = '';
+      model.effort = '';
+    } else {
+      const apiProtocolValue = normalizeApiProtocol(apiProtocol);
+      if (apiProtocolValue != null) model.apiProtocol = apiProtocolValue;
+      const effortValue = normalizeEffort(effort);
+      if (effortValue != null) model.effort = effortValue;
+    }
     const impersonation = normalizeClientImpersonation(clientImpersonation);
     if (impersonation != null) model.clientImpersonation = impersonation;
     const authTypeValue = normalizeAuthTypeInput(authType);
@@ -415,6 +473,9 @@ export class ModelService {
     const startTime = Date.now();
     if (model.modelType === 'audio') {
       return this.testAudioSynthesis(config, startTime, actorUserId);
+    }
+    if ((model.modelType ?? '').trim() === 'image') {
+      return this.testImageGeneration(model, startTime, actorUserId);
     }
 
     try {
@@ -497,6 +558,84 @@ export class ModelService {
     }
   }
 
+  private async testImageGeneration(
+    model: LlmModel,
+    startTime: number,
+    actorUserId?: number | null,
+  ): Promise<ModelTestResult> {
+    const fail = (error: string): ModelTestResult => ({
+      connectivity: false,
+      imageTest: true,
+      error,
+      durationMs: Date.now() - startTime,
+    });
+    const cfg = imageApiConfigFromModel(model);
+    if (!cfg.baseUrl) return fail('文生图模型未配置 base_url');
+    if (!cfg.model) return fail('文生图模型未配置 model_id');
+
+    let upstreamAttempted = false;
+    try {
+      cfg.apiKey = await this.imageAuthResolver.resolveApiKey({
+        id: model.id,
+        modelId: model.modelId,
+        apiKey: cfg.apiKey,
+        authType: model.authType,
+      }, actorUserId);
+      upstreamAttempted = true;
+      const result = await this.imageCallGenerations(cfg, {
+        prompt: IMAGE_PROBE_PROMPT,
+        n: 1,
+        size: IMAGE_PROBE_SIZE,
+        quality: IMAGE_PROBE_QUALITY,
+      });
+      if (!result.images?.length) {
+        await this.recordImageProbe(model, cfg.model, normalizeImageUsage(result.usage), false, '图片生成接口未返回图片', startTime, actorUserId);
+        return fail('试生成失败: 图片生成接口未返回图片');
+      }
+      await this.recordImageProbe(model, cfg.model, normalizeImageUsage(result.usage), true, null, startTime, actorUserId);
+      return {
+        connectivity: true,
+        imageTest: true,
+        durationMs: Date.now() - startTime,
+      };
+    } catch (e) {
+      const err = toImageApiError(e, cfg.apiKey);
+      if (upstreamAttempted) {
+        await this.recordImageProbe(
+          model, cfg.model, err.usage ?? null, false, err.message, startTime, actorUserId,
+        );
+      }
+      return fail(`试生成失败: ${err.message}`);
+    }
+  }
+
+  private async recordImageProbe(
+    model: LlmModel,
+    resolvedModelName: string,
+    usage: ReturnType<typeof normalizeImageUsage>,
+    success: boolean,
+    errorMessage: string | null,
+    startTime: number,
+    actorUserId?: number | null,
+  ): Promise<void> {
+    if (!this.imageRecorder) return;
+    try {
+      await this.imageRecorder.record({
+        model,
+        resolvedModelName,
+        usage,
+        success,
+        errorMessage,
+        durationMs: Date.now() - startTime,
+        userId: actorUserId ?? null,
+        sessionId: null,
+        agentId: null,
+      });
+    } catch {
+      // 记账失败不影响试生成结果
+    }
+  }
+
   private buildAudioTestFailure(error: string, startTime: number): ModelTestResult {
     return {
       connectivity: false,
@@ -505,6 +644,16 @@ export class ModelService {
       durationMs: Date.now() - startTime,
     };
   }
+}
+
+/** 与 generate_image 的 buildImageApiConfig 同口径：去尾斜杠由客户端负责，这里只归一模型名。 */
+function imageApiConfigFromModel(model: LlmModel): ImageApiConfig {
+  return {
+    baseUrl: (model.baseUrl ?? '').trim(),
+    apiKey: (model.apiKey ?? '').trim(),
+    model: normalizeImageModelName(model.modelId),
+    clientImpersonation: model.clientImpersonation,
+  };
 }
 
 function extractChatContent(response: LlmChatResponse | null | undefined): string | null {

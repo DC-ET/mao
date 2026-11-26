@@ -156,6 +156,7 @@ import { WebhookSecretCipher } from './notification/task/webhook-secret-cipher.j
 import { LlmUsageRepository, LlmUsageService } from './usage/llm-usage.service.js';
 import { LlmCallRepository } from './usage/llm-call.repository.js';
 import { LlmCallService } from './usage/llm-call.service.js';
+import { createImageCallRecorder } from './usage/image-call-recorder.js';
 import { RecordingLlmChatClient } from './usage/recording-llm-chat-client.js';
 import { MysqlFeishuBindingRepository } from './feishu/binding.repository.js';
 import { FeishuInboundProcessor } from './feishu/inbound-processor.js';
@@ -491,6 +492,10 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     llmChatClients,
     // 写侧校验：authType=ecp 要求 ECP 飞书登录已启用（与读侧 provider 同源判定）。
     () => ecpAuth.isEnabled(),
+    {
+      authResolver: llmAuthResolver,
+      recorder: createImageCallRecorder(llmCallService),
+    },
   );
 
   const settingService = new SystemSettingService(

@@ -89,7 +89,7 @@
             </el-radio-group>
             <span class="form-hint-inline">调用该模型时模拟的客户端请求头</span>
           </el-form-item>
-          <el-form-item label="API 协议">
+          <el-form-item v-if="!isImageType" label="API 协议">
             <el-select v-model="form.apiProtocol" style="width: 100%">
               <el-option label="OpenAI 兼容（ChatCompletions）" value="openai-compatible" />
               <el-option label="Anthropic（Messages）" value="anthropic" />
@@ -112,6 +112,7 @@
             <el-input v-model="form.baseUrl" placeholder="例如: https://api.openai.com/v1">
               <template #append><span class="api-suffix">{{ apiProtocolSuffix }}</span></template>
             </el-input>
+            <span v-if="isImageType" class="form-hint-inline">改图走同一基址下的 /images/edits。协议固定为 OpenAI Images，不使用聊天补全</span>
           </el-form-item>
           <el-form-item label="凭证方式">
             <el-radio-group v-model="form.authType">
@@ -237,10 +238,12 @@ const dialogTitle = computed(() => {
 })
 const submitButtonText = computed(() => (isEdit.value ? '保存' : '添加'))
 const isTextType = computed(() => form.modelType === 'text')
+const isImageType = computed(() => form.modelType === 'image')
 // 推理力度仅对 OpenAI 兼容 / Responses 协议的文本模型有意义，Anthropic 协议不支持该参数
 const supportsEffort = computed(() => isTextType.value && form.apiProtocol !== 'anthropic')
-// 协议对应的调用路径后缀，与后端各 LLM 适配器实际拼接一致
+// 文本/语音后缀与各 LLM 适配器拼接一致；文生图固定走 Images API，不看 apiProtocol
 const apiProtocolSuffix = computed(() => {
+  if (isImageType.value) return '/images/generations'
   const suffixes: Record<string, string> = {
     'openai-compatible': '/chat/completions',
     anthropic: '/messages',
@@ -432,6 +435,11 @@ async function handleSubmit() {
       payload.priceCacheRead = null
       payload.priceCacheWrite = null
       payload.priceOutput = null
+    }
+    // 文生图不使用聊天协议与推理力度，不提交这两项（后端也会强制清空）
+    if (form.modelType === 'image') {
+      delete payload.apiProtocol
+      delete payload.effort
     }
     // ECP 模式不使用固定 Key：编辑时不提交（保留原值）；创建时提交空串占位（api_key 列 NOT NULL）。
     if (form.authType === 'ecp') {
