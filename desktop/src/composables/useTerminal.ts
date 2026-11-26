@@ -153,6 +153,8 @@ const restoreInflight = new Map<string, Promise<void>>()
 let electronListenersInitialized = false
 let themeListenerInitialized = false
 let themeObserver: MutationObserver | null = null
+/** 触屏长按终端的处理（由 TerminalPanel 注册为「打开选择文本层」）。 */
+let longPressHandler: (() => void) | null = null
 
 function currentTheme() {
   return document.documentElement.getAttribute('data-theme') === 'dark' ? DARK_THEME : LIGHT_THEME
@@ -631,6 +633,7 @@ export function useTerminal() {
         inst.disposers.push(installTouchScroll(inst.terminal, {
           sendRaw: (data) => writeInstance(id, inst, data),
           onPinchSteps: (steps) => adjustFontSize(steps),
+          onLongPress: () => longPressHandler?.(),
         }))
       }
     }
@@ -817,6 +820,11 @@ export function useTerminal() {
     pendingFocus = true
   }
 
+  /** 注册触屏长按终端的处理（TerminalPanel 用它打开「选择文本」层）。 */
+  function setLongPressHandler(handler: (() => void) | null): void {
+    longPressHandler = handler
+  }
+
   /** 登出时清空模块级状态，避免重新登录后残留失效 tab。 */
   function reset() {
     replayRequested.clear()
@@ -864,6 +872,7 @@ export function useTerminal() {
     getActiveInstance,
     getInstance,
     focusActiveTerminal,
+    setLongPressHandler,
     reset,
   }
 }

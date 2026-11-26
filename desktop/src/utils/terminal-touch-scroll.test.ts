@@ -3,6 +3,7 @@ import {
   classifyScrollTarget,
   installTouchScroll,
   linesFromPixels,
+  LONG_PRESS_MS,
   velocityFromSamples,
 } from './terminal-touch-scroll'
 
@@ -167,6 +168,76 @@ describe('installTouchScroll 手势状态机', () => {
     element.dispatch('touchcancel', { touches: [] })
     element.dispatch('touchmove', { touches: [touch(100, 60)] })
     expect(scrollLines).toHaveBeenCalledTimes(1)
+    dispose()
+  })
+})
+
+describe('installTouchScroll 长按选择', () => {
+  function setupLongPress() {
+    const element = new FakeElement()
+    const onLongPress = vi.fn()
+    const terminal = {
+      element: element as unknown as HTMLElement,
+      rows: 24,
+      buffer: { active: { type: 'normal' as const } },
+      modes: { mouseTrackingMode: 'none', applicationCursorKeysMode: false },
+      scrollLines: vi.fn(),
+    }
+    const dispose = installTouchScroll(terminal, {
+      onLongPress,
+      now: () => 0,
+      scheduleFrame: () => 1,
+      cancelFrame: () => {},
+    })
+    return { element, onLongPress, dispose }
+  }
+
+  it('按住超过阈值触发一次，随后 touchend 被吞掉（不重新聚焦弹键盘）', () => {
+    vi.useFakeTimers()
+    const { element, onLongPress, dispose } = setupLongPress()
+    element.dispatch('touchstart', { touches: [touch(100, 100)] })
+    vi.advanceTimersByTime(LONG_PRESS_MS)
+    expect(onLongPress).toHaveBeenCalledTimes(1)
+
+    const preventDefault = vi.fn()
+    element.dispatch('touchend', { touches: [], preventDefault })
+    expect(preventDefault).toHaveBeenCalled()
+
+    // 下一次普通点击不再被吞
+    const next = vi.fn()
+    element.dispatch('touchend', { touches: [], preventDefault: next })
+    expect(next).not.toHaveBeenCalled()
+    dispose()
+    vi.useRealTimers()
+  })
+
+  it('手指移动超过阈值不触发长按（优先滚动）', () => {
+    vi.useFakeTimers()
+    const { element, onLongPress, dispose } = setupLongPress()
+    element.dispatch('touchstart', { touches: [touch(100, 100)] })
+    element.dispatch('touchmove', { touches: [touch(100, 140)] })
+    vi.advanceTimersByTime(LONG_PRESS_MS)
+    expect(onLongPress).not.toHaveBeenCalled()
+    dispose()
+    vi.useRealTimers()
+  })
+
+  it('双指捏合会取消长按', () => {
+    vi.useFakeTimers()
+    const { element, onLongPress, dispose } = setupLongPress()
+    element.dispatch('touchstart', { touches: [touch(100, 100)] })
+    element.dispatch('touchstart', { touches: [touch(100, 100), touch(200, 100)] })
+    vi.advanceTimersByTime(LONG_PRESS_MS)
+    expect(onLongPress).not.toHaveBeenCalled()
+    dispose()
+    vi.useRealTimers()
+  })
+
+  it('拦掉 contextmenu，避免 WebView 弹粘贴 / 自动填充菜单', () => {
+    const { element, dispose } = setupLongPress()
+    const preventDefault = vi.fn()
+    element.dispatch('contextmenu', { preventDefault })
+    expect(preventDefault).toHaveBeenCalled()
     dispose()
   })
 })

@@ -185,6 +185,7 @@ const {
   getActiveInstance,
   getInstance,
   focusActiveTerminal,
+  setLongPressHandler,
   fontSize,
 } = useTerminal()
 
@@ -591,6 +592,12 @@ const copyAlternate = ref(false)
 function openCopyOverlay(): void {
   const inst = getActiveInstance()
   if (!inst) return
+  // 触屏端长按进入这里：给一次短振动作为「已进入选择模式」的反馈
+  try {
+    navigator.vibrate?.(10)
+  } catch {
+    // 部分 WebView 不支持振动，忽略
+  }
   const snapshot = extractBufferText(inst.terminal.buffer, 2000)
   const options = inst.terminal.options
   copyText.value = snapshot.text
@@ -609,6 +616,10 @@ function openCopyOverlay(): void {
 function closeCopyOverlay(): void {
   copyOverlayVisible.value = false
 }
+
+// 触屏端长按终端直接打开选择层：xterm 的隐藏 textarea 会弹系统「粘贴 / 自动填充」菜单，
+// 用它替代掉那个菜单，长按即可进入选择文本。
+setLongPressHandler(openCopyOverlay)
 
 async function copySnapshot(text: string): Promise<void> {
   let copied = false
@@ -937,6 +948,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  setLongPressHandler(null)
   window.removeEventListener('resize', handleWindowResize)
   document.removeEventListener('keydown', handleSearchKeydown)
   if (isTouch) {

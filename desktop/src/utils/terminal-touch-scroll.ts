@@ -13,6 +13,8 @@
 import { encodeArrow } from './terminal-keys'
 
 export const TOUCH_SCROLL_THRESHOLD_PX = 8
+/** 长按判定：按住不动超过这个时长就打开「选择文本」层（替代 WebView 的长按菜单）。 */
+export const LONG_PRESS_MS = 500
 const INERTIA_DECAY = 0.95
 const INERTIA_STOP_VELOCITY = 0.05
 const INERTIA_FRAME_MS = 16
@@ -72,6 +74,8 @@ export interface TouchScrollOptions {
   sendRaw?: (data: string) => void
   /** 捏合字号增量（正数放大）。 */
   onPinchSteps?: (steps: number) => void
+  /** 单指按住不动达到 LONG_PRESS_MS：打开「选择文本」层。 */
+  onLongPress?: () => void
   now?: () => number
   scheduleFrame?: (cb: () => void) => number
   cancelFrame?: (handle: number) => void
@@ -110,6 +114,31 @@ export function installTouchScroll(
   let gestureScale = 1
   /** iOS Safari 双指手势会同时派发 touchmove 与 gesturechange，只让一条路径调字号。 */
   let gestureActive = false
+  /** 长按计时与状态：触发后要吞掉随后的 touchend，避免 xterm 重新聚焦弹键盘。 */
+  let longPressTimer: ReturnType<typeof setTimeout> | null = null
+  let longPressPoint: { x: number; y: number } | null = null
+  let longPressFired = false
+
+  function cancelLongPress(): void {
+    if (longPressTimer != null) {
+      clearTimeout(longPressTimer)
+      longPressTimer = null
+    }
+    longPressPoint = null
+  }
+
+  function startLongPress(x: number, y: number): void {
+    if (!options.onLongPress) return
+    cancelLongPress()
+    longPressFired = false
+    longPressPoint = { x, y }
+    longPressTimer = setTimeout(() => {
+      longPressTimer = null
+      longPressPoint = null
+      longPressFired = true
+      options.onLongPress?.()
+    }, LONG_PRESS_MS)
+  }
 
   function lineHeight(): number {
     return Math.max(1, element!.clientHeight / Math.max(1, terminal.rows))
@@ -176,6 +205,7 @@ export function installTouchScroll(
   function onTouchStart(event: TouchEvent): void {
     const touches = event.touches
     if (touches.length >= 2) {
+      cancelLongPress()
       tracking = false
       scrolling = false
       stopInertia()
@@ -183,7 +213,10 @@ export function installTouchScroll(
       gestureScale = 1
       return
     }
-    if (touches.length !== 1) return
+    if (touches.length !== 1) {
+      cancelLongPress()
+      return
+    }
     stopInertia()
     const touch = touches[0]
     tracking = true
@@ -194,11 +227,13 @@ export function installTouchScroll(
     arrowBudget = 0
     wheelBudget = 0
     samples = [{ t: now(), y: touch.clientY }]
+    startLongPress(touch.clientX, touch.clientY)
   }
 
   function onTouchMove(event: TouchEvent): void {
     if (event.touches.length >= 2) {
       // 双指：捏合字号。第二指在已进入滚动态后落下时，直接让位给捏合。
+      cancelLongPress()
       event.preventDefault()
       scrolling = false
       tracking = false
@@ -220,6 +255,12 @@ export function installTouchScroll(
     }
     if (event.touches.length !== 1 || !tracking) return
     const touch = event.touches[0]
+    // 手指一旦移动超过阈值就转为滚动/浏览，不再算长按
+    if (longPressPoint) {
+      const longDx = touch.clientX - longPressPoint.x
+      const longDy = touch.clientY - longPressPoint.y
+      if (Math.hypot(longDx, longDy) > TOUCH_SCROLL_THRESHOLD_PX) cancelLongPress()
+    }
     if (!scrolling) {
       const dx = touch.clientX - startX
       const dy = touch.clientY - startY
@@ -238,6 +279,12 @@ export function installTouchScroll(
   }
 
   function onTouchEnd(event: TouchEvent): void {
+    cancelLongPress()
+    if (longPressFired) {
+      // 长按已打开选择层：吞掉这一下 tap，避免 xterm 重新聚焦把键盘弹到选择层下面
+      longPressFired = false
+      event.preventDefault()
+    }
     if (scrolling) {
       const target = classifyScrollTarget(terminal.buffer.active.type, terminal.modes.mouseTrackingMode)
       if (target === 'viewport') startInertia(samples, now())
@@ -248,11 +295,18 @@ export function installTouchScroll(
   }
 
   function onTouchCancel(): void {
+    cancelLongPress()
+    longPressFired = false
     tracking = false
     scrolling = false
     pinchStartDistance = 0
     gestureActive = false
     stopInertia()
+  }
+
+  /** 长按选择走自定义「选择文本」层：拦掉 WebView 长按输入框弹出的「粘贴 / 自动填充」菜单。 */
+  function onContextMenu(event: Event): void {
+    event.preventDefault()
   }
 
   /** iOS Safari 的页面 pinch 由 WebKit 的 gesture 事件驱动；不拦会同时缩放整页。 */
@@ -281,18 +335,22 @@ export function installTouchScroll(
 
   element.addEventListener('touchstart', onTouchStart, { passive: true })
   element.addEventListener('touchmove', onTouchMove, { passive: false })
-  element.addEventListener('touchend', onTouchEnd, { passive: true })
+  // touchend 需要 preventDefault（长按后吞掉 tap），不能 passive
+  element.addEventListener('touchend', onTouchEnd, { passive: false })
   element.addEventListener('touchcancel', onTouchCancel, { passive: true })
+  element.addEventListener('contextmenu', onContextMenu)
   element.addEventListener('gesturestart', onGestureStart, { passive: false })
   element.addEventListener('gesturechange', onGestureChange, { passive: false })
   element.addEventListener('gestureend', onGestureEnd, { passive: false })
 
   return () => {
+    cancelLongPress()
     stopInertia()
     element.removeEventListener('touchstart', onTouchStart)
     element.removeEventListener('touchmove', onTouchMove)
     element.removeEventListener('touchend', onTouchEnd)
     element.removeEventListener('touchcancel', onTouchCancel)
+    element.removeEventListener('contextmenu', onContextMenu)
     element.removeEventListener('gesturestart', onGestureStart)
     element.removeEventListener('gesturechange', onGestureChange)
     element.removeEventListener('gestureend', onGestureEnd)

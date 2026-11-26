@@ -319,6 +319,13 @@ html.android-capacitor .management-dialog .el-dialog__body {
   touch-action: none;
 }
 
+/* 长按终端走自定义「选择文本」层：隐藏 textarea 不再让 WebView 弹「粘贴 / 自动填充」菜单与选择手柄 */
+.terminal-panel--touch .xterm .xterm-helper-textarea {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 /* ============================================
    Dark Mode
    底色接近原来的炭黑，不往纯黑压。长文主文字用 #d0d0d4（卡片上约 10:1），
