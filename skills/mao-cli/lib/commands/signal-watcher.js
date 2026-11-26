@@ -18,7 +18,7 @@ const HELP = `用法:
   mao signal-watcher create --name <名称> --agent-id <Agent id> --prompt-template <提示词> --probe-type HTTP
       --url <探测地址> [--method GET|POST] [--headers '<请求头 JSON>'] [--body '<请求体>' | --body-file <路径>]
   mao signal-watcher create --name <名称> --agent-id <Agent id> --prompt-template <提示词> --probe-type SCRIPT
-      --script-path <项目内相对路径> [--timeout-seconds <秒>]
+      --script-path <项目slug/子路径> [--timeout-seconds <秒>]
   mao signal-watcher create ... [--interval <分钟>] [--compare-mode HASH|JSON_FIELD|STATUS_CODE] [--json-path <点分路径>]
       [--trigger-mode NEW_SESSION|REUSE_SESSION|SPECIFIED_SESSION] [--session-id <执行会话 id>] [--copy-from <源哨兵 id>]
   mao signal-watcher update --id <id> [create 的可选字段；只提交显式传入的字段，未传的保持原值]
@@ -51,8 +51,9 @@ const HELP = `用法:
                     会话必须属于本人、为主会话且云端执行；会话被删/归档后触发判失败计连败，不自动降级
   --copy-from       复制源哨兵 id：未显式修改的敏感请求头与请求体由后端从源行解密继承，CLI 不接触明文；
                     指定会话不会被服务端继承，副本需显式传 --session-id
-  --script-path     SCRIPT 探针要执行的脚本：项目工作区内相对路径（如 my-project/sentinels/check.sh），
-                    非绝对路径、不含 .. 段；stdout 作为判定值，退出码非 0 记一次失败（SCRIPT 必填）
+  --script-path     SCRIPT 探针要执行的脚本：相对 projects 根（{workspaceRoot}/{userId}/projects）的路径，必须以项目 slug 开头
+                    （如 mao/.mao/sentinels/check.sh）；只写项目内相对路径会报「脚本文件不存在」；非绝对路径、不含 .. 段；
+                    stdout 作为判定值，退出码非 0 记一次失败（SCRIPT 必填）
   --timeout-seconds SCRIPT 探针超时秒数，5~300 的整数，默认 60
 
 update 的部分更新口径（与后端一致）:
