@@ -14,10 +14,29 @@ export function useGitRepos(provider: Ref<WorkspaceGitProvider | null>) {
   const loading = ref(false)
   const error = ref('')
   const selectedRepoPath = ref('')
+  /**
+   * 仓库身份是否已确定（当前 provider 的仓库扫描已出结果，成功 / 失败都算确定）。
+   *
+   * provider 变化时本 composable 会在同步阶段清空 repos 与 selectedRepoPath：
+   * 这段窗口里「选中仓库」还不存在，消费者若照旧发请求就不带 repoPath，会落到工作区
+   * 根目录——多仓库工作区（根目录不是 git 仓库、仓库在一级子目录）会直接被后端判成
+   * 「当前工作区不是 Git 仓库」并弹错。因此消费者必须等 ready 为 true 再发请求。
+   */
+  const ready = ref(false)
   let requestSeq = 0
 
   /** 多仓库模式：工作区自身不是 git 仓库，且一级子目录存在至少一个 git 仓库。 */
   const multiRepoMode = computed(() => !isRootGit.value && repos.value.length > 0)
+
+  /**
+   * 可以按仓库发起请求：扫描已出结果，且不是「扫描失败、一个候选仓库都没拿到」的悬空态。
+   *
+   * 未就绪时消费者应把 provider 换成 null（= 不发请求）：这段时间没有选中仓库，
+   * 照旧发请求就不带 repoPath，会落到工作区根目录——多仓库工作区根目录不是 git 仓库，
+   * 后端直接报「当前工作区不是 Git 仓库」并在前端弹全局错误。
+   */
+  const requestReady = computed(() =>
+    ready.value && !(error.value !== '' && !isRootGit.value && !selectedRepoPath.value))
 
   /** 有变更的仓库（摘要行逐仓库展示用）。 */
   const changedRepos = computed(() => repos.value.filter(r => r.changedFileCount > 0))
@@ -42,6 +61,7 @@ export function useGitRepos(provider: Ref<WorkspaceGitProvider | null>) {
       selectedRepoPath.value = ''
       loading.value = false
       error.value = ''
+      ready.value = false
       return
     }
     const seq = ++requestSeq
@@ -65,6 +85,9 @@ export function useGitRepos(provider: Ref<WorkspaceGitProvider | null>) {
     } finally {
       if (seq === requestSeq) {
         loading.value = false
+        // 扫描出结果（含失败）才算仓库身份确定：失败时保留旧 repos 与旧选中项，
+        // 与其配对的原 repoPath 仍然有效，消费者可以继续按旧仓库发请求。
+        ready.value = true
       }
     }
   }
@@ -86,6 +109,8 @@ export function useGitRepos(provider: Ref<WorkspaceGitProvider | null>) {
     selectedRepoPath.value = ''
     loading.value = false
     error.value = ''
+    // 仓库身份失效：消费者据此暂停所有按仓库发起的请求，等这次扫描出结果
+    ready.value = false
     void refresh()
   }, { immediate: true, flush: 'sync' })
 
@@ -93,6 +118,8 @@ export function useGitRepos(provider: Ref<WorkspaceGitProvider | null>) {
     repos,
     isRootGit,
     multiRepoMode,
+    ready,
+    requestReady,
     changedRepos,
     unavailableRepos,
     selectedRepoPath,

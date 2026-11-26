@@ -524,6 +524,7 @@ const {
   unavailableRepos,
   selectedRepoPath,
   selectedRepo,
+  requestReady: reposRequestReady,
   loading: reposLoading,
   error: reposError,
   refresh: refreshRepos,
@@ -533,9 +534,14 @@ const {
 // 多仓库模式下按选中仓库包装 provider（单仓库直接透传）。
 // 用展开继承保留 WorkspaceGitProvider 全量方法，只覆写与选中仓库相关的几个，
 // 避免手写子集随接口扩展漏项（编译期不再报缺方法）。
+//
+// 仓库身份未就绪时返回 null（= 不发任何请求）：provider 刚换时 useGitRepos 会同步清空
+// 仓库列表，此时若照旧发请求就不带 repoPath，落到工作区根目录——多仓库工作区根目录
+// 不是 git 仓库，后端直接报「当前工作区不是 Git 仓库」并弹全局错误。
 const statusProviderRef = computed<WorkspaceGitProvider | null>(() => {
   const p = gitProviderRef.value
   if (!p) return null
+  if (!reposRequestReady.value) return null
   if (multiRepoMode.value && selectedRepoPath.value) {
     const repoPath = selectedRepoPath.value
     return {
@@ -572,6 +578,9 @@ const showGitTab = computed(() => {
   if (gitStatus.value?.isGit) return true
   // Confirmed non-git: never show, even during a refresh
   if (gitStatus.value && !gitStatus.value.isGit) return false
+  // 仓库识别中（provider 刚换、仓库列表还在扫）不判负：否则 Tab 会先消失再出现。
+  // 此时 statusProviderRef 为 null，gitLoading 不会置位，只能看仓库扫描态。
+  if (reposLoading.value) return true
   // Only show while the initial probe is in flight (status still unknown)
   return gitLoading.value
 })
@@ -595,6 +604,8 @@ const gitSummaryVisible = computed(() => {
   if (!props.gitProvider) return false
   if (multiRepoMode.value) return true
   if (gitStatus.value?.isGit) return true
+  // 仓库识别中：status 尚未读取（statusProviderRef 为 null），不能据此判负
+  if (reposLoading.value) return true
   if (gitLoading.value && gitStatus.value === null) return true
   // 仓库发现 / 状态读取失败时给出可见提示，避免 Git 信息静默消失
   if (reposError.value || gitError.value) return true

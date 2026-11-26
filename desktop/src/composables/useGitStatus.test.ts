@@ -167,3 +167,77 @@ describe('useGitStatus 远端确认', () => {
     expect(calls.refreshStatus).toBe(1)
   })
 })
+
+/**
+ * 远端确认必须绑定「刚刚读到 status 的那次读取 + 那个 provider」（2026-11-25 回归）。
+ *
+ * 原缺陷：读取被后发请求作废（序号变了、status 仍是旧仓库的 isGit=true）或 provider
+ * 身份已换（多仓库包装层随仓库列表重建）时，仍会拿旧 status 补一次 refreshStatus。
+ * 多仓库工作区里这时 provider 已退化成裸引用，请求不带 repoPath → 打到工作区根目录 →
+ * 后端报「当前工作区不是 Git 仓库」，前端弹红条（关子代理 Tab、切会话回来时命中）。
+ */
+describe('useGitStatus 远端确认绑定读取', () => {
+  it('读取被后发请求作废时不再补确认（旧 status 不得复用）', async () => {
+    let releasePending: (v: GitStatusResult) => void = () => {}
+    const counts = { getStatus: 0, refreshStatus: 0 }
+    const provider = {
+      getRepos: vi.fn(),
+      getStatus: () => {
+        counts.getStatus++
+        // 前两次立刻返回（首屏 + 重叠对里的第一次），第三次挂起等测试放行
+        if (counts.getStatus <= 2) return Promise.resolve(status())
+        return new Promise<GitStatusResult>((resolve) => { releasePending = resolve })
+      },
+      refreshStatus: async () => {
+        counts.refreshStatus++
+        return status({ remoteStatusAvailable: true })
+      },
+    } as unknown as WorkspaceGitProvider
+    const s = useGitStatus(ref(provider), { confirmRemote: ref(true) })
+    await settle()
+    expect(counts.refreshStatus).toBe(1)
+
+    // 两次重叠的「读状态 + 确认远端」（provider watcher 与 onActivated 各一次）：
+    // 第二次把第一次的读取作废了，第一次不得拿着首屏那份旧 status 再发一次确认
+    void s.refreshWithRemoteConfirmation()
+    void s.refreshWithRemoteConfirmation()
+    await settle()
+    releasePending(status())
+    await settle()
+
+    // 只有生效的那次补了确认：总数 2（首屏 1 + 接管的那次 1），而不是 3
+    expect(counts.getStatus).toBe(3)
+    expect(counts.refreshStatus).toBe(2)
+  })
+
+  it('读取途中 provider 换身份：旧 provider 不补确认，新 provider 自己确认一次', async () => {
+    let releaseSlow: (v: GitStatusResult) => void = () => {}
+    const slowRefresh = vi.fn(async () => status())
+    const slow = {
+      getRepos: vi.fn(),
+      getStatus: vi.fn(() => new Promise<GitStatusResult>((resolve) => { releaseSlow = resolve })),
+      refreshStatus: slowRefresh,
+    } as unknown as WorkspaceGitProvider
+
+    const fastCalls = { getStatus: 0, refreshStatus: 0 }
+    const fast = {
+      getRepos: vi.fn(),
+      async getStatus() { fastCalls.getStatus++; return status() },
+      async refreshStatus() { fastCalls.refreshStatus++; return status({ remoteStatusAvailable: true }) },
+    } as unknown as WorkspaceGitProvider
+
+    const providerRef = ref<WorkspaceGitProvider>(slow)
+    useGitStatus(providerRef, { confirmRemote: ref(true) })
+    await settle()
+    expect(slowRefresh).not.toHaveBeenCalled()
+
+    providerRef.value = fast
+    await settle()
+    releaseSlow(status())
+    await settle()
+
+    // 旧 provider 的读取迟到：不得拿它的 status 去补确认（否则打到已失效的仓库引用上）
+    expect(slowRefresh).not.toHaveBeenCalled()
+    expect(fastCalls.refreshStatus).toBe(1)
+  })
+})
