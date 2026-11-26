@@ -169,6 +169,7 @@ import { ElMessage } from 'element-plus'
 import { shouldDeferFocusToSearchJump } from '../../composables/searchJumpFocus'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import { markedTextToEditorHtml } from '../../utils/editor-tags'
+import { coerceDraftHtml, resolveDraftHtml } from './draft-html'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import { TextSelection } from '@tiptap/pm/state'
@@ -414,6 +415,19 @@ const dynamicPlaceholder = computed(() => {
 
 // ===== Editor =====
 
+// useEditor 在 setup 里注册的 onBeforeUnmount 会先 destroy()，schema 被清空。
+// 草稿必须在那之前落盘。销毁后再写，getHTML 失败会把纯文本塞进 html 字段，
+// 进设置页再返回时 setContent 按 HTML 解析，换行被折成空格。
+// 刷新经常来不及跑卸载钩子，读的是输入时写下的 HTML，所以换行还在。
+let saveDraftBeforeEditorDestroy: () => void = () => {}
+onBeforeUnmount(() => {
+  try {
+    saveDraftBeforeEditorDestroy()
+  } catch {
+    // getHTML 失败不能阻断路由切换
+  }
+})
+
 const editor = useEditor({
   editable: !props.disabled,
   extensions: [
@@ -586,16 +600,26 @@ const editor = useEditor({
 
 // ===== Draft (per-session input draft) =====
 
-function buildCurrentDraft(): DraftEntry {
-  let html = editorContent.value || ''
+/** 视图还没挂上时 isDestroyed 也是 true，但 schema 还在，getHTML 可用。真正 destroy 后 schema 为空。 */
+function readLiveEditorHtml(): string | null {
   const ed = editor.value
-  if (ed) {
-    try {
-      if (!ed.isDestroyed) html = ed.getHTML()
-    } catch {
-      // 卸载过程中 schema 可能已空，回退纯文本
-    }
+  if (!ed?.schema) return null
+  try {
+    return ed.getHTML()
+  } catch {
+    return null
   }
+}
+
+function buildCurrentDraft(key: string | null | undefined = props.draftKey): DraftEntry {
+  const stored = key ? draftStore.getDraft(key) : undefined
+  const meta = !stored && key ? draftStore.getDraftMeta(key) : undefined
+  const html = resolveDraftHtml({
+    liveHtml: readLiveEditorHtml(),
+    plainText: editorContent.value || '',
+    storedHtml: stored?.html ?? meta?.html,
+    storedText: stored?.text ?? meta?.text,
+  })
   return {
     html,
     text: editorContent.value,
@@ -612,13 +636,14 @@ function attachmentsBlocked(): boolean {
 function persistEditor(mode: 'debounce' | 'now', key: string | null | undefined = props.draftKey) {
   if (restoringDraft) return
   if (!key || draftStore.isCleared(key)) return
-  draftStore.setDraft(key, buildCurrentDraft(), mode)
+  draftStore.setDraft(key, buildCurrentDraft(key), mode)
 }
 
 /** 将当前输入内容写入草稿槽位；key 为空或已被显式清除时跳过 */
 function saveDraft(key?: string | null) {
   persistEditor('now', key)
 }
+saveDraftBeforeEditorDestroy = () => saveDraft(props.draftKey)
 
 /**
  * 恢复指定键的草稿；无草稿则清空编辑器与待发列表。
@@ -631,7 +656,7 @@ function restoreDraft(key?: string | null) {
   try {
     const d = key ? draftStore.getDraft(key) : undefined
     if (d) {
-      editor.value.commands.setContent(d.html || '')
+      editor.value.commands.setContent(coerceDraftHtml(d.html || '', d.text || ''))
       editorContent.value = d.text
       // 浅拷贝隔离 store 快照：移除待发文件时的 splice/revoke 不影响草稿槽位
       pendingFiles.value = d.files.map((item) => ({ ...item }))
@@ -643,7 +668,7 @@ function restoreDraft(key?: string | null) {
         const token = meta.files.length > 0 ? draftStore.startFileLoad(key) : 0
         pendingFiles.value = []
         replyQuotes.value = (meta.quotes ?? []).map(quote => ({ ...quote }))
-        editor.value.commands.setContent(meta.html || '')
+        editor.value.commands.setContent(coerceDraftHtml(meta.html || '', meta.text || ''))
         editorContent.value = meta.text
         if (meta.files.length > 0) void recoverDraftFiles(key, token)
         else textOnlyKey = key
@@ -657,7 +682,7 @@ function restoreDraft(key?: string | null) {
   } finally {
     restoringDraft = false
   }
-  if (textOnlyKey) draftStore.setDraft(textOnlyKey, buildCurrentDraft(), 'now')
+  if (textOnlyKey) draftStore.setDraft(textOnlyKey, buildCurrentDraft(textOnlyKey), 'now')
   refreshFileQuoteStale()
 }
 
@@ -681,7 +706,7 @@ async function recoverDraftFiles(key: string, token: number) {
       localPath: item.localPath,
       previewUrl: previewUrlForRestoredFile(item.file),
     }))
-    draftStore.finishFileLoad(key, token, buildCurrentDraft())
+    draftStore.finishFileLoad(key, token, buildCurrentDraft(key))
   } finally {
     if (props.draftKey === key) clearFileLoadHint()
   }
@@ -1229,12 +1254,7 @@ onBeforeUnmount(() => {
   }
   // 关闭面板 + 清理文件搜索防抖（逻辑归一到 composable，技术方案 §4.4）
   panels.closeAll()
-  // 兜底保存当前草稿（覆盖 KeepAlive 淘汰 / 路由离开）。刷新不一定走得到这里。
-  try {
-    saveDraft(props.draftKey)
-  } catch {
-    // 编辑器已随父级卸载时 getHTML 可能抛错，不能阻断路由切换
-  }
+  // 草稿已在 useEditor destroy 之前写入。这里再写会撞上已销毁的编辑器，把换行存成纯文本。
   if (props.draftKey) {
     draftStore.cancelFileLoad(props.draftKey)
     draftStore.deactivateDraftKey(props.draftKey)
