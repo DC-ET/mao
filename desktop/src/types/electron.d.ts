@@ -504,6 +504,14 @@ interface ElectronAPI {
     sessionEnded(sessionId: number, phase: string): void
     /** 画中画双击放大 → 主进程 hide 小窗并通知主窗开 Tab */
     expand(): void
+    /**
+     * 协作输入（技术方案 2026-11-27 §8）：LOCAL 主进程直 POST sidecar /input；
+     * CLOUD 主进程转请 renderer 发 WS 帧。'unsupported' = LOCAL 旧 sidecar 无 /input
+     * 路由（renderer 据此关闭交互入口并提示「采集端版本过旧」）。
+     */
+    input(sessionId: number, payload: { targetId: string | null; events: unknown[] }): Promise<'ok' | 'unsupported'>
+    /** 协作键盘捕获（§7.1）：overlay 聚焦时屏蔽主窗菜单加速键，失焦 / 退出时恢复 */
+    setCollabKeys(active: boolean): void
     /** Tab 内还原画中画 */
     restore(): void
     /** 收起画中画（仅停止观看）：只隐藏窗口，不停浏览器、不中断 Agent */
@@ -526,6 +534,8 @@ interface ElectronAPI {
     onExpand(callback: (payload: { sessionId: number | null }) => void): RemoveListener
     /** CLOUD 停止下行：主进程 → 主窗 renderer，由 useStreamWS 发 browser_live_stop 帧 */
     onStopRelay(callback: (payload: { sessionId: number }) => void): RemoveListener
+    /** CLOUD 协作输入下行：主进程 → 主窗 renderer，由 useStreamWS 发 browser_live_input 帧 */
+    onInputRelay(callback: (payload: { sessionId: number; payload: { targetId: string | null; events: unknown[] } }) => void): RemoveListener
   }
 }
 
@@ -540,6 +550,8 @@ declare interface BrowserLiveStateSnapshot {
     stoppedReason: string | null
     lastSeq: number
     source: 'local' | 'cloud'
+    /** sidecar 能力协商（D6）：刷新后经 getState 快照恢复协作输入入口（评审 P2-1） */
+    startedControl: boolean
   }>
 }
 

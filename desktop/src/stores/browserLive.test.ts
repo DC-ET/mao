@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useBrowserLiveStore } from './browserLive'
 import { createBrowserReplayProvider } from '../composables/browserReplayProvider'
+import type { BrowserInputBatch } from '@mao/contracts'
 
 vi.mock('../composables/browserReplayProvider', () => ({ createBrowserReplayProvider: vi.fn() }))
 
@@ -166,6 +167,84 @@ describe('browserLive store', () => {
       store.bindMainProcess()
     }).not.toThrow()
     expect(store.ipcBound).toBe(false)
+  })
+})
+
+describe('browserLive store 协作输入（技术方案 2026-11-27）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  const META = { targetId: 'T1', deviceWidth: 1280, deviceHeight: 720, pageScaleFactor: 1, scrollOffsetX: 0, scrollOffsetY: 0, offsetLeft: 0, offsetTop: 0 }
+
+  it('ingest：started.control → startedControl；帧 meta / lastFrameAt；帧级 meta 缺失沿用上一个', () => {
+    const store = useBrowserLiveStore()
+    store.ingest({ sessionId: 11, type: 'browser_live_started', data: { width: 1280, height: 720, control: true } })
+    expect(store.sessions['11'].startedControl).toBe(true)
+
+    store.ingest({ sessionId: 11, type: 'browser_frame', data: { seq: 1, jpeg: 'A', meta: META } })
+    expect(store.sessions['11'].frameMeta).toEqual(META)
+    expect(store.sessions['11'].lastFrameAt).toBeGreaterThan(0)
+
+    // 帧不带 meta（CDP 可选字段）：沿用上一个
+    store.ingest({ sessionId: 11, type: 'browser_frame', data: { seq: 2, jpeg: 'B' } })
+    expect(store.sessions['11'].frameMeta).toEqual(META)
+
+    // stopped → 能力标记复位（交互入口随之失效）
+    store.ingest({ sessionId: 11, type: 'browser_live_stopped', data: { reason: 'user_stop' } })
+    expect(store.sessions['11'].startedControl).toBe(false)
+  })
+
+  it('新一场 started 重置 frameMeta / startedControl / inputUnsupported；replay 只按类型校准 control', () => {
+    const store = useBrowserLiveStore()
+    store.ingest({ sessionId: 12, type: 'browser_live_started', data: { width: 800, height: 600, control: true } })
+    store.ingest({ sessionId: 12, type: 'browser_frame', data: { seq: 1, jpeg: 'A', meta: META } })
+    store.inputUnsupported['12'] = true
+
+    // replay：control 按类型判断校准（旧 sidecar replay 不带 → 保留旧值）
+    store.ingest({ sessionId: 12, type: 'browser_live_started', data: { width: 800, height: 600, replay: true } })
+    expect(store.sessions['12'].startedControl).toBe(true)
+    expect(store.sessions['12'].frameMeta).toEqual(META)
+
+    // 新一场（非 replay）：meta 清空、unsupported 复位、control 以新值定
+    store.ingest({ sessionId: 12, type: 'browser_live_started', data: { width: 640, height: 480 } })
+    expect(store.sessions['12'].frameMeta).toBeNull()
+    expect(store.sessions['12'].startedControl).toBe(false)
+    expect(store.inputUnsupported['12']).toBeUndefined()
+  })
+
+  it('inputBrowser：Electron 走 IPC，unsupported 只记一次；Web 走注入请求器', async () => {
+    const store = useBrowserLiveStore()
+    store.ingest({ sessionId: 9, type: 'browser_live_started', data: { width: 1, height: 1 } })
+    const batch: BrowserInputBatch = { targetId: null, events: [{ type: 'char', text: 'a' }] }
+
+    // Web（无 electronAPI）：未注入请求器时不抛错；注入后按 (sid, batch) 透传
+    expect(() => store.inputBrowser(9, batch)).not.toThrow()
+    const relayed: Array<[number, BrowserInputBatch]> = []
+    store.setInputRequester((sid, data) => relayed.push([sid, data]))
+    store.inputBrowser(9, batch)
+    store.inputBrowser(null, batch) // 缺省回退最近活跃会话
+    expect(relayed).toEqual([[9, batch], [9, batch]])
+
+    // Electron：IPC 透传；'unsupported' 回执只记一次标记（高频批不重复提示）
+    const calls: Array<[number, BrowserInputBatch]> = []
+    let reply = 'ok'
+    ;(globalThis as any).window = {
+      electronAPI: { browserLive: { input: (sid: number, data: BrowserInputBatch) => { calls.push([sid, data]); return Promise.resolve(reply) } } },
+    }
+    try {
+      await store.inputBrowser(9, batch)
+      await store.inputBrowser(9, batch)
+      expect(calls).toEqual([[9, batch], [9, batch]])
+      expect(store.inputUnsupported['9']).toBeUndefined()
+
+      reply = 'unsupported'
+      await store.inputBrowser(9, batch)
+      await store.inputBrowser(9, batch)
+      expect(store.inputUnsupported['9']).toBe(true) // 标记置位（第二次不再置，视图据此禁用入口）
+    } finally {
+      delete (globalThis as any).window
+    }
   })
 })
 

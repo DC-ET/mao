@@ -213,6 +213,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     stop: (sessionId) => ipcRenderer.send('browser-live-stop', { sessionId }),
     sessionEnded: (sessionId, phase) => ipcRenderer.send('browser-live-session-ended', { sessionId, phase }),
     expand: () => ipcRenderer.send('browser-live-expand'),
+    // 协作输入（技术方案 2026-11-27 §8）：高频小包逐批 invoke；'unsupported' = LOCAL 旧 sidecar
+    input: (sessionId, payload) => ipcRenderer.invoke('browser-live-input', { sessionId, payload }),
+    // 协作键盘捕获（§7.1）：overlay 聚焦时屏蔽菜单加速键（Cmd+W/Q 等留给远端）
+    setCollabKeys: (active) => ipcRenderer.send('browser-live-collab-keys', { active }),
     restore: () => ipcRenderer.send('browser-live-restore'),
     // 收起画中画（仅停止观看）：与关窗同语义，不影响浏览器与 Agent
     hide: () => ipcRenderer.send('browser-live-hide'),
@@ -227,5 +231,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onExpand: (callback) => onIpc('browser-live-expand', callback),
     // CLOUD 停止下行：主进程 → 主窗 renderer，由 useStreamWS 发 browser_live_stop WS 帧
     onStopRelay: (callback) => onIpc('browser-live-stop-relay', callback),
+    // CLOUD 协作输入下行（技术方案 2026-11-27）：主进程 → 主窗 renderer 发 browser_live_input WS 帧
+    onInputRelay: (callback) => onIpc('browser-live-input-relay', callback),
   },
 })

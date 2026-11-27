@@ -192,6 +192,10 @@ let skillSyncListenerRegistered = false
 let browserLiveStopRelayRegistered = false
 /** Web 端停止通道（store.stopBrowser → WS 帧）注入只注册一次 */
 let browserLiveWebStopRegistered = false
+/** 协作输入下行（主进程 → renderer WS）监听只注册一次（方案 2026-11-27 §7.3） */
+let browserLiveInputRelayRegistered = false
+/** Web 端协作输入通道（store.inputBrowser → WS 帧）注入只注册一次 */
+let browserLiveWebInputRegistered = false
 
 /** skill_sync_done payloads waiting for WS to become OPEN (reconnect during sync). */
 const pendingSkillSyncDones = new Map<number, {
@@ -277,6 +281,28 @@ export function useStreamWS() {
     browserLiveWebStopRegistered = true
     useBrowserLiveStore().setStopRequester((sessionId: number) => {
       void sendReliable({ type: 'browser_live_stop', sessionId })
+    })
+  }
+
+  // 协作输入（技术方案 2026-11-27 §7.3）：普通 send 不排队不重试——输入丢了就丢了。
+  // Electron CLOUD：主进程把输入转请本 renderer 发 WS 帧（与 stop-relay 同范式）。
+  if (!browserLiveInputRelayRegistered && isElectronClient()) {
+    browserLiveInputRelayRegistered = true
+    ;(window as any).electronAPI?.browserLive?.onInputRelay?.((payload: {
+      sessionId: number
+      payload: { targetId: string | null; events: unknown[] }
+    }) => {
+      if (payload?.sessionId != null) {
+        send({ type: 'browser_live_input', sessionId: payload.sessionId, data: payload.payload })
+      }
+    })
+  }
+
+  // Web 端：注入输入通道让 store.inputBrowser 直接发 WS 帧。
+  if (!browserLiveWebInputRegistered && !isElectronClient()) {
+    browserLiveWebInputRegistered = true
+    useBrowserLiveStore().setInputRequester((sessionId: number, data: { targetId: string | null; events: unknown[] }) => {
+      send({ type: 'browser_live_input', sessionId, data })
     })
   }
 

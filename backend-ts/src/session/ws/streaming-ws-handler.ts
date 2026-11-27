@@ -394,6 +394,27 @@ export class StreamingWsHandler {
   private readonly runnerSessions = new Map<number, WsSocket>();
   private readonly runnerBindings = new Map<string, { sessionId: number; userId: number }>();
   private readonly browserFrameRateLimiter = new WsRateLimiter(6, 12);
+  /**
+   * 协作输入（技术方案 2026-11-27 §6）：按会话事件数限速（60/s，burst 180）——
+   * 客户端自限 ≤50/s（D12「诚实发送者」），本层作为滥用防护必须高于客户端持续速率，
+   * 否则合法打字+拖拽持续 4.5s 后开始整批丢弃，丢到含 keyUp 的批时远端卡键（评审 P2-3）；
+   * 批原子性（任一令牌不足整批丢弃）与 sidecar 同口径，避免半批注入造成按压卡死。
+   */
+  private readonly browserInputRateLimiter = new WsRateLimiter(60, 180);
+  /** 输入活跃窗口内的帧限速放宽（D5：6,12 → 12,24；令牌不跨桶迁移，切换即按新桶口径）。 */
+  private readonly browserFrameRateLimiterBoost = new WsRateLimiter(12, 24);
+  /** D9 属主缓存：高频输入不能每批查库（60s TTL，正负结果都缓存；未属主静默丢弃不回错）。 */
+  private readonly browserInputOwnerCache = new Map<string, { ok: boolean; at: number }>();
+  /** 属主缓存未命中查库的按用户滥用防护：distinct sessionId 洪泛不能无限打库（评审 P2-4）。 */
+  private readonly browserInputOwnerLookupLimiter = new WsRateLimiter(5, 15);
+  /** sessionId → 最近一次转发输入的时刻：帧限速放宽的活跃窗口判定（D5）。 */
+  private readonly browserInputActiveAt = new Map<number, number>();
+  /** D9 属主缓存 TTL（ms）：短窗口内会话被转移/删除的风险已列方案 R12。 */
+  private static readonly BROWSER_INPUT_OWNER_TTL_MS = 60_000;
+  /** D5 帧限速放宽的输入活跃窗口（ms）。 */
+  private static readonly BROWSER_INPUT_BOOST_WINDOW_MS = 5_000;
+  /** D9 属主缓存容量上限：无 runner 会话的负缓存键没有断开清理事件，超限整清防无界增长（评审 P2-4）。 */
+  private static readonly BROWSER_INPUT_OWNER_CACHE_MAX = 1024;
   /** 最近一次转发的 sidecar stopped 时间：断连兜底合成 runner_exit 的去重窗口。 */
   private readonly runnerStopForwarded = new Map<number, number>();
   /**
@@ -407,6 +428,8 @@ export class StreamingWsHandler {
     height: number;
     pageUrl: string;
     cliSession: string;
+    /** 能力协商（D6）：sidecar 声明支持协作输入注入；随 subscribe 重放的 started 回放 */
+    control: boolean;
   }>();
   private readonly pendingSkillSyncs = new Map<number, { syncId: string; resolve: () => void; reject: (e: Error) => void }>();
   private readonly pendingMcpSyncs = new Map<number, { syncId: string; resolve: () => void; reject: (e: Error) => void }>();
@@ -532,6 +555,11 @@ export class StreamingWsHandler {
       if (this.runnerSessions.get(runnerBinding.sessionId) === session) {
         this.runnerSessions.delete(runnerBinding.sessionId);
         this.browserFrameRateLimiter.clear(String(runnerBinding.sessionId));
+        // 协作输入（方案 2026-11-27 §6）：限速桶 / 活跃窗口 / 属主缓存随 runner 断开同处清理
+        this.browserFrameRateLimiterBoost.clear(String(runnerBinding.sessionId));
+        this.browserInputRateLimiter.clear(String(runnerBinding.sessionId));
+        this.browserInputActiveAt.delete(runnerBinding.sessionId);
+        this.browserInputOwnerCache.delete(`${runnerBinding.userId}:${runnerBinding.sessionId}`);
         this.browserLiveStates.delete(runnerBinding.sessionId);
         const lastStopped = this.runnerStopForwarded.get(runnerBinding.sessionId);
         this.runnerStopForwarded.delete(runnerBinding.sessionId);
@@ -778,6 +806,7 @@ export class StreamingWsHandler {
       case 'retry_execution': await this.handleRetryExecution(session, userId, root); break;
       case 'compact_now': await this.handleCompactNow(userId, root); break;
       case 'browser_live_stop': await this.handleBrowserLiveStop(userId, root); break;
+      case 'browser_live_input': await this.handleBrowserLiveInput(userId, root); break;
       case 'ping': this.deps.registry.send(userId, wsEvent('pong', null, {})); break;
       default: break;
     }
@@ -850,7 +879,7 @@ export class StreamingWsHandler {
         if (typeof data.pageUrl === 'string') live.pageUrl = data.pageUrl;
         if (typeof data.cliSession === 'string') live.cliSession = data.cliSession;
       }
-      if (!this.browserFrameRateLimiter.allow(String(binding.sessionId))) return;
+      if (!this.browserFrameAllow(binding.sessionId)) return;
       this.deps.registry.sendToClientTypes(binding.userId, wsEvent('browser_frame', binding.sessionId, data), BROWSER_LIVE_CLIENT_TYPES);
       return;
     }
@@ -860,6 +889,9 @@ export class StreamingWsHandler {
         height: typeof data.height === 'number' ? data.height : 0,
         pageUrl: typeof data.pageUrl === 'string' ? data.pageUrl : '',
         cliSession: typeof data.cliSession === 'string' ? data.cliSession : 'default',
+        // 能力协商（D6）随重放下发：刷新后的客户端靠 subscribe 重放 started 恢复直播态，
+        // 不带 control 会把新 sidecar 当旧版、协作入口消失到下一场（评审 P2-1）
+        control: data.control === true,
       });
     } else if (type === 'browser_live_stopped') {
       this.browserLiveStates.delete(binding.sessionId);
@@ -884,6 +916,122 @@ export class StreamingWsHandler {
       return;
     }
     this.deps.registry.sendToConnection(runner, { type: 'browser_live_stop', data: { reason: 'user_stop' } });
+  }
+
+  /** 帧限速（D5）：输入活跃窗口（5s）内放宽到 (12,24)，否则基础 (6,12)。 */
+  private browserFrameAllow(sessionId: number): boolean {
+    const activeAt = this.browserInputActiveAt.get(sessionId);
+    const boosted = activeAt != null && Date.now() - activeAt <= StreamingWsHandler.BROWSER_INPUT_BOOST_WINDOW_MS;
+    const limiter = boosted ? this.browserFrameRateLimiterBoost : this.browserFrameRateLimiter;
+    return limiter.allow(String(sessionId));
+  }
+
+  /**
+   * 协作输入（技术方案 2026-11-27 §6）：属主缓存校验（D9，60s TTL）→ 按会话限速（事件条数）
+   * → 转发 runner（与 handleBrowserLiveStop 同一转发范式）。输入丢了就丢了（交互语义容忍），
+   * 全程静默：不回错、不写日志、不审计（R3：按键可能含密码；REST 审计拦截器本就不覆盖 WS）。
+   */
+  private async handleBrowserLiveInput(userId: number, root: Record<string, unknown>): Promise<void> {
+    const sessionId = this.getLong(root, 'sessionId');
+    if (sessionId == null || !Number.isSafeInteger(sessionId) || sessionId <= 0) return;
+    const batch = this.parseBrowserInputBatch(root.data);
+    if (batch == null) return;
+    // D9 属主缓存：命中免查库；未命中回落查库并回填（正负结果都缓存，未属主同样静默）
+    const cacheKey = `${userId}:${sessionId}`;
+    const cached = this.browserInputOwnerCache.get(cacheKey);
+    if (cached != null && Date.now() - cached.at <= StreamingWsHandler.BROWSER_INPUT_OWNER_TTL_MS) {
+      if (!cached.ok) return;
+    } else {
+      // 未命中查库前的按用户限速：distinct sessionId 洪泛（每个会话独立限速桶拦不住）
+      // 不能无限打库（评审 P2-4）；超限静默丢弃，等下一个令牌窗口
+      if (!this.browserInputOwnerLookupLimiter.allow(String(userId))) return;
+      let session: Session | null = null;
+      try {
+        session = await this.deps.sessionService.getSession(sessionId);
+      } catch {
+        session = null;
+      }
+      // 不用 requireOwnedSession：它对非属主回发 error 帧，高频输入下会刷屏；这里静默丢弃（D9）
+      const ok = session != null && session.userId === userId;
+      if (this.browserInputOwnerCache.size >= StreamingWsHandler.BROWSER_INPUT_OWNER_CACHE_MAX) {
+        this.browserInputOwnerCache.clear();
+      }
+      this.browserInputOwnerCache.set(cacheKey, { ok, at: Date.now() });
+      if (!ok) return;
+    }
+    // 限速（按会话，计数单位=事件条数）：任一令牌不足整批丢弃（与 sidecar 批原子口径一致）
+    for (let i = 0; i < batch.events.length; i++) {
+      if (!this.browserInputRateLimiter.allow(String(sessionId))) return;
+    }
+    const runner = this.runnerSessions.get(sessionId);
+    if (runner == null) return;
+    this.browserInputActiveAt.set(sessionId, Date.now());
+    this.deps.registry.sendToConnection(runner, { type: 'browser_live_input', data: { targetId: batch.targetId, events: batch.events } });
+  }
+
+  /**
+   * 协作输入批校验（§4 约束；与 sidecar browser-live-input.mjs 同矩阵）：
+   * 非法批返回 null（整批静默丢弃——洪泛防护优先于可观测性）。
+   * 只回传规整后的 { targetId, events }，不透传客户端多余字段给 runner。
+   */
+  private parseBrowserInputBatch(data: unknown): { targetId: string | null; events: unknown[] } | null {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+    const node = data as Record<string, unknown>;
+    let targetId: string | null = null;
+    if (node.targetId != null) {
+      if (typeof node.targetId !== 'string' || node.targetId.length > 128) return null;
+      targetId = node.targetId;
+    }
+    const events = node.events;
+    if (!Array.isArray(events) || events.length === 0 || events.length > 32) return null;
+    for (const e of events) {
+      if (!e || typeof e !== 'object') return null;
+      const ev = e as Record<string, unknown>;
+      switch (ev.type) {
+        case 'mouseMoved':
+          if (!this.isInputCoord(ev.x) || !this.isInputCoord(ev.y)) return null;
+          break;
+        case 'mousePressed':
+        case 'mouseReleased':
+          if (!this.isInputCoord(ev.x) || !this.isInputCoord(ev.y)) return null;
+          if (ev.button !== 'left' && ev.button !== 'right' && ev.button !== 'middle') return null;
+          if (!Number.isInteger(ev.clickCount) || (ev.clickCount as number) < 1 || (ev.clickCount as number) > 3) return null;
+          if (!this.isInputMods(ev.modifiers)) return null;
+          break;
+        case 'mouseWheel':
+          if (!this.isInputCoord(ev.x) || !this.isInputCoord(ev.y)) return null;
+          if (!this.isInputDelta(ev.deltaX) || !this.isInputDelta(ev.deltaY)) return null;
+          if (!this.isInputMods(ev.modifiers)) return null;
+          break;
+        case 'keyDown':
+        case 'keyUp':
+          if (typeof ev.key !== 'string' || ev.key.length > 64) return null;
+          if (typeof ev.code !== 'string' || ev.code.length > 64) return null;
+          if (!Number.isInteger(ev.windowsVirtualKeyCode)
+            || (ev.windowsVirtualKeyCode as number) < 0 || (ev.windowsVirtualKeyCode as number) > 0xffff) return null;
+          if (!this.isInputMods(ev.modifiers)) return null;
+          break;
+        case 'char':
+        case 'insertText':
+          if (typeof ev.text !== 'string' || ev.text.length === 0 || ev.text.length > 1000) return null;
+          break;
+        default:
+          return null;
+      }
+    }
+    return { targetId, events };
+  }
+
+  private isInputCoord(v: unknown): boolean {
+    return typeof v === 'number' && Number.isFinite(v) && v >= -100 && v <= 100_000;
+  }
+
+  private isInputDelta(v: unknown): boolean {
+    return typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 100_000;
+  }
+
+  private isInputMods(v: unknown): boolean {
+    return v == null || (Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 0xff);
   }
 
   /**

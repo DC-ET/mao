@@ -86,6 +86,15 @@ git --version
 
   未就绪时 Agent 的浏览器命令会得到可解释报错（含「管理员尚未启用浏览器依赖」指引），其余功能不受影响。docker 模式由 `mao-runtime` 镜像内置（见下节）：依赖状态以镜像内容为准（后端用一次性容器探测镜像内 Chrome 与 playwright-cli），镜像已就绪时 Skills 页显示「依赖就绪」、点「安装依赖」不会重建；只有镜像缺依赖（构建时 `INSTALL_CHROME=0`、旧镜像或自建镜像）才触发镜像重建。重建建议在后端环境配 `APT_MIRROR=mirrors.aliyun.com`（与生产镜像构建参数一致可命中层缓存；缺省 `deb.debian.org` 会从 apt 层全量重建，可能需要十几分钟）。
 
+### 浏览器直播协作操作
+
+**浏览器直播协作操作（2026-11-27 起）**：会话属主在桌面直播 Tab 开启「协作操作」后，鼠标 / 滚轮 / 键盘（含中文输入法；macOS 的 Cmd 按远端 Ctrl 语义翻译）直接注入 Agent 正在使用的浏览器，与 Agent 并发、无接管 / 暂停语义；输入内容零日志 / 零审计 / 零录制（回放继续只录画面帧，回放文档见 [config.md](config.md#浏览器直播录制v202-新增)）。同一窗口内「协作操作」开启期间本机应用菜单快捷键（Cmd+W / Ctrl+W 等）被临时屏蔽，退出即恢复。
+
+- **链路**：复用既有 `/api/ws/stream`（CLOUD：上行 `browser_live_input` 帧，后端校验属主与限速后转发 sidecar 注入 CDP `Input.*`）与 Electron 主进程直连 sidecar（LOCAL：`POST /input`）。**无新增端口、无 Nginx / 反向代理配置**。
+- **发布组合**：后端 restart + `desktop/dist` 覆盖 Web 端 + **重打桌面安装包**（LOCAL 输入链路改了 Electron 主进程 / preload，不能只发 dist）；sidecar 脚本（`skills/bundled/browser-use/scripts/browser-live-host.mjs`）随 skills 同步到会话、仅新会话生效。
+- **降级**：旧 sidecar 无 `/input` 路由时，桌面交互入口自动置灰并提示「采集端升级后支持操作」；旧客户端对新增字段（帧 `meta`、started `control`）自然忽略，互不干扰。
+- **边界**：原生弹窗（文件选择框、HTTP Basic 认证、原生右键菜单）无法远程操作——这类交互留给 Agent 处理；安卓触摸为后续规划。
+
 **Git 说明**：CLOUD 模式通过 HTTPS Git 初始化工作区需要 `git` 命令。仅支持 HTTPS 地址；私有仓库用户在桌面端配置 Git 凭证（完整主机名）。
 
 **构建工具链说明**：`python3 make g++` 用于后端安装 `node-pty`（云端终端的 PTY 支持）时编译原生模块，缺失会导致 `npm ci` 失败。

@@ -6,8 +6,9 @@
  * 1. 监视 <live-dir>/cdp/<cliSession>.port，旁路接入 playwright-cli daemon 拉起的浏览器 CDP 端口；
  * 2. 对每个页面 Target.setAutoAttach + Page.startScreencast 采帧（JPEG，逐帧 ack，按页限速）；
  * 3. 帧出口：
- *    - local：本机 HTTP/SSE server（Electron 主进程消费，POST /stop 停止）；
- *    - cloud：WS client 连后端 /api/ws/stream（runner_auth 握手，browser_live_stop 下行）。
+ *    - local：本机 HTTP/SSE server（Electron 主进程消费，POST /stop 停止、POST /input 协作输入）；
+ *    - cloud：WS client 连后端 /api/ws/stream（runner_auth 握手，browser_live_stop /
+ *      browser_live_input 下行，协作输入见 2026-11-27 方案）。
  *
  * 生命周期：CDP 连续判死 / 收到 stop / 2h 硬上限 → 清理退出；stop 会先 Browser.close 杀浏览器。
  * 本进程由 wrapper 经 node spawn(detached:true) 拉起——自成进程组，逃逸 shell 工具的整组 SIGKILL。
@@ -17,6 +18,7 @@ import { randomBytes } from 'node:crypto';
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createRecorder } from './browser-live-recorder.mjs';
+import { createInputApplier, createInputRateLimiter, frameIntervalFor } from './browser-live-input.mjs';
 
 // ---------- 参数 ----------
 function parseArgs(argv) {
@@ -196,12 +198,38 @@ function handleCdpEvent(cliSession, msg) {
     // 出帧（POC P2）；被限速丢弃的帧也要 ack。
     const flatSid = msg.sessionId;
     cdpCall(entry, 'Page.screencastFrameAck', { sessionId: p.sessionId }, flatSid);
-    const meta = [...entry.pages.entries()].find(([, pg]) => pg.sessionId === flatSid);
+    const found = [...entry.pages.entries()].find(([, pg]) => pg.sessionId === flatSid);
+    if (!found || p.data == null || p.data.length > MAX_FRAME_B64) return;
+    const [targetId, page] = found;
     const now = Date.now();
-    if (!meta || p.data == null || p.data.length > MAX_FRAME_B64) return;
-    if (now - meta[1].lastSent < PAGE_MIN_INTERVAL_MS) return;
-    meta[1].lastSent = now;
-    emitFrame(cliSession, meta[1].url, p.data, Number(p.metadata?.width ?? 0), Number(p.metadata?.height ?? 0));
+    // 最近出帧页：协作输入的回退路由目标（§5.2）
+    lastActiveFrame = { cliSession, targetId };
+    // 定向提帧率（§5.3）：只提输入路由命中的页（page.lastInputAt 在注入处置位），
+    // 其余页维持基础限速——后端限速按会话不分页，全员提率在多页并发下必超预算
+    const interval = frameIntervalFor(page, now) ?? PAGE_MIN_INTERVAL_MS;
+    if (now - page.lastSent < interval) return;
+    page.lastSent = now;
+    // metadata 子集随帧下发（§4 BrowserFrameMeta）：协作坐标映射依据。CDP metadata 是
+    // 可选字段且 deviceWidth/Height 可为 0（隐藏/最小化页面）——无效时不带 meta，
+    // 客户端沿用上一个已知 meta（三级降级见方案 §7.2）
+    const m = p.metadata ?? {};
+    const deviceWidth = Number(m.deviceWidth ?? 0);
+    const deviceHeight = Number(m.deviceHeight ?? 0);
+    const frameMeta = deviceWidth > 0 && deviceHeight > 0
+      ? {
+          targetId,
+          deviceWidth,
+          deviceHeight,
+          pageScaleFactor: Number(m.pageScaleFactor ?? 1) || 1,
+          scrollOffsetX: Number(m.scrollOffsetX ?? 0),
+          scrollOffsetY: Number(m.scrollOffsetY ?? 0),
+          offsetLeft: Number(m.offsetLeft ?? 0),
+          offsetTop: Number(m.offsetTop ?? 0),
+        }
+      : null;
+    // width/height 修正为 deviceWidth/deviceHeight（CDP ScreencastFrameMetadata 无
+    // width/height 字段，旧实现恒为 0；方案 §7.2 复审项）
+    emitFrame(cliSession, page.url, p.data, deviceWidth, deviceHeight, frameMeta);
   }
 }
 
@@ -315,13 +343,28 @@ if (recorder) {
   log('browser-live recorder enabled');
 }
 
+// ---------- 协作输入（技术方案 2026-11-27 §5） ----------
+// 最近出帧页：协作输入的回退路由目标（targetId 未命中时用），Page.screencastFrame 处维护
+let lastActiveFrame = null;
+const inputRateLimiter = createInputRateLimiter();
+const applyInput = createInputApplier({
+  browsers,
+  getLastActiveFrame: () => lastActiveFrame,
+  cdpCall,
+  rateLimiter: inputRateLimiter,
+  log,
+});
+
 // ---------- 事件出口 ----------
-function emitFrame(cliSession, pageUrl, jpeg, width, height) {
+function emitFrame(cliSession, pageUrl, jpeg, width, height, meta) {
   const data = { seq: ++seq, ts: Date.now(), jpeg, width, height, pageUrl, cliSession };
+  if (meta) data.meta = meta;
   if (!startedEmitted) {
     startedEmitted = true;
     recorder?.onStarted({ ts: data.ts });
-    emit({ type: 'browser_live_started', data: { width, height, pageUrl, cliSession } });
+    // control: true（D6 能力协商）：声明本 sidecar 支持协作输入注入；
+    // 旧客户端收到多余字段自然忽略
+    emit({ type: 'browser_live_started', data: { width, height, pageUrl, cliSession, control: true } });
   }
   // 录制 tee 在直播出口之前：录制节流/超限只影响落盘，不影响 emit（§3.4）
   recorder?.onFrame(data);
@@ -353,6 +396,26 @@ function startLocalServer() {
       doStop('user_stop');
       return;
     }
+    if (req.method === 'POST' && url.pathname === '/input') {
+      // 协作输入（技术方案 2026-11-27 §5.1）：Electron 主进程直连。批体积上限防洪泛——
+      // 契约上限 32 事件 × 1000 字符（JSON 转义后可超 64K 字符），256K 上限覆盖矩阵
+      // 不产生 LOCAL/CLOUD 分支（评审 P2-5）；非法批静默丢弃（返回 200 与 CLOUD 口径
+      // 一致——洪泛防护优先于可观测性）。旧 sidecar 无此路由 → 404，客户端按 unsupported 降级。
+      let body = '';
+      let oversized = false;
+      req.setEncoding('utf8');
+      req.on('data', (c) => {
+        if (body.length > 256 * 1024) { oversized = true; return; }
+        body += c;
+      });
+      req.on('end', () => {
+        if (!oversized) {
+          try { applyInput(JSON.parse(body)); } catch { /* 坏 JSON 静默 */ }
+        }
+        res.writeHead(200).end();
+      });
+      return;
+    }
     if (req.method === 'GET' && url.pathname === '/live') {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -382,7 +445,8 @@ function startLocalServer() {
   // 仅绑回环
   server.listen(0, '127.0.0.1', () => {
     const { port } = server.address();
-    writeJson(LIVE_JSON, { httpPort: port, token, pid: process.pid, mode: 'local' }, 0o600);
+    // caps: ['input']（D6 能力协商）：LOCAL 客户端探测协作输入能力
+    writeJson(LIVE_JSON, { httpPort: port, token, pid: process.pid, mode: 'local', caps: ['input'] }, 0o600);
     log(`sse server on 127.0.0.1:${port}`);
   });
 }
@@ -421,6 +485,10 @@ function startCloudClient() {
         log('runner connected to backend');
       } else if (msg.type === 'browser_live_stop') {
         doStop(String(msg.data?.reason ?? 'user_stop'));
+      } else if (msg.type === 'browser_live_input') {
+        // 协作输入（技术方案 2026-11-27 §5.1）：后端已做属主校验与限速，
+        // sidecar 再校验/限速/路由后注入 CDP
+        applyInput(msg.data);
       } else if (msg.type === 'error') {
         log('backend error frame', JSON.stringify(msg.data ?? {}));
         exitSoon(300, 'runner_exit');

@@ -18,10 +18,11 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-/** 假 sidecar：SSE 出口 + POST /stop 接收端，事件写入由测试驱动。 */
-async function startFakeSidecar() {
+/** 假 sidecar：SSE 出口 + POST /stop / POST /input 接收端，事件写入由测试驱动。 */
+async function startFakeSidecar({ inputStatus = 200 } = {}) {
   const subscribers = new Set()
   const stopRequests = []
+  const inputRequests = []
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1')
     if (req.method === 'POST' && url.pathname === '/stop') {
@@ -30,6 +31,17 @@ async function startFakeSidecar() {
       req.on('end', () => {
         stopRequests.push(url.searchParams.get('token'))
         res.writeHead(200).end()
+      })
+      return
+    }
+    if (req.method === 'POST' && url.pathname === '/input') {
+      let body = ''
+      req.on('data', (c) => { body += c })
+      req.on('end', () => {
+        let parsed = null
+        try { parsed = JSON.parse(body) } catch { /* 坏 body 照 404/200 语义处理 */ }
+        inputRequests.push(parsed)
+        res.writeHead(inputStatus).end()
       })
       return
     }
@@ -51,6 +63,7 @@ async function startFakeSidecar() {
   return {
     port,
     stopRequests,
+    inputRequests,
     emit(type, data) {
       for (const res of subscribers) res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`)
     },
@@ -63,10 +76,16 @@ async function startFakeSidecar() {
 
 function setupRuntime(runtimeDir) {
   const mainWindowSends = []
+  const menuShortcutCalls = []
   const pipCalls = { show: 0, hide: 0, sends: [] }
   const runtime = createBrowserLiveRuntime({
     resolveSessionRuntimeDir: (sessionId) => path.join(runtimeDir, String(sessionId)),
-    getMainWindow: () => ({ webContents: { send: (channel, data) => mainWindowSends.push({ channel, data }) } }),
+    getMainWindow: () => ({
+      webContents: {
+        send: (channel, data) => mainWindowSends.push({ channel, data }),
+        setIgnoreMenuShortcuts: (v) => menuShortcutCalls.push(v),
+      },
+    }),
     pip: {
       show: () => { pipCalls.show += 1 },
       hide: () => { pipCalls.hide += 1 },
@@ -78,7 +97,7 @@ function setupRuntime(runtimeDir) {
     handle: (name, fn) => { ipc.handlers[name] = fn },
     on: (name, fn) => { ipc.onHandlers[name] = fn },
   })
-  return { runtime, ipc, mainWindowSends, pipCalls }
+  return { runtime, ipc, mainWindowSends, menuShortcutCalls, pipCalls }
 }
 
 test('browserLive hub: 发现 live.json → SSE 扇出 → 停止下行 → 终态收窗', async () => {
@@ -99,8 +118,9 @@ test('browserLive hub: 发现 live.json → SSE 扇出 → 停止下行 → 终�
     sidecar.emit('browser_frame', { seq: 1, ts: 1, jpeg: 'Zg==', width: 1280, height: 720, pageUrl: 'https://example.com' })
     await sleep(100)
 
-    // started → 画中画弹出；事件扇出主窗 + 画中画
-    assert.ok(pipCalls.show >= 1, 'pip should show on browser_live_started')
+    // P-1（技术方案 2026-11-27 §1.3）：started 不再自动弹画中画（手动入口在 Tab）；
+    // 事件照常扇出主窗 + 画中画
+    assert.strictEqual(pipCalls.show, 0, 'pip must not auto-show on browser_live_started')
     const startedMain = mainWindowSends.find((s) => s.channel === 'browser-live-event' && s.data.type === 'browser_live_started')
     assert.ok(startedMain, 'main window should receive browser_live_started')
     assert.strictEqual(startedMain.data.sessionId, 11)
@@ -166,7 +186,7 @@ test('browserLive hub: 收起画中画只 hide 窗口，不停浏览器', async 
     // CLOUD 直播中：收起按钮（browser-live-hide）必须与关窗同语义——只 hide，
     // 不转请 renderer 发 browser_live_stop（否则 Agent 的浏览器会被误杀）
     ipc.onHandlers['browser-live-relay'](null, { sessionId: 55, type: 'browser_live_started', data: { width: 800, height: 600 } })
-    assert.strictEqual(pipCalls.show, 1)
+    assert.strictEqual(pipCalls.show, 0, 'started must not auto-show pip (P-1)')
 
     ipc.onHandlers['browser-live-hide'](null)
 
@@ -183,25 +203,96 @@ test('browserLive hub: 收起画中画只 hide 窗口，不停浏览器', async 
   }
 })
 
-test('browserLive hub: 订阅重放的 started 不重复弹出画中画', async () => {
+test('browserLive hub: started（含 replay）不弹出画中画；手动 restore 仍可打开（P-1）', async () => {
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-bl-replay-'))
   try {
     const { runtime, ipc, pipCalls } = setupRuntime(runtimeDir)
 
     ipc.onHandlers['browser-live-relay'](null, { sessionId: 66, type: 'browser_live_started', data: { width: 800, height: 600 } })
-    assert.strictEqual(pipCalls.show, 1)
+    // P-1：自动弹出删除——无论真 started 还是刷新后的 replay started 都不 show
+    assert.strictEqual(pipCalls.show, 0)
 
-    // 刷新主窗后后端按 subscribe 重放 started：hub 已有直播态，不再 show，
-    // 否则用户刚手动收起的画中画会被刷新重新弹出来
+    // 刷新主窗后后端按 subscribe 重放 started：同样不弹出
     ipc.onHandlers['browser-live-relay'](null, { sessionId: 66, type: 'browser_live_started', data: { width: 800, height: 600, replay: true } })
-    assert.strictEqual(pipCalls.show, 1, 'replayed started must not re-show a live pip window')
+    assert.strictEqual(pipCalls.show, 0, 'replayed started must not show pip')
 
-    // 应用重启后 hub 无态：重放仍要弹出（直播还在进行，画中画是观看入口）
-    ipc.onHandlers['browser-live-relay'](null, { sessionId: 77, type: 'browser_live_started', data: { width: 800, height: 600, replay: true } })
-    assert.strictEqual(pipCalls.show, 2, 'replayed started should show pip when hub has no live state')
+    // 观看入口收敛为手动：Tab 内「打开画中画」→ browser-live-restore
+    ipc.onHandlers['browser-live-restore'](null)
+    assert.strictEqual(pipCalls.show, 1, 'manual restore should show pip')
 
     runtime.shutdown()
   } finally {
+    fs.rmSync(runtimeDir, { recursive: true, force: true })
+  }
+})
+
+test('browserLive hub: LOCAL 协作输入 POST /input；CLOUD 转请 renderer；404 → unsupported、403 → 丢批', async () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-bl-input-'))
+  const sidecar = await startFakeSidecar()
+  const oldSidecar = await startFakeSidecar({ inputStatus: 404 })
+  const staleTokenSidecar = await startFakeSidecar({ inputStatus: 403 })
+  try {
+    for (const sid of [88, 99, 77]) {
+      fs.mkdirSync(path.join(runtimeDir, String(sid), '.mao-browser'), { recursive: true })
+    }
+    fs.writeFileSync(
+      path.join(runtimeDir, '88', '.mao-browser', 'live.json'),
+      JSON.stringify({ httpPort: sidecar.port, token: 'tok-88', pid: 4242 }),
+    )
+    fs.writeFileSync(
+      path.join(runtimeDir, '99', '.mao-browser', 'live.json'),
+      JSON.stringify({ httpPort: oldSidecar.port, token: 'tok-99', pid: 4243 }),
+    )
+    fs.writeFileSync(
+      path.join(runtimeDir, '77', '.mao-browser', 'live.json'),
+      JSON.stringify({ httpPort: staleTokenSidecar.port, token: 'tok-77', pid: 4244 }),
+    )
+    const { runtime, ipc, mainWindowSends, menuShortcutCalls } = setupRuntime(runtimeDir)
+
+    // LOCAL：新 sidecar（200）→ 'ok'，payload 原样到达 /input；能力标记随快照下发（P2-1）
+    runtime.attachLocalSession(88)
+    await sleep(300)
+    sidecar.emit('browser_live_started', { width: 800, height: 600, pageUrl: 'https://a.com', control: true })
+    await sleep(100)
+    const payload = { targetId: 'T1', events: [{ type: 'mousePressed', x: 10, y: 20, button: 'left', clickCount: 1 }] }
+    const ok = await ipc.handlers['browser-live-input'](null, { sessionId: 88, payload })
+    assert.strictEqual(ok, 'ok')
+    await sleep(200)
+    assert.strictEqual(sidecar.inputRequests.length, 1)
+    assert.deepStrictEqual(sidecar.inputRequests[0], payload)
+    const snapshot = ipc.handlers['browser-live-get-state']()
+    assert.strictEqual(snapshot.sessions['88'].startedControl, true, 'control 能力随快照下发（刷新后入口恢复）')
+
+    // LOCAL：旧 sidecar（404 无 /input 路由）→ 'unsupported'（renderer 关闭交互入口）
+    runtime.attachLocalSession(99)
+    await sleep(300)
+    const unsupported = await ipc.handlers['browser-live-input'](null, { sessionId: 99, payload })
+    assert.strictEqual(unsupported, 'unsupported')
+
+    // LOCAL：403 = token 失配（sidecar 重启换 token）→ 按丢批处理 'ok'，不误报版本过旧（P2-6）
+    runtime.attachLocalSession(77)
+    await sleep(300)
+    const stale = await ipc.handlers['browser-live-input'](null, { sessionId: 77, payload })
+    assert.strictEqual(stale, 'ok')
+
+    // CLOUD（无 LOCAL 出口）：转请主窗 renderer 发 WS 帧（与 stop-relay 同范式）
+    const relayed = await ipc.handlers['browser-live-input'](null, { sessionId: 22, payload })
+    assert.strictEqual(relayed, 'ok')
+    const relay = mainWindowSends.find((s) => s.channel === 'browser-live-input-relay')
+    assert.ok(relay, 'cloud input should be relayed to renderer WS')
+    assert.strictEqual(relay.data.sessionId, 22)
+    assert.deepStrictEqual(relay.data.payload, payload)
+
+    // 协作键盘捕获：overlay 聚焦 → 主窗屏蔽菜单加速键；失焦 → 恢复
+    ipc.onHandlers['browser-live-collab-keys'](null, { active: true })
+    ipc.onHandlers['browser-live-collab-keys'](null, { active: false })
+    assert.deepStrictEqual(menuShortcutCalls, [true, false])
+
+    runtime.shutdown()
+  } finally {
+    await sidecar.close()
+    await oldSidecar.close()
+    await staleTokenSidecar.close()
     fs.rmSync(runtimeDir, { recursive: true, force: true })
   }
 })

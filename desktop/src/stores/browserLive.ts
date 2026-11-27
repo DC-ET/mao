@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
+import { ElMessage } from 'element-plus'
 import { isElectronClient } from '../utils/platform'
 import { createBrowserReplayProvider } from '../composables/browserReplayProvider'
-import type { BrowserFrameData, BrowserLiveStartedData, BrowserLiveStoppedData } from '@mao/contracts'
+import type { BrowserFrameData, BrowserFrameMeta, BrowserInputBatch, BrowserLiveStartedData, BrowserLiveStoppedData } from '@mao/contracts'
 
 /**
  * 浏览器直播状态（方案 2026-11-20 v2 D10）。
@@ -19,8 +20,14 @@ export interface BrowserLiveSessionState {
   cliSession: string
   stoppedReason: string | null
   lastSeq: number
-  /** 最新帧的 JPEG base64（只保留最新，旧帧直接覆盖） */
+  /** 最新帧 JPEG base64（只保留最新，旧帧直接覆盖） */
   frame: string | null
+  /** 最新帧元数据（方案 2026-11-27 §7.2）：协作坐标映射依据；帧未带 meta 沿用上一个（CDP 可选） */
+  frameMeta: BrowserFrameMeta | null
+  /** 最新帧到达时刻（epoch ms）：协作态「画面延迟较高」提示用 */
+  lastFrameAt: number
+  /** 能力协商（D6）：sidecar 声明 control=true 时「协作操作」入口可用 */
+  startedControl: boolean
 }
 
 export interface BrowserLiveEventPayload {
@@ -33,22 +40,26 @@ function emptySession(): BrowserLiveSessionState {
   return {
     isLive: false, pageUrl: '', width: 0, height: 0,
     cliSession: 'default', stoppedReason: null, lastSeq: 0, frame: null,
+    frameMeta: null, lastFrameAt: 0, startedControl: false,
   }
 }
 
 /** Web 端停止通道注入点：useStreamWS 注册后，stopBrowser 走 WS 帧（Electron 仍走主进程 IPC）。 */
 let stopRequester: ((sessionId: number) => void) | null = null
 
+/** Web 端协作输入通道注入点（方案 2026-11-27 §7.3）：useStreamWS 注册后走 WS 普通发帧。 */
+let inputRequester: ((sessionId: number, data: BrowserInputBatch) => void) | null = null
+
 export const useBrowserLiveStore = defineStore('browserLive', {
   state: () => ({
     activeSessionId: null as number | null,
     sessions: {} as Record<string, BrowserLiveSessionState>,
-    /** 画中画双击放大 → 主窗应打开直播 Tab（TaskView 监听该信号） */
-    expandRequested: 0,
     ipcBound: false,
     /** 无直播时点状态条 chip → 直播 Tab 落在回放列表模式（seq 全局记账、consumedSeq 由视图消费后回写，
      *  记账在 store 而非组件实例：Tab 在 chip 点击后才创建，实例本地基线会吞掉未消费的请求） */
     replayBrowse: { sessionId: null as number | null, seq: 0, consumedSeq: 0 },
+    /** 会话 → LOCAL 旧 sidecar（POST /input 404）标记：协作入口转禁用态 + 升级提示（D6 降级） */
+    inputUnsupported: {} as Record<string, boolean>,
     /** 会话是否存在已结算回放（chip 显示条件）；30s 惰性缓存，直播开始/结束即失效 */
     replayAvailability: {} as Record<string, { available: boolean; checkedAt: number }>,
   }),
@@ -82,10 +93,15 @@ export const useBrowserLiveStore = defineStore('browserLive', {
           // 上一场的冻结帧也要清掉，让「等待 Agent 打开浏览器…」占位正常出现
           state.lastSeq = 0
           state.frame = null
+          state.frameMeta = null
           state.width = data?.width ?? 0
           state.height = data?.height ?? 0
           state.pageUrl = data?.pageUrl ?? ''
           state.cliSession = data?.cliSession ?? 'default'
+          // 能力协商（D6）：新 sidecar 恒置 true；旧 sidecar 缺省 → 协作入口不可开
+          state.startedControl = data?.control === true
+          // 新一场可能换了新版 sidecar：旧 sidecar 的 unsupported 记号不再成立
+          delete this.inputUnsupported[String(sessionId)]
         } else if (data != null) {
           // replay 只校准元数据：宽高 0 是合法值（最小化 / 隐藏窗口），空串也是服务端真实状态，
           // 一律按类型判断是否下发，不能用 falsy 跳过，否则重连后一直沿用刷新前的旧值
@@ -93,6 +109,7 @@ export const useBrowserLiveStore = defineStore('browserLive', {
           if (typeof data.height === 'number') state.height = data.height
           if (typeof data.pageUrl === 'string') state.pageUrl = data.pageUrl
           if (typeof data.cliSession === 'string') state.cliSession = data.cliSession
+          if (typeof data.control === 'boolean') state.startedControl = data.control
         }
         this.activeSessionId = sessionId
       } else if (msg.type === 'browser_frame') {
@@ -102,11 +119,15 @@ export const useBrowserLiveStore = defineStore('browserLive', {
         if (data?.jpeg) state.frame = data.jpeg
         if (data?.pageUrl) state.pageUrl = data.pageUrl
         if (data?.cliSession) state.cliSession = data.cliSession
+        // meta 帧级缺失沿用上一个（CDP metadata 可选，三级降级见 utils/browserLiveInput）
+        if (data?.meta) state.frameMeta = data.meta
+        state.lastFrameAt = Date.now()
         this.activeSessionId = sessionId
       } else if (msg.type === 'browser_live_stopped') {
         const data = msg.data as BrowserLiveStoppedData | undefined
         state.isLive = false
         state.stoppedReason = data?.reason ?? 'unknown'
+        state.startedControl = false
       }
       // 直播状态翻转 → 回放可用性缓存置过期（保留上次结果供 chip 平滑显示，
       // 组件侧 watch isLive 会立即重探，新一场结束后列表才会出现该场）
@@ -142,6 +163,31 @@ export const useBrowserLiveStore = defineStore('browserLive', {
     /** Web 端注入停止通道（幂等，useStreamWS 调用一次）。 */
     setStopRequester(cb: (sessionId: number) => void) {
       stopRequester = cb
+    },
+    /** Web 端注入协作输入通道（幂等，useStreamWS 调用一次；方案 2026-11-27 §7.3）。 */
+    setInputRequester(cb: (sessionId: number, data: BrowserInputBatch) => void) {
+      inputRequester = cb
+    },
+    /**
+     * 协作输入上行（§7.3）：Electron 经主进程（LOCAL 直 POST sidecar /input，CLOUD 转请
+     * renderer 发 WS 帧——与 stop 同范式）；Web 直接 WS 普通发帧（输入丢了就丢了，不重试）。
+     * 'unsupported'（LOCAL 旧 sidecar 无 /input）→ 记 inputUnsupported 并提示，视图关闭入口。
+     */
+    inputBrowser(sessionId?: number | null, data?: BrowserInputBatch) {
+      const sid = sessionId ?? this.activeSessionId
+      if (sid == null || !data) return
+      if (isElectronClient()) {
+        void (window as any).electronAPI?.browserLive?.input?.(sid, data)
+          .then((r: string) => {
+            if (r === 'unsupported' && !this.inputUnsupported[String(sid)]) {
+              this.inputUnsupported[String(sid)] = true
+              ElMessage.warning('采集端版本过旧，暂不支持协作操作')
+            }
+          })
+          .catch(() => { /* IPC 失败等同丢批：交互语义容忍 */ })
+      } else {
+        inputRequester?.(sid, data)
+      }
     },
     /** 停止浏览器（停止观看不受影响）：Electron LOCAL 走主进程直停 sidecar，CLOUD 由主进程转请 WS；Web 直接发 WS 帧。 */
     stopBrowser(sessionId?: number | null) {

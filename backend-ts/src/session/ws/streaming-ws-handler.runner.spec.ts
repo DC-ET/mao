@@ -458,3 +458,282 @@ describe('StreamingWsHandler runner (browser live)', () => {
     expect(registry.sendToConnection).not.toHaveBeenCalled();
   });
 });
+
+describe('StreamingWsHandler browser live 协作输入（方案 2026-11-27 §6）', () => {
+  let jwt: JwtService;
+  beforeEach(() => {
+    jwt = new JwtService('runner-spec-secret', 3_600_000, 86_400_000, 7_200_000);
+  });
+
+  /** runner + 已鉴权用户连接就绪；返回两枚 socket。 */
+  async function setup(handler: ReturnType<typeof buildHandler>['handler']) {
+    const runner = runnerSocket('r1');
+    await handler.processTextMessage(runner, JSON.stringify({
+      type: 'runner_auth', token: jwt.generateShellToken(7, 'alice'), sessionId: 11,
+    }));
+    await flushMicrotasks();
+    const userSocket = runnerSocket('user-1');
+    await handler.processTextMessage(userSocket, JSON.stringify({
+      type: 'auth', token: jwt.generateToken(7, 'alice'),
+    }));
+    await flushMicrotasks();
+    return { runner, userSocket };
+  }
+
+  const validBatch = {
+    targetId: 'T1',
+    events: [
+      { type: 'mousePressed', x: 10, y: 20, button: 'left' as const, clickCount: 1, modifiers: 2 },
+      { type: 'mouseWheel', x: 10, y: 20, deltaX: 0, deltaY: -120 },
+      { type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65 },
+      { type: 'char', text: 'a' },
+      { type: 'insertText', text: '你好' },
+    ],
+  };
+
+  it('属主协作输入原样转发 runner（规整字段，不透传客户端多余字段）', async () => {
+    const { handler, registry } = buildHandler();
+    registry.getUserId.mockImplementation((s: { id: string }) => (s.id.startsWith('r') ? null : 7));
+    const { runner, userSocket } = await setup(handler);
+    registry.sendToConnection.mockClear();
+
+    await handler.processTextMessage(userSocket, JSON.stringify({
+      type: 'browser_live_input', sessionId: 11,
+      data: { ...validBatch, extraField: 'should-not-relay' },
+    }));
+    await flushMicrotasks();
+    expect(registry.sendToConnection).toHaveBeenCalledWith(runner, {
+      type: 'browser_live_input',
+      data: { targetId: 'T1', events: validBatch.events },
+    });
+  });
+
+  it('非属主 / 不存在的会话：静默丢弃，不回错误帧、不转发', async () => {
+    const foreign = buildHandler({ getSession: vi.fn(async () => session({ userId: 8 })) });
+    foreign.registry.getUserId.mockReturnValue(7);
+    const { userSocket } = await setup(foreign.handler);
+    foreign.registry.sendToConnection.mockClear();
+    foreign.registry.send.mockClear();
+
+    await foreign.handler.processTextMessage(userSocket, JSON.stringify({
+      type: 'browser_live_input', sessionId: 11, data: validBatch,
+    }));
+    await flushMicrotasks();
+    // 非属主：无转发、无 error 帧（D9：高频输入静默丢弃，不能每批回错刷屏）
+    expect(foreign.registry.sendToConnection).not.toHaveBeenCalled();
+    expect(foreign.registry.send).not.toHaveBeenCalled();
+
+    const missing = buildHandler({ getSession: vi.fn(async () => null) });
+    missing.registry.getUserId.mockReturnValue(7);
+    const { userSocket: missingUser } = await setup(missing.handler);
+    await missing.handler.processTextMessage(missingUser, JSON.stringify({
+      type: 'browser_live_input', sessionId: 11, data: validBatch,
+    }));
+    await flushMicrotasks();
+    expect(missing.registry.sendToConnection).not.toHaveBeenCalled();
+    expect(missing.registry.send).not.toHaveBeenCalled();
+  });
+
+  it('属主校验 60s 缓存命中免查库（D9），非法批不触发任何查库/转发', async () => {
+    const { handler, registry, getSession } = buildHandler();
+    registry.getUserId.mockImplementation((s: { id: string }) => (s.id.startsWith('r') ? null : 7));
+    const { userSocket } = await setup(handler);
+
+    for (let i = 0; i < 5; i++) {
+      await handler.processTextMessage(userSocket, JSON.stringify({
+        type: 'browser_live_input', sessionId: 11, data: { targetId: null, events: [{ type: 'mouseMoved', x: 1, y: 2 }] },
+      }));
+      await flushMicrotasks();
+    }
+    // 基线 1 次来自 runner_auth 握手：输入侧只查 1 次库，后续 4 批全部命中缓存
+    expect(getSession).toHaveBeenCalledTimes(2, '缓存命中后不再查库');
+
+    // 非法批：整批静默丢弃（坐标 NaN / 未知类型 / 空事件 / 超限）
+    for (const bad of [
+      { events: [{ type: 'mouseMoved', x: NaN, y: 1 }] },
+      { events: [{ type: 'teleport', x: 1, y: 1 }] },
+      { events: [] },
+      { events: Array.from({ length: 33 }, () => ({ type: 'mouseMoved', x: 1, y: 1 })) },
+      { targetId: 123, events: [{ type: 'char', text: 'a' }] },
+      null,
+    ]) {
+      await handler.processTextMessage(userSocket, JSON.stringify({
+        type: 'browser_live_input', sessionId: 11, data: bad,
+      }));
+      await flushMicrotasks();
+    }
+    expect(getSession).toHaveBeenCalledTimes(2, '非法批在属主校验前就被丢弃');
+  });
+
+  it('按会话事件数限速（60/s burst 180）：超限批静默丢弃、时间推进恢复', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000_000);
+      const { handler, registry } = buildHandler();
+      registry.getUserId.mockImplementation((s: { id: string }) => (s.id.startsWith('r') ? null : 7));
+      const { userSocket } = await setup(handler);
+      registry.sendToConnection.mockClear();
+
+      const batch32 = { targetId: null, events: Array.from({ length: 32 }, (_, i) => ({ type: 'mouseMoved' as const, x: i, y: i })) };
+      // burst 180：前 5 批（160 事件）转发；第 6 批需 32 令牌只剩 20 → 整批丢弃
+      for (let i = 0; i < 5; i++) {
+        await handler.processTextMessage(userSocket, JSON.stringify({ type: 'browser_live_input', sessionId: 11, data: batch32 }));
+      }
+      await handler.processTextMessage(userSocket, JSON.stringify({ type: 'browser_live_input', sessionId: 11, data: batch32 }));
+      await flushMicrotasks();
+      expect(registry.sendToConnection).toHaveBeenCalledTimes(5);
+
+      // 时间推进 2s（补 120 令牌）恢复：限速高于客户端自限 50/s，合法速率不丢批（评审 P2-3）
+      vi.setSystemTime(1_002_000);
+      await handler.processTextMessage(userSocket, JSON.stringify({ type: 'browser_live_input', sessionId: 11, data: batch32 }));
+      await flushMicrotasks();
+      expect(registry.sendToConnection).toHaveBeenCalledTimes(6);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('无 runner 时输入被忽略（会话无浏览器直播）', async () => {
+    const { handler, registry } = buildHandler();
+    registry.getUserId.mockReturnValue(7);
+    const userSocket = runnerSocket('user-1');
+    await handler.processTextMessage(userSocket, JSON.stringify({
+      type: 'auth', token: jwt.generateToken(7, 'alice'),
+    }));
+    await flushMicrotasks();
+    registry.sendToConnection.mockClear();
+
+    await handler.processTextMessage(userSocket, JSON.stringify({
+      type: 'browser_live_input', sessionId: 11, data: validBatch,
+    }));
+    await flushMicrotasks();
+    expect(registry.sendToConnection).not.toHaveBeenCalled();
+  });
+
+  it('输入活跃窗口内帧限速放宽 (12,24)，窗口外回落基础 (6,12)（D5）', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000_000);
+      const { handler, registry } = buildHandler();
+      registry.getUserId.mockImplementation((s: { id: string }) => (s.id.startsWith('r') ? null : 7));
+      const { runner, userSocket } = await setup(handler);
+
+      // 先发一帧（消耗基础桶 1 令牌），再发输入 → 激活 5s 提升窗口
+      await handler.processTextMessage(runner, JSON.stringify({
+        type: 'browser_frame', data: { seq: 0, jpeg: 'x' },
+      }));
+      await handler.processTextMessage(userSocket, JSON.stringify({
+        type: 'browser_live_input', sessionId: 11, data: validBatch,
+      }));
+      await flushMicrotasks();
+      registry.sendToClientTypes.mockClear();
+
+      // 窗口内连发 20 帧全部转发（提升桶 burst 24；基础桶 burst 12 只能过 11）
+      for (let i = 1; i <= 20; i++) {
+        await handler.processTextMessage(runner, JSON.stringify({
+          type: 'browser_frame', data: { seq: i, jpeg: 'x' },
+        }));
+      }
+      expect(registry.sendToClientTypes).toHaveBeenCalledTimes(20);
+
+      // 窗口外（+6s）回落基础桶：同毫秒只能过 12 帧（burst 12）
+      vi.setSystemTime(1_006_000);
+      registry.sendToClientTypes.mockClear();
+      for (let i = 100; i <= 115; i++) {
+        await handler.processTextMessage(runner, JSON.stringify({
+          type: 'browser_frame', data: { seq: i, jpeg: 'x' },
+        }));
+      }
+      expect(registry.sendToClientTypes).toHaveBeenCalledTimes(12);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('runner 断开清理输入限速桶 / 活跃窗口 / 属主缓存（方案 §6 清理口径）', async () => {
+    const { handler, registry, getSession } = buildHandler();
+    registry.getUserId.mockImplementation((s: { id: string }) => (s.id.startsWith('r') ? null : 7));
+    const { runner, userSocket } = await setup(handler);
+
+    await handler.processTextMessage(userSocket, JSON.stringify({
+      type: 'browser_live_input', sessionId: 11, data: validBatch,
+    }));
+    await flushMicrotasks();
+    // 基线 1 次来自 runner_auth：首次输入查库 1 次
+    expect(getSession).toHaveBeenCalledTimes(2);
+
+    handler.afterConnectionClosed(runner);
+
+    // 缓存已清：下一次输入重新查库（runner 已断，转发为 no-op，但查库计数回升）
+    await handler.processTextMessage(userSocket, JSON.stringify({
+      type: 'browser_live_input', sessionId: 11, data: validBatch,
+    }));
+    await flushMicrotasks();
+    expect(getSession).toHaveBeenCalledTimes(3);
+  });
+
+  it('属主缓存 60s TTL 过期后重新查库（D9）', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000_000);
+      const { handler, registry, getSession } = buildHandler();
+      registry.getUserId.mockImplementation((s: { id: string }) => (s.id.startsWith('r') ? null : 7));
+      const { userSocket } = await setup(handler);
+
+      await handler.processTextMessage(userSocket, JSON.stringify({
+        type: 'browser_live_input', sessionId: 11, data: validBatch,
+      }));
+      await flushMicrotasks();
+      expect(getSession).toHaveBeenCalledTimes(2); // runner_auth 1 + 首次输入 1
+
+      // TTL 窗口内（+50s）：命中缓存不再查库
+      vi.setSystemTime(1_050_000);
+      await handler.processTextMessage(userSocket, JSON.stringify({
+        type: 'browser_live_input', sessionId: 11, data: validBatch,
+      }));
+      await flushMicrotasks();
+      expect(getSession).toHaveBeenCalledTimes(2);
+
+      // 越过 60s（+61s）：缓存过期，重新查库
+      vi.setSystemTime(1_061_000);
+      await handler.processTextMessage(userSocket, JSON.stringify({
+        type: 'browser_live_input', sessionId: 11, data: validBatch,
+      }));
+      await flushMicrotasks();
+      expect(getSession).toHaveBeenCalledTimes(3);
+      void registry;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('subscribe 重放的 started 携带 control 能力标记（刷新后协作入口恢复，评审 P2-1）', async () => {
+    const { handler, registry } = buildHandler();
+    registry.getUserId.mockImplementation((s: { id: string }) => (s.id.startsWith('r') ? null : 7));
+
+    const runner = runnerSocket('r1');
+    await handler.processTextMessage(runner, JSON.stringify({
+      type: 'runner_auth', token: jwt.generateShellToken(7, 'alice'), sessionId: 11,
+    }));
+    await flushMicrotasks();
+    await handler.processTextMessage(runner, JSON.stringify({
+      type: 'browser_live_started',
+      data: { width: 1280, height: 720, pageUrl: 'https://example.com/a', cliSession: 'ui2', control: true },
+    }));
+
+    const userSocket = runnerSocket('user-1');
+    await handler.processTextMessage(userSocket, JSON.stringify({
+      type: 'auth', token: jwt.generateToken(7, 'alice'),
+    }));
+    await flushMicrotasks();
+    registry.sendToConnection.mockClear();
+
+    await handler.processTextMessage(userSocket, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+    await flushMicrotasks();
+    expect(registry.sendToConnection).toHaveBeenCalledWith(userSocket, expect.objectContaining({
+      type: 'browser_live_started',
+      sessionId: 11,
+      data: expect.objectContaining({ replay: true, control: true }),
+    }));
+  });
+});

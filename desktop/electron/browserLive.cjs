@@ -42,6 +42,7 @@ function createBrowserLiveRuntime({
    *   live: { httpPort, token } | null,   // LOCAL sidecar 出口
    *   sseReq, reconnectTimer, liveFileTimer, reconnectTries,
    *   live: boolean, pageUrl, width, height, cliSession, stoppedReason, lastSeq,
+   *   startedControl: boolean,            // sidecar 能力协商（D6）：协作输入入口开关
    *   buf: string,                        // SSE 半块缓冲
    * }
    */
@@ -54,7 +55,7 @@ function createBrowserLiveRuntime({
       state = {
         source: 'cloud', live: null, sseReq: null, reconnectTimer: null, liveFileTimer: null,
         reconnectTries: 0, isLive: false, pageUrl: '', width: 0, height: 0,
-        cliSession: 'default', stoppedReason: null, lastSeq: 0, buf: '',
+        cliSession: 'default', stoppedReason: null, lastSeq: 0, startedControl: false, buf: '',
       }
       sessions.set(sessionId, state)
     }
@@ -67,7 +68,8 @@ function createBrowserLiveRuntime({
       result.sessions[sessionId] = {
         isLive: s.isLive, pageUrl: s.pageUrl, width: s.width, height: s.height,
         cliSession: s.cliSession, stoppedReason: s.stoppedReason, lastSeq: s.lastSeq,
-        source: s.source, frame: s.isLive ? lastFrames.get(String(sessionId)) ?? null : null,
+        source: s.source, startedControl: s.startedControl,
+        frame: s.isLive ? lastFrames.get(String(sessionId)) ?? null : null,
       }
     }
     return result
@@ -102,17 +104,24 @@ function createBrowserLiveRuntime({
     const state = stateOf(sessionId)
     if (evt.type === 'browser_live_started') {
       console.log(`[browser-live] session ${sessionId}: live started (${evt.data?.pageUrl ?? ''})`)
-      // 订阅/重连补发（replay）：同一场直播的状态校准。主进程已有直播态时不重复弹窗，
-      // 尊重用户手动收起的画中画；应用重启后 hub 无态（wasLive=false）仍照常弹出。
-      const replayLive = evt.data?.replay === true && state.isLive
+      // P-1（技术方案 2026-11-27 §1.3）：画中画不再自动弹出——自动弹出打扰工作且
+      // 误触「停止浏览器」杀掉 Agent 浏览器；观看入口收敛为 Tab 内「打开画中画」
+      // 手动按钮（isLive 门控）。replay 守卫随自动弹出一并删除（无意义）。
       state.isLive = true
       state.stoppedReason = null
       state.width = evt.data?.width ?? 0
       state.height = evt.data?.height ?? 0
       state.pageUrl = evt.data?.pageUrl ?? ''
       state.cliSession = evt.data?.cliSession ?? 'default'
+      // 能力协商（D6）：非 replay started 以 data 定值；replay（CLOUD 订阅重放）只在
+      // 显式携带 boolean 时校准——刷新靠 getState 快照恢复直播态，control 必须随快照
+      // 下发，否则刷新后「协作操作」入口消失到下一场（评审 P2-1）
+      if (evt.data?.replay === true) {
+        if (typeof evt.data?.control === 'boolean') state.startedControl = evt.data.control
+      } else {
+        state.startedControl = evt.data?.control === true
+      }
       setActive(sessionId)
-      if (!replayLive) pip?.show()
     } else if (evt.type === 'browser_frame') {
       state.lastSeq = evt.data?.seq ?? state.lastSeq
       state.pageUrl = evt.data?.pageUrl ?? state.pageUrl
@@ -123,6 +132,7 @@ function createBrowserLiveRuntime({
     } else if (evt.type === 'browser_live_stopped') {
       state.isLive = false
       state.stoppedReason = evt.data?.reason ?? 'unknown'
+      state.startedControl = false
       // 断开残留 SSE/重连定时器并清 live（旧端口/token 已死）：不清的话下一场
       // attachLocalSession 会早退去连死端口，scheduleReconnect 又被 stoppedReason
       // 拦截，同会话第二场直播永远连不上（「已结束」卡死）
@@ -277,6 +287,34 @@ function createBrowserLiveRuntime({
     req.end(body)
     void sessionId
     return true
+  }
+
+  /**
+   * 协作输入（技术方案 2026-11-27 §8）：POST sidecar /input。
+   * 旧 sidecar 无 /input 路由 → 404 → 'unsupported'，renderer 据此关闭交互入口并提示
+   * 「采集端版本过旧」；403 是 token 失配（sidecar 重启换 token，SSE 重连会拿到新
+   * live.json），按丢批处理返回 'ok'（评审 P2-6：403 误报「版本过旧」会误导排障）；
+   * 其余情况一律 'ok'（输入丢了就丢了，交互语义）。
+   */
+  function postInput(state, payload) {
+    if (!state.live) return Promise.resolve('ok')
+    return new Promise((resolve) => {
+      const body = JSON.stringify(payload ?? {})
+      const req = http.request({
+        host: '127.0.0.1', port: state.live.httpPort,
+        path: `/input?token=${encodeURIComponent(state.live.token)}`,
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        timeout: 3000,
+      }, (res) => {
+        res.resume()
+        res.on('end', () => {
+          resolve(res.statusCode === 404 ? 'unsupported' : 'ok')
+        })
+      })
+      req.on('error', () => resolve('ok'))
+      req.on('timeout', () => { req.destroy(); resolve('ok') })
+      req.end(body)
+    })
   }
 
   // ---------- 回放读取（V202，技术方案 2026-11-22 §4.2）：主进程 fs 直读本机 runtime 目录 ----------
@@ -462,9 +500,34 @@ function createBrowserLiveRuntime({
     sendToMainWindow('browser-live-stop-relay', { sessionId: Number(sessionId) })
   }
 
+  /**
+   * 协作输入（技术方案 2026-11-27 §7.3）：LOCAL 直 POST sidecar /input；CLOUD 转请主窗
+   * renderer 发 WS 帧（WS 连接在 renderer 侧，与 stop 同范式）。返回 Promise<'ok' |
+   * 'unsupported'>——renderer 不区分模式，'unsupported' 只可能来自 LOCAL 旧 sidecar。
+   */
+  function inputBrowser(sessionId, payload) {
+    const state = sessions.get(Number(sessionId))
+    if (state && state.source === 'local') {
+      return postInput(state, payload)
+    }
+    sendToMainWindow('browser-live-input-relay', { sessionId: Number(sessionId), payload })
+    return Promise.resolve('ok')
+  }
+
   /** 收起画中画（仅停止观看）：只隐藏窗口，不停浏览器、不断帧流，Agent 继续执行。 */
   function hidePip() {
     pip?.hide()
+  }
+
+  /**
+   * 协作键盘捕获开关（技术方案 2026-11-27 §7.1）：overlay 聚焦时屏蔽主窗应用菜单加速键
+   * （Cmd+W/Q/R 等会被菜单先吃掉，到不了 overlay 也到不了远端）。用 webContents
+   * setIgnoreMenuShortcuts（Electron 官方口径：只屏蔽菜单快捷键，页面 keydown 照常派发）。
+   * 失焦 / 退出协作 / 停止直播时由 renderer 回置 false；主窗重建默认也是 false。
+   */
+  function setCollabKeys(active) {
+    const main = typeof getMainWindow === 'function' ? getMainWindow() : null
+    try { main?.webContents?.setIgnoreMenuShortcuts?.(Boolean(active)) } catch { /* 旧版本无此 API */ }
   }
 
   /** 会话终态（renderer 侧 session_status 透传）：LOCAL 停 sidecar（杀浏览器、收窗）。 */
@@ -495,6 +558,13 @@ function createBrowserLiveRuntime({
       if (payload?.sessionId != null) sessionEnded(Number(payload.sessionId), payload.phase)
     })
     ipcMain.on('browser-live-expand', () => expandToTab())
+    // 协作输入（技术方案 2026-11-27 §8）：高频小包，invoke 逐批回执 'ok' / 'unsupported'
+    ipcMain.handle('browser-live-input', (_e, payload) => {
+      if (payload?.sessionId != null) return inputBrowser(Number(payload.sessionId), payload.payload)
+      return Promise.resolve('ok')
+    })
+    // 协作键盘捕获（§7.1）：overlay 聚焦 → 屏蔽菜单加速键；失焦 → 恢复
+    ipcMain.on('browser-live-collab-keys', (_e, payload) => setCollabKeys(Boolean(payload?.active)))
     ipcMain.on('browser-live-restore', () => { pip?.show() })
     // 收起画中画：与关窗同语义（仅停止观看），不触 stopBrowser
     ipcMain.on('browser-live-hide', () => hidePip())
@@ -533,7 +603,7 @@ function createBrowserLiveRuntime({
   }
 
   return {
-    attachLocalSession, relayRendererEvent, stopBrowser, sessionEnded, hidePip, registerIpc, shutdown, snapshot,
+    attachLocalSession, relayRendererEvent, stopBrowser, inputBrowser, sessionEnded, hidePip, registerIpc, shutdown, snapshot,
     replayList, replayListAll, replayTimeline, replayFrame,
   }
 }

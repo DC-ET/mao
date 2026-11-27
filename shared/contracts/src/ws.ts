@@ -336,6 +336,8 @@ export interface BrowserLiveStartedData {
    * 已持有直播态的客户端只校准元数据，不清当前帧、不重置 seq。
    */
   replay?: boolean;
+  /** sidecar 支持协作输入注入时置 true（方案 2026-11-27 D6 能力协商；旧 sidecar 缺省 → 客户端隐藏交互入口） */
+  control?: boolean;
 }
 
 export interface BrowserFrameData {
@@ -348,11 +350,54 @@ export interface BrowserFrameData {
   height: number;
   pageUrl?: string;
   cliSession?: string;
+  /**
+   * 帧元数据（CDP screencastFrame.metadata 子集，方案 2026-11-27 §4）：协作操作的
+   * 坐标映射依据。CDP metadata 是可选字段，逐帧可能缺失——客户端沿用上一个已知 meta。
+   */
+  meta?: BrowserFrameMeta;
 }
 
 export interface BrowserLiveStoppedData {
   reason: BrowserLiveStopReason | string;
   cliSession?: string;
+}
+
+/** 帧元数据（CDP screencastFrame.metadata 子集）：协作操作的坐标映射依据（方案 2026-11-27 §4）。 */
+export interface BrowserFrameMeta {
+  /** 出帧页面的 target（协作输入回带，跨 cliSession 消歧） */
+  targetId: string;
+  deviceWidth: number;
+  deviceHeight: number;
+  /** 桌面无缩放时恒 1 */
+  pageScaleFactor: number;
+  scrollOffsetX: number;
+  scrollOffsetY: number;
+  /** 滚动条留白 */
+  offsetLeft: number;
+  offsetTop: number;
+}
+
+/**
+ * 协作输入事件（视口坐标级原始事件，方案 2026-11-27 §4 / D3）。
+ * modifiers 为 CDP 组合键位掩码（Alt=1/Ctrl=2/Meta=4/Shift=8）：CDP 每次 dispatch
+ * 无状态、不自动跟随键盘会话，mouse 系事件必须显式携带（D10）；macOS Cmd 由客户端
+ * 翻译为 Ctrl 后计入（D11），mouseMoved 纯移动不带。
+ */
+export type BrowserInputEvent =
+  | { type: 'mouseMoved'; x: number; y: number }
+  | { type: 'mousePressed' | 'mouseReleased'; x: number; y: number; button: 'left' | 'right' | 'middle'; clickCount: number; modifiers?: number }
+  | { type: 'mouseWheel'; x: number; y: number; deltaX: number; deltaY: number; modifiers?: number }
+  | { type: 'keyDown' | 'keyUp'; key: string; code: string; windowsVirtualKeyCode: number; modifiers?: number }
+  /** 单个可打印字符（浏览器 keypress 事件流） */
+  | { type: 'char'; text: string }
+  /** IME 合成 / 粘贴段（≤1000 字符，compositionend 整段提交） */
+  | { type: 'insertText'; text: string };
+
+/** 协作输入批载荷：事件数 ≤32，非法批静默整批丢弃（洪泛防护优先于可观测性）。 */
+export interface BrowserInputBatch {
+  /** 优先路由的页面 target（最新帧 meta.targetId）；null = 路由到最近出帧页 */
+  targetId: string | null;
+  events: BrowserInputEvent[];
 }
 
 /**
@@ -376,6 +421,19 @@ export interface WsRunnerEventFrame {
 export interface WsRunnerStopFrame {
   type: 'browser_live_stop';
   data: { reason: BrowserLiveStopReason | string };
+}
+
+/** 桌面客户端 → 后端：协作输入（后端校验属主 + 限速后原样转发 runner；方案 2026-11-27 §4）。 */
+export interface WsBrowserLiveInputFrame {
+  type: 'browser_live_input';
+  sessionId: number;
+  data: BrowserInputBatch;
+}
+
+/** 后端 → runner：协作输入（校验属主与限速后转发 sidecar，sidecar 校验/限速/路由后注入 CDP）。 */
+export interface WsRunnerInputFrame {
+  type: 'browser_live_input';
+  data: BrowserInputBatch;
 }
 
 /** 桌面客户端 → 后端：停止浏览器（后端校验属主后转发给该会话的 runner）。 */

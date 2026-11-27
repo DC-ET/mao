@@ -89,10 +89,15 @@ export type {
   BrowserLiveStartedData,
   BrowserFrameData,
   BrowserLiveStoppedData,
+  BrowserFrameMeta,
+  BrowserInputEvent,
+  BrowserInputBatch,
   WsRunnerAuthFrame,
   WsRunnerEventFrame,
   WsRunnerStopFrame,
   WsBrowserLiveStopFrame,
+  WsBrowserLiveInputFrame,
+  WsRunnerInputFrame,
 } from './ws';
 export type { SkillDepsKind, SkillDepsPhase, SkillDepsItem, SkillDepsStatusMap } from './skill-deps';
 export type { TerminalHostAvailability } from './terminal';
