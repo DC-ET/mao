@@ -15,7 +15,7 @@
         >
           <template #reference>
             <button class="icon-btn" type="button" aria-label="停止浏览器" title="停止浏览器">
-              <el-icon><CircleCloseFilled /></el-icon>
+              <el-icon><VideoPause /></el-icon>
             </button>
           </template>
         </el-popconfirm>
@@ -36,6 +36,18 @@
           aria-label="退出回放"
           title="退出回放"
           @click="exitReplay"
+        >
+          <el-icon><Back /></el-icon>
+        </button>
+        <!-- 画中画无边框、没有系统关闭键：提供与关窗同语义的收起按钮（仅停止观看），
+             避免用户把「停止浏览器」的 ✕ 当成关窗而误杀 Agent 的浏览器 -->
+        <button
+          v-if="variant === 'pip'"
+          class="icon-btn"
+          type="button"
+          aria-label="关闭画中画（仅停止观看）"
+          title="关闭画中画（仅停止观看）"
+          @click="onHidePip"
         >
           <el-icon><Close /></el-icon>
         </button>
@@ -88,7 +100,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElIcon } from 'element-plus'
-import { CircleCloseFilled, Close, CopyDocument } from '@element-plus/icons-vue'
+import { Back, Close, CopyDocument, VideoPause } from '@element-plus/icons-vue'
 import { useBrowserLiveStore } from '../../stores/browserLive'
 import { isElectronClient } from '../../utils/platform'
 import BrowserLiveReplay from './BrowserLiveReplay.vue'
@@ -206,6 +218,10 @@ function onStop() {
 
 function onRestore() {
   store.restorePip()
+}
+
+function onHidePip() {
+  store.hidePip()
 }
 
 onBeforeUnmount(() => {

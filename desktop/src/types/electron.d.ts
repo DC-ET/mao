@@ -488,6 +488,8 @@ interface ElectronAPI {
     expand(): void
     /** Tab 内还原画中画 */
     restore(): void
+    /** 收起画中画（仅停止观看）：只隐藏窗口，不停浏览器、不中断 Agent */
+    hide(): void
     /** 回放场次列表（V202）：fs 直读本机 runtime 目录，含未结算场；与 CLOUD API 同结构 */
     replayList(sessionId: number): Promise<BrowserReplaySummary[]>
     /** 回放 manifest + 全量帧索引 */

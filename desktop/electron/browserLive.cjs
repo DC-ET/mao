@@ -97,6 +97,9 @@ function createBrowserLiveRuntime({
     const state = stateOf(sessionId)
     if (evt.type === 'browser_live_started') {
       console.log(`[browser-live] session ${sessionId}: live started (${evt.data?.pageUrl ?? ''})`)
+      // 订阅/重连补发（replay）：同一场直播的状态校准。主进程已有直播态时不重复弹窗，
+      // 尊重用户手动收起的画中画；应用重启后 hub 无态（wasLive=false）仍照常弹出。
+      const replayLive = evt.data?.replay === true && state.isLive
       state.isLive = true
       state.stoppedReason = null
       state.width = evt.data?.width ?? 0
@@ -104,7 +107,7 @@ function createBrowserLiveRuntime({
       state.pageUrl = evt.data?.pageUrl ?? ''
       state.cliSession = evt.data?.cliSession ?? 'default'
       setActive(sessionId)
-      pip?.show()
+      if (!replayLive) pip?.show()
     } else if (evt.type === 'browser_frame') {
       state.lastSeq = evt.data?.seq ?? state.lastSeq
       state.pageUrl = evt.data?.pageUrl ?? state.pageUrl
@@ -378,6 +381,11 @@ function createBrowserLiveRuntime({
     sendToMainWindow('browser-live-stop-relay', { sessionId: Number(sessionId) })
   }
 
+  /** 收起画中画（仅停止观看）：只隐藏窗口，不停浏览器、不断帧流，Agent 继续执行。 */
+  function hidePip() {
+    pip?.hide()
+  }
+
   /** 会话终态（renderer 侧 session_status 透传）：LOCAL 停 sidecar（杀浏览器、收窗）。 */
   function sessionEnded(sessionId, phase) {
     const state = sessions.get(Number(sessionId))
@@ -407,6 +415,8 @@ function createBrowserLiveRuntime({
     })
     ipcMain.on('browser-live-expand', () => expandToTab())
     ipcMain.on('browser-live-restore', () => { pip?.show() })
+    // 收起画中画：与关窗同语义（仅停止观看），不触 stopBrowser
+    ipcMain.on('browser-live-hide', () => hidePip())
     // 回放读取（V202）：renderer 传入的 liveId/seq 经白名单 + containment 断言后 fs 直读
     ipcMain.handle('browser-live-replay-list', (_e, payload) => replayList(payload?.sessionId))
     ipcMain.handle('browser-live-replay-timeline', (_e, payload) => replayTimeline(payload?.sessionId, payload?.liveId))
@@ -440,7 +450,7 @@ function createBrowserLiveRuntime({
   }
 
   return {
-    attachLocalSession, relayRendererEvent, stopBrowser, sessionEnded, registerIpc, shutdown, snapshot,
+    attachLocalSession, relayRendererEvent, stopBrowser, sessionEnded, hidePip, registerIpc, shutdown, snapshot,
     replayList, replayTimeline, replayFrame,
   }
 }

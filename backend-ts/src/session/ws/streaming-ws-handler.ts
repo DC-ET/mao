@@ -395,6 +395,18 @@ export class StreamingWsHandler {
   private readonly browserFrameRateLimiter = new WsRateLimiter(6, 12);
   /** 最近一次转发的 sidecar stopped 时间：断连兜底合成 runner_exit 的去重窗口。 */
   private readonly runnerStopForwarded = new Map<number, number>();
+  /**
+   * sessionId → 进行中的浏览器直播状态（含帧更新的 pageUrl/cliSession）。
+   * browser_live_started 是每场仅一次的边沿事件：客户端刷新 / WS 重连后收不到，
+   * 直播中的 chip / 画中画 / Tab 会整场消失。subscribe 时据此重放 started（data.replay=true）。
+   * 不缓存帧（内存与带宽成本高），画面等下一帧自然恢复。
+   */
+  private readonly browserLiveStates = new Map<number, {
+    width: number;
+    height: number;
+    pageUrl: string;
+    cliSession: string;
+  }>();
   private readonly pendingSkillSyncs = new Map<number, { syncId: string; resolve: () => void; reject: (e: Error) => void }>();
   private readonly pendingMcpSyncs = new Map<number, { syncId: string; resolve: () => void; reject: (e: Error) => void }>();
   private readonly autoConsumingSessionIds = new Set<number>();
@@ -519,6 +531,7 @@ export class StreamingWsHandler {
       if (this.runnerSessions.get(runnerBinding.sessionId) === session) {
         this.runnerSessions.delete(runnerBinding.sessionId);
         this.browserFrameRateLimiter.clear(String(runnerBinding.sessionId));
+        this.browserLiveStates.delete(runnerBinding.sessionId);
         const lastStopped = this.runnerStopForwarded.get(runnerBinding.sessionId);
         this.runnerStopForwarded.delete(runnerBinding.sessionId);
         // sidecar 非正常断开（没来得及发 stopped）：合成 runner_exit，客户端才收得了窗
@@ -828,12 +841,30 @@ export class StreamingWsHandler {
     }
     const data = (root.data ?? {}) as Record<string, unknown>;
     if (type === 'browser_frame') {
+      // 刷新页面的客户端靠 subscribe 重放的 started 恢复状态；pageUrl/cliSession 取最新帧
+      // （限速前更新，保证重放不是开场时的旧地址）。空串也是帧上报的真实状态（与 started
+      // 的落库口径一致），不能用 falsy 跳过，否则重放会一直沿用旧值。帧本身不缓存。
+      const live = this.browserLiveStates.get(binding.sessionId);
+      if (live != null) {
+        if (typeof data.pageUrl === 'string') live.pageUrl = data.pageUrl;
+        if (typeof data.cliSession === 'string') live.cliSession = data.cliSession;
+      }
       if (!this.browserFrameRateLimiter.allow(String(binding.sessionId))) return;
       this.deps.registry.sendToClientTypes(binding.userId, wsEvent('browser_frame', binding.sessionId, data), BROWSER_LIVE_CLIENT_TYPES);
       return;
     }
+    if (type === 'browser_live_started') {
+      this.browserLiveStates.set(binding.sessionId, {
+        width: typeof data.width === 'number' ? data.width : 0,
+        height: typeof data.height === 'number' ? data.height : 0,
+        pageUrl: typeof data.pageUrl === 'string' ? data.pageUrl : '',
+        cliSession: typeof data.cliSession === 'string' ? data.cliSession : 'default',
+      });
+    } else if (type === 'browser_live_stopped') {
+      this.browserLiveStates.delete(binding.sessionId);
+      this.runnerStopForwarded.set(binding.sessionId, Date.now());
+    }
     if (type === 'browser_live_started' || type === 'browser_live_stopped') {
-      if (type === 'browser_live_stopped') this.runnerStopForwarded.set(binding.sessionId, Date.now());
       this.deps.registry.sendToClientTypes(binding.userId, wsEvent(type, binding.sessionId, data), BROWSER_LIVE_CLIENT_TYPES);
     }
   }
@@ -846,6 +877,7 @@ export class StreamingWsHandler {
     if (!session) return;
     const runner = this.runnerSessions.get(sessionId);
     if (runner == null) {
+      this.browserLiveStates.delete(sessionId);
       this.deps.registry.sendToClientTypes(userId,
         wsEvent('browser_live_stopped', sessionId, { reason: 'user_stop' }), BROWSER_LIVE_CLIENT_TYPES);
       return;
@@ -853,10 +885,20 @@ export class StreamingWsHandler {
     this.deps.registry.sendToConnection(runner, { type: 'browser_live_stop', data: { reason: 'user_stop' } });
   }
 
-  /** 会话终态（CLOUD）：通知 runner 停止直播并 Browser.close；映射等 stopped/断连收敛。 */
+  /**
+   * 会话终态（CLOUD）：通知 runner 停止直播并 Browser.close；映射等 stopped/断连收敛。
+   * 不在这里清 browserLiveStates：Browser.close 生效前浏览器仍在跑，并发的订阅 / 刷新
+   * 仍应能重放直播态；缓存由 stopped 回执、runner 断开（合成 runner_exit）或无 runner
+   * 分支清理。stopped 晚到 / 丢失时由 handleSubscribe 的终态判断兜底，不会把已结束会话
+   * 重放成「直播中」。
+   */
   private notifyRunnerStop(sessionId: number): void {
     const runner = this.runnerSessions.get(sessionId);
-    if (runner == null) return;
+    if (runner == null) {
+      // 没有 runner 就不会再收到 stopped 回执：就地清理，避免陈旧缓存
+      this.browserLiveStates.delete(sessionId);
+      return;
+    }
     this.deps.registry.sendToConnection(runner, { type: 'browser_live_stop', data: { reason: 'session_end' } });
   }
 
@@ -866,6 +908,10 @@ export class StreamingWsHandler {
     const s = await this.requireOwnedSession(userId, sessionId);
     if (!s) return;
     this.deps.registry.subscribe(userId, sessionId);
+    // 刷新 / 重连校准：直播中的 started 已发过，重放下才能恢复 chip / 画中画 / 停止按钮。
+    // 终态会话不重放：notifyRunnerStop 故意保留缓存等 stopped 回执，若回执晚到 / 丢失，
+    // 这里按相位兜底，避免已结束会话被刷新成「直播中」。
+    if (!this.isTerminalPhase(s.phase)) this.replayBrowserLiveState(session, sessionId);
     // 页面执行端绑定：embed 连接订阅 agent 会话后，该会话的页面工具请求只发往此连接。
     if (this.deps.registry.getClientType(session) === 'embed') {
       const previous = this.deps.registry.getEmbedSessionBinding(sessionId);
@@ -921,6 +967,20 @@ export class StreamingWsHandler {
         this.deps.registry.send(userId, wsEvent('tool_approval_request', sessionId, { ...pending }));
       }
     }
+  }
+
+  /**
+   * 订阅 / 重连校准：把进行中的直播状态重放给当前连接（started 每场只发一次，刷新必丢）。
+   * 只发给本次订阅的连接，且只发给会展示直播的客户端类型（与 sidecar 帧同一白名单）；
+   * 带 replay 标记，已持有直播态的客户端只校准元数据、不清当前帧。
+   */
+  private replayBrowserLiveState(socket: WsSocket, sessionId: number): void {
+    const live = this.browserLiveStates.get(sessionId);
+    if (live == null) return;
+    const clientType = this.deps.registry.getClientType(socket);
+    if (clientType == null || !BROWSER_LIVE_CLIENT_TYPES.has(clientType)) return;
+    this.deps.registry.sendToConnection(socket,
+      wsEvent('browser_live_started', sessionId, { ...live, replay: true }));
   }
 
   private handleUnsubscribe(session: WsSocket, userId: number, root: Record<string, unknown>): void {

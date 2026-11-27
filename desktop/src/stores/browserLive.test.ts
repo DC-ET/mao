@@ -66,6 +66,51 @@ describe('browserLive store', () => {
     expect(store.activeSession?.frame).toBe('b')
   })
 
+  it('订阅重放 started（replay）不清帧、不重置 seq，只校准元数据', () => {
+    const store = useBrowserLiveStore()
+    store.ingest({ sessionId: 61, type: 'browser_live_started', data: { width: 1280, height: 720, pageUrl: 'https://a.com', cliSession: 'ui2' } })
+    store.ingest({ sessionId: 61, type: 'browser_frame', data: { seq: 42, jpeg: 'frame42', pageUrl: 'https://a.com/x' } })
+
+    store.ingest({ sessionId: 61, type: 'browser_live_started', data: { width: 800, height: 600, pageUrl: 'https://a.com/y', cliSession: 'ui2', replay: true } })
+    // 画中画 / Tab 不闪白：帧与 seq 保持，只校准元数据
+    expect(store.sessions['61'].frame).toBe('frame42')
+    expect(store.sessions['61'].lastSeq).toBe(42)
+    expect(store.sessions['61'].pageUrl).toBe('https://a.com/y')
+    expect(store.sessions['61'].width).toBe(800)
+    expect(store.sessions['61'].isLive).toBe(true)
+
+    // seq 未重置，乱序保护仍生效
+    store.ingest({ sessionId: 61, type: 'browser_frame', data: { seq: 41, jpeg: 'stale' } })
+    expect(store.sessions['61'].frame).toBe('frame42')
+  })
+
+  it('刷新后 store 为空时收到 replay：按正常 started 建立直播态', () => {
+    const store = useBrowserLiveStore()
+    store.ingest({ sessionId: 62, type: 'browser_live_started', data: { width: 800, height: 600, pageUrl: 'https://a.com', cliSession: 'ui2', replay: true } })
+    expect(store.sessions['62'].isLive).toBe(true)
+    expect(store.sessions['62'].stoppedReason).toBeNull()
+    expect(store.hasAnyLive).toBe(true)
+  })
+
+  it('replay 的宽高为 0 也要生效（最小化 / 隐藏窗口的合法尺寸，不能被 falsy 判断吞掉）', () => {
+    const store = useBrowserLiveStore()
+    store.ingest({ sessionId: 63, type: 'browser_live_started', data: { width: 1280, height: 720, pageUrl: 'https://a.com', cliSession: 'ui2' } })
+    // sidecar 对隐藏 / 最小化页面会报 0×0；重连重放时不能沿用刷新前的旧尺寸做布局
+    store.ingest({ sessionId: 63, type: 'browser_live_started', data: { width: 0, height: 0, pageUrl: 'https://a.com', cliSession: 'ui2', replay: true } })
+    expect(store.sessions['63'].isLive).toBe(true)
+    expect(store.sessions['63'].width).toBe(0)
+    expect(store.sessions['63'].height).toBe(0)
+  })
+
+  it('replay 的空串 pageUrl / cliSession 也要覆盖（与宽高同口径按类型判断）', () => {
+    const store = useBrowserLiveStore()
+    store.ingest({ sessionId: 64, type: 'browser_live_started', data: { width: 800, height: 600, pageUrl: 'https://a.com/x', cliSession: 'ui2' } })
+    // 空串是服务端重放的真实值；falsy 判断会让客户端一直显示刷新前的旧地址 / 旧会话名
+    store.ingest({ sessionId: 64, type: 'browser_live_started', data: { width: 800, height: 600, pageUrl: '', cliSession: '', replay: true } })
+    expect(store.sessions['64'].pageUrl).toBe('')
+    expect(store.sessions['64'].cliSession).toBe('')
+  })
+
   it('stopBrowser 仅在 Electron 下走 IPC，且缺省用最近活跃会话', () => {
     // 非 Electron（node 测试环境无 electronAPI）：未注入停止通道时不抛错、不动作
     const store = useBrowserLiveStore()

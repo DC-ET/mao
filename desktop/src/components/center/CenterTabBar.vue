@@ -37,17 +37,23 @@
       <el-icon v-else-if="tab.type === 'chat' || tab.type === 'side_task' || tab.type === 'subagent'" class="tab-icon"><ChatDotRound /></el-icon>
       <el-icon v-else-if="tab.type === 'diff'" class="tab-icon"><DocumentCopy /></el-icon>
       <el-icon v-else-if="tab.type === 'trace'" class="tab-icon"><TrendCharts /></el-icon>
-      <el-icon v-else-if="tab.type === 'browser_live'" class="tab-icon"><Monitor /></el-icon>
+      <svg v-else-if="tab.type === 'browser_live'" class="tab-icon chrome-mark" viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="#EA4335" d="M12 12 2.47 6.5A11 11 0 0 1 21.53 6.5Z" />
+        <path fill="#FBBC05" d="M12 12 21.53 6.5A11 11 0 0 1 12 23Z" />
+        <path fill="#34A853" d="M12 12 12 23A11 11 0 0 1 2.47 6.5Z" />
+        <circle cx="12" cy="12" r="6" fill="#fff" />
+        <circle cx="12" cy="12" r="3.8" fill="#4285F4" />
+      </svg>
       <el-icon v-else-if="tab.type === 'git'" class="tab-icon"><Share /></el-icon>
       <el-icon v-else-if="tab.type === 'workspace_overview'" class="tab-icon"><FolderOpened /></el-icon>
       <el-icon v-else class="tab-icon"><Document /></el-icon>
       <el-tooltip v-if="tab.filePath" :content="tab.filePath" placement="bottom" :show-after="300">
-        <span class="tab-title">{{ tab.title }}</span>
+        <span class="tab-title">{{ tabLabel(tab) }}</span>
       </el-tooltip>
       <el-tooltip v-else-if="tab.forkFrom?.label" :content="`分叉自主会话 · ${tab.forkFrom.label}`" placement="bottom" :show-after="300">
-        <span class="tab-title">{{ tab.title }}</span>
+        <span class="tab-title">{{ tabLabel(tab) }}</span>
       </el-tooltip>
-      <span v-else class="tab-title">{{ tab.title }}</span>
+      <span v-else class="tab-title">{{ tabLabel(tab) }}</span>
       <button
         v-if="tab.type !== 'chat'"
         class="tab-close"
@@ -85,7 +91,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { ChatDotRound, Document, DocumentCopy, Close, Share, TrendCharts, FolderOpened, Monitor } from '@element-plus/icons-vue'
+import { ChatDotRound, Document, DocumentCopy, Close, Share, TrendCharts, FolderOpened } from '@element-plus/icons-vue'
 import type { Tab } from '../../types/file-browser'
 import { shouldDismissContextMenuForScroll } from '../../utils/contextMenuDismiss'
 import { fileEntriesOf, hasWorkspaceDragPayload, parseWorkspaceDrag, type WorkspaceDragEntry } from '../../utils/workspaceDrag'
@@ -102,6 +108,11 @@ const props = defineProps<{
 }>()
 
 const agentStore = useAgentStore()
+
+/** 浏览器直播页签固定展示「浏览器」；已打开的旧页签内存里仍是「浏览器直播」，这里直接盖掉。 */
+function tabLabel(tab: Tab): string {
+  return tab.type === 'browser_live' ? '浏览器' : tab.title
+}
 
 const agentIdentity = computed(() =>
   resolveAgentIdentity({
@@ -417,6 +428,12 @@ onUnmounted(() => {
 .tab-icon {
   font-size: 13px;
   flex-shrink: 0;
+}
+
+.chrome-mark {
+  width: 14px;
+  height: 14px;
+  display: block;
 }
 
 .tab-title {

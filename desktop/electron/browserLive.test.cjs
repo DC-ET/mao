@@ -158,6 +158,54 @@ test('browserLive hub: CLOUD 事件回灌与停止转请 renderer', async () => 
   }
 })
 
+test('browserLive hub: 收起画中画只 hide 窗口，不停浏览器', async () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-bl-hide-'))
+  try {
+    const { runtime, ipc, mainWindowSends, pipCalls } = setupRuntime(runtimeDir)
+
+    // CLOUD 直播中：收起按钮（browser-live-hide）必须与关窗同语义——只 hide，
+    // 不转请 renderer 发 browser_live_stop（否则 Agent 的浏览器会被误杀）
+    ipc.onHandlers['browser-live-relay'](null, { sessionId: 55, type: 'browser_live_started', data: { width: 800, height: 600 } })
+    assert.strictEqual(pipCalls.show, 1)
+
+    ipc.onHandlers['browser-live-hide'](null)
+
+    assert.strictEqual(pipCalls.hide, 1, 'hide should hide the pip window')
+    assert.strictEqual(
+      mainWindowSends.filter((s) => s.channel === 'browser-live-stop-relay').length,
+      0,
+      'hiding must not relay a stop to the renderer',
+    )
+
+    runtime.shutdown()
+  } finally {
+    fs.rmSync(runtimeDir, { recursive: true, force: true })
+  }
+})
+
+test('browserLive hub: 订阅重放的 started 不重复弹出画中画', async () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-bl-replay-'))
+  try {
+    const { runtime, ipc, pipCalls } = setupRuntime(runtimeDir)
+
+    ipc.onHandlers['browser-live-relay'](null, { sessionId: 66, type: 'browser_live_started', data: { width: 800, height: 600 } })
+    assert.strictEqual(pipCalls.show, 1)
+
+    // 刷新主窗后后端按 subscribe 重放 started：hub 已有直播态，不再 show，
+    // 否则用户刚手动收起的画中画会被刷新重新弹出来
+    ipc.onHandlers['browser-live-relay'](null, { sessionId: 66, type: 'browser_live_started', data: { width: 800, height: 600, replay: true } })
+    assert.strictEqual(pipCalls.show, 1, 'replayed started must not re-show a live pip window')
+
+    // 应用重启后 hub 无态：重放仍要弹出（直播还在进行，画中画是观看入口）
+    ipc.onHandlers['browser-live-relay'](null, { sessionId: 77, type: 'browser_live_started', data: { width: 800, height: 600, replay: true } })
+    assert.strictEqual(pipCalls.show, 2, 'replayed started should show pip when hub has no live state')
+
+    runtime.shutdown()
+  } finally {
+    fs.rmSync(runtimeDir, { recursive: true, force: true })
+  }
+})
+
 test('browserLive hub: LOCAL 会话终态 → 停 sidecar', async () => {
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mao-bl-end-'))
   const sidecar = await startFakeSidecar()

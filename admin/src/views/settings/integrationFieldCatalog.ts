@@ -254,7 +254,7 @@ export const INTEGRATION_GROUP_CATALOG: IntegrationGroupSpec[] = [
     title: '浏览器直播',
     keys: ['browserLive.recordEnabled', 'harness.cleanup.browserReplayTtlDays', 'harness.cleanup.shellOutputMaxAgeDays'],
     fields: [
-      { key: 'browserLive.recordEnabled', label: '启用操作录制', type: 'switch', hint: '开启后浏览器直播画面在采集侧落盘为回放，可在直播结束后回看。录屏含登录态页面的敏感信息（邮箱、后台、令牌等），按回放保留天数自动清理；对新会话生效。' },
+      { key: 'browserLive.recordEnabled', label: '启用操作录制', type: 'switch', hint: '开启后浏览器直播画面在采集侧落盘为回放，可在直播结束后回看（聊天输入框上方「浏览器」状态条 → 直播 Tab → 历史回放）。录屏含登录态页面的敏感信息（邮箱、后台、令牌等），按回放保留天数自动清理；对开启后新启动的浏览器采集进程生效，已开始的直播不补录。' },
       { key: 'harness.cleanup.browserReplayTtlDays', label: '回放保留天数', type: 'number', min: 0, max: 365, hint: '默认 7；0 表示关闭按天清理（回放仍随会话删除清理）。保存后即时生效。' },
       { key: 'harness.cleanup.shellOutputMaxAgeDays', label: 'Shell 输出保留天数', type: 'number', min: 0, max: 365, hint: 'shell 输出与网页全文缓存的保留天数，默认 7；0 表示不清理。保存后即时生效。' },
     ],

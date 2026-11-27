@@ -491,11 +491,12 @@ export function useCenterTabs(activeSessionId: Ref<string | null>) {
     const state = getSessionState()
     const existing = state.tabs.find(t => t.type === 'browser_live' && t.id === 'browser-live')
     if (existing) {
+      existing.title = '浏览器'
       state.activeTabId = existing.id
       notifyTabsChanged()
       return
     }
-    state.tabs.push({ id: 'browser-live', type: 'browser_live', title: '浏览器直播' })
+    state.tabs.push({ id: 'browser-live', type: 'browser_live', title: '浏览器' })
     state.activeTabId = 'browser-live'
     notifyTabsChanged()
   }

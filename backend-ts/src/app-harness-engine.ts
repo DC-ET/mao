@@ -225,6 +225,10 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     shellCompanySsoInjector: d.companySsoInjector,
     shellLarkUatInjector: d.larkUatInjector,
     shellBaseUrlProvider: { getSiteBaseUrl: () => d.settingService.getSiteBaseUrl() },
+    // host 模式浏览器直播录制：sidecar 靠 shell env 的 MAO_BROWSER_LIVE_RECORD 决定是否落盘
+    shellBrowserLiveRecordProvider: {
+      getBrowserLiveRecordEnabled: () => d.settingService.getBrowserLiveRecordEnabled(),
+    },
     webSearch: () => d.settingService.getWebSearchConfig(),
     webPage: harnessTuning.webPage,
     runtimeDataResolver: d.runtimeResolver,

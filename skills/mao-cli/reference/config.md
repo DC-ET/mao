@@ -210,7 +210,7 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
-| `MAO_BROWSER_LIVE_RECORD` | 未注入 | sidecar 采集侧录制开关（=1 开启）。由后端按 `browserLive.recordEnabled` 自动注入（CLOUD 走容器 envelope、桌面 LOCAL 走主进程 shell env），无需手工配置 |
+| `MAO_BROWSER_LIVE_RECORD` | 未注入 | sidecar 采集侧录制开关（=1 开启）。由后端按 `browserLive.recordEnabled` 自动注入（CLOUD 容器模式走 envelope、CLOUD host 模式走 shell env、桌面 LOCAL 走主进程 shell env），无需手工配置。注入前已启动的采集进程（同一会话内）需等它退出（浏览器关闭 / 2h 上限）后才生效 |
 | `MAO_BROWSER_LIVE_RECORD_MAX_MB` | 300 | 单场回放体积上限（MB），超限截断停录本场，直播不受影响 |
 
 ### 密钥轮换注意

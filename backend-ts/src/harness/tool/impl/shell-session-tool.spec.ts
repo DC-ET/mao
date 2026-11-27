@@ -213,6 +213,7 @@ describe('ShellSessionTool marker and environment handling', () => {
   function harness(
     readResult: Partial<{ output: string; truncated: boolean; completed: boolean; exitCode: number | null; matched: string | null }> = {},
     baseUrlProvider?: { getSiteBaseUrl: () => Promise<string | null> },
+    browserLiveRecordProvider?: { getBrowserLiveRecordEnabled: () => Promise<boolean> },
   ) {
     const shellSession = {
       sessionId: 'sh-1',
@@ -260,6 +261,8 @@ describe('ShellSessionTool marker and environment handling', () => {
       null,
       null,
       baseUrlProvider,
+      null,
+      browserLiveRecordProvider,
     );
     const written = () => shellSession.writeStdin.mock.calls.map((c) => String(c[0])).join('');
     return { tool, shellSession, sessionManager, outputManager, written };
@@ -277,6 +280,29 @@ describe('ShellSessionTool marker and environment handling', () => {
     const { tool, written } = harness({}, { getSiteBaseUrl: vi.fn(async () => null) });
     await tool.execute(JSON.stringify({ command: 'echo hi' }), 11, 7, '/tmp');
     expect(written()).not.toContain('MAO_BASE_URL');
+  });
+
+  it('injects MAO_BROWSER_LIVE_RECORD for host-mode sidecar recording', async () => {
+    const getBrowserLiveRecordEnabled = vi.fn(async () => true);
+    const { tool, written } = harness({}, undefined, { getBrowserLiveRecordEnabled });
+    await tool.execute(JSON.stringify({ command: 'playwright-cli open https://example.com' }), 11, 7, '/tmp');
+    const out = written();
+    expect(out).toContain('export MAO_BROWSER_LIVE_RECORD=1');
+    // 必须在命令之前导出，wrapper 拉起的 sidecar 才读得到
+    expect(out.indexOf('export MAO_BROWSER_LIVE_RECORD=1')).toBeLessThan(out.indexOf('playwright-cli open'));
+  });
+
+  it('unsets MAO_BROWSER_LIVE_RECORD when the recording switch is off', async () => {
+    const { tool, written } = harness({}, undefined, { getBrowserLiveRecordEnabled: vi.fn(async () => false) });
+    await tool.execute(JSON.stringify({ command: 'echo hi' }), 11, 7, '/tmp');
+    expect(written()).toContain('unset MAO_BROWSER_LIVE_RECORD');
+    expect(written()).not.toContain('export MAO_BROWSER_LIVE_RECORD');
+  });
+
+  it('keeps shell env unchanged when no record provider is wired (container/local assemblies)', async () => {
+    const { tool, written } = harness();
+    await tool.execute(JSON.stringify({ command: 'echo hi' }), 11, 7, '/tmp');
+    expect(written()).not.toContain('MAO_BROWSER_LIVE_RECORD');
   });
 
   it('appends a completion marker to write_stdin so it does not wait for the timeout', async () => {

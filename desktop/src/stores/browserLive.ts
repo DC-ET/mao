@@ -72,16 +72,28 @@ export const useBrowserLiveStore = defineStore('browserLive', {
       const state = this.ensure(sessionId)
       if (msg.type === 'browser_live_started') {
         const data = msg.data as BrowserLiveStartedData | undefined
+        // 订阅 / 重连重放（replay）：客户端已持有直播态时只校准元数据，保留当前帧与 seq，
+        // 避免画中画 / Tab 闪白；真正的 started（新一场直播）仍走完整重置。
+        const replay = data?.replay === true && state.isLive
         state.isLive = true
         state.stoppedReason = null
-        // 新一场直播：host 进程重启后 seq 从 1 重新计数（不清则整场帧被乱序丢弃），
-        // 上一场的冻结帧也要清掉，让「等待 Agent 打开浏览器…」占位正常出现
-        state.lastSeq = 0
-        state.frame = null
-        state.width = data?.width ?? 0
-        state.height = data?.height ?? 0
-        state.pageUrl = data?.pageUrl ?? ''
-        state.cliSession = data?.cliSession ?? 'default'
+        if (!replay) {
+          // 新一场直播：host 进程重启后 seq 从 1 重新计数（不清则整场帧被乱序丢弃），
+          // 上一场的冻结帧也要清掉，让「等待 Agent 打开浏览器…」占位正常出现
+          state.lastSeq = 0
+          state.frame = null
+          state.width = data?.width ?? 0
+          state.height = data?.height ?? 0
+          state.pageUrl = data?.pageUrl ?? ''
+          state.cliSession = data?.cliSession ?? 'default'
+        } else if (data != null) {
+          // replay 只校准元数据：宽高 0 是合法值（最小化 / 隐藏窗口），空串也是服务端真实状态，
+          // 一律按类型判断是否下发，不能用 falsy 跳过，否则重连后一直沿用刷新前的旧值
+          if (typeof data.width === 'number') state.width = data.width
+          if (typeof data.height === 'number') state.height = data.height
+          if (typeof data.pageUrl === 'string') state.pageUrl = data.pageUrl
+          if (typeof data.cliSession === 'string') state.cliSession = data.cliSession
+        }
         this.activeSessionId = sessionId
       } else if (msg.type === 'browser_frame') {
         const data = msg.data as BrowserFrameData | undefined
@@ -144,6 +156,10 @@ export const useBrowserLiveStore = defineStore('browserLive', {
     /** Tab 内「还原画中画」。 */
     restorePip() {
       if (isElectronClient()) (window as any).electronAPI?.browserLive?.restore()
+    },
+    /** 收起画中画（仅停止观看）：只隐藏窗口，不停浏览器；再次开播或 Tab 内还原可重新出现。 */
+    hidePip() {
+      if (isElectronClient()) (window as any).electronAPI?.browserLive?.hide()
     },
     /** chip 无直播时点击：直播 Tab 打开后落在回放列表模式（sessionId=null 跟随激活会话）。 */
     requestReplayBrowse(sessionId: number | null) {

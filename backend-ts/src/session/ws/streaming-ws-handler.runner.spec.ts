@@ -35,6 +35,8 @@ function buildHandler(overrides: {
     send: vi.fn(),
     register: vi.fn(),
     unregister: vi.fn(),
+    subscribe: vi.fn(),
+    getClientType: vi.fn(() => 'browser'),
     getDeviceId: vi.fn(() => null),
     getDeviceInfo: vi.fn(() => null),
     failAllForSocket: vi.fn(),
@@ -267,5 +269,192 @@ describe('StreamingWsHandler runner (browser live)', () => {
     expect(registry.sendToConnection).toHaveBeenCalledWith(socket, {
       type: 'browser_live_stop', data: { reason: 'session_end' },
     });
+  });
+
+  it('subscribeReplaysOngoingLiveStateForReconnectingClients', async () => {
+    const { handler, registry } = buildHandler();
+    registry.getUserId.mockImplementation((s: { id: string }) => (s.id.startsWith('r') ? null : 7));
+
+    // runner 直播中：started + 一帧（pageUrl 随帧更新，重放取最新地址）
+    const runner = runnerSocket('r1');
+    await handler.processTextMessage(runner, JSON.stringify({
+      type: 'runner_auth', token: jwt.generateShellToken(7, 'alice'), sessionId: 11,
+    }));
+    await flushMicrotasks();
+    await handler.processTextMessage(runner, JSON.stringify({
+      type: 'browser_live_started',
+      data: { width: 1280, height: 720, pageUrl: 'https://example.com/a', cliSession: 'ui2' },
+    }));
+    await handler.processTextMessage(runner, JSON.stringify({
+      type: 'browser_frame',
+      data: { seq: 1, ts: 1, jpeg: 'Zg==', width: 1280, height: 720, pageUrl: 'https://example.com/b', cliSession: 'ui2' },
+    }));
+
+    const userSocket = runnerSocket('user-1');
+    await handler.processTextMessage(userSocket, JSON.stringify({
+      type: 'auth', token: jwt.generateToken(7, 'alice'),
+    }));
+    await flushMicrotasks();
+    registry.sendToConnection.mockClear();
+
+    // 刷新页面后的 subscribe：重放 started（replay 标记 + 最新 pageUrl），chip / 画中画可恢复
+    await handler.processTextMessage(userSocket, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+    await flushMicrotasks();
+    expect(registry.sendToConnection).toHaveBeenCalledWith(userSocket, expect.objectContaining({
+      type: 'browser_live_started',
+      sessionId: 11,
+      data: expect.objectContaining({
+        replay: true,
+        width: 1280,
+        height: 720,
+        pageUrl: 'https://example.com/b',
+        cliSession: 'ui2',
+      }),
+    }));
+
+    // stopped 之后不再重放：已结束的直播不能被刷新复活成「直播中」
+    await handler.processTextMessage(runner, JSON.stringify({
+      type: 'browser_live_stopped', data: { reason: 'browser_exit' },
+    }));
+    registry.sendToConnection.mockClear();
+    await handler.processTextMessage(userSocket, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+    await flushMicrotasks();
+    expect(registry.sendToConnection).not.toHaveBeenCalled();
+  });
+
+  it('frame 的空串 pageUrl / cliSession 也写入重放缓存', async () => {
+    const { handler, registry } = buildHandler();
+    registry.getUserId.mockImplementation((s: { id: string }) => (s.id.startsWith('r') ? null : 7));
+
+    const runner = runnerSocket('r1');
+    await handler.processTextMessage(runner, JSON.stringify({
+      type: 'runner_auth', token: jwt.generateShellToken(7, 'alice'), sessionId: 11,
+    }));
+    await flushMicrotasks();
+    await handler.processTextMessage(runner, JSON.stringify({
+      type: 'browser_live_started',
+      data: { width: 800, height: 600, pageUrl: 'https://example.com/a', cliSession: 'ui2' },
+    }));
+    // 帧上报空串（如页面暂无 URL）：缓存要与 started 的落值口径一致，更新为最新空值，
+    // 不能因为 falsy 判断继续沿用旧地址
+    await handler.processTextMessage(runner, JSON.stringify({
+      type: 'browser_frame',
+      data: { seq: 1, ts: 1, jpeg: 'Zg==', width: 800, height: 600, pageUrl: '', cliSession: '' },
+    }));
+
+    const userSocket = runnerSocket('user-1');
+    await handler.processTextMessage(userSocket, JSON.stringify({
+      type: 'auth', token: jwt.generateToken(7, 'alice'),
+    }));
+    await flushMicrotasks();
+    registry.sendToConnection.mockClear();
+
+    await handler.processTextMessage(userSocket, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+    await flushMicrotasks();
+    expect(registry.sendToConnection).toHaveBeenCalledWith(userSocket, expect.objectContaining({
+      type: 'browser_live_started',
+      sessionId: 11,
+      data: expect.objectContaining({ replay: true, pageUrl: '', cliSession: '' }),
+    }));
+  });
+
+  it('notifyRunnerStopKeepsReplayStateUntilStoppedArrives', async () => {
+    // 终态收尾只转发 stop：Browser.close 生效（stopped 回执）前浏览器仍在跑，
+    // 并发的订阅 / 刷新仍应能重放直播态
+    const { handler, registry } = buildHandler({ getSession: vi.fn(async () => session({ phase: 'RUNNING' })) });
+    registry.getUserId.mockImplementation((s: { id: string }) => (s.id.startsWith('r') ? null : 7));
+
+    const runner = runnerSocket('r1');
+    await handler.processTextMessage(runner, JSON.stringify({
+      type: 'runner_auth', token: jwt.generateShellToken(7, 'alice'), sessionId: 11,
+    }));
+    await flushMicrotasks();
+    await handler.processTextMessage(runner, JSON.stringify({
+      type: 'browser_live_started',
+      data: { width: 800, height: 600, pageUrl: 'https://example.com/', cliSession: 'ui2' },
+    }));
+
+    (handler as unknown as { notifyRunnerStop(sessionId: number): void }).notifyRunnerStop(11);
+
+    const userSocket = runnerSocket('user-1');
+    await handler.processTextMessage(userSocket, JSON.stringify({
+      type: 'auth', token: jwt.generateToken(7, 'alice'),
+    }));
+    await flushMicrotasks();
+    registry.sendToConnection.mockClear();
+
+    await handler.processTextMessage(userSocket, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+    await flushMicrotasks();
+    expect(registry.sendToConnection).toHaveBeenCalledWith(userSocket, expect.objectContaining({
+      type: 'browser_live_started',
+      sessionId: 11,
+      data: expect.objectContaining({ replay: true, pageUrl: 'https://example.com/' }),
+    }));
+
+    // stopped 回执到达后才清理，后续订阅不再重放
+    await handler.processTextMessage(runner, JSON.stringify({
+      type: 'browser_live_stopped', data: { reason: 'session_end' },
+    }));
+    registry.sendToConnection.mockClear();
+    await handler.processTextMessage(userSocket, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+    await flushMicrotasks();
+    expect(registry.sendToConnection).not.toHaveBeenCalled();
+  });
+
+  it('subscribeReplaySkippedForTerminalSessionEvenIfStateLingers', async () => {
+    // stopped 晚到 / 丢失时缓存可能还在：终态会话按相位兜底，不能重放成「直播中」
+    let phase = 'RUNNING';
+    const getSession = vi.fn(async () => session({ phase }));
+    const { handler, registry } = buildHandler({ getSession });
+    registry.getUserId.mockImplementation((s: { id: string }) => (s.id.startsWith('r') ? null : 7));
+
+    const runner = runnerSocket('r1');
+    await handler.processTextMessage(runner, JSON.stringify({
+      type: 'runner_auth', token: jwt.generateShellToken(7, 'alice'), sessionId: 11,
+    }));
+    await flushMicrotasks();
+    await handler.processTextMessage(runner, JSON.stringify({
+      type: 'browser_live_started', data: { width: 800, height: 600, pageUrl: 'https://example.com/' },
+    }));
+
+    phase = 'COMPLETED';
+
+    const userSocket = runnerSocket('user-1');
+    await handler.processTextMessage(userSocket, JSON.stringify({
+      type: 'auth', token: jwt.generateToken(7, 'alice'),
+    }));
+    await flushMicrotasks();
+    registry.sendToConnection.mockClear();
+
+    await handler.processTextMessage(userSocket, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+    await flushMicrotasks();
+    expect(registry.sendToConnection).not.toHaveBeenCalled();
+  });
+
+  it('subscribeReplaySkipsClientTypesWithoutLiveView', async () => {
+    const { handler, registry } = buildHandler();
+    registry.getUserId.mockImplementation((s: { id: string }) => (s.id.startsWith('r') ? null : 7));
+    registry.getClientType.mockReturnValue('cli');
+
+    const runner = runnerSocket('r1');
+    await handler.processTextMessage(runner, JSON.stringify({
+      type: 'runner_auth', token: jwt.generateShellToken(7, 'alice'), sessionId: 11,
+    }));
+    await flushMicrotasks();
+    await handler.processTextMessage(runner, JSON.stringify({
+      type: 'browser_live_started', data: { width: 800, height: 600, pageUrl: 'https://example.com/' },
+    }));
+
+    const userSocket = runnerSocket('user-1');
+    await handler.processTextMessage(userSocket, JSON.stringify({
+      type: 'auth', token: jwt.generateToken(7, 'alice'),
+    }));
+    await flushMicrotasks();
+    registry.sendToConnection.mockClear();
+
+    await handler.processTextMessage(userSocket, JSON.stringify({ type: 'subscribe', sessionId: 11 }));
+    await flushMicrotasks();
+    // 终端 CLI 等无直播界面的连接不重放（避免无意义帧与未知事件）
+    expect(registry.sendToConnection).not.toHaveBeenCalled();
   });
 });

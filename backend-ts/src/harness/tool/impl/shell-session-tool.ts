@@ -21,6 +21,8 @@ const DEFAULT_AWAIT_YIELD_MS = 60_000;
 const MAX_WAIT_FOR_LENGTH = 200;
 /** MAO_BASE_URL 注入的站点地址缓存：避免每条命令都查一次系统设置。 */
 const SITE_BASE_URL_CACHE_TTL_MS = 60_000;
+/** host 模式录制开关缓存：后台切换后最多一分钟生效，避免每条命令查一次设置。 */
+const BROWSER_LIVE_RECORD_CACHE_TTL_MS = 60_000;
 
 /** 为 CLOUD shell 签发短效 token 所需的最小依赖。 */
 export interface ShellTokenIssuer {
@@ -49,6 +51,14 @@ export interface ShellBaseUrlProvider {
   getSiteBaseUrl(): Promise<string | null>;
 }
 
+/**
+ * 浏览器直播录制开关（V202）：host 模式 shell 注入 MAO_BROWSER_LIVE_RECORD，
+ * wrapper 拉起的 sidecar 读该 env 决定是否落盘回放。容器模式由 envelope.envVars 下发。
+ */
+export interface ShellBrowserLiveRecordProvider {
+  getBrowserLiveRecordEnabled(): Promise<boolean>;
+}
+
 /** bash 单引号转义，避免 JWT 等特殊字符破坏命令 */
 export function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
@@ -57,6 +67,8 @@ export function shellSingleQuote(value: string): string {
 export class ShellSessionTool extends BaseTool {
   /** 注入 MAO_BASE_URL 的站点地址缓存（60s TTL，避免每条命令都查系统设置）。 */
   private siteBaseUrlCache: { value: string | null; at: number } | null = null;
+  /** 录制开关缓存（60s TTL，与站点地址同口径）：后台切换后最多一分钟生效。 */
+  private browserLiveRecordCache: { value: boolean; at: number } | null = null;
 
   constructor(
     private readonly pathSandbox: PathSandbox,
@@ -70,6 +82,8 @@ export class ShellSessionTool extends BaseTool {
     private readonly larkUatInjector?: ShellLarkUatInjector | null,
     private readonly baseUrlProvider?: ShellBaseUrlProvider | null,
     private readonly companySsoInjector?: CompanySsoTokenInjector | null,
+    /** host 模式录制开关（容器模式不传：envelope.envVars 已下发）。 */
+    private readonly browserLiveRecordProvider?: ShellBrowserLiveRecordProvider | null,
   ) { super(); }
 
   getName(): string { return 'shell'; }
@@ -486,6 +500,7 @@ export class ShellSessionTool extends BaseTool {
   /** 为 CLOUD shell 注入站点地址与短效 JWT，供 mao / mao-agent CLI 使用。必须在写入命令前完成，否则 export 会排到命令之后。 */
   private async injectMaoToken(session: ShellSession, userId: number | null): Promise<void> {
     await this.injectMaoBaseUrl(session);
+    await this.injectBrowserLiveRecord(session);
     if (userId == null) return;
     if (this.ecpInjector) {
       try {
@@ -553,6 +568,29 @@ export class ShellSessionTool extends BaseTool {
       }
     } catch (e) {
       harnessLog('warn', `Failed to inject MAO_BASE_URL: ${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * 注入浏览器直播录制开关（host 模式）：wrapper 拉起的 sidecar 只在启动时读
+   * `MAO_BROWSER_LIVE_RECORD`，必须在命令前 export。关闭时 unset，避免常驻 shell
+   * 残留上一条命令的导出；sidecar 已在跑时改动要等它退出（2h 上限/空闲退出）后生效。
+   */
+  private async injectBrowserLiveRecord(session: ShellSession): Promise<void> {
+    if (!this.browserLiveRecordProvider) return;
+    try {
+      const now = Date.now();
+      if (!this.browserLiveRecordCache || now - this.browserLiveRecordCache.at > BROWSER_LIVE_RECORD_CACHE_TTL_MS) {
+        this.browserLiveRecordCache = {
+          value: await this.browserLiveRecordProvider.getBrowserLiveRecordEnabled(),
+          at: now,
+        };
+      }
+      session.writeStdin(this.browserLiveRecordCache.value
+        ? 'export MAO_BROWSER_LIVE_RECORD=1\n'
+        : 'unset MAO_BROWSER_LIVE_RECORD\n');
+    } catch (e) {
+      harnessLog('warn', `Failed to inject MAO_BROWSER_LIVE_RECORD: ${(e as Error).message}`);
     }
   }
 

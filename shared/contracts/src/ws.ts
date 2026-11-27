@@ -331,6 +331,11 @@ export interface BrowserLiveStartedData {
   pageUrl?: string;
   /** playwright-cli 的命名会话名（-s=xxx），缺省为 default */
   cliSession?: string;
+  /**
+   * 订阅 / 重连后的状态重放（每场直播真正的 started 只发一次，刷新会丢）。
+   * 已持有直播态的客户端只校准元数据，不清当前帧、不重置 seq。
+   */
+  replay?: boolean;
 }
 
 export interface BrowserFrameData {

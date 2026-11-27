@@ -35,7 +35,7 @@ import { EditFileTool } from './impl/edit-file-tool.js';
 import { GlobSearchTool } from './impl/glob-search-tool.js';
 import { GrepSearchTool } from './impl/grep-search-tool.js';
 import type { CompanySsoTokenInjector } from '../../auth/company-sso-token-injector.js';
-import { ShellSessionTool, type ShellBaseUrlProvider, type ShellEcpInjector, type ShellLarkUatInjector, type ShellTokenIssuer, type ShellUserLookup } from './impl/shell-session-tool.js';
+import { ShellSessionTool, type ShellBaseUrlProvider, type ShellBrowserLiveRecordProvider, type ShellEcpInjector, type ShellLarkUatInjector, type ShellTokenIssuer, type ShellUserLookup } from './impl/shell-session-tool.js';
 import { WebSearchTool } from './impl/web-search-tool.js';
 import { OpenWebPageTool } from './impl/open-web-page-tool.js';
 import { DumpUserMessagesTool } from './impl/dump-user-messages-tool.js';
@@ -90,6 +90,11 @@ export interface DefaultToolRegistryDeps {
   shellCompanySsoInjector?: CompanySsoTokenInjector | null;
   /** 站点地址（注入 shell 的 MAO_BASE_URL）；未注入时 shell 行为与改造前一致（不注入该变量）。 */
   shellBaseUrlProvider?: ShellBaseUrlProvider | null;
+  /**
+   * 浏览器直播录制开关（V202）：host 模式 shell 注入 MAO_BROWSER_LIVE_RECORD，
+   * 未注入时不写该变量（容器模式由 envelope.envVars 下发，不走这里）。
+   */
+  shellBrowserLiveRecordProvider?: ShellBrowserLiveRecordProvider | null;
   webSearch: () => Promise<WebSearchConfig>;
   webPage: WebPageConfig;
   runtimeDataResolver: RuntimeDataResolver;
@@ -179,6 +184,7 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
       deps.backgroundTaskManager, deps.gitTokenResolver,
       deps.jwtService, deps.shellUserLookup, deps.shellEcpInjector,
       deps.shellLarkUatInjector, deps.shellBaseUrlProvider, deps.shellCompanySsoInjector,
+      deps.shellBrowserLiveRecordProvider,
     ),
     new WebSearchTool(deps.webSearch),
     new OpenWebPageTool(
