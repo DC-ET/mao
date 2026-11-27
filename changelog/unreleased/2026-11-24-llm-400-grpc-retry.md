@@ -1,3 +1,0 @@
-### 后端
-
-- **网关把上游 gRPC 故障包成 400 时不再整轮失败**：sub2api 类网关在推理服务瞬断时会返回 `400` + `Request was rejected due to reason: rpc error: code = Unavailable desc = ...`，旧版按请求参数错误直接终止，该轮已完成的工具调用与上下文全部作废（需人工点飞书失败卡重试）。现在 Chat Completions / Responses / Anthropic 三种协议的流式与非流式请求，遇到 400 且错误体含 `rpc error: code =`（覆盖 Unavailable / DeadlineExceeded / Internal / ResourceExhausted）时，按 429/5xx 同一套限流重试预算与退避自动重试；其它 400（参数、图片格式、内容审核等确定性错误）仍立即失败，不受影响。
