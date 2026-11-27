@@ -86,6 +86,14 @@ export interface MessageSearchHitRow {
   score: number;
 }
 
+/** 浏览器回放跨会话列表的候选会话行（技术方案 2026-11-27 §4.3）。 */
+export interface ReplayCandidateSessionRow {
+  id: number;
+  userId: number;
+  agentId: number;
+  title: string | null;
+}
+
 /** 失败会话批量恢复的候选行：会话 + 终态错误 + 最后一条 agent 场景 LLM 调用（可空）。 */
 export interface FailedSessionCandidateRow {
   sessionId: number;
@@ -679,6 +687,61 @@ export class SessionRepository {
     return this.db.query<Session>(
       `SELECT * FROM \`session\` WHERE id IN (${placeholders}) AND ${notDeleted()}`,
       ids,
+    );
+  }
+
+  /**
+   * 浏览器回放跨会话列表的候选会话（技术方案 2026-11-27 §4.3）：按 last_activity_at
+   * 时间窗取 CLOUD 会话超集（浏览器操作必然发生在会话活跃期内，精确过滤在 manifest
+   * startedAt 上二次完成）。排序键走 idx_session_last_activity(last_activity_at, id)；
+   * execution_mode 无索引，仅作回表后的过滤条件。
+   */
+  selectReplayCandidateSessions(
+    filter: {
+      userId?: number | null;
+      agentId?: number | null;
+      sessionId?: number | null;
+      keyword?: string | null;
+      activityFrom?: string | null;
+      activityToExclusive?: string | null;
+    },
+    limit: number,
+  ): Promise<ReplayCandidateSessionRow[]> {
+    const conditions = ['deleted = 0', "execution_mode = 'CLOUD'"];
+    const params: unknown[] = [];
+    if (filter.sessionId != null) {
+      conditions.push('id = ?');
+      params.push(filter.sessionId);
+    }
+    if (filter.userId != null) {
+      conditions.push('user_id = ?');
+      params.push(filter.userId);
+    }
+    if (filter.agentId != null) {
+      conditions.push('agent_id = ?');
+      params.push(filter.agentId);
+    }
+    const keyword = filter.keyword?.trim();
+    if (keyword != null && keyword.length > 0) {
+      // 只匹配会话标题：消息正文匹配会退化成全局消息扫描（§4.2 定案不做）
+      conditions.push('title LIKE ? ESCAPE \'\\\\\'');
+      params.push(`%${escapeLike(keyword)}%`);
+    }
+    if (filter.activityFrom != null) {
+      conditions.push('last_activity_at >= ?');
+      params.push(filter.activityFrom);
+    }
+    if (filter.activityToExclusive != null) {
+      conditions.push('last_activity_at < ?');
+      params.push(filter.activityToExclusive);
+    }
+    return this.db.query<ReplayCandidateSessionRow>(
+      `SELECT id, user_id AS userId, agent_id AS agentId, title
+       FROM \`session\`
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY last_activity_at DESC, id DESC
+       LIMIT ${Math.max(1, limit)}`,
+      params,
     );
   }
 

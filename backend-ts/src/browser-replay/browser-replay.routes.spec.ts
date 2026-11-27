@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { handleError } from '../common/http-error.js';
 import { ErrorCode } from '../common/error-code.js';
 import { BrowserReplayService } from './browser-replay.service.js';
+import { BrowserReplayCatalogService } from './browser-replay-catalog.service.js';
 import { registerBrowserReplayRoutes } from './browser-replay.routes.js';
 import { RuntimeDataResolver } from '../harness/runtime/runtime-data-resolver.js';
 
@@ -26,19 +27,31 @@ function writeLive(root: string): void {
 }
 
 function fakeSessionService() {
-  return { getSession: vi.fn(async (id: number) => ({ userId: id === SESSION_ID ? OWNER : OTHER, id })) };
+  return {
+    getSession: vi.fn(async (id: number) => ({ userId: id === SESSION_ID ? OWNER : OTHER, id })),
+    getSessionsByIds: vi.fn(async (ids: number[]) =>
+      ids.map((id) => ({ id, userId: id === SESSION_ID ? OWNER : OTHER, agentId: 5, title: '会话甲' }))),
+  };
 }
 
 async function application(root: string, opts?: { userId?: number }) {
   const app = Fastify();
   app.setErrorHandler(handleError);
+  const sessionService = fakeSessionService();
   await app.register(async (api) => {
     api.addHook('preHandler', async (request) => {
       (request as { userId?: number }).userId = opts?.userId ?? OWNER;
     });
     registerBrowserReplayRoutes(api, {
-      sessionService: fakeSessionService(),
+      sessionService: sessionService as never,
       replayService: new BrowserReplayService(RuntimeDataResolver.forTest(root, path.join(root, 'home'))),
+      catalogService: new BrowserReplayCatalogService({
+        runtimeResolver: RuntimeDataResolver.forTest(root, path.join(root, 'home')),
+        replayService: new BrowserReplayService(RuntimeDataResolver.forTest(root, path.join(root, 'home'))),
+        sessionService: sessionService as never,
+        sessionRepository: { selectReplayCandidateSessions: async () => [] },
+        agentLookup: { findByIds: async (ids: number[]) => ids.map((id) => ({ id, name: `agent${id}` })) },
+      }),
     });
   });
   await app.ready();
@@ -46,6 +59,37 @@ async function application(root: string, opts?: { userId?: number }) {
 }
 
 describe('browser-replay routes（归属校验 + 白名单）', () => {
+  it('跨会话列表（/v1/browser-live/replays）：本人目录聚合 + size 上限收敛', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'mao-replay-routes-all-'));
+    writeLive(root);
+    const app = await application(root, { userId: OWNER });
+    // 夹具 startedAt=1970，range=ALL 避开默认 30D 窗口（默认档行为由 catalog spec 覆盖）
+    const res = await app.inject({ method: 'GET', url: '/v1/browser-live/replays?range=ALL&size=500' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.code).toBe(0);
+    expect(body.data.total).toBe(1);
+    expect(body.data.records[0]).toMatchObject({
+      sessionId: SESSION_ID,
+      liveId: 'L1000',
+      executionMode: 'CLOUD',
+      sessionTitle: '会话甲',
+      agentName: 'agent5',
+    });
+    // size 超上限收敛到 200
+    expect(body.data.size).toBe(200);
+    await app.close();
+  });
+
+  it('跨会话列表：他人目录不可见', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'mao-replay-routes-all-other-'));
+    writeLive(root);
+    const app = await application(root, { userId: OTHER });
+    const res = await app.inject({ method: 'GET', url: '/v1/browser-live/replays?range=ALL' });
+    expect(res.json().data.total).toBe(0);
+    await app.close();
+  });
+
   it('归属用户可列表：Result 包裹场次摘要', async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'mao-replay-routes-'));
     writeLive(root);

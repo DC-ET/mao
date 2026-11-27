@@ -675,7 +675,8 @@ describeGit('GitWriteOperationService git', () => {
     expect(run(repo, 'git', 'rev-parse', '--abbrev-ref', 'HEAD').trim()).toBe('side');
     expect(run(repo, 'git', 'rev-parse', '--abbrev-ref', 'side@{upstream}').trim()).toBe('origin/side');
     expect(branch).toBeTruthy();
-  });
+    // 真实 git clone/push/fetch/checkout：全量套件并行下常超过默认 5s 超时（非逻辑问题）
+  }, 30_000);
 
   it('switchBranchRejectsDetachedHead', async () => {
     const dir = useTmpDir('mao-gswitch-detached-');
@@ -751,6 +752,8 @@ describeGit('GitWriteOperationService git', () => {
     expect(run(repo, 'git', 'rev-parse', '--abbrev-ref', 'HEAD').trim()).toBe('feat/demo');
   });
 
+  // 真实 git 操作（远端 + stash 多轮），并行负载下会超过 vitest 默认 5s：与同文件
+  // switchBranchCreatesTrackingBranchFromRemoteRef 同口径放宽到 30s
   it('stashOpApplyPopDropRoundTrip', async () => {
     const dir = useTmpDir('mao-gstash-');
     const { repo } = await setupRemoteRepo(dir, 'stash-repo');
@@ -778,7 +781,7 @@ describeGit('GitWriteOperationService git', () => {
     expect(dropped.success).toBe(true);
     expect(dropped.message).toBe('已丢弃 stash@{0}');
     expect(run(repo, 'git', 'stash', 'list')).toBe('');
-  });
+  }, 30_000);
 
   it('stashOpApplyConflictReportsConflictAndKeepsTheScene', async () => {
     const dir = useTmpDir('mao-gstash-conflict-');

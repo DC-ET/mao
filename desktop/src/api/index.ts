@@ -1,6 +1,6 @@
 import axios, { type InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
-import type { InboxItem, InboxKind, InboxListResult, InboxPreference, InboxSource, NotificationChannel, ReplaySummary, ReplayTimeline, Result, TaskNotificationPreference } from '@mao/contracts'
+import type { InboxItem, InboxKind, InboxListResult, InboxPreference, InboxSource, NotificationChannel, BrowserReplayListItem, BrowserReplayListResult, ReplaySummary, ReplayTimeline, Result, TaskNotificationPreference } from '@mao/contracts'
 import { apiBaseUrl } from '../utils/api-base'
 import { redirectToLogin } from '../utils/login-redirect'
 import { useAuthStore } from '../stores/auth'
@@ -131,10 +131,13 @@ api.interceptors.response.use(
     if (error.response) {
       const { status, data } = error.response
       if (status === 403) {
-        // 403 是已登录无权限，不是未登录：只提示，不踢回登录页
-        ElMessage.error(data?.message || '无权限执行该操作')
-        if (error && typeof error === 'object') {
-          (error as Error & { toastShown?: boolean }).toastShown = true
+        // 403 是已登录无权限，不是未登录：只提示，不踢回登录页。
+        // skipErrorToast 对 403 同样生效：调用方按状态码自行分支（如回放 LOCAL 行归属探测），不该再弹条
+        if (!originalRequest.skipErrorToast) {
+          ElMessage.error(data?.message || '无权限执行该操作')
+          if (error && typeof error === 'object') {
+            (error as Error & { toastShown?: boolean }).toastShown = true
+          }
         }
       } else if (status !== 401 && !originalRequest.skipErrorToast) {
         ElMessage.error(data?.message || '请求失败')
@@ -498,8 +501,12 @@ export async function listMemories(params: MemoryListParams = {}): Promise<Memor
 }
 
 /** 会话存在性探测 + 跳转前校验（仅属主可见；不存在/非本人抛业务错误）。 */
-export async function getSession(sessionId: number): Promise<unknown> {
-  const { data } = await api.get(`/sessions/${sessionId}`)
+export async function getSession(sessionId: number, options?: { skipErrorToast?: boolean }): Promise<unknown> {
+  // skipErrorToast 是内部约定字段（不在 AxiosRequestConfig 上），与本文件其它调用同一 cast 口径
+  const config = options?.skipErrorToast
+    ? ({ skipErrorToast: true } as unknown as InternalAxiosRequestConfig)
+    : undefined
+  const { data } = await api.get(`/sessions/${sessionId}`, config)
   return data
 }
 
@@ -1206,6 +1213,37 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 export async function listBrowserReplays(sessionId: number | string): Promise<ReplaySummary[]> {
   const { data } = await api.get(`/sessions/${sessionId}/browser-live/replays`)
   return (data ?? []) as ReplaySummary[]
+}
+
+/** 跨会话回放列表查询参数（技术方案 2026-11-27 §4.2）：时间窗三选一，均缺时后端兜底 30D。 */
+export interface BrowserReplayListAllParams {
+  /** 预设档位 1D / 3D / 7D / 30D / 90D / ALL（后端按 Asia/Shanghai 日历计算窗口） */
+  range?: string
+  /** 自定义起始日 YYYY-MM-DD（显式传入优先于 range） */
+  dateFrom?: string
+  /** 自定义结束日 YYYY-MM-DD */
+  dateTo?: string
+  page?: number
+  /** 默认 20，后端上限 200 */
+  size?: number
+  /** 跳过 30s 结果缓存 */
+  refresh?: boolean
+}
+
+/**
+ * 本人跨会话回放列表（CLOUD，技术方案 2026-11-27 §4.2）：扫服务端 runtime 目录，
+ * 服务端只可能存在 CLOUD 录制，列表项 executionMode 恒为 CLOUD（LOCAL 录制在本机，见 IPC）。
+ */
+export async function listBrowserReplaysAll(params: BrowserReplayListAllParams = {}): Promise<BrowserReplayListResult> {
+  const query: Record<string, string | number> = {}
+  if (params.range) query.range = params.range
+  if (params.dateFrom) query.dateFrom = params.dateFrom
+  if (params.dateTo) query.dateTo = params.dateTo
+  if (params.page != null) query.page = params.page
+  if (params.size != null) query.size = params.size
+  if (params.refresh) query.refresh = 1
+  const { data } = await api.get('/browser-live/replays', { params: query })
+  return (data ?? { records: [] as BrowserReplayListItem[], total: 0, page: 1, size: 20 }) as BrowserReplayListResult
 }
 
 /** 单场 manifest + 全量帧索引；场次不存在（已被清理 / 未录制）返回 null。 */

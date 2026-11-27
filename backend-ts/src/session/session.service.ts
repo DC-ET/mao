@@ -674,6 +674,12 @@ export class SessionService {
     return session;
   }
 
+  /** 批量取会话（软删会话不在结果内）：回放跨会话列表补标题/Agent 元数据用（技术方案 2026-11-27 §4.3）。 */
+  async getSessionsByIds(ids: number[]): Promise<Session[]> {
+    if (ids.length === 0) return [];
+    return this.sessionRepo.selectByIds(ids);
+  }
+
   async deleteSession(id: number): Promise<void> {
     // 锁前预检只为快速失败：执行提交路径（IDLE/终态 → RUNNING）可能在这次读之后才落相位，
     // 真正的拒删判据在下面的事务内复查。

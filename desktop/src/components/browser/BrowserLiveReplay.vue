@@ -2,6 +2,8 @@
   <div class="browser-replay">
     <!-- 场次列表态 -->
     <div v-if="!current" class="replay-list">
+      <!-- initialLiveId 未命中（已被清理 / 不属于当前会话）：停留列表并说明，不静默失败 -->
+      <div v-if="autoOpenMissed" class="replay-hint">未找到指定的回放场次（可能已被清理）</div>
       <div v-if="!provider" class="replay-hint">
         {{ props.sessionId == null ? '尚未进入会话' : '当前端无法读取回放数据（LOCAL 会话仅在执行设备上可回看）' }}
       </div>
@@ -84,10 +86,19 @@ import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
 import type { Ref } from 'vue'
 import type { ReplayFrameMeta, ReplaySummary, ReplayTimeline } from '@mao/contracts'
 import { createBrowserReplayProvider, type BrowserReplayProvider } from '../../composables/browserReplayProvider'
+import { matchInitialReplay } from '../../utils/browserReplayList'
 import { formatDateTime } from '../../utils/datetime'
 import { replayAdvanceIndex, replayBars, replayClock, replayIndexForRatio } from '../../utils/replayPlayer'
 
-const props = defineProps<{ sessionId: number | null }>()
+const props = defineProps<{
+  sessionId: number | null
+  /**
+   * 初始场次（技术方案 2026-11-27 §6.4）：列表加载完成后按 liveId 命中即自动打开，
+   * 避免用户点两次。调用方须按行传 :key（sessionId + liveId）——watch 在 sessionId/provider
+   * 变化时会重置到列表态，自动打开逻辑要靠新实例重新武装，否则与重置竞争。
+   */
+  initialLiveId?: string
+}>()
 
 const executionMode = inject<Ref<string>>('executionMode', ref('CLOUD'))
 const provider = computed<BrowserReplayProvider | null>(() => {
@@ -99,8 +110,15 @@ const provider = computed<BrowserReplayProvider | null>(() => {
 const summaries = ref<ReplaySummary[]>([])
 const loading = ref(false)
 const current = ref<ReplayTimeline | null>(null)
+/** initialLiveId 自动打开待执行（每次列表重置后重新武装，见 props 注释） */
+const autoOpenPending = ref(false)
+/** initialLiveId 未命中：停留列表态并提示 */
+const autoOpenMissed = ref(false)
+/** 列表加载失败：失败态由 provider / 列表提示承载，不谎称「场次不存在」 */
+const listFailed = ref(false)
 
 async function loadList() {
+  listFailed.value = false
   if (!provider.value || props.sessionId == null) {
     summaries.value = []
     return
@@ -110,13 +128,31 @@ async function loadList() {
     summaries.value = await provider.value.list(props.sessionId)
   } catch {
     summaries.value = []
+    listFailed.value = true
   } finally {
     loading.value = false
   }
+  await maybeAutoOpen()
+}
+
+/** 列表落定后按 initialLiveId 自动打开：命中 → open；未命中/打开失败 → 停留列表并提示。 */
+async function maybeAutoOpen() {
+  if (!autoOpenPending.value) return
+  autoOpenPending.value = false
+  const target = matchInitialReplay(summaries.value, props.initialLiveId)
+  if (!target) {
+    autoOpenMissed.value = !listFailed.value
+    return
+  }
+  if (!(await open(target))) autoOpenMissed.value = true
 }
 
 watch(() => [props.sessionId, provider.value] as const, () => {
   backToList()
+  // 重置到列表态的同时重新武装自动打开：设置页按行 :key 挂载时新实例从初始值开始，
+  // 同一实例内 sessionId/provider 变化也按新上下文再尝试一次（§6.4）
+  autoOpenPending.value = !!props.initialLiveId
+  autoOpenMissed.value = false
   void loadList()
 }, { immediate: true })
 
@@ -318,18 +354,20 @@ const timeLabel = computed(() => {
   return `${replayClock(list[cur].ts - list[0].ts)} / ${replayClock(list[list.length - 1].ts - list[0].ts)}`
 })
 
-async function open(item: ReplaySummary) {
-  if (!provider.value || props.sessionId == null) return
+/** 打开单场回放：拉取失败 / 空时间轴保持列表态，返回 false（调用方按需提示）。 */
+async function open(item: ReplaySummary): Promise<boolean> {
+  if (!provider.value || props.sessionId == null) return false
   let timeline: ReplayTimeline | null = null
   try {
     timeline = await provider.value.timeline(props.sessionId, item.liveId)
   } catch {
-    return // 拉取失败保持列表态（404 已在 api 层转 null）
+    return false // 拉取失败保持列表态（404 已在 api 层转 null）
   }
-  if (!timeline || timeline.frames.length === 0) return
+  if (!timeline || timeline.frames.length === 0) return false
   frameCache.clear()
   current.value = timeline
   seek(0)
+  return true
 }
 
 function backToList() {

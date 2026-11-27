@@ -40,6 +40,24 @@ interface BrowserReplaySummary {
   truncated: boolean
 }
 
+/**
+ * 跨会话本机回放扫描行（技术方案 2026-11-27 §6.3）：与 @mao/contracts BrowserReplayListItem
+ * 的录制字段同构，缺会话标题 / Agent（由渲染层按 sessionId 批量补齐）。
+ * electron.d.ts 自包含，不引入包依赖，故手写镜像。
+ */
+interface BrowserReplayListAllRow {
+  sessionId: number
+  liveId: string
+  startedAt: number
+  endedAt: number | null
+  durationMs: number | null
+  frameCount: number
+  approxBytes: number
+  truncated: boolean
+  /** manifest.urls[0] ?? '' */
+  pageUrl: string
+}
+
 interface TerminalCreateResult {
   id: string
   shell: string
@@ -492,6 +510,13 @@ interface ElectronAPI {
     hide(): void
     /** 回放场次列表（V202）：fs 直读本机 runtime 目录，含未结算场；与 CLOUD API 同结构 */
     replayList(sessionId: number): Promise<BrowserReplaySummary[]>
+    /**
+     * 跨会话本机回放扫描（技术方案 2026-11-27 §6.3）：扫当前 hostKey 下全部会话目录，
+     * 按数字时间窗（epoch ms，null = 无界）过滤，单次上限 2000 场，按 startedAt 倒序。
+     * truncated = 触达返回场数上限或会话目录枚举上限，结果可能不完整（与后端
+     * truncatedCandidates 同口径，由渲染层提示缩小时间范围）。
+     */
+    replayListAll(from: number | null, to: number | null): Promise<{ rows: BrowserReplayListAllRow[]; truncated: boolean }>
     /** 回放 manifest + 全量帧索引 */
     replayTimeline(sessionId: number, liveId: string): Promise<{ manifest: BrowserReplayManifest; frames: BrowserReplayFrameMeta[] } | null>
     /** 单帧 JPEG 字节（invoke 结构化克隆直达，非法/缺失返回 null） */

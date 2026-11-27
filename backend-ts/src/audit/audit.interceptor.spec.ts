@@ -30,6 +30,20 @@ describe('audit interceptor', () => {
     expect(shouldAudit('/v1/system-settings/admin.menu.hidden', 'GET')).toBe(true);
   });
 
+  it('管理端浏览器回放：列表/timeline 照常审计，逐帧 frames 豁免（方案 2026-11-27 §D5）', () => {
+    // 列表与 timeline：一次播放留一条打开痕迹
+    expect(shouldAudit('/v1/admin/browser-replays', 'GET')).toBe(true);
+    expect(shouldAudit('/v1/admin/browser-replays/12/L1732/frames/7', 'GET')).toBe(false);
+    // 非法 seq 不命中豁免正则（仍审计，400 痕迹可查）
+    expect(shouldAudit('/v1/admin/browser-replays/12/L1732/frames/1.5', 'GET')).toBe(true);
+    // 非 frames 路径（timeline）不受豁免影响
+    expect(shouldAudit('/v1/admin/browser-replays/12/L1732/timeline', 'GET')).toBe(true);
+    // 豁免只对读方法：同路径的写方法仍审计（纵深防御，当前无写端点）
+    expect(shouldAudit('/v1/admin/browser-replays/12/L1732/frames/7', 'DELETE')).toBe(true);
+    // owner 侧 frames 路径不在豁免集（/v1/admin 前缀本就不审计读）
+    expect(shouldAudit('/v1/sessions/12/browser-live/replays/L1732/frames/7', 'GET')).toBe(false);
+  });
+
   it('resolveActionAndObjectFields', () => {
     expect(resolveAction('POST')).toBe('CREATE');
     expect(resolveAction('PUT')).toBe('UPDATE');

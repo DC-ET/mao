@@ -4,10 +4,12 @@ import { ErrorCode } from '../common/error-code.js';
 import { requireUserId, sendOk } from '../common/http-error.js';
 import { pathId, pathParam } from '../common/request.js';
 import type { BrowserReplayService } from './browser-replay.service.js';
+import { parseReplayListQuery, type BrowserReplayCatalogService } from './browser-replay-catalog.service.js';
 
 export interface BrowserReplayRouteDeps {
   sessionService: { getSession(sessionId: number): Promise<{ userId: number }> };
   replayService: BrowserReplayService;
+  catalogService: BrowserReplayCatalogService;
 }
 
 /**
@@ -31,6 +33,13 @@ export function registerBrowserReplayRoutes(app: FastifyInstance, deps: BrowserR
     }
     return Number(raw);
   }
+
+  app.get('/v1/browser-live/replays', async (request, reply: FastifyReply) => {
+    // 本人跨会话回放列表（技术方案 2026-11-27 §4.2）：扫本人 runtime 目录，默认 30D
+    const userId = requireUserId(request);
+    const { filters, page, size, refresh } = parseReplayListQuery(request, '30D');
+    return sendOk(reply, await deps.catalogService.listForUser(userId, filters, page, size, refresh));
+  });
 
   app.get('/v1/sessions/:sid/browser-live/replays', async (request, reply: FastifyReply) => {
     const userId = requireUserId(request);

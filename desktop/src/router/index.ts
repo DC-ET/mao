@@ -159,6 +159,13 @@ const routes: RouteRecordRaw[] = [
             component: () => import('../views/settings/SignalWatchersView.vue')
           },
           {
+            // 浏览器回放跨会话入口（技术方案 2026-11-27 §6.1）：命名跟随设置子路由惯例
+            // （路径段 PascalCase、无 Settings 前缀），与既有路由名无冲突
+            path: 'browser-replays',
+            name: 'BrowserReplays',
+            component: () => import('../views/settings/BrowserReplaysView.vue')
+          },
+          {
             path: 'scheduled-tasks',
             name: 'ScheduledTasks',
             component: () => import('../components/ScheduledTaskPanel.vue')

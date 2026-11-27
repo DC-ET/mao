@@ -15,6 +15,14 @@ function createLocalRuntimePaths({ getServerHostKey, getCurrentWorkspace } = {})
     return path.join(LOCAL_RUNTIME_ROOT, getServerHostKey(), String(sessionId))
   }
 
+  /**
+   * 当前服务器 hostKey 下的 runtime 根（技术方案 2026-11-27 §6.3）：跨会话扫本机回放时用。
+   * hostKey 随服务器切换动态变化，必须走 factory 注入，不能静态导出常量。
+   */
+  function resolveLocalRuntimeRoot() {
+    return path.join(LOCAL_RUNTIME_ROOT, getServerHostKey())
+  }
+
   function resolveLocalSkillsDir(sessionId) {
     return path.join(resolveLocalRuntimeDir(sessionId), 'skills')
   }
@@ -59,6 +67,7 @@ function createLocalRuntimePaths({ getServerHostKey, getCurrentWorkspace } = {})
 
   return {
     resolveLocalRuntimeDir,
+    resolveLocalRuntimeRoot,
     resolveLocalSkillsDir,
     resolveLocalShellOutputDir,
     formatLocalRuntimePath,

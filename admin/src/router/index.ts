@@ -67,6 +67,13 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '会话管理', keepAlive: true, permission: 'session:read' }
       },
       {
+        // 跨会话浏览器回放入口（技术方案 2026-11-27 §5.1）：复用 session:read，LOCAL 录制不可见
+        path: 'browser-replays',
+        name: 'BrowserReplays',
+        component: () => import('../views/session/BrowserReplayListView.vue'),
+        meta: { title: '浏览器回放', keepAlive: true, permission: 'session:read' }
+      },
+      {
         path: 'roles',
         name: 'Roles',
         component: () => import('../views/permission/RolePermissionView.vue'),

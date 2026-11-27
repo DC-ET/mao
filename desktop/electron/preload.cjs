@@ -218,6 +218,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     hide: () => ipcRenderer.send('browser-live-hide'),
     // 回放读取（V202）：主进程 fs 直读本机 runtime 目录，liveId/seq 由主进程白名单校验
     replayList: (sessionId) => ipcRenderer.invoke('browser-live-replay-list', { sessionId }),
+    // 跨会话本机扫描（技术方案 2026-11-27 §6.3）：只传数字时间窗（epoch ms，null = 无界）
+    replayListAll: (from, to) => ipcRenderer.invoke('browser-live-replay-list-all', { from, to }),
     replayTimeline: (sessionId, liveId) => ipcRenderer.invoke('browser-live-replay-timeline', { sessionId, liveId }),
     replayFrame: (sessionId, liveId, seq) => ipcRenderer.invoke('browser-live-replay-frame', { sessionId, liveId, seq }),
     onEvent: (callback) => onIpc('browser-live-event', callback),

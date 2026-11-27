@@ -23,7 +23,8 @@ import {
   Aim,
   Operation,
   Cellphone,
-  Cpu
+  Cpu,
+  VideoCamera
 } from '@element-plus/icons-vue'
 
 export interface MenuItemDef {
@@ -70,6 +71,7 @@ export const menuGroups: MenuGroupDef[] = [
     label: '运行',
     items: [
       { index: '/sessions', label: '会话管理', icon: ChatDotRound, permission: 'session:read' },
+      { index: '/browser-replays', label: '浏览器回放', icon: VideoCamera, permission: 'session:read' },
       { index: '/scheduled-tasks', label: '定时任务', icon: Timer, permission: 'scheduled-task:read' },
       { index: '/budgets', label: '用量预算', icon: Wallet, permission: 'budget:read' },
       { index: '/llm-calls', label: '调用流水', icon: Tickets, permission: 'llm-call:read' },

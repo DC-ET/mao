@@ -24,10 +24,15 @@ const RECONNECT_INTERVAL_MS = 2000
 const LIVE_FILE_POLL_INTERVAL_MS = 1500
 const LIVE_FILE_POLL_MAX_TRIES = 12
 const PIP_HIDE_AFTER_STOP_MS = 2000
+/** 跨会话本机回放扫描的单次返回上限（技术方案 2026-11-27 §6.3，与服务端 manifest 读取上限同量级） */
+const REPLAY_LIST_ALL_CAP = 2000
+/** 单次扫描枚举的会话目录上限：主进程同步 IO 不随会话总数无界增长（超限报 truncated） */
+const REPLAY_SCAN_SESSION_CAP = 2000
 const TERMINAL_PHASES = new Set(['COMPLETED', 'FAILED', 'CANCELLED'])
 
 function createBrowserLiveRuntime({
   resolveSessionRuntimeDir,
+  resolveLocalRuntimeRoot,
   getMainWindow,
   pip,
 }) {
@@ -338,6 +343,82 @@ function createBrowserLiveRuntime({
     return summaries
   }
 
+  /** 时间窗命中判定：from/to 为 epoch ms，闭区间；null = 该侧无界。 */
+  function inReplayWindow(startedAt, fromMs, toMs) {
+    if (fromMs != null && startedAt < fromMs) return false
+    if (toMs != null && startedAt > toMs) return false
+    return true
+  }
+
+  /**
+   * 跨会话本机回放扫描（技术方案 2026-11-27 §6.3）：扫 localRuntimeRoot 下各会话目录的
+   * .mao-browser/replay，只取 L\d+ 场次；只覆盖当前服务器 hostKey 的会话目录（避免跨服务器 sessionId 撞号）。
+   * 入参只接受数字时间窗（epoch ms）：非有限数字按无界处理；from > to 直接空列表。
+   * 会话目录名必须为数字；manifest.sessionId 落盘是字符串（host 侧 String(args.session)），
+   * 与目录名按字符串比对，不一致即跳过。
+   * 单次返回上限 REPLAY_LIST_ALL_CAP 场：目录名 / liveId 均按时间戳倒序扫，达到上限即停，
+   * 因此截断时保留的是较新的场次。坏 manifest / 空目录 / 目录不存在一律跳过。
+   * 另设会话目录枚举上限 REPLAY_SCAN_SESSION_CAP：主进程同步 IO 不随会话总数无界增长。
+   * 返回 { rows, truncated }：任一上限触顶都置 truncated（与后端 truncatedCandidates 同口径），
+   * 由渲染层提示「结果可能不完整」；旧主进程没有本函数，渲染层按特性探测降级。
+   */
+  function replayListAll(from, to) {
+    if (typeof resolveLocalRuntimeRoot !== 'function') return { rows: [], truncated: false }
+    const fromMs = Number.isFinite(from) ? from : null
+    const toMs = Number.isFinite(to) ? to : null
+    if (fromMs != null && toMs != null && fromMs > toMs) return { rows: [], truncated: false }
+    const runtimeRoot = resolveLocalRuntimeRoot()
+    let sessionNames = []
+    try {
+      sessionNames = fs.readdirSync(runtimeRoot)
+    } catch { return { rows: [], truncated: false } } // 本机从未录制
+    sessionNames = sessionNames
+      .filter((name) => /^\d+$/.test(name))
+      .sort((a, b) => Number(b) - Number(a))
+    let scannedSessions = 0
+    let truncated = false
+    const rows = []
+    for (const name of sessionNames) {
+      if (scannedSessions >= REPLAY_SCAN_SESSION_CAP) {
+        truncated = true
+        break
+      }
+      scannedSessions += 1
+      const replayRoot = path.join(runtimeRoot, name, '.mao-browser', 'replay')
+      let liveNames = []
+      try {
+        liveNames = fs.readdirSync(replayRoot)
+      } catch { continue } // 该会话从未录制
+      liveNames = liveNames
+        .filter((liveId) => LIVE_ID_PATTERN.test(liveId))
+        .sort((a, b) => Number(b.slice(1)) - Number(a.slice(1)))
+      for (const liveId of liveNames) {
+        if (!inReplayWindow(Number(liveId.slice(1)), fromMs, toMs)) continue
+        const manifest = readManifestSafe(path.join(replayRoot, liveId), liveId)
+        if (!manifest) continue
+        if (String(manifest.sessionId) !== name) continue
+        rows.push({
+          sessionId: Number(name),
+          liveId: manifest.liveId,
+          startedAt: manifest.startedAt,
+          endedAt: manifest.endedAt ?? null,
+          durationMs: manifest.durationMs ?? null,
+          frameCount: manifest.frameCount ?? 0,
+          approxBytes: manifest.approxBytes ?? 0,
+          truncated: manifest.truncated === true,
+          pageUrl: Array.isArray(manifest.urls) ? manifest.urls[0] ?? '' : '',
+        })
+        if (rows.length >= REPLAY_LIST_ALL_CAP) {
+          truncated = true
+          break
+        }
+      }
+      if (rows.length >= REPLAY_LIST_ALL_CAP) break
+    }
+    rows.sort((a, b) => b.startedAt - a.startedAt)
+    return { rows, truncated }
+  }
+
   function replayTimeline(sessionId, liveId) {
     const sid = Number(sessionId)
     if (!Number.isSafeInteger(sid) || sid <= 0) return null
@@ -419,6 +500,8 @@ function createBrowserLiveRuntime({
     ipcMain.on('browser-live-hide', () => hidePip())
     // 回放读取（V202）：renderer 传入的 liveId/seq 经白名单 + containment 断言后 fs 直读
     ipcMain.handle('browser-live-replay-list', (_e, payload) => replayList(payload?.sessionId))
+    // 跨会话本机扫描（技术方案 2026-11-27 §6.3）：renderer 只传数字时间窗，根目录固定本机 runtime
+    ipcMain.handle('browser-live-replay-list-all', (_e, payload) => replayListAll(payload?.from, payload?.to))
     ipcMain.handle('browser-live-replay-timeline', (_e, payload) => replayTimeline(payload?.sessionId, payload?.liveId))
     ipcMain.handle('browser-live-replay-frame', (_e, payload) => replayFrame(payload?.sessionId, payload?.liveId, payload?.seq))
   }
@@ -451,7 +534,7 @@ function createBrowserLiveRuntime({
 
   return {
     attachLocalSession, relayRendererEvent, stopBrowser, sessionEnded, hidePip, registerIpc, shutdown, snapshot,
-    replayList, replayTimeline, replayFrame,
+    replayList, replayListAll, replayTimeline, replayFrame,
   }
 }
 

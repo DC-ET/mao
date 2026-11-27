@@ -28,13 +28,20 @@ const AUDITED_WRITE_EXCLUDES = ['/v1/scheduled-tasks/cron-preview'];
  * 逐条留痕只会淹没审计日志；同一路径的写入（PUT）仍照常审计。
  */
 const AUDITED_READ_EXCLUDES = ['/v1/system-settings/menu-visibility'];
+/**
+ * 读取型豁免正则（技术方案 2026-11-27 §D5）：管理端浏览器回放的逐帧请求一次播放会打
+ * 几十到几百个 frames/:seq，逐条留痕会淹没审计日志；列表与 timeline 照常审计
+ * （一次播放留一条打开痕迹）。匹配口径与 app-hooks 一致：路径已去 query 串。
+ */
+const AUDITED_READ_EXCLUDE_PATTERNS = [/^\/v1\/admin\/browser-replays\/\d+\/L\d+\/frames\/\d+$/];
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 export function shouldAudit(path: string | null | undefined, method?: string): boolean {
   if (path == null || path.startsWith('/v1/auth') || path.startsWith('/v1/audit/logs')) {
     return false;
   }
-  if (!WRITE_METHODS.has(method ?? '') && AUDITED_READ_EXCLUDES.includes(path)) {
+  if (!WRITE_METHODS.has(method ?? '')
+    && (AUDITED_READ_EXCLUDES.includes(path) || AUDITED_READ_EXCLUDE_PATTERNS.some((pattern) => pattern.test(path)))) {
     return false;
   }
   if (AUDITED_PREFIXES.some((prefix) => path.startsWith(prefix))) {

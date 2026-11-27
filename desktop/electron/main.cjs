@@ -129,6 +129,8 @@ const pipManager = createPipWindowManager({
 })
 const browserLive = createBrowserLiveRuntime({
   resolveSessionRuntimeDir: localRuntimePaths.resolveLocalRuntimeDir,
+  // 跨会话本机回放扫描根（技术方案 2026-11-27 §6.3）：随 hostKey 动态变化，同款 factory 注入
+  resolveLocalRuntimeRoot: localRuntimePaths.resolveLocalRuntimeRoot,
   getMainWindow: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null),
   pip: pipManager,
 })

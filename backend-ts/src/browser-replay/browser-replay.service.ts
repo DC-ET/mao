@@ -4,7 +4,21 @@ import type { ReplayFrameMeta, ReplayManifest, ReplaySummary, ReplayTimeline } f
 import type { RuntimeDataResolver } from '../harness/runtime/runtime-data-resolver.js';
 
 /** liveId 形态白名单：sidecar 录制器分配的 `L<毫秒时间戳>`（技术方案 2026-11-22 §4.1）。 */
-const LIVE_ID_PATTERN = /^L\d+$/;
+export const LIVE_ID_PATTERN = /^L\d+$/;
+
+/**
+ * manifest.json 解析容错（纯函数，service 与跨会话 catalog 共用，避免两套解析口径）：
+ * 坏 JSON / liveId 不符 / startedAt 非数字按"本场不存在"处理。
+ */
+export function parseReplayManifest(raw: string, liveId: string): ReplayManifest | null {
+  try {
+    const parsed = JSON.parse(raw) as ReplayManifest;
+    if (parsed?.liveId !== liveId || typeof parsed?.startedAt !== 'number') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * 浏览器直播回放读取服务（技术方案 2026-11-22 §4.1）：数据源是会话 runtime 目录下的
@@ -90,9 +104,7 @@ export class BrowserReplayService {
   /** manifest 读取容错：缺文件 / 坏 JSON / liveId 不符按"本场不存在"处理。 */
   private readManifest(liveDir: string, liveId: string): ReplayManifest | null {
     try {
-      const parsed = JSON.parse(readFileSync(path.join(liveDir, 'manifest.json'), 'utf8')) as ReplayManifest;
-      if (parsed?.liveId !== liveId || typeof parsed?.startedAt !== 'number') return null;
-      return parsed;
+      return parseReplayManifest(readFileSync(path.join(liveDir, 'manifest.json'), 'utf8'), liveId);
     } catch {
       return null;
     }

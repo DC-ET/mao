@@ -27,6 +27,15 @@ test('resolveLocalRuntimeDir：hostKey 与 sessionId 进入 ~/.mao/runtime', () 
   assert.ok(paths.resolveLocalRuntimeDir('7').endsWith(path.join(HOST, '7')))
 })
 
+test('resolveLocalRuntimeRoot：当前 hostKey 下的 runtime 根（跨会话回放扫描用，随服务器切换）', () => {
+  assert.equal(makePaths().resolveLocalRuntimeRoot(), path.join(os.homedir(), '.mao', 'runtime', HOST))
+  // hostKey 动态变化：同一 factory 换个注入即跟随，不能是静态常量
+  const other = createLocalRuntimePaths({ getServerHostKey: () => 'other.example.com', getCurrentWorkspace: () => '' })
+  assert.equal(other.resolveLocalRuntimeRoot(), path.join(os.homedir(), '.mao', 'runtime', 'other.example.com'))
+  // 会话目录挂在根下一级
+  assert.ok(makePaths().resolveLocalRuntimeDir(42).startsWith(makePaths().resolveLocalRuntimeRoot() + path.sep))
+})
+
 test('formatLocalRuntimePath：以 ~/.mao/runtime 开头，不展开 home', () => {
   const paths = makePaths()
   const display = paths.formatLocalRuntimePath(42, 'shellOutput', 'abc.out')

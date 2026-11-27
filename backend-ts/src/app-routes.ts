@@ -138,6 +138,8 @@ import { registerUploadRoutes } from './config/upload.routes.js';
 import { registerSessionRoutes } from './session/session.routes.js';
 import { registerBrowserReplayRoutes } from './browser-replay/browser-replay.routes.js';
 import { BrowserReplayService } from './browser-replay/browser-replay.service.js';
+import { BrowserReplayCatalogService } from './browser-replay/browser-replay-catalog.service.js';
+import { registerBrowserReplayAdminRoutes } from './browser-replay/browser-replay-admin.routes.js';
 import { registerSessionShareRoutes } from './session/session-share.routes.js';
 import { MysqlSessionShareRepository } from './session/session-share.repository.js';
 import { SessionShareService } from './session/session-share.service.js';
@@ -575,9 +577,39 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     });
     // 浏览器直播回放读取（技术方案 2026-11-22 §4.1）：数据源是会话 runtime 目录（无 DB 表），
     // 归属校验走 sessionService.getSession + userId 比对，与 session.routes 同口径
+    const browserReplayService = new BrowserReplayService(runtimeResolver);
+    // 跨会话回放列表聚合（技术方案 2026-11-27 §4.3）：扫 runtime manifest + 30s 缓存，零 DB 迁移
+    // User/Agent 读出口径的 id 可选，显式映射成 UserRef/AgentRef 并滤掉缺 id 的行：
+    // 不用 as never 掩盖，否则元数据 Map 会静默产出 undefined 键（loadUsernames/loadAgentNames）
+    const browserReplayCatalogService = new BrowserReplayCatalogService({
+      runtimeResolver,
+      replayService: browserReplayService,
+      sessionService,
+      sessionRepository: sessionRepo,
+      userLookup: {
+        findByIds: async (ids: number[]) => {
+          const users = await userRepo.findByIds(ids);
+          return users.filter((user) => user.id != null).map((user) => ({ id: user.id!, username: user.username }));
+        },
+      },
+      agentLookup: {
+        findByIds: async (ids: number[]) => {
+          const agents = await agentRepo.findByIds(ids);
+          return agents.filter((agent) => agent.id != null).map((agent) => ({ id: agent.id!, name: agent.name }));
+        },
+      },
+    });
     registerBrowserReplayRoutes(api, {
       sessionService,
-      replayService: new BrowserReplayService(runtimeResolver),
+      replayService: browserReplayService,
+      catalogService: browserReplayCatalogService,
+    });
+    // 管理后台回放入口（技术方案 2026-11-27 §4.2）：session:read + 全局审计，LOCAL 会话拒绝
+    registerBrowserReplayAdminRoutes(api, {
+      sessionService,
+      replayService: browserReplayService,
+      catalogService: browserReplayCatalogService,
+      permissionService,
     });
     const sessionShareService = new SessionShareService(
       new MysqlSessionShareRepository(db),

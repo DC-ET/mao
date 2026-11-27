@@ -48,3 +48,38 @@ export interface ReplayTimeline {
   manifest: ReplayManifest;
   frames: ReplayFrameMeta[];
 }
+
+/**
+ * 跨会话回放列表项（owner / admin 共用；admin 独有字段可选）。
+ * 技术方案 2026-11-27 §4.1：数据源是扫 runtime 目录里的 manifest，无 DB 索引表。
+ */
+export interface BrowserReplayListItem {
+  sessionId: number;
+  liveId: string;
+  executionMode: 'CLOUD' | 'LOCAL';
+  sessionTitle: string | null;
+  agentId: number | null;
+  agentName: string | null;
+  /** 仅 admin 列表返回。 */
+  userId?: number;
+  /** 仅 admin 列表返回。 */
+  username?: string;
+  startedAt: number;
+  /** null = 未正常结算的场（崩溃/超时）；列表时长列按「未结束」展示。 */
+  endedAt: number | null;
+  durationMs: number | null;
+  frameCount: number;
+  approxBytes: number;
+  truncated: boolean;
+  /** manifest.urls[0] ?? ''。 */
+  pageUrl: string;
+}
+
+export interface BrowserReplayListResult {
+  records: BrowserReplayListItem[];
+  total: number;
+  page: number;
+  size: number;
+  /** 候选会话/manifest 读取超过上限被截断：提示调用方缩小筛选范围。 */
+  truncatedCandidates?: boolean;
+}

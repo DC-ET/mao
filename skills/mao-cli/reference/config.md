@@ -213,6 +213,8 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 | `MAO_BROWSER_LIVE_RECORD` | 未注入 | sidecar 采集侧录制开关（=1 开启）。由后端按 `browserLive.recordEnabled` 自动注入（CLOUD 容器模式走 envelope、CLOUD host 模式走 shell env、桌面 LOCAL 走主进程 shell env），无需手工配置。注入前已启动的采集进程（同一会话内）需等它退出（浏览器关闭 / 2h 上限）后才生效 |
 | `MAO_BROWSER_LIVE_RECORD_MAX_MB` | 300 | 单场回放体积上限（MB），超限截断停录本场，直播不受影响 |
 
+2026-11-27 起新增两个跨会话回放入口（数据源不变，零 DB 迁移）：管理后台「运行 → 浏览器回放」（跨用户全局列表，`session:read` + 全局审计留痕，逐帧请求按路径豁免；仅云端录制，默认最近 7 天）与桌面「设置 → 浏览器回放」（本人全部录制，默认最近 30 天；Electron 另含本机 `~/.mao/runtime/<当前服务器>/` 下的 LOCAL 录制扫描，改了主进程需重出桌面安装包）。列表为扫盘聚合：30 秒缓存、`refresh=1` 强制刷新，候选会话 / manifest 读取超上限时返回截断提示而非静默丢数据。
+
 ### 密钥轮换注意
 
 - 更换 `APP_GIT_CREDENTIAL_SECRET` 前需用旧密钥解密、新密钥重加密 `user_git_credential` 表。
