@@ -116,6 +116,8 @@ test('all three tabs preserve values and save the complete payload', async ({ pa
     avatarUrl: null, name: '跨页签 Agent', description: '保留描述', systemPrompt: '保留角色定义',
     skillNames: ['mock-skill'], mcpServerIds: [21], isDefault: 1, defaultModelId: 11,
     clientVisible: true, httpToolIds: [],
+    // 问题上报开关（2026-11-27 agent-report）：表单缺省勾选，创建时随 payload 提交 true
+    reportIssueEnabled: true,
     // 特色工具（2026-11-27）：未勾选时提交空数组，后端按未启用处理
     featuredTools: [],
     // 特色工具模型绑定（2026-11-27）：未指定 = null（跟随该类型默认模型）
