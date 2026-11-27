@@ -1,7 +1,8 @@
 import { getToken } from './auth-storage'
+import { apiBaseUrl as resolveApiBaseUrl } from './api-base'
 
 export function apiBaseUrl(): string {
-  return import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1'
+  return resolveApiBaseUrl()
 }
 
 export function sharePageUrl(token: string, isPublic: boolean): string {

@@ -98,7 +98,7 @@ npm run dev:electron  # Electron（LOCAL 工具）
 
 **管理后台** `admin/`：`.env.development` 使用 `/api/v1`（Vite 代理到 9080）；`.env.production` 为 `/api/v1`（Nginx 反代）。
 
-**桌面端** `desktop/`：`.env.development` 为 `http://localhost:9080/api/v1`；`.env.production` 改为部署域名如 `https://mao.example.com/api/v1`。
+**桌面端** `desktop/`：`.env.development` 为 `http://localhost:9080/api/v1`；`.env.production` 默认不设置 `VITE_API_BASE_URL`，构建后按页面 origin 同源推导 API / WebSocket / OTA 地址。仅 split-domain（SPA 与 API 不同源）部署才显式设置 `VITE_API_BASE_URL`（必要时加 `VITE_WS_BASE_URL`）。
 
 可用 `.env.local` 覆盖（已被 gitignore）。
 

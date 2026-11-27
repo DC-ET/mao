@@ -1,4 +1,5 @@
 import { parseDateTime, formatDateTime } from './datetime'
+import { sha256Hex } from './sha256'
 import type { GitChangedFile, GitTreeNode } from '../types/git'
 
 /**
@@ -214,9 +215,14 @@ export function collectTreeFilePaths(node: GitTreeNode, out: string[] = []): str
  * 与后端 discardDigest / Electron gitOperations.discardDigest 同算法；不一致时服务端拒绝执行。
  */
 export async function gitDiscardDigest(paths: string[]): Promise<string> {
-  const bytes = new TextEncoder().encode([...paths].sort().join('\n'))
-  const hash = await crypto.subtle.digest('SHA-256', bytes)
-  return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('')
+  const text = [...paths].sort().join('\n')
+  const bytes = new TextEncoder().encode(text)
+  // HTTP 部署（非安全上下文）下 crypto.subtle 不可用，回退纯 JS 实现。
+  if (typeof crypto !== 'undefined' && crypto.subtle?.digest) {
+    const hash = await crypto.subtle.digest('SHA-256', bytes)
+    return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('')
+  }
+  return sha256Hex(text)
 }
 
 /** 收集树中全部目录路径（折叠态集合清理用）。 */

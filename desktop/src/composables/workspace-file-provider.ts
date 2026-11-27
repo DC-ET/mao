@@ -3,6 +3,7 @@ import { api } from '../api'
 import { getToken } from '../utils/auth-storage'
 import { isAndroidCapacitor, openExternalUrl } from '../utils/capacitor'
 import { isWechatBrowser } from '../utils/user-agent'
+import { apiBaseUrl } from '../utils/api-base'
 import { resolveWorkspaceFilePath } from '../utils/workspace-path'
 
 export interface DirectoryEntry {
@@ -508,7 +509,7 @@ function dataUriToBlob(dataUri: string, mime: string): Blob {
   return new Blob([bytes], { type: mime })
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1'
+const API_BASE = apiBaseUrl()
 
 function mapCloudEntries(entries: CloudDirectoryEntry[] | undefined): DirectoryEntry[] {
   return (entries ?? []).map(({ mtimeMs, ...rest }) => ({

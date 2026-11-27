@@ -51,6 +51,7 @@ import {
   type SessionShareInfo,
 } from '../../api'
 import { sharePageUrl } from '../../utils/sessionShare'
+import { copyText as copyToClipboard } from '../../utils/clipboard'
 
 const props = defineProps<{
   modelValue: boolean
@@ -135,12 +136,9 @@ async function revoke() {
 }
 
 async function copy() {
-  try {
-    await navigator.clipboard.writeText(link.value)
-    ElMessage.success('已复制链接')
-  } catch {
-    ElMessage.error('复制失败')
-  }
+  const ok = await copyToClipboard(link.value)
+  if (ok) ElMessage.success('已复制链接')
+  else ElMessage.error('复制失败')
 }
 </script>
 

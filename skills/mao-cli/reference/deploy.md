@@ -16,6 +16,8 @@
 
 桌面路由勿占用 `/admin`、`/api`、`/uploads`。已有**双域名**环境的 Nginx 调整见仓库 [`docs/guides/single-domain-nginx-migration.md`](../../../docs/guides/single-domain-nginx-migration.md)。
 
+**同源前置（2026-11-27 起）**：desktop 前端默认按当前页面 origin 推导 API / WebSocket / OTA 地址，一份 `desktop/dist` 可部署到任意站点，不再按域名重新构建。站点必须在**同一 origin** 提供 `/api/v1` 与 `/uploads`（即上面的单域 Nginx 结构）。split-domain（SPA 与 API 不同源）必须在构建 desktop 时显式设置 `VITE_API_BASE_URL` / `VITE_WS_BASE_URL`；站点必须部署在根，不支持 `https://host/mao` 子路径。
+
 ## 目录结构
 
 ```
@@ -102,7 +104,7 @@ cd /opt/mao && git checkout main
 ```bash
 cd /opt/mao/backend-ts && npm ci && npm run build
 cd /opt/mao/admin && npm ci && npm run build
-cd /opt/mao/desktop && npm ci && npm run build   # 先改 desktop/.env.production
+cd /opt/mao/desktop && npm ci && npm run build   # .env.production 默认同源，无需按域名修改
 ```
 
 或：
@@ -380,7 +382,7 @@ Flyway 在启动时自动迁移；升级期间勿多实例并发启动后端。
 
 ```bash
 cd desktop
-# 修改 .env.production 为部署域名
+# 无需按域名改 .env.production：默认同源。仅 split-domain 才显式设 VITE_API_BASE_URL
 npm ci && npm run build && npm run dist
 ```
 
@@ -394,7 +396,9 @@ npm ci && npm run build && npm run dist
 cd /opt/mao/android && bash build-apk.sh
 ```
 
-APK 发布到 `/opt/mao-data/uploads/releases/`。详见 [android.md](android.md)。
+可选参数：`--server-url` 写入编译期默认站点；`--version-code` 显式抬高 versionCode（构建前会校验本机 `android-latest.json` 的下限）；私有站发版用 `MAO_PUBLIC_BASE_URL=https://<站点> bash build-apk.sh` 让清单 `downloadUrl` 指向本站。APK 发布到 `/opt/mao-data/uploads/releases/`，Nginx 的 `/uploads/` 需可访问。详见 [android.md](android.md)。
+
+**私有站 OTA**：私有站只托管官方签名 APK + 该站自己的 `android-latest.json`，不要用私有 keystore 重新构建——签名不同无法覆盖安装，versionCode 不高于已装版本也会被拒绝。私有站没有 releases 目录时 OTA 返回 `not-available` 且不弹提示，不影响 App 使用。
 
 ## 九、访问地址
 

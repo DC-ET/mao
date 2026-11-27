@@ -2,8 +2,9 @@ import type { InternalAxiosRequestConfig } from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import { getToken } from '../utils/auth-storage'
+import { apiBaseUrl } from '../utils/api-base'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1'
+const API_BASE = apiBaseUrl()
 const SKIP_BUSINESS_CODES = [3044, 3045]
 const OVERWRITE_OPS = new Set(['write', 'copy', 'upload'])
 

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 及以下：服务器地址与 HTTP 开关不进云备份。 -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="mao_server_config.xml" />
+</full-backup-content>

@@ -1,6 +1,7 @@
 import axios, { type InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
 import type { InboxItem, InboxKind, InboxListResult, InboxPreference, InboxSource, NotificationChannel, ReplaySummary, ReplayTimeline, Result, TaskNotificationPreference } from '@mao/contracts'
+import { apiBaseUrl } from '../utils/api-base'
 import { redirectToLogin } from '../utils/login-redirect'
 import { useAuthStore } from '../stores/auth'
 import { getRefreshToken, getToken, setTokens } from '../utils/auth-storage'
@@ -15,7 +16,7 @@ async function forceRelogin(): Promise<void> {
 }
 
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1',
+  baseURL: apiBaseUrl(),
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json'
@@ -34,7 +35,7 @@ export async function doRefreshToken(): Promise<string> {
   const refreshToken = getRefreshToken()
   if (!refreshToken) throw new Error('No refresh token')
 
-  const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1'
+  const baseURL = apiBaseUrl()
   const resp = await axios.post<Result<{ accessToken: string; refreshToken: string }>>(
     `${baseURL}/auth/refresh`,
     { refreshToken }

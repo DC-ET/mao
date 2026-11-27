@@ -51,13 +51,13 @@ npm run dist
 | 配置入口 | 应用菜单「服务器设置…」；桌面端设置 →「服务器」；两个入口均为「当前连接状态卡 + 历史地址一键切换 + 手动连接表单」结构 |
 | 历史快切 | 连接成功过的地址存 `userData/server-history.json`（最多 10 个，最近连接置顶），列表内一键切换（不同服务器弹确认），删除两步确认 |
 | 环境变量 | `MAO_DESKTOP_SERVER_URL` 锁定站点（优先于配置文件）；`MAO_DESKTOP_UPDATE_URL` 覆盖更新源 |
-| 地址归一化 | 接受站点根、`/api`、`/api/v1`；无协议默认 `https://` |
+| 地址归一化 | 接受站点根、`/api`、`/api/v1`；无协议默认 `https://`。安卓壳的选择器一期只接受站点根，子路径会拒绝 |
 | 切换行为 | 各服务器登录分别保存在本机（`userData/auth.json` 按 host 分槽）。切回时登录仍有效则直接进入；主动退出、登录过期，或从历史删除该服务器且没有其他地址指向同一 host 后，需重新登录。切换仍关闭终端/MCP/本地 Shell。LOCAL 目录按 host 隔离：`~/.mao/runtime/<host>/<sessionId>` |
 | 自动更新 | `follow-site`（默认，跟随当前站 `/api/uploads/releases/`）/ `package-default` / `disabled` |
 
-**私有部署前提**：每套 Mao 仍需在本域构建并部署桌面 Web（`VITE_API_BASE_URL=https://<本域>/api/v1`），壳只负责加载该站 SPA。各站 `version.json` 与前端资源同域即可。
+**私有部署前提**：每套 Mao 必须在同一 origin 提供 `/api/v1` 与 `/uploads`，并部署包含同源改造的桌面 Web `desktop/dist`；壳只负责加载该站 SPA。前端已同源化，**同源私有站无需按域名改 `.env.production` 重新构建**。split-domain（SPA 与 API 不同源）站点必须在构建时显式设置 `VITE_API_BASE_URL` / `VITE_WS_BASE_URL`。站点必须部署在根，不支持 `https://host/mao` 这类子路径：安卓选择器会直接拒绝；已有 Electron 子路径配置需保留 `VITE_API_BASE_URL` 显式覆盖，或迁移到根。
 
-API 地址由该站前端构建产物注入；壳内 skill-sync 等主进程请求从当前站点推导 `{origin}/api`。
+API 地址由该站前端按页面 origin 推导；壳内 skill-sync 等主进程请求仍从当前站点推导 `{origin}/api`。
 
 ## 自动更新
 

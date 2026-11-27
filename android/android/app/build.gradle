@@ -4,6 +4,14 @@ apply plugin: 'com.android.application'
 def maoVersionCode = project.findProperty('MAO_VERSION_CODE')?.toInteger() ?: 1
 def maoVersionName = project.findProperty('MAO_VERSION_NAME') ?: '0.0.1'
 
+// 私有分发的编译期默认站点（官方团队构建；产物仍是官方签名）
+def maoDefaultServerUrl = project.findProperty('MAO_DEFAULT_SERVER_URL')
+        ?: System.getenv('MAO_DEFAULT_SERVER_URL')
+        ?: ''
+def maoDefaultServerUrlEscaped = maoDefaultServerUrl
+        .replace('\\', '\\\\')
+        .replace('"', '\\"')
+
 // release 签名凭据从环境变量注入（不写入代码库）
 def maoKeystorePath = System.getenv('MAO_KEYSTORE_PATH')
 def maoKeystorePassword = System.getenv('MAO_KEYSTORE_PASSWORD')
@@ -20,6 +28,7 @@ android {
         versionCode maoVersionCode
         versionName maoVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField "String", "MAO_DEFAULT_SERVER_URL", "\"${maoDefaultServerUrlEscaped}\""
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
@@ -62,6 +71,7 @@ dependencies {
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
+    testImplementation "org.json:json:20240303"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')

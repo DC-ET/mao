@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+：服务器地址与 HTTP 开关既不云备份，也不随设备迁移。 -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="mao_server_config.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="mao_server_config.xml" />
+    </device-transfer>
+</data-extraction-rules>

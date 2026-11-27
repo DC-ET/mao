@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   buildGitTree,
   collectDirPaths,
@@ -299,6 +299,16 @@ describe('discard helpers', () => {
   it('gitDiscardDigest 与后端 / Electron 同一测试向量（排序后 \\n 连接取 SHA-256）', async () => {
     expect(await gitDiscardDigest(['src/b.ts', 'a.txt', '中文.png']))
       .toBe('b725ad5be7af285c2495ae3c1689c6e2bd2cdd13c515da0c48dcc1a609d24061')
+  })
+
+  it('crypto.subtle 不可用时回退纯 JS SHA-256（HTTP 部署）', async () => {
+    vi.stubGlobal('crypto', {})
+    try {
+      expect(await gitDiscardDigest(['src/b.ts', 'a.txt', '中文.png']))
+        .toBe('b725ad5be7af285c2495ae3c1689c6e2bd2cdd13c515da0c48dcc1a609d24061')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('collectTreeFilePaths 收齐目录节点下的全部文件路径', () => {

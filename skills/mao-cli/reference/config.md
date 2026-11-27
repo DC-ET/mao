@@ -223,8 +223,8 @@ web_search 工具支持 Tavily / TinyFish 双实现，在管理后台「系统�
 
 | 变量 | 说明 |
 |------|------|
-| `VITE_API_BASE_URL` | API 根，如 `/api/v1` 或完整 URL |
-| `VITE_WS_BASE_URL` | WebSocket（可选，默认同域推导） |
+| `VITE_API_BASE_URL` | 构建期覆盖 API 根。生产默认不设置，运行时按页面 origin 推导 `{origin}/api/v1`；仅 split-domain（SPA 与 API 不同源）才显式设置完整 URL |
+| `VITE_WS_BASE_URL` | 构建期覆盖 WebSocket（可选，默认从 API 地址推导） |
 
 ## mao-cli / mao-agent 环境变量
 

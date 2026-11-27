@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 // 正文图片解析 + 失败回退（utils/markdownImages）：桌面 vitest 全局是 node 环境，本文件单开 DOM。
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const authState = vi.hoisted(() => ({ token: null as string | null }))
 vi.mock('./auth-storage', () => ({ getToken: () => authState.token }))
+
+// 固定 API 基址：同源化后 jsdom 默认 origin 是 http://localhost:3000，这里保持旧断言口径。
+vi.stubEnv('VITE_API_BASE_URL', 'http://localhost:9080/api/v1')
+afterAll(() => vi.unstubAllEnvs())
 
 const { BROKEN_IMAGE_CLASS, decorateMarkdownImages, isWorkspaceRelativeImageSrc, toWorkspaceImageUrl } =
   await import('./markdownImages')

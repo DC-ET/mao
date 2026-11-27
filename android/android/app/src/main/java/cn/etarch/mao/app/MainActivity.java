@@ -3,6 +3,7 @@ package cn.etarch.mao.app;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -28,6 +29,12 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.CapConfig;
+
+import org.json.JSONObject;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 
 /**
  * 主 Activity（Capacitor 壳）：
@@ -43,6 +50,7 @@ public class MainActivity extends BridgeActivity {
     private static final String TAG = "MaoMain";
     private static final String PREFS = "mao_webview";
     private static final String KEY_ASSET_VERSION = "asset_version_code";
+    private static final int REQ_SERVER_PICKER = 1001;
 
     /** 回前台探测：延迟等待 WebView 恢复后再探测 */
     private static final long RECOVERY_PROBE_DELAY_MS = 2_000;
@@ -73,6 +81,8 @@ public class MainActivity extends BridgeActivity {
     private TextView loadingMessage;
     private ProgressBar loadingProgress;
     private Button loadingRetryButton;
+    private Button loadingServerButton;
+    private boolean serverPickerOpen = false;
     private boolean firstPageLoaded = false;
     private int loadingAttempt = 0;
 
@@ -105,6 +115,46 @@ public class MainActivity extends BridgeActivity {
                     + "||!!(document.getElementById('app')&&document.getElementById('app').children.length>0);"
                     + "}catch(e){return false}})()";
 
+    /**
+     * 动态 Capacitor 配置：在 Bridge 创建前把 server.url 换成当前生效站点。
+     * 使用 assets JSON 克隆 CapConfig，保留 android.adjustMarginsForEdgeToEdge 等全部原配置。
+     */
+    @Override
+    protected void load() {
+        String target = ServerConfigStore.getEffectiveBaseUrl(this);
+        try {
+            JSONObject asset = readAssetJson("capacitor.config.json");
+            JSONObject server = asset.optJSONObject("server");
+            if (server == null) {
+                server = new JSONObject();
+                asset.put("server", server);
+            }
+            server.put("url", target);
+            if (BuildConfig.DEBUG) {
+                JSONObject android = asset.optJSONObject("android");
+                if (android == null) {
+                    android = new JSONObject();
+                    asset.put("android", android);
+                }
+                android.put("webContentsDebuggingEnabled", true);
+            }
+            this.config = new CapConfig(getAssets(), asset);
+        } catch (Exception e) {
+            Log.w(TAG, "build CapConfig failed for " + target + ", fallback to assets", e);
+        }
+        super.load();
+    }
+
+    private JSONObject readAssetJson(String name) throws Exception {
+        try (InputStream input = getAssets().open(name)) {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+            return new JSONObject(output.toString("UTF-8"));
+        }
+    }
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         // 必须在 super.onCreate() 之前调用：正确关闭 Android 12+ SplashScreen。
@@ -112,6 +162,7 @@ public class MainActivity extends BridgeActivity {
 
         registerPlugin(AppUpdatePlugin.class);
         registerPlugin(OpenUrlPlugin.class);
+        registerPlugin(ServerConfigPlugin.class);
         super.onCreate(savedInstanceState);
 
         // BridgeActivity 会 setTheme(NoActionBar)；再显式藏掉 ActionBar，杜绝标题「Mao」。
@@ -120,6 +171,19 @@ public class MainActivity extends BridgeActivity {
         configureWebView();
         showLoadingOverlay();
         firstStartAt = System.currentTimeMillis();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_SERVER_PICKER) {
+            serverPickerOpen = false;
+            if (resultCode == RESULT_OK
+                    && data != null
+                    && data.getBooleanExtra(ServerPickerActivity.EXTRA_CHANGED, false)) {
+                AppRestart.restart(this);
+            }
+        }
     }
 
     /** 回前台：延迟探测 WebView 响应性，无响应则自动 reload（WebView 卡死时无需用户退出重开）。 */
@@ -295,6 +359,27 @@ public class MainActivity extends BridgeActivity {
             retryParams.topMargin = dp(24);
             content.addView(loadingRetryButton, retryParams);
 
+            loadingServerButton = new Button(this);
+            loadingServerButton.setText("服务器设置");
+            loadingServerButton.setAllCaps(false);
+            loadingServerButton.setTextColor(Color.parseColor("#2563eb"));
+            GradientDrawable serverBg = new GradientDrawable();
+            serverBg.setColor(Color.WHITE);
+            serverBg.setCornerRadius(dp(20));
+            serverBg.setStroke(dp(1), Color.parseColor("#bfdbfe"));
+            loadingServerButton.setBackground(serverBg);
+            loadingServerButton.setPadding(dp(18), 0, dp(18), 0);
+            loadingServerButton.setVisibility(View.GONE);
+            loadingServerButton.setOnClickListener(v -> {
+                if (serverPickerOpen) return;
+                serverPickerOpen = true;
+                startActivityForResult(new Intent(this, ServerPickerActivity.class), REQ_SERVER_PICKER);
+            });
+            LinearLayout.LayoutParams serverParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(40));
+            serverParams.topMargin = dp(10);
+            content.addView(loadingServerButton, serverParams);
+
             loadingOverlay.addView(content, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -313,6 +398,7 @@ public class MainActivity extends BridgeActivity {
         loadingMessage.setText("网络较慢时可能需要多等一会儿");
         loadingProgress.setVisibility(View.VISIBLE);
         loadingRetryButton.setVisibility(View.GONE);
+        loadingServerButton.setVisibility(View.GONE);
         loadingAttempt++;
         scheduleLoadingTimeout(webView, loadingAttempt);
         watchInitialPageLoad(webView, loadingAttempt);
@@ -362,6 +448,7 @@ public class MainActivity extends BridgeActivity {
             loadingMessage.setText("请检查网络后重试，或继续等待页面加载");
             loadingProgress.setVisibility(View.GONE);
             loadingRetryButton.setVisibility(View.VISIBLE);
+            loadingServerButton.setVisibility(View.VISIBLE);
         }, LOADING_TIMEOUT_MS);
     }
 

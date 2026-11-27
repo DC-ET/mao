@@ -118,6 +118,10 @@
           返回密码登录
         </el-button>
       </div>
+
+      <div v-if="androidServerPlugin" class="login-server-entry">
+        <el-button link :loading="androidOpening" @click="openServerPicker">服务器设置</el-button>
+      </div>
     </div>
   </div>
 </template>
@@ -135,6 +139,7 @@ import feishuLogo from '../../assets/feishu-logo.svg'
 import { useTheme } from '../../utils/theme'
 import { readRedirectQuery, safeRedirect } from '../../utils/login-redirect'
 import { isAndroidCapacitor, openExternalUrl } from '../../utils/capacitor'
+import { getAndroidServerConfigPlugin } from '../../utils/android-server-config'
 import { feishuPollPhase, openFeishuAuthPopup } from '../../utils/feishu-login-poll'
 import { safeRemoveItem, safeSetItem } from '../../utils/safe-storage'
 
@@ -145,6 +150,20 @@ const authStore = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 const { theme, toggleTheme } = useTheme()
+const androidServerPlugin = getAndroidServerConfigPlugin()
+const androidOpening = ref(false)
+
+async function openServerPicker() {
+  if (!androidServerPlugin || androidOpening.value) return
+  androidOpening.value = true
+  try {
+    await androidServerPlugin.openPicker()
+  } catch (e) {
+    ElMessage.error((e as Error)?.message || '打开服务器设置失败')
+  } finally {
+    androidOpening.value = false
+  }
+}
 
 const themeTooltip = computed(() => {
   if (theme.value === 'auto') return '跟随系统（点击切换浅色）'
@@ -692,6 +711,11 @@ onBeforeUnmount(() => {
 
 .password-entry {
   padding: 0;
+}
+
+.login-server-entry {
+  margin-top: 4px;
+  text-align: center;
 }
 
 .login-closed {

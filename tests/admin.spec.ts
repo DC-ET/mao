@@ -553,42 +553,49 @@ test.describe('Governance Console', () => {
     await userRoleRow.locator('button:has-text("成员")').click()
     const dialog = page.locator('.el-dialog', { hasText: '管理成员' })
     await expect(dialog).toBeVisible()
-    await expect(dialog.locator('.member-summary')).toContainText('当前成员')
-    // 弹窗默认只列「当前成员」（0.0.4xx 起），普通用户角色初始无成员；
-    // 本用例要管理 admin 的加入状态，先切到「全部用户」列表。
-    await dialog.locator('.el-radio-button:has(input[value="all"])').click()
-    const adminRow = dialog.locator('.el-table__row', { hasText: 'admin' })
-    await expect(adminRow).toBeVisible({ timeout: 10_000 })
 
-    // 自愈：上次运行若中断在添加后，先把 admin 移出恢复初始态
-    if (await adminRow.getByText('已加入').count()) {
-      await adminRow.locator('.el-checkbox').first().click()
-      await dialog.locator('button:has-text("移出角色")').click()
+    // 0.0.4xx 起改为左右双栏：左「未加入」、右「当前成员」，不再有单选切换。
+    const candidates = dialog.locator('.rm-panel--candidates')
+    const members = dialog.locator('.rm-panel--members')
+    await expect(candidates.locator('.rm-title')).toHaveText('未加入')
+    await expect(members.locator('.rm-title')).toHaveText('当前成员')
+    await expect(candidates.locator('.rm-row').first()).toBeVisible({ timeout: 10_000 })
+
+    const adminCandidate = candidates.locator('.rm-row', { hasText: 'admin' })
+    const adminMember = members.locator('.rm-row', { hasText: 'admin' })
+    const memberCount = members.locator('.rm-count')
+
+    // 自愈：上次运行若中断在添加后，先把 admin 移出恢复初始态。
+    // 移出自己会二次确认（0.0.4xx 起只有移出本人时才确认）。
+    if (await adminMember.count()) {
+      await adminMember.locator('.rm-quick').click()
       const recoverBox = page.getByRole('dialog', { name: '移出成员', exact: true })
       await expect(recoverBox).toBeVisible()
       await recoverBox.getByRole('button', { name: '移出', exact: true }).click()
-      await expect(page.locator('.el-message--success', { hasText: '已移除 1 人' })).toBeVisible()
-      await expect(adminRow.getByText('已加入')).toHaveCount(0)
+      await expect(page.locator('.el-message--success', { hasText: '已移出 1 人' })).toBeVisible()
+      await expect(members.locator('.rm-row', { hasText: 'admin' })).toHaveCount(0)
     }
 
-    // 添加：勾选 admin → 添加为成员 → 行内出现「已加入」，成员数同步 +1
-    await adminRow.locator('.el-checkbox').first().click()
-    await dialog.locator('button:has-text("添加为成员")').click()
-    await expect(page.locator('.el-message--success', { hasText: '已添加 1 人' })).toBeVisible()
-    await expect(adminRow.getByText('已加入')).toBeVisible()
-    await expect(dialog.locator('.member-summary strong')).toHaveText('1')
+    const beforeCount = await members.locator('.rm-row').count()
 
-    // 移除：勾选 admin → 移出角色 → 确认 → 「已加入」消失，成员数回到 0
-    await adminRow.locator('.el-checkbox').first().click()
-    await dialog.locator('button:has-text("移出角色")').click()
+    // 添加：左栏 admin 点行内「添加」→ 右栏出现 admin，成员数 +1
+    await expect(adminCandidate).toBeVisible({ timeout: 10_000 })
+    await adminCandidate.locator('.rm-quick').click()
+    await expect(page.locator('.el-message--success', { hasText: '已添加 1 人' })).toBeVisible()
+    await expect(members.locator('.rm-row', { hasText: 'admin' })).toBeVisible()
+    await expect(memberCount).toHaveText(`${beforeCount + 1} 人`)
+
+    // 移除：右栏 admin 点行内「移出」→ 确认 → 右栏消失，成员数回到原值
+    await members.locator('.rm-row', { hasText: 'admin' }).locator('.rm-quick').click()
     const confirmBox = page.getByRole('dialog', { name: '移出成员', exact: true })
     await expect(confirmBox).toBeVisible()
     await confirmBox.getByRole('button', { name: '移出', exact: true }).click()
-    await expect(page.locator('.el-message--success', { hasText: '已移除 1 人' })).toBeVisible()
-    await expect(adminRow.getByText('已加入')).toHaveCount(0)
-    await expect(dialog.locator('.member-summary strong')).toHaveText('0')
+    await expect(page.locator('.el-message--success', { hasText: '已移出 1 人' })).toBeVisible()
+    await expect(members.locator('.rm-row', { hasText: 'admin' })).toHaveCount(0)
+    await expect(memberCount).toHaveText(`${beforeCount} 人`)
+    await expect(candidates.locator('.rm-row', { hasText: 'admin' })).toBeVisible()
 
-    await dialog.locator('button:has-text("取消")').click()
+    await dialog.getByRole('button', { name: '完成', exact: true }).click()
     await expect(dialog).toBeHidden()
   })
 

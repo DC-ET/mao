@@ -161,6 +161,7 @@ import { useSessionStore } from '../../stores/session'
 import { isTouchTerminal } from '../../utils/terminal-touch'
 import { encodeKey, type KeyBarAction, type KeyId } from '../../utils/terminal-keys'
 import { extractBufferText } from '../../utils/terminal-buffer-text'
+import { copyText as copyToClipboard } from '../../utils/clipboard'
 import TerminalTabs from './TerminalTabs.vue'
 import TerminalKeyBar from './TerminalKeyBar.vue'
 import TerminalCopyOverlay from './TerminalCopyOverlay.vue'
@@ -622,25 +623,8 @@ function closeCopyOverlay(): void {
 setLongPressHandler(openCopyOverlay)
 
 async function copySnapshot(text: string): Promise<void> {
-  let copied = false
-  try {
-    await navigator.clipboard.writeText(text)
-    copied = true
-  } catch {
-    const textarea = document.createElement('textarea')
-    textarea.value = text
-    textarea.style.position = 'fixed'
-    textarea.style.opacity = '0'
-    document.body.appendChild(textarea)
-    textarea.select()
-    try {
-      copied = document.execCommand('copy')
-    } catch {
-      copied = false
-    } finally {
-      document.body.removeChild(textarea)
-    }
-  }
+  // 统一走 copyText：HTTP 部署下 navigator.clipboard 不可用时回退 execCommand。
+  const copied = await copyToClipboard(text)
   if (copied) {
     ElMessage.success('已复制')
   } else {

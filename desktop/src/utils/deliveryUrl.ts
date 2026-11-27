@@ -1,7 +1,8 @@
 import type { SendDelivery } from '../types/chat'
 import { getToken } from './auth-storage'
+import { apiBaseUrl } from './api-base'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1'
+const API_BASE = apiBaseUrl()
 
 /**
  * 发送媒体投递的稳定 key（活引用方案 2026-11-20 §5.2 评审补充；2026-11-24 send-file 补充）：

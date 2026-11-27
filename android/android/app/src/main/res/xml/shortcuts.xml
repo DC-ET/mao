@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutId="server_settings"
+        android:shortcutLongLabel="@string/server_settings_long"
+        android:shortcutShortLabel="@string/server_settings">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="cn.etarch.mao.app"
+            android:targetClass="cn.etarch.mao.app.ServerPickerActivity" />
+    </shortcut>
+</shortcuts>

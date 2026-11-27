@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { isAndroidCapacitor } from '../utils/capacitor'
+import { androidReleaseManifestUrl } from '../utils/api-base'
 import { safeSetItem } from '../utils/safe-storage'
 import type { AppUpdateStatus } from '../utils/update-click'
 
@@ -8,8 +9,6 @@ const CHECK_INTERVAL = 60_000
 const APP_UPDATE_CHECK_INTERVAL = 60_000
 
 /* ---- 安卓 OTA（原生壳 APK）---- */
-const _apiBase = import.meta.env.VITE_API_BASE_URL || ''  // e.g. https://mao.etarch.cn/api/v1
-const ANDROID_MANIFEST_URL = _apiBase ? _apiBase.replace(/\/api\/v1\/?$/, '/uploads/releases/android-latest.json') : '/uploads/releases/android-latest.json'
 const IGNORED_VERSION_KEY = 'mao_android_ignored_version_code'
 
 /** 旧版内嵌资源包（localhost）；远程加载后与 Web/Electron 一致 */
@@ -286,6 +285,27 @@ export function useVersionCheck() {
     }
   }
 
+  /** 相对清单地址先按当前页面解析；测试 / 无 window 环境保持原值。 */
+  function resolveManifestAbsoluteUrl(manifestUrl: string): string {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(manifestUrl)) return manifestUrl
+    if (typeof window !== 'undefined' && window.location?.href) {
+      try {
+        return new URL(manifestUrl, window.location.href).href
+      } catch {
+        return manifestUrl
+      }
+    }
+    return manifestUrl
+  }
+
+  function resolveDownloadUrl(downloadUrl: string, manifestUrl: string): string {
+    try {
+      return new URL(downloadUrl, manifestUrl).href
+    } catch {
+      return downloadUrl
+    }
+  }
+
   /** 安卓：拉取 android-latest.json 比对 versionCode */
   async function checkAndroidUpdate() {
     try {
@@ -298,8 +318,9 @@ export function useVersionCheck() {
       const current = await plugin.getVersionCode()
       const currentVersionCode: number = current?.versionCode ?? 0
 
-      // 拉取清单
-      const url = ANDROID_MANIFEST_URL + (ANDROID_MANIFEST_URL.includes('?') ? '&' : '?') + '_t=' + Date.now()
+      // 拉取清单（跟随当前站点；相对 downloadUrl 以清单地址为 base）
+      const manifestUrl = resolveManifestAbsoluteUrl(androidReleaseManifestUrl())
+      const url = manifestUrl + (manifestUrl.includes('?') ? '&' : '?') + '_t=' + Date.now()
       const resp = await fetch(url)
       if (!resp.ok) { appUpdateStatus.value = 'not-available'; return }
       const manifest = await resp.json() as {
@@ -330,7 +351,7 @@ export function useVersionCheck() {
       // 有更新：先写入全部元数据与状态，再置 appUpdateAvailable 触发 UI watch。
       // 注意：如果先置 appUpdateAvailable，TopNav 的 watch 触发时状态仍可能是 checking，导致弹窗不出现。
       const isForced = (manifest.minVersionCode ?? 0) > currentVersionCode
-      _androidDownloadUrl = manifest.downloadUrl
+      _androidDownloadUrl = resolveDownloadUrl(manifest.downloadUrl, manifestUrl)
       _androidIsForced = isForced
       _androidManifestVersionCode = manifest.versionCode
       appUpdateVersion.value = manifest.versionName || String(manifest.versionCode)

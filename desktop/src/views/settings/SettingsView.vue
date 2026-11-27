@@ -77,10 +77,11 @@ import { useRouter } from 'vue-router'
 import { useSessionStore } from '../../stores/session'
 import { goBackToWorkbench } from '../../utils/workbench-nav'
 import { isElectronClient } from '../../utils/platform'
+import { getAndroidServerConfigPlugin } from '../../utils/android-server-config'
 
 const sessionStore = useSessionStore()
 const router = useRouter()
-const showServerNav = computed(() => isElectronClient())
+const showServerNav = computed(() => isElectronClient() || !!getAndroidServerConfigPlugin())
 const showDesktopNav = computed(() => isElectronClient())
 
 function goBack() {

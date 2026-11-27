@@ -10,6 +10,8 @@
 | 管理后台 | `https://<桌面域名>/admin/` |
 | API / WS | `https://<桌面域名>/api/` |
 
+**同源前置（2026-11-27 起）**：desktop 前端默认按页面 origin 推导 API / WebSocket / OTA 地址，一份 `desktop/dist` 可服务多套单域部署。因此多服务器/私有站必须在**同一 origin** 提供 `/api/v1` 与 `/uploads`；split-domain（SPA 与 API 不同源）仍需在构建时显式设置 `VITE_API_BASE_URL`，不能直接复用通用 dist。站点必须部署在根，不支持 `https://host/mao` 子路径。
+
 新装完整 `server` 见 [deploy.md 第三节](../../skills/mao-cli/reference/deploy.md)。管理后台 location 的权威片段：仓库 `scripts/nginx/mao-admin-locations.conf`。
 
 ---
@@ -179,10 +181,17 @@ curl -sI "$HOST/" | grep -i cache-control   # 应含 no-cache
 curl -sI "$HOST/assets/$(grep -oE 'assets/[^"]+\.js' /opt/mao/desktop/dist/index.html | head -1 | sed 's|assets/||')" | grep -i cache-control
 ```
 
+## 9. 前端同源与多站点（2026-11-27 起）
+
+- `desktop/.env.production` 默认不再写死 API 域名；构建后的 API / WebSocket / 安卓 OTA 地址都跟随当前访问 origin。同源站点无需再按域名改 `.env.production` 重新构建，一份 `desktop/dist` 可部署到多套单域部署。
+- 已有站点升级：`cd /opt/mao && git pull origin main && bash scripts/deploy-desktop.sh`。**旧 dist 仍会把 API 指向构建时写入的域名**，目标站升级完成前不要让安卓壳切换过去；地址探测只能确认站点可达，识别不出前端版本。
+- split-domain（SPA 与 API 不同源）站点：构建 desktop 时显式设置 `VITE_API_BASE_URL=https://<API域名>/api/v1`，必要时再设 `VITE_WS_BASE_URL`；不要直接复用通用 dist。
+- 安卓 OTA 清单固定为当前站点 `/uploads/releases/android-latest.json`；私有站只托管**官方签名 APK** + 本站清单，自行构建的 APK 签名不同无法覆盖安装，versionCode 也必须严格递增。
+
 ## 不要做
 
 - 不要在 `/opt/mao-data/workspace/...` 里 `git pull` 或改 `/etc/nginx`
 - 不要 `rewrite ^/admin/(.*)$ /$1`
 - 不要 `try_files $uri $uri/ /index.html` 或 `... /admin/index.html` 做后台 fallback
 - 不要为这次迁移重启 `backend-ts`
-- 不要改 `desktop/.env.production` 为相对路径 `/api/v1`（Electron 仍需要绝对 API 地址）
+- 不要把官方域名写死回 `desktop/.env.production`（默认同源；split-domain 才用 `VITE_API_BASE_URL` 显式覆盖）

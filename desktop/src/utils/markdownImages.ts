@@ -10,8 +10,9 @@
  * 至少不再显示破图图标。
  */
 import { getToken } from './auth-storage'
+import { apiBaseUrl } from './api-base'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1'
+const API_BASE = apiBaseUrl()
 
 export interface MarkdownImageContext {
   /** 会话 ID：会话的工作区文件经后端按会话归属读取（LOCAL 由后端按需委托执行端，方案 2026-11-18） */

@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { getToken } from '../utils/auth-storage'
+import { wsBaseUrl } from '../utils/api-base'
 
 /**
  * 云端终端 WS 单例：一条连接多路复用多个 terminalId，与 useStreamWS 完全独立。
@@ -73,9 +74,7 @@ const resumeSeq = new Map<string, number>()
 let lifecycleInstalled = false
 
 function wsUrl(): string {
-  const wsBase = import.meta.env.VITE_WS_BASE_URL
-    || import.meta.env.VITE_API_BASE_URL?.replace(/^http/, 'ws').replace(/\/api\/v1$/, '/api')
-    || 'ws://localhost:9080/api'
+  const wsBase = wsBaseUrl()
   return `${wsBase}/ws/terminal`
 }
 

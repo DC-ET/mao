@@ -10,6 +10,7 @@ import { mapCompactionEvents } from '../utils/chatMessage'
 import { stripImageUrlLines } from '../utils/imageUrlAnnotation'
 import { clientKind, isElectronClient } from '../utils/platform'
 import { isAndroidCapacitor } from '../utils/capacitor'
+import { apiBaseUrl, wsBaseUrl } from '../utils/api-base'
 import { currentPageVersion, resolveClientVersion } from '../utils/client-version'
 import { getLocalDeviceInfo } from '../utils/device-info'
 import { updateSideTaskTabTitleFor } from './useCenterTabs'
@@ -287,7 +288,7 @@ export function useStreamWS() {
     }
     if (connectPromise) return connectPromise
 
-    const wsBase = import.meta.env.VITE_WS_BASE_URL || import.meta.env.VITE_API_BASE_URL?.replace(/^http/, 'ws').replace(/\/api\/v1$/, '/api') || 'ws://localhost:9080/api'
+    const wsBase = wsBaseUrl()
     const token = getToken()
     if (!token) return Promise.reject(new Error('No token'))
 
@@ -1342,7 +1343,7 @@ export function useStreamWS() {
         }
         if (sessionId && syncUrl && isElectronClient()) {
           const token = getToken() || ''
-          const apiBase = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:9080/api/v1')
+          const apiBase = apiBaseUrl()
             .replace(/\/v1\/?$/, '')
           ;(window as any).electronAPI.skillSync?.(Number(sessionId), syncUrl, token, workspace || '', apiBase)
         } else {

@@ -2,11 +2,31 @@
   <div class="server-page">
     <div class="page-header">
       <h1 class="page-title">服务器</h1>
-      <p class="page-desc">查看当前桌面客户端连接的 Mao 站点。切换会重新加载对应站点；该站曾在本机登录且登录仍有效时直接进入。</p>
+      <p class="page-desc">{{ pageDesc }}</p>
     </div>
 
     <div class="server-card">
-      <div v-if="!isElectron" class="server-tip">
+      <div v-if="isAndroid" class="server-tip">
+        <div class="server-current">当前站点：{{ browserOrigin }}</div>
+        <template v-if="androidPlugin">
+          <div>当前允许 HTTP：{{ androidInfo?.allowHttp ? '是' : '否' }}</div>
+          <div v-if="androidInfo?.shellVersionName">
+            壳版本：{{ androidInfo.shellVersionName }}（{{ androidInfo.shellVersionCode ?? '—' }}）
+          </div>
+          <div class="server-actions">
+            <el-button type="primary" :loading="androidOpening" @click="openAndroidPicker">
+              打开服务器设置
+            </el-button>
+          </div>
+          <div class="field-hint">切换会重新加载目标站点；登录态、草稿和偏好按站点隔离。</div>
+        </template>
+        <div v-else class="server-tip warn">
+          当前安卓壳版本不支持切换服务器，请升级 App。
+        </div>
+        <div v-if="androidMessage" class="server-msg" :class="androidMessageType">{{ androidMessage }}</div>
+      </div>
+
+      <div v-else-if="!isElectron" class="server-tip">
         当前为浏览器访问，服务器地址由部署环境决定，无需在此配置。
         <div class="server-current">当前站点：{{ browserOrigin }}</div>
       </div>
@@ -103,12 +123,26 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { isElectronClient } from '../../utils/platform'
+import { isAndroidCapacitor } from '../../utils/capacitor'
+import { getAndroidServerConfigPlugin, type AndroidServerInfo } from '../../utils/android-server-config'
 
 type ServerUpdateFeedMode = 'follow-site' | 'package-default' | 'disabled'
 type ProbeState = 'unconfigured' | 'checking' | 'ok' | 'error' | 'unknown'
 
 const isElectron = isElectronClient()
+const isAndroid = isAndroidCapacitor()
+const androidPlugin = getAndroidServerConfigPlugin()
 const browserOrigin = typeof window !== 'undefined' ? window.location.origin : ''
+const pageDesc = computed(() =>
+  isAndroid
+    ? '查看当前 App 连接的 Mao 站点。切换会重新加载目标站点；登录态、草稿和偏好按站点隔离。'
+    : '查看当前桌面客户端连接的 Mao 站点。切换会重新加载对应站点；该站曾在本机登录且登录仍有效时直接进入。'
+)
+
+const androidInfo = ref<AndroidServerInfo | null>(null)
+const androidOpening = ref(false)
+const androidMessage = ref('')
+const androidMessageType = ref<'ok' | 'error'>('ok')
 
 const loading = ref(false)
 const saving = ref(false)
@@ -214,6 +248,30 @@ function isCurrent(entry: ServerConfigHistoryEntry): boolean {
 function setMessage(text: string, type: 'ok' | 'error' = 'ok') {
   message.value = text
   messageType.value = type
+}
+
+async function loadAndroid() {
+  if (!androidPlugin) return
+  try {
+    androidInfo.value = await androidPlugin.get()
+  } catch (e) {
+    androidMessageType.value = 'error'
+    androidMessage.value = (e as Error)?.message || '读取安卓服务器配置失败'
+  }
+}
+
+async function openAndroidPicker() {
+  if (!androidPlugin || androidOpening.value) return
+  androidOpening.value = true
+  androidMessage.value = ''
+  try {
+    await androidPlugin.openPicker()
+  } catch (e) {
+    androidMessageType.value = 'error'
+    androidMessage.value = (e as Error)?.message || '打开服务器设置失败'
+  } finally {
+    androidOpening.value = false
+  }
 }
 
 async function load() {
@@ -396,6 +454,10 @@ async function save() {
 }
 
 onMounted(() => {
+  if (isAndroid) {
+    void loadAndroid()
+    return
+  }
   void load()
 })
 </script>

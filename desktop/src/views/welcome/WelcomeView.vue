@@ -331,6 +331,7 @@ import feishuLogo from '../../assets/feishu-logo.svg'
 import dingtalkLogo from '../../assets/dingtalk-logo.svg'
 import weixinLogo from '../../assets/weixin-logo.png'
 import { useTheme } from '../../utils/theme'
+import { copyText } from '../../utils/clipboard'
 
 const router = useRouter()
 const { theme, isDark, toggleTheme } = useTheme()
@@ -432,7 +433,7 @@ const deploySteps = [
 const deployCommands = [
   '# 克隆仓库',
   'git clone https://github.com/DC-ET/mao.git /opt/mao',
-  '# 构建（先按手册配置 desktop/.env.production）',
+  '# 构建（前端同源，无需按域名改 API 地址）',
   'cd /opt/mao/backend-ts && npm ci && npm run build',
   'bash /opt/mao/scripts/deploy-admin.sh',
   'bash /opt/mao/scripts/deploy-desktop.sh',
@@ -444,14 +445,10 @@ const copied = ref(false)
 let copiedTimer: ReturnType<typeof setTimeout> | null = null
 
 async function copyCommands() {
-  try {
-    await navigator.clipboard.writeText(deployCommands.join('\n'))
-    copied.value = true
-    if (copiedTimer) clearTimeout(copiedTimer)
-    copiedTimer = setTimeout(() => (copied.value = false), 2000)
-  } catch {
-    copied.value = false
-  }
+  const ok = await copyText(deployCommands.join('\n'))
+  copied.value = ok
+  if (copiedTimer) clearTimeout(copiedTimer)
+  if (ok) copiedTimer = setTimeout(() => (copied.value = false), 2000)
 }
 
 const pageRef = ref<HTMLElement | null>(null)

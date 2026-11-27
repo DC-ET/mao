@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 // 回归锁定：正文 Markdown 里的工作区相对图片必须能在渲染后被解析成可访问地址，
 // 否则浏览器按页面地址请求 /screenshots/... 得到 404（线上裂图的根因）。
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../utils/auth-storage', () => ({ getToken: () => 'jwt-token' }))
+
+// 固定 API 基址：同源化后 jsdom 默认 origin 是 http://localhost:3000，这里保持旧断言口径。
+vi.stubEnv('VITE_API_BASE_URL', 'http://localhost:9080/api/v1')
+afterAll(() => vi.unstubAllEnvs())
 
 const { renderMarkdown } = await import('./useMarkdown')
 const { decorateMarkdownImages } = await import('../utils/markdownImages')
