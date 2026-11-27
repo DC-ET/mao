@@ -140,6 +140,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '点踩反馈', keepAlive: true, permission: 'feedback:read' }
       },
       {
+        path: 'agent-report',
+        name: 'AgentReport',
+        component: () => import('../views/agent-report/AgentReportListView.vue'),
+        meta: { title: 'Agent 上报', keepAlive: true, permission: 'agent-report:read' }
+      },
+      {
         path: 'memory',
         name: 'MemoryManage',
         component: () => import('../views/memory/MemoryManageView.vue'),

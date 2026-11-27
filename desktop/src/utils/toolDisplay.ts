@@ -31,6 +31,9 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   generate_image: '生成图片',
   edit_image: '编辑图片',
   text_to_speech: '语音合成',
+  // 问题上报（2026-11-27 agent-issue-report）：服务端已对用户全链路过滤，此处为纵深防御
+  // + 防未来新路径漏过滤；正常用户界面不应渲染到它。
+  report_issue: '问题上报',
   feishu_download_file: '下载飞书文件',
   send_image: '发送图片',
   send_file: '发送文件',
@@ -158,6 +161,11 @@ export function getToolInputPreview(name: string, input?: Record<string, unknown
       const text = input.text
       if (typeof text !== 'string' || text === '') return ''
       return text.length > 60 ? clipByCodePoint(text, 60) + '...' : text
+    }
+    case 'report_issue': {
+      const title = input.title
+      if (typeof title !== 'string' || title === '') return ''
+      return title.length > 30 ? clipByCodePoint(title, 30) + '...' : title
     }
     case 'feishu_download_file':
       return typeof input.message_id === 'string' ? input.message_id : ''

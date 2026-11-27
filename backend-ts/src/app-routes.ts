@@ -69,6 +69,7 @@ import type { MysqlSignalWatcherRepository } from './signal/signal.repository.js
 import type { AnalyticsService } from './analytics/analytics.service.js';
 import type { StatisticsService } from './statistics/statistics.service.js';
 import type { FeedbackService } from './feedback/feedback.service.js';
+import type { AgentReportService } from './agent-report/agent-report.service.js';
 import type { MemoryService } from './memory/memory.service.js';
 import type { ApprovalRuleService } from './approval-rule/approval-rule.service.js';
 import type { InboxService } from './inbox/inbox.service.js';
@@ -168,6 +169,7 @@ import { registerAnalyticsRoutes } from './analytics/analytics.routes.js';
 import { registerStatisticsRoutes } from './statistics/statistics.routes.js';
 import type { HostStatusService } from './statistics/host-status.service.js';
 import { registerFeedbackRoutes } from './feedback/feedback.routes.js';
+import { registerAgentReportRoutes } from './agent-report/agent-report.routes.js';
 import { registerMemoryRoutes } from './memory/memory.routes.js';
 import { registerApprovalRuleRoutes, type ApprovalRuleAuditInput } from './approval-rule/approval-rule.routes.js';
 import { registerApprovalRuleAdminRoutes } from './approval-rule/approval-rule.admin.routes.js';
@@ -329,6 +331,9 @@ export interface RouteDeps {
   // feedback
   feedbackService: FeedbackService;
 
+  // agent-report（2026-11-27 Agent 静默问题上报）
+  agentReportService: AgentReportService;
+
   // memory
   memoryService: MemoryService;
 
@@ -413,6 +418,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     watcherService, signalWatcherRepo,
     analyticsService, statisticsService, hostStatus, adminAnalytics,
     feedbackService,
+    agentReportService,
     memoryService,
     approvalRuleService,
     inboxService,
@@ -738,6 +744,7 @@ export async function registerAllRoutes(deps: RouteDeps): Promise<void> {
     registerAnalyticsRoutes(api, { analytics: analyticsService, jwt, permissionService });
     registerStatisticsRoutes(api, { statistics: statisticsService, hostStatus, jwt, permissionService });
     registerFeedbackRoutes(api, { feedback: feedbackService, jwt, permissionService });
+    registerAgentReportRoutes(api, { agentReport: agentReportService, jwt, permissionService });
     registerMemoryRoutes(api, { memoryService });
     registerApprovalRuleRoutes(api, {
       approvalRuleService,

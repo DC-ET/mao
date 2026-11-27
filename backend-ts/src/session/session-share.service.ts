@@ -8,6 +8,7 @@ import type { UserRepository } from '../user/types.js';
 import type { AgentLookup, Session } from './types.js';
 import type { SessionService } from './session.service.js';
 import { toMessageVOList, type MessageVO } from './session-vo.js';
+import { filterUserHiddenToolMessages } from './util/hidden-tool-filter.js';
 import {
   isDuplicateKey,
   newShareToken,
@@ -140,7 +141,8 @@ export class SessionShareService {
       maxMessageId: Number(share.messageWatermark),
       excludeSourceSessionId: parentId,
     });
-    const visible = withoutParentCopies(page.messages, parentId);
+    // 用户隐藏工具（report_issue，2026-11-27 §6.3 #5）：分享页与会话历史同口径过滤
+    const visible = filterUserHiddenToolMessages(withoutParentCopies(page.messages, parentId));
     const changes = await this.sessionService.getFileChangeSummariesByMessageIds(
       session.id!,
       visible.map((m) => m.id!),

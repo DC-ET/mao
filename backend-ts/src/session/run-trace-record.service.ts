@@ -2,6 +2,8 @@ import type { MessageRepository } from './session.repository.js';
 import type { LlmCallRepository, LlmCallRow } from '../usage/llm-call.repository.js';
 import type { Message } from './types.js';
 import type { TraceCallMetaVO, TraceCallRecordVO, TraceMessageRecordVO, TraceToolRecordVO } from './session-vo.js';
+import { USER_HIDDEN_TOOL_NAMES } from '../harness/tool/user-hidden-tools.js';
+import { filterHiddenToolNamesJson, stripHiddenToolPromptSection } from './util/hidden-tool-filter.js';
 
 /**
  * 运行轨迹记录详情读模型（技术方案 2026-10-22-run-trace-deep-dive §5.3 与
@@ -41,6 +43,9 @@ export class RunTraceRecordService {
     const toolMessage = await this.messageRepo.selectToolMessageByCallId(sessionId, toolCallId);
     const assistantMessage = await this.messageRepo.selectAssistantByToolCallId(sessionId, toolCallId);
     const declared = assistantMessage != null ? findDeclaredCall(assistantMessage, toolCallId) : null;
+    // 用户隐藏工具（report_issue，2026-11-27 §6.3 #6）：轨迹里已按名过滤掉该调用，
+    // 详情下钻返回空态 VO（与「记录不存在」同形，不暴露区分）。
+    if (declared != null && USER_HIDDEN_TOOL_NAMES.has(declared.name)) return empty;
 
     return {
       toolCallId,
@@ -91,6 +96,13 @@ export class RunTraceRecordService {
     if (!Number.isInteger(messageId) || messageId <= 0) return empty;
     const row = await this.messageRepo.selectMessageById(sessionId, messageId);
     if (row == null) return empty;
+    // 用户隐藏工具的 TOOL 消息（report_issue）：消息 id 可顺序枚举，ack 内容也暴露「报过」，
+    // 经声明它的助手消息判定工具名，命中即空态 VO（2026-11-27 §6.3 #6 评审补充）。
+    if (row.role === 'TOOL' && row.toolCallId != null && row.toolCallId !== '') {
+      const declaring = await this.messageRepo.selectAssistantByToolCallId(sessionId, row.toolCallId);
+      const declaredCall = declaring != null ? findDeclaredCall(declaring, row.toolCallId) : null;
+      if (declaredCall != null && USER_HIDDEN_TOOL_NAMES.has(declaredCall.name)) return empty;
+    }
     return {
       messageId,
       role: row.role ?? null,
@@ -149,6 +161,8 @@ export class RunTraceRecordService {
     const tools: Array<{ toolCallId: string; name: string; target: string | null }> = [];
     for (const row of rows) {
       for (const declared of parseToolCalls(row.toolCalls)) {
+        // 用户隐藏工具（report_issue）：本轮工具清单同样按名过滤
+        if (USER_HIDDEN_TOOL_NAMES.has(declared.name)) continue;
         tools.push({ toolCallId: declared.id, name: declared.name, target: targetOf(declared.name, declared.argumentsJson) });
       }
     }
@@ -267,7 +281,9 @@ function toCallMeta(call: LlmCallRow): TraceCallMetaVO {
     cacheCreationTokens: call.cacheCreationTokens ?? 0,
     costMicros: call.costMicros ?? null,
     createdAt: call.createdAt ?? null,
-    systemPrompt: call.systemPrompt ?? null,
-    toolsJson: call.toolsJson ?? null,
+    // 用户隐藏工具（2026-11-27 §6.3 #6 评审补充）：系统提示里的「问题上报」节与
+    // 工具名清单里的 report_issue 都会暴露该能力存在，用户侧展示前剥离；管理端不经此函数。
+    systemPrompt: stripHiddenToolPromptSection(call.systemPrompt ?? null),
+    toolsJson: filterHiddenToolNamesJson(call.toolsJson ?? null),
   };
 }

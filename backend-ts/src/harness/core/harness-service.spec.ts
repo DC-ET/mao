@@ -285,6 +285,8 @@ function makeHarness(
     sessionService, sessionCompactionService, sessionHistoryLoader, orchestrator,
     promptEngine, activeContext, compactionConfig, envInfo, mcpClientManager, db,
     featuredToolModels: null,
+    // report_issue 全局开关（2026-11-27）：缺省 null = 未注入（视为开启）
+    agentReportSwitch: null,
     ...overrides,
   };
 
@@ -318,6 +320,7 @@ function makeHarness(
     deps.experienceMount ?? null,
     runtimeIdentityMode,
     deps.featuredToolModels ?? null,
+    deps.agentReportSwitch ?? null,
   );
   return { service, ...deps };
 }
@@ -454,6 +457,54 @@ describe('HarnessService.buildContext and execute', () => {
     expect(ctx.compactionConfig?.maxSummaryTokens).toBe(8000);
     expect(ctx.sessionBaseYmd).toBe(shanghaiYmd());
     expect(sessionService.getFirstUserStamp).toHaveBeenCalledWith(10);
+  });
+
+  // report_issue 两级开关门控（技术方案 2026-11-27 §3.3）：全局 settings 键 AND agent.report_issue_enabled。
+  describe('report_issue 两级开关门控', () => {
+    function reportIssueHarness(overrides: Record<string, unknown> = {}) {
+      const toolRegistry = {
+        getAllTools: vi.fn(() => [fakeTool('read_file'), fakeTool('report_issue')]),
+        getTool: vi.fn((name: string) => [fakeTool('read_file'), fakeTool('report_issue')].find((t) => t.getName() === name)),
+      };
+      return makeHarness({ toolRegistry, ...overrides });
+    }
+
+    it('默认全开：switch 未注入（精简装配）+ agent 无列值 → 工具在 context.tools', async () => {
+      const { service } = reportIssueHarness();
+      const ctx = await service.buildContext(10);
+      expect(ctx.tools.map((t) => t.getName())).toContain('report_issue');
+    });
+
+    it('全局开关关闭 → 工具不进 context.tools', async () => {
+      const { service } = reportIssueHarness({ agentReportSwitch: { agentReportEnabled: vi.fn(async () => false) } });
+      const ctx = await service.buildContext(10);
+      expect(ctx.tools.map((t) => t.getName())).not.toContain('report_issue');
+      expect(ctx.tools.map((t) => t.getName())).toContain('read_file');
+    });
+
+    it('按 Agent 开关关闭（reportIssueEnabled=0）→ 工具不进 context.tools', async () => {
+      const { service } = reportIssueHarness({
+        agentReportSwitch: { agentReportEnabled: vi.fn(async () => true) },
+        agentMapper: {
+          selectById: vi.fn(async () => ({
+            id: 2, name: 'Coder', systemPrompt: 'You are a coder',
+            skillNames: '["java"]',
+            configJson: JSON.stringify({ compaction: { enabled: true, maxSummaryTokens: 8000 } }),
+            reportIssueEnabled: 0,
+          })),
+        },
+      });
+      const ctx = await service.buildContext(10);
+      expect(ctx.tools.map((t) => t.getName())).not.toContain('report_issue');
+    });
+
+    it('全局开关读取失败 fail-open：记 warn 按开启处理（读库抖动不该打断会话）', async () => {
+      const { service } = reportIssueHarness({
+        agentReportSwitch: { agentReportEnabled: vi.fn(async () => { throw new Error('db down'); }) },
+      });
+      const ctx = await service.buildContext(10);
+      expect(ctx.tools.map((t) => t.getName())).toContain('report_issue');
+    });
   });
 
   it('角色技能接在 Agent 名单后，个人技能文档后写覆盖同名系统技能', async () => {

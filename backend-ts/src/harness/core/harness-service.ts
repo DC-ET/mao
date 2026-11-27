@@ -46,6 +46,7 @@ import {
   resolveFeaturedToolNames,
   type FeaturedToolModelLookup,
 } from '../tool/featured-tools.js';
+import { REPORT_ISSUE_TOOL_NAME } from '../tool/user-hidden-tools.js';
 import { buildCustomHttpToolCatalog } from './custom-http-tools-catalog.js';
 import type { HttpTool } from '../../http-tool/types.js';
 import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
@@ -120,7 +121,32 @@ export class HarnessService {
      * 未注入（精简装配 / 单测）时跳过过滤，保持改造前行为。
      */
     private readonly featuredToolModels?: FeaturedToolModelLookup | null,
+    /**
+     * report_issue 全局开关读取（技术方案 2026-11-27 §3.3）：与 agent.report_issue_enabled AND。
+     * 每轮直读、不缓存——admin 改完下一轮会话即生效。未注入（精简装配/单测）时视为开启，
+     * 工具是否可用完全由注册与否（agentReportSink 条件注册）决定。
+     */
+    private readonly agentReportSwitch?: { agentReportEnabled(): Promise<boolean> } | null,
   ) {}
+
+  /**
+   * report_issue 两级开关（2026-11-27 §3.3）：全局 settings 键 AND agent.report_issue_enabled。
+   * 未注册（精简装配未注入 agentReportSink）时零开销直返；开关读取失败 fail-open 记 warn
+   * （上报是带外运维信号，读库抖动不该打断会话，也不能让一次抖动永久关停上报）。
+   */
+  private async filterReportIssueTool(tools: Tool[], agent: Agent, sessionId: number): Promise<Tool[]> {
+    if (!tools.some((t) => t.getName() === REPORT_ISSUE_TOOL_NAME)) return tools;
+    let globallyEnabled = true;
+    if (this.agentReportSwitch != null) {
+      try {
+        globallyEnabled = await this.agentReportSwitch.agentReportEnabled();
+      } catch (e) {
+        harnessLog('warn', `[agent-report] 全局开关读取失败，按开启处理（session=${sessionId}）: ${(e as Error).message}`);
+      }
+    }
+    if (globallyEnabled && agent.reportIssueEnabled !== 0) return tools;
+    return tools.filter((t) => t.getName() !== REPORT_ISSUE_TOOL_NAME);
+  }
 
   /** 运行身份（技术方案 2026-11-04 §5.2）：execution 下为本次发言者，owner 下为会话归属。 */
   private runtimeUserFor(session: Session, executionUserId?: number | null): number | null {
@@ -484,6 +510,10 @@ export class HarnessService {
         + ` configured=${JSON.stringify(featured)} injected=${JSON.stringify([...allowed])}`
         + ` hidden=${hidden}`);
     }
+    // report_issue 两级开关（技术方案 2026-11-27 §3.3）：全局 settings 键 AND
+    // agent.report_issue_enabled，默认全开；任一关闭则工具不进 context.tools，
+    // prompt 的「问题上报」section（prompt-engine 按 context.tools 条件注入）随之不出现，天然一致。
+    sessionTools = await this.filterReportIssueTool(sessionTools, agent, sessionId);
     // 工作集工具只按模式注入：先从默认工具集中剔除，避免全量模式凭空多出两个模型可见工具。
     sessionTools = sessionTools.filter((tool) => !MCP_WORKING_SET_TOOL_NAMES.has(tool.getName()));
     // 自定义 HTTP 工具入口同样先剔除；用户有启用工具时在 MCP 块之后条件推入（§5.4）。

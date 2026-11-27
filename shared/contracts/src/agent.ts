@@ -47,6 +47,8 @@ export interface AgentVO {
   httpToolIds?: number[];
   /** 特色工具（管理后台多选）：[] = 未启用 */
   featuredTools?: AgentFeaturedTool[];
+  /** 问题上报（report_issue）按 Agent 开关（2026-11-27）：false=该 Agent 会话不提供上报工具；缺省 true */
+  reportIssueEnabled?: boolean;
   /** 指定文生图模型 id（2026-11-27 特色工具模型绑定）；null=跟随图片默认模型 */
   imageModelId?: number | null;
   /** 指定语音模型 id（2026-11-27 特色工具模型绑定）；null=跟随语音默认模型 */

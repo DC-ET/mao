@@ -24,6 +24,8 @@ export interface Agent {
   httpToolIds?: string | null;
   /** 特色工具（JSON 数组字符串）：image_generation / text_to_speech；null / '[]' = 未启用 */
   featuredTools?: string | null;
+  /** 问题上报（report_issue）按 Agent 开关（2026-11-27）：1 开 0 关；缺省视为开启（与全局开关 AND） */
+  reportIssueEnabled?: number | null;
   /** 指定文生图模型 id（2026-11-27 特色工具模型绑定）；NULL=跟随图片默认模型 */
   imageModelId?: number | null;
   /** 指定语音模型 id（2026-11-27 特色工具模型绑定）；NULL=跟随语音默认模型 */

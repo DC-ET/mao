@@ -628,11 +628,14 @@ export function createMessageRuntimeModule(ctx: {
   }
 
   const TASK_TOOL_NAMES = new Set(['task_create', 'task_update', 'task_delete', 'task_list'])
+  // 用户隐藏工具（report_issue，2026-11-27 agent-issue-report）：服务端实时流已过滤，
+  // 此处为纵深防御（防未来新路径漏过滤）；start/result 对称拦截同 task 工具口径。
+  const USER_HIDDEN_TOOL_NAMES = new Set(['report_issue'])
   const filteredToolCallIds = new Set<string>()
 
   function appendToolCallStart(sessionId: string, data: { tool_call_id: string; tool_name: string; arguments?: string; elapsed_ms?: number }) {
     if (isHistoryAnchored(sessionId)) return
-    if (TASK_TOOL_NAMES.has(data.tool_name)) {
+    if (TASK_TOOL_NAMES.has(data.tool_name) || USER_HIDDEN_TOOL_NAMES.has(data.tool_name)) {
       filteredToolCallIds.add(data.tool_call_id)
       // 跳过 task 工具，但在末尾 text 段追加换行，保证后续文本不与前文粘连
       const sid = String(sessionId)

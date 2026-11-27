@@ -90,6 +90,11 @@ export const ErrorCode = {
   /** 用量预算 BLOCK 超线：message 动态携带 scope/当期消耗/上限（技术方案 §5.7）。 */
   BUDGET_EXCEEDED: { code: 3041, message: '用量预算已超限' },
 
+  /** Agent 上报：不存在（含跨权限域直探 id）。HTTP 200 业务信封。 */
+  AGENT_REPORT_NOT_FOUND: { code: 3059, message: '上报不存在' },
+  /** Agent 上报已是终态（RESOLVED / DISMISSED）或被并发处置（CAS 影响行数不符）。HTTP 200。 */
+  AGENT_REPORT_ALREADY_RESOLVED: { code: 3060, message: '该上报已被处置，请刷新后重试' },
+
   INTERNAL_ERROR: { code: 5001, message: '服务内部错误' },
   DATABASE_ERROR: { code: 5002, message: '数据库错误' },
   FILE_UPLOAD_ERROR: { code: 5004, message: '文件上传失败' },

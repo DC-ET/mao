@@ -109,6 +109,8 @@ import { BuiltinSkillCatalog, assertMutableRootSeparate, locateBuiltinRoot } fro
 import { ScheduledTaskDbStore } from './schedule/scheduled-task.store.js';
 import { FeedbackRepository } from './feedback/feedback.repository.js';
 import { FeedbackDbLookup, FeedbackService } from './feedback/feedback.service.js';
+import { AgentReportRepository } from './agent-report/agent-report.repository.js';
+import { AgentReportService } from './agent-report/agent-report.service.js';
 import { McpSyncService } from './harness/mcp/local/mcp-sync-service.js';
 import { HttpApiExecutor } from './harness/tool/impl/http-api-executor.js';
 import { DangerAssessor } from './harness/tool/danger-assessor.js';
@@ -569,7 +571,11 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     },
     // 事务内回写反馈状态必须同事务（db.transaction 把连接包成新 Db 传回调）
     db,
-  );  const fileChangeRepo = new FileChangeRepository(db);
+  );
+  // Agent 静默问题上报（技术方案 2026-11-27）：report_issue 工具落库 + admin 处置。
+  const agentReportRepository = new AgentReportRepository(db);
+  const agentReportService = new AgentReportService(agentReportRepository);
+  const fileChangeRepo = new FileChangeRepository(db);
   const compactionRepo = new SessionCompactionRepository(db);
   const sessionCompactionService = new SessionCompactionService(compactionRepo, messageRepo, sessionRepo);
   const sessionCompactionEventService = new SessionCompactionEventService(new SessionCompactionEventRepository(db));
@@ -995,6 +1001,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     activityHeartbeat, memoryService, wsRegistry,
     experienceIndexService,
     experienceMountService,
+    // Agent 静默问题上报（2026-11-27）：工具落库端口 + 全局开关读取（HarnessService 门控）
+    agentReportService,
   });
   const { toolRegistry, toolDispatcher, compactionSignalBus, agentLoop, harness } = harnessEngine;
 
@@ -1201,6 +1209,7 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
     watcherService, signalWatcherRepo,
     analyticsService, statisticsService, hostStatus, adminAnalytics,
     feedbackService,
+    agentReportService,
     memoryService,
     approvalRuleService,
     inboxService,

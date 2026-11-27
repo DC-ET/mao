@@ -66,6 +66,7 @@ import type { JwtService } from '../../crypto/jwt.service.js';
 import { contentParts, WsStreamingEventListener, type AgentEventListener, type WsListenerDeps } from './ws-streaming-event-listener.js';
 import type { StreamingWsRegistry, WsDeliveryResult, WsDeviceInfo, WsSocket } from './streaming-ws-registry.js';
 import { wsEvent } from './ws-event.js';
+import { USER_HIDDEN_TOOL_NAMES } from '../../harness/tool/user-hidden-tools.js';
 import { WsRateLimiter } from './ws-rate-limiter.js';
 import { isActivePhase } from '../session-vo.js';
 import type { AgentExecutionContext } from '../../harness/core/agent-execution-context.js';
@@ -948,6 +949,9 @@ export class StreamingWsHandler {
     }));
     if (active) {
       for (const toolCall of this.deps.registry.getActiveToolCalls(sessionId)) {
+        // 用户隐藏工具（report_issue，2026-11-27 §6.3 #4）：重放同样按名过滤
+        // （活跃登记照做是为了结果回调恢复工具名与管理端在飞补充一致性，不面向用户）。
+        if (typeof toolCall.tool_name === 'string' && USER_HIDDEN_TOOL_NAMES.has(toolCall.tool_name)) continue;
         this.deps.registry.send(userId, wsEvent('tool_call_start', sessionId, {
           ...toolCall,
           // 在途调用重放带回服务端已耗时：前端据此把「执行中」计时的基座挪到真正的开始时刻，

@@ -7,6 +7,7 @@ import { buildUserContentParts } from '../util/image-url-annotation.js';
 import { FileChangeDiffUtil } from '../../harness/tool/file-change-diff-util.js';
 import { ToolImageResultProcessor } from '../../harness/tool/tool-image-result-processor.js';
 import type { ToolCallResultMeta } from '../../harness/tool/tool-result.js';
+import { USER_HIDDEN_TOOL_NAMES } from '../../harness/tool/user-hidden-tools.js';
 import type { ContextManifest } from '../../harness/core/context-manifest.js';
 import { contextManifestJson } from '../../harness/core/context-manifest.js';
 import { wsEvent } from './ws-event.js';
@@ -112,6 +113,9 @@ export class WsStreamingEventListener implements AgentEventListener {
     this.toolCallInfo.set(toolCallId, [toolName, args]);
     this.deps.registry.trackActiveToolCall(this.sessionId, this.executionId, toolCallId, toolName, args ?? '');
     if (alreadySent) return;
+    // 用户隐藏工具（report_issue，技术方案 2026-11-27 §6.3 #1）：登记照做
+    // （结果回调要从 toolCallInfo 恢复工具名、重连重放按名过滤），但不向用户发送任何事件。
+    if (USER_HIDDEN_TOOL_NAMES.has(toolName)) return;
     this.send('tool_call_start', {
       tool_call_id: toolCallId,
       tool_name: toolName,
@@ -124,6 +128,10 @@ export class WsStreamingEventListener implements AgentEventListener {
     const info = this.toolCallInfo.get(toolCallId);
     this.toolCallInfo.delete(toolCallId);
     const toolName = info?.[0] ?? null;
+    // 用户隐藏工具（§6.3 #2）：completeActiveToolCall 照常（注册表清理），
+    // 但跳过 tool_call_result 发送与 recordActivity（不落 session_activity 行 → 活动流天然无痕迹）。
+    // report_issue 本就不在 TASK_TOOLS / FILE_TOOLS 集合，pushTodos / pushFileChange 天然不触发。
+    if (toolName != null && USER_HIDDEN_TOOL_NAMES.has(toolName)) return;
     const argumentsJson = info?.[1] ?? null;
     const publicResult = FileChangeDiffUtil.stripPrivateDiff(result) ?? result;
     const processed = ToolImageResultProcessor.process(publicResult, this.supportsVision);
@@ -237,6 +245,8 @@ export class WsStreamingEventListener implements AgentEventListener {
   }  onToolCallArgsDelta(toolCallId: string, argumentsDelta: string): void {
     const info = this.toolCallInfo.get(toolCallId);
     if (info) info[1] = argumentsDelta;
+    // 用户隐藏工具（§6.3 #3）：toolCallInfo 快照照更新（结果回调要用），注册表与下发跳过。
+    if (info && USER_HIDDEN_TOOL_NAMES.has(info[0])) return;
     this.deps.registry.updateActiveToolCallArguments(this.sessionId, toolCallId, argumentsDelta);
     // 上游回调的是"合并后的完整 arguments"，直接降频为全量快照下发（前端按全量替换消费）。
     this.enqueueDelta({ type: 'tool_call_args_delta', payload: argumentsDelta, toolCallId });

@@ -141,6 +141,10 @@ export function normalizeApiToolCall(
 
 const TASK_TOOL_NAMES = new Set(['task_create', 'task_update', 'task_delete', 'task_list'])
 
+// 用户隐藏工具（report_issue，2026-11-27 agent-issue-report）：问题上报对用户不可见；
+// 服务端历史出口已过滤，此处为纵深防御（防未来新数据路径漏过滤）。
+const USER_HIDDEN_TOOL_NAMES = new Set(['report_issue'])
+
 export function normalizeToolCallsList(raw: unknown): ToolCall[] {
   if (!raw) return []
   let list: unknown[] = []
@@ -160,9 +164,9 @@ export function normalizeToolCallsList(raw: unknown): ToolCall[] {
     .map(tc => normalizeApiToolCall(tc))
 }
 
-/** 过滤掉 task_* 工具（仅供内部 todo 管理，不展示） */
+/** 过滤掉 task_* 工具（仅供内部 todo 管理，不展示）与用户隐藏工具（report_issue） */
 function filterTaskTools(toolCalls: ToolCall[]): ToolCall[] {
-  return toolCalls.filter(tc => !TASK_TOOL_NAMES.has(tc.name))
+  return toolCalls.filter(tc => !TASK_TOOL_NAMES.has(tc.name) && !USER_HIDDEN_TOOL_NAMES.has(tc.name))
 }
 
 /** 由正文 + 工具列表构建时间线（历史消息每轮一条 assistant） */

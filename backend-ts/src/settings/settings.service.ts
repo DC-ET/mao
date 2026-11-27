@@ -24,6 +24,8 @@ export const WEIXIN_AGENT_ID_KEY = 'weixin.agentId';
 export const EMBED_AGENT_ID_KEY = 'embed.agentId';
 /** 三级环境变量注入总开关（V158，默认开启；关闭后三层变量全部不注入）。 */
 export const SHELL_ENV_VARS_ENABLED_KEY = 'shell.envVars.enabled';
+/** Agent 问题上报（report_issue）全局开关键（2026-11-27）：缺省/非 false 一律开启。 */
+export const AGENT_REPORT_ENABLED_KEY = 'agentReport.enabled';
 /** MCP 工具加载模式全局默认（V159）：working_set=工作集（默认） | full=全量注入。 */
 export const MCP_LOAD_MODE_KEY = 'mcp.loadMode';
 /** Git 凭据域策略（V187）：lenient=未配置允许域的 Agent 不限制（默认）；strict=不注入任何 Git 凭据。 */
@@ -237,6 +239,16 @@ export class SystemSettingService {
 
   async shellEnvVarsEnabled(): Promise<boolean> {
     const raw = (await this.getText(SHELL_ENV_VARS_ENABLED_KEY)).trim().toLowerCase();
+    return raw !== 'false' && raw !== '0';
+  }
+
+  /**
+   * Agent 问题上报（report_issue）全局开关（技术方案 2026-11-27 §3.3）。
+   * 行缺失或值非 false/0 一律视为开启：新能力默认可用；应急关停必须显式写 false。
+   * 每次 buildContext 直读库（不缓存）：admin 改完下一轮会话即生效。
+   */
+  async agentReportEnabled(): Promise<boolean> {
+    const raw = (await this.getText(AGENT_REPORT_ENABLED_KEY, 'true')).trim().toLowerCase();
     return raw !== 'false' && raw !== '0';
   }
 

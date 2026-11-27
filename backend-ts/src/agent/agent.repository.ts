@@ -117,6 +117,7 @@ export class MysqlAgentRepository implements AgentRepository, AgentFeaturedModel
         mcpServerIds: agent.mcpServerIds,
         httpToolIds: agent.httpToolIds,
         featuredTools: agent.featuredTools ?? null,
+        reportIssueEnabled: agent.reportIssueEnabled ?? 1,
         imageModelId: agent.imageModelId ?? null,
         audioModelId: agent.audioModelId ?? null,
         gitAllowedDomains: agent.gitAllowedDomains ?? null,
@@ -156,6 +157,8 @@ export class MysqlAgentRepository implements AgentRepository, AgentFeaturedModel
         mcpServerIds: agent.mcpServerIds ?? null,
         httpToolIds: agent.httpToolIds ?? null,
         featuredTools: agent.featuredTools ?? null,
+        // 全量回写：service 层已合并好最终值（undefined 不回写该列由 service 先读当前值兜底）。
+        reportIssueEnabled: agent.reportIssueEnabled ?? 1,
         // 全量回写：service 层已按「undefined=不修改 / null=清空」合并好最终值（与 featuredTools 同款口径）。
         imageModelId: agent.imageModelId ?? null,
         audioModelId: agent.audioModelId ?? null,

@@ -149,6 +149,10 @@ export function summarize(toolName: string | null | undefined, argumentsJson: st
       return summarizeEditImage(argumentsJson, result);
     case 'text_to_speech':
       return summarizeTextToSpeech(argumentsJson, result);
+    // report_issue（2026-11-27 agent-issue-report）：摘要供管理端审计轨迹用；
+    // 用户侧两处消费者（WS tool_call_result.summary、飞书卡片行）已被隐藏过滤拦截，不会到用户眼前。
+    case 'report_issue':
+      return summarizeReportIssue(argumentsJson, result);
     case 'send_wechat_image':
       return summarizeSendWechatImage(argumentsJson, result);
     case 'send_wechat_file':
@@ -507,6 +511,20 @@ function summarizeTextToSpeech(argumentsJson: string | null | undefined, result:
   }
   const sizeBytes = typeof node.size_bytes === 'number' && Number.isFinite(node.size_bytes) ? node.size_bytes : null;
   return sizeBytes != null ? `${label} (${formatFileSize(sizeBytes)})` : label;
+}
+
+function summarizeReportIssue(argumentsJson: string | null | undefined, result: string | null | undefined): string {
+  const title = extractJsonString(argumentsJson, 'title');
+  const label = `问题上报${title != null ? `: ${truncate(title, 30)}` : ''}`;
+  if (result == null) return label;
+  const node = asObj(parseJson(result));
+  if (!node) return label;
+  if (has(node, 'error')) {
+    const suffix = failureSuffix(node);
+    return suffix ? `${label}${suffix}` : `${label} (失败)`;
+  }
+  // 去重命中（duplicate=true）是正常结果，不是失败：审计轨迹里区分开「新报」与「重复」。
+  return node.duplicate === true ? `${label} (重复)` : label;
 }
 
 function summarizeSendWechatImage(argumentsJson: string | null | undefined, result: string | null | undefined): string {

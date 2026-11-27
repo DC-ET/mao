@@ -98,12 +98,13 @@ describe('CRUD routes', () => {
     expect((await app.inject({
       method: 'POST', url: '/v1/agents', payload: { name: 'A', systemPrompt: 'p', avatarUrl: agent.avatarUrl },
     })).json().data.avatarUrl).toBe(agent.avatarUrl);
-    expect(agentService.createAgent.mock.calls[0]?.at(-7)).toBe(agent.avatarUrl);
-    expect(agentService.createAgent.mock.calls[0]?.at(-5)).toBeUndefined();
+    // 参数表末尾追加了 reportIssueEnabled（2026-11-27），负索引整体后移一位
+    expect(agentService.createAgent.mock.calls[0]?.at(-8)).toBe(agent.avatarUrl);
+    expect(agentService.createAgent.mock.calls[0]?.at(-6)).toBeUndefined();
     expect((await app.inject({
       method: 'PUT', url: '/v1/agents/1', payload: { name: 'B', avatarUrl: null },
     })).statusCode).toBe(200);
-    expect(agentService.updateAgent.mock.calls[0]?.at(-7)).toBeNull();
+    expect(agentService.updateAgent.mock.calls[0]?.at(-8)).toBeNull();
     expect((await app.inject({ method: 'DELETE', url: '/v1/agents/1' })).statusCode).toBe(200);
     expect((await app.inject({ method: 'GET', url: '/v1/agents/1/experiences' })).statusCode).toBe(200);
     expect((await app.inject({
@@ -143,7 +144,7 @@ describe('CRUD routes', () => {
       const cleared = await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { mcpServerIds: [] } });
       expect(cleared.statusCode).toBe(200);
       expect(agentService.updateAgent).toHaveBeenCalledWith(
-        7, 1, undefined, undefined, undefined, undefined, [], undefined, null, null, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        7, 1, undefined, undefined, undefined, undefined, [], undefined, null, null, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
       );
       expect(mcpServerValidator.validateForAgent).not.toHaveBeenCalled();
 
@@ -205,12 +206,13 @@ describe('CRUD routes', () => {
         },
       });
       expect(created.statusCode).toBe(200);
-      expect(agentService.createAgent.mock.calls.at(-1)?.at(-3)).toEqual(['image_generation', 'text_to_speech']);
+      // featuredTools 位（2026-11-27 起倒数第 4：尾部追加了 reportIssueEnabled）
+      expect(agentService.createAgent.mock.calls.at(-1)?.at(-4)).toEqual(['image_generation', 'text_to_speech']);
 
       await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { featuredTools: ['text_to_speech'] } });
-      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-3)).toEqual(['text_to_speech']);
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-4)).toEqual(['text_to_speech']);
       await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { featuredTools: [] } });
-      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-3)).toEqual([]);
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-4)).toEqual([]);
 
       const callsBefore = agentService.updateAgent.mock.calls.length;
       const invalid = await app.inject({
@@ -252,22 +254,22 @@ describe('CRUD routes', () => {
       expect(detail.json().data.imageModelId).toBe(12);
       expect(detail.json().data.audioModelId).toBe(5);
 
-      // 创建：绑定两个模型（create 尾部两参数 = imageModelId, audioModelId）
+      // 创建：绑定两个模型（尾部第 3/2 位 = imageModelId, audioModelId；末位是 reportIssueEnabled）
       const created = await app.inject({
         method: 'POST', url: '/v1/agents',
         payload: { name: 'A', systemPrompt: 'p', imageModelId: 12, audioModelId: 5 },
       });
       expect(created.statusCode).toBe(200);
-      expect(agentService.createAgent.mock.calls.at(-1)?.at(-2)).toBe(12);
-      expect(agentService.createAgent.mock.calls.at(-1)?.at(-1)).toBe(5);
+      expect(agentService.createAgent.mock.calls.at(-1)?.at(-3)).toBe(12);
+      expect(agentService.createAgent.mock.calls.at(-1)?.at(-2)).toBe(5);
 
       // 更新：null 清空绑定
       await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { imageModelId: null } });
-      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-2)).toBeNull();
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-3)).toBeNull();
       // 未传 = 不修改
       await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { name: 'B' } });
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-3)).toBeUndefined();
       expect(agentService.updateAgent.mock.calls.at(-1)?.at(-2)).toBeUndefined();
-      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-1)).toBeUndefined();
 
       // 非法值：0 / 负数 / 字符串 / 浮点一律 PARAM_INVALID
       const callsBefore = agentService.updateAgent.mock.calls.length;
@@ -276,6 +278,40 @@ describe('CRUD routes', () => {
         expect(res.json().code).toBe(ErrorCode.PARAM_INVALID.code);
       }
       expect(agentService.updateAgent.mock.calls.length).toBe(callsBefore);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('round-trips reportIssueEnabled（2026-11-27）：末位透传；VO 缺省 true、0 → false', async () => {
+    const agent = { id: 1, name: 'A', systemPrompt: 'p', isDefault: 0, reportIssueEnabled: 0 };
+    const agentService = {
+      getAgent: vi.fn(async () => agent),
+      createAgent: vi.fn(async () => agent),
+      updateAgent: vi.fn(async () => agent),
+      getAgentExperiences: vi.fn(async () => []),
+      getAgentSuggestedQuestions: vi.fn(async () => []),
+    };
+    const app = await appWithUser((f) => registerAgentRoutes(f, {
+      agentService: agentService as never,
+      experienceService: {} as never,
+      suggestedQuestionService: {} as never,
+      userRepo: { findById: vi.fn(async () => null) } as never,
+      mcpServerValidator: { validateForAgent: vi.fn(async (ids: number[]) => ids) } as never,
+      httpToolValidator: { validateForAgent: vi.fn(async (ids: number[]) => ids) } as never,
+      permissionService: { hasPermission: vi.fn(async () => true) },
+    }));
+    try {
+      // VO 输出：0 → false
+      expect((await app.inject({ method: 'GET', url: '/v1/agents/1' })).json().data.reportIssueEnabled).toBe(false);
+      // 创建：false 透传到末位参数
+      await app.inject({ method: 'POST', url: '/v1/agents', payload: { name: 'A', systemPrompt: 'p', reportIssueEnabled: false } });
+      expect(agentService.createAgent.mock.calls.at(-1)?.at(-1)).toBe(false);
+      // 更新：true 透传；未传 = undefined（不修改）
+      await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { reportIssueEnabled: true } });
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-1)).toBe(true);
+      await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { name: 'B' } });
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-1)).toBeUndefined();
     } finally {
       await app.close();
     }
@@ -350,21 +386,21 @@ describe('CRUD routes', () => {
       permissionService,
     }));
     try {
-      // 规范化：去协议 / 去路径 / 小写 / 去重，at(-4) 位参数（gitAllowedDomains）为规范化结果
+      // 规范化：去协议 / 去路径 / 小写 / 去重，at(-5) 位参数（gitAllowedDomains）为规范化结果
       const normalized = await app.inject({
         method: 'PUT', url: '/v1/agents/1',
         payload: { gitAllowedDomains: ['https://Git.ACG.Team/foo', 'git.acg.team'] },
       });
       expect(normalized.statusCode).toBe(200);
-      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-4)).toEqual(['git.acg.team']);
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-5)).toEqual(['git.acg.team']);
 
       // null 清空 / [] 显式禁止 / 未传不改
       await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { gitAllowedDomains: null } });
-      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-4)).toBeNull();
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-5)).toBeNull();
       await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { gitAllowedDomains: [] } });
-      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-4)).toEqual([]);
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-5)).toEqual([]);
       await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { name: 'B' } });
-      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-4)).toBeUndefined();
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-5)).toBeUndefined();
 
       // 非法：空串 / 格式不符 / 非字符串 / 超过 32 条 / 总长超过 1024（最终闸门）
       const callsBefore = agentService.updateAgent.mock.calls.length;

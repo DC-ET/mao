@@ -75,6 +75,8 @@ const SERVER_ONLY_TOOLS = new Set([
   // 用户消息文件化（技术方案 2026-10-29）：两种模式都由服务端读消息并决定落点，
   // LOCAL 会话的落盘再经 LocalToolExecutor 委托桌面端 write_local_text_file。
   'dump_user_messages',
+  // Agent 静默问题上报（技术方案 2026-11-27）：服务端直连写库，无审批门，LOCAL 不下发桌面。
+  'report_issue',
   // 统一发送图片 / 文件（2026-11-18-unified-send-media）：SERVER_ONLY，LOCAL 不再下发执行端
   'send_image', 'send_file',
   // mcp_describe 是纯本地查询（读会话缓存清单），两种执行模式都不进 LOCAL 委托分支。

@@ -99,6 +99,10 @@ const SIGNAL_WATCHER_SEMANTIC_KEYS = [
  */
 const TTS_SEMANTIC_KEYS = ['format', 'model'] as const;
 
+// report_issue（2026-11-27 agent-issue-report）刻意不登记：返回 {received, duplicate}
+// 无随机 id / 时间戳 / 传输字段，是参数的确定性函数；且不加入 NO_PROGRESS_EXEMPT_TOOLS——
+// 重复相同的上报调用应计入循环检测（同参同结果 streak 累积），让本机制成为「上报刷屏」的最后一道闸。
+
 /**
  * 按工具归一化的语义白名单：key = 工具名，value = 进签名的语义字段（其余一律剔除）。
  * 结果含随机 id / 传输字段的工具必须在这里登记——漏补即漏报（见 VOLATILE_RESULT_KEYS 注释）。

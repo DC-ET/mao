@@ -46,6 +46,7 @@ import {
   toTodoVO,
   type SessionVO,
 } from './session-vo.js';
+import { filterUserHiddenToolMessages } from './util/hidden-tool-filter.js';
 
 export interface SessionRouteDeps {
   sessionService: SessionService;
@@ -594,7 +595,9 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
     const beforeMessageId = queryOptInt(request, 'beforeMessageId') ?? null;
     const aroundMessageId = queryOptInt(request, 'aroundMessageId') ?? null;
     const page = await sessionService.getMessagesByRounds(id, roundLimit, beforeMessageId, { aroundMessageId });
-    const changesByMsg = await sessionService.getFileChangesByMessageIds(id, page.messages.map((m) => m.id!));
+    // 用户隐藏工具（report_issue，2026-11-27 §6.3 #5）：剥掉 toolCalls 条目与 TOOL 行后再出 VO
+    const visibleMessages = filterUserHiddenToolMessages(page.messages);
+    const changesByMsg = await sessionService.getFileChangesByMessageIds(id, visibleMessages.map((m) => m.id!));
     const vo: {
       messages: ReturnType<typeof toMessageVOList>;
       hasMore: boolean;
@@ -602,7 +605,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
       hasNewer?: boolean;
       compactionEvents?: ReturnType<typeof toCompactionEventVO>[];
     } = {
-      messages: toMessageVOList(page.messages, changesByMsg),
+      messages: toMessageVOList(visibleMessages, changesByMsg),
       hasMore: page.hasMore,
       nextBeforeMessageId: page.nextBeforeMessageId,
     };
@@ -649,9 +652,11 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionRouteDe
       throw new BusinessException(ErrorCode.MESSAGE_NOT_FOUND);
     }
     const page = await sessionService.getForkPreview(id, cutMessageId, roundLimit, queryOptInt(request, 'beforeMessageId') ?? null);
-    const changesByMsg = await sessionService.getFileChangesByMessageIds(id, page.messages.map((m) => m.id!));
+    // 用户隐藏工具（report_issue，2026-11-27 §6.3 #5）：与 messages 端点同口径过滤
+    const visibleMessages = filterUserHiddenToolMessages(page.messages);
+    const changesByMsg = await sessionService.getFileChangesByMessageIds(id, visibleMessages.map((m) => m.id!));
     return sendOk(reply, {
-      messages: toMessageVOList(page.messages, changesByMsg),
+      messages: toMessageVOList(visibleMessages, changesByMsg),
       hasMore: page.hasMore,
       nextBeforeMessageId: page.nextBeforeMessageId,
       compactionEvents: (await deps.sessionCompactionEventService.listBySessionId(id))

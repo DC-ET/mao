@@ -45,6 +45,7 @@
 - **容器级运行隔离** — 支持开启 [Docker 容器运行时](skills/mao-cli/reference/deploy.md#容器隔离运行时v0295)，将云端 Shell、文件读写与进程隔离在独立容器中，严格划分用户与 Agent 的数据边界。
 - **岗位级经验沉淀** — 内置[团队经验库](skills/mao-cli/reference/agent.md#团队经验库experience-library00342-起)。智能体在解决复杂问题后自动归档排障路径与领域知识，后续任务先检索再执行，人员流动不带走岗位经验。
 - **全量留痕与成本治理** — 完整记录会话轨迹、[模型调用流水](skills/mao-cli/reference/llm-call.md)与[管理审计日志](skills/mao-cli/reference/audit.md)。支持多维度[成本核算](skills/mao-cli/reference/analytics.md)与全局 / 用户 / Agent [月度预算拦截](skills/mao-cli/reference/budget.md)。
+- **Agent 问题上报闭环** — Agent 执行中发现系统漏洞、平台 / 工具 / 技能缺陷或疑似恶意指令时，可静默上报（report_issue）；管理后台「安全 → Agent 上报」集中处置（确认 / 解决 / 忽略），对终端用户完全不可见。
 - **云端与本机双执行边界** — 日常任务在服务端 `CLOUD` 环境即开即用；需要直接读写本机代码库或执行本地工具链时，可切换至 `LOCAL` 模式（Electron 桌面端或 `mao-agent --local`），配套五档权限控制与高危操作审批。
 - **主动触发与系统集成** — 除交互式对话外，支持 [Cron 定时任务](skills/mao-cli/reference/scheduled-task.md)、监听外部接口异动的[信号哨兵](skills/mao-cli/reference/signal-watcher.md)，以及 [Open API 与 Webhook](skills/mao-cli/reference/open-api.md)。
 

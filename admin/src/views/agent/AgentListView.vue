@@ -104,6 +104,8 @@
                 <div>MCP：{{ capabilityText(resolveNames(row.mcpServerIds, mcpNameById)) }}</div>
                 <div>自定义工具：{{ capabilityText(resolveNames(row.httpToolIds, toolNameById)) }}</div>
                 <div>特色工具：{{ featuredToolsText(row.featuredTools) }}</div>
+                <!-- 仅关闭时显示（避免噪音）：上报默认全开 -->
+                <div v-if="row.reportIssueEnabled === false">问题上报：已关闭</div>
                 <div>Git 域：{{ gitDomainText(row.gitAllowedDomains) }}</div>
               </template>
               <span>{{ capabilitySummary(row) }}</span>
@@ -396,6 +398,8 @@ function capabilitySummary(row: any): string {
   if (mcp > 0) parts.push(`MCP ${mcp}`)
   if (tools > 0) parts.push(`工具 ${tools}`)
   if (featured > 0) parts.push(`特色 ${featured}`)
+  // 上报关闭标识仅关闭时显示（默认全开，避免噪音）
+  if (row.reportIssueEnabled === false) parts.push('上报关')
   return parts.length > 0 ? parts.join(' · ') : '—'
 }
 

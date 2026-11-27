@@ -5,6 +5,7 @@ import { formatDateTime, shanghaiYmd } from '../common/json.js';
 import type { AgentLookup, FileChange, Message, Session } from './types.js';
 import type { SessionService } from './session.service.js';
 import { renderMessageJsonl } from './message-jsonl.js';
+import { filterUserHiddenToolMessages } from './util/hidden-tool-filter.js';
 
 export const EXPORT_MAX_BYTES = 5 * 1024 * 1024;
 
@@ -28,7 +29,10 @@ export class SessionExportService {
 
   async render(session: Session, now = new Date()): Promise<SessionExportResult> {
     const parentId = sideTaskParentId(session);
-    const messages = withoutParentCopies(await this.loadAllMessages(session.id!, parentId), parentId);
+    // 用户隐藏工具（report_issue，2026-11-27 §6.3 #5）：导出与会话历史同口径过滤
+    const messages = filterUserHiddenToolMessages(
+      withoutParentCopies(await this.loadAllMessages(session.id!, parentId), parentId),
+    );
     const changes = changesForMessages(
       await this.sessionService.listFileChangeSummaries(session.id!, parentId),
       messages,

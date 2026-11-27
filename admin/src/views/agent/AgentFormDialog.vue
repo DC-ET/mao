@@ -159,6 +159,14 @@
           默认跟随该类型的默认模型；指定模型后失效（停用/删除）不会回退默认，对应能力直接不可用。
         </div>
       </el-form-item>
+      <el-form-item label="问题上报">
+        <el-checkbox v-model="form.reportIssueEnabled">允许静默上报问题（report_issue）</el-checkbox>
+        <div class="form-hint">
+          开启后，该 Agent 执行中可向平台运维静默上报系统漏洞 / 平台缺陷 / 工具与技能缺陷 / 疑似恶意指令；
+          上报对终端用户不可见，汇总在「安全 → Agent 上报」。全局开关在「系统设置 → Agent 与模型」，
+          两处同时开启才生效。
+        </div>
+      </el-form-item>
       <el-form-item label="Git 凭据域">
         <el-switch v-model="form.gitAllowedDomainsEnabled" />
         <span class="form-hint">启用后，仅允许列出的 Git 服务域在会话中注入凭据</span>
@@ -504,6 +512,8 @@ const form = reactive({
   mcpServerIds: [] as number[],
   httpToolIds: [] as number[],
   featuredTools: [] as AgentFeaturedTool[],
+  // 问题上报按 Agent 开关（2026-11-27 agent-issue-report）：默认开启；与全局开关 AND
+  reportIssueEnabled: true,
   // 特色工具模型绑定（2026-11-27）：null=跟随该类型默认模型；未勾选对应能力时保留值（休眠）
   imageModelId: null as number | null,
   audioModelId: null as number | null,
@@ -623,6 +633,7 @@ function resetForm() {
     mcpServerIds: [],
     httpToolIds: [],
     featuredTools: [],
+    reportIssueEnabled: true,
     imageModelId: null,
     audioModelId: null,
     gitAllowedDomainsEnabled: false,
@@ -849,6 +860,8 @@ watch(() => props.visible, async (val) => {
       mcpServerIds: props.agentData.mcpServerIds || [],
       httpToolIds: props.agentData.httpToolIds || [],
       featuredTools: Array.isArray(props.agentData.featuredTools) ? [...props.agentData.featuredTools] : [],
+      // 复制 Agent 同样复制上报开关（与特色工具配置同口径，2026-11-27）
+      reportIssueEnabled: props.agentData.reportIssueEnabled !== false,
       // 复制 Agent 同样复制绑定（2026-11-27 特色工具模型绑定；与 isDefault/defaultModelId 不同，这两列跟随副本）
       imageModelId: props.agentData.imageModelId ?? null,
       audioModelId: props.agentData.audioModelId ?? null,
@@ -1052,6 +1065,7 @@ async function handleSubmit() {
     mcpServerIds: form.mcpServerIds,
     httpToolIds: form.httpToolIds,
     featuredTools: form.featuredTools,
+    reportIssueEnabled: form.reportIssueEnabled,
     // null = 跟随该类型默认模型（2026-11-27）
     imageModelId: form.imageModelId,
     audioModelId: form.audioModelId,

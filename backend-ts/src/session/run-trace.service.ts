@@ -7,6 +7,7 @@ import type { Message, SessionActivity, SessionCompactionEvent } from './types.j
 import { javaLocalDateTimeString } from '../common/datetime.js';
 import { isMultimodalContentParts } from '../common/multimodal-content.js';
 import { isCancelledError } from '../common/llm-cancel.js';
+import { USER_HIDDEN_TOOL_NAMES } from '../harness/tool/user-hidden-tools.js';
 import type {
   RunTracePageVO,
   RunTraceVO,
@@ -266,10 +267,16 @@ export class RunTraceService {
       if (declared.length === 0) continue;
       const tools: TraceToolVO[] = [];
       for (const call of declared) {
+        // 用户隐藏工具（report_issue，2026-11-27 §6.3 #6）：轨迹主 VO 按名过滤声明调用；
+        // 对应活动行本就不落库（WS listener 跳过 recordActivity），activityByCallId 查无此物。
+        if (USER_HIDDEN_TOOL_NAMES.has(call.name)) continue;
         const activity = activityByCallId.get(call.id);
         if (activity?.id != null) groupedActivityIds.add(activity.id);
         tools.push(toToolVO(call, toolMessageByCallId.get(call.id), activity));
       }
+      // 该消息的声明调用全是隐藏工具：无可展示工具，也不做挂轮认领（认领了也只是 push 空数组，
+      // 反而会占用候选调用、干扰后续消息的工具挂轮）。
+      if (tools.length === 0) continue;
       // 挂轮：当前段内 created_at 不晚于该助手消息、且尚未被占用的最后一条 agent 调用。
       // 候选池限定当前段——对得上现存消息的工具永远归当前段（编辑前的助手消息已被截断）。
       //

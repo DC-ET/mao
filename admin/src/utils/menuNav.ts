@@ -24,7 +24,8 @@ import {
   Operation,
   Cellphone,
   Cpu,
-  VideoCamera
+  VideoCamera,
+  Warning
 } from '@element-plus/icons-vue'
 
 export interface MenuItemDef {
@@ -89,6 +90,7 @@ export const menuGroups: MenuGroupDef[] = [
       { index: '/users', label: '用户管理', icon: User, permission: 'user:read' },
       { index: '/roles', label: '角色权限', icon: Lock, permission: 'role:read' },
       { index: '/approval-rules', label: '审批规则', icon: Key, permission: 'approval-rule:read' },
+      { index: '/agent-report', label: 'Agent 上报', icon: Warning, permission: 'agent-report:read' },
       { index: '/audit-logs', label: '审计日志', icon: DocumentChecked, permission: 'audit:read' }
     ]
   },

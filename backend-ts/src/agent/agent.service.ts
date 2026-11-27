@@ -98,6 +98,8 @@ export class AgentService {
     /** 特色工具模型绑定（2026-11-27）：null/未提供都存 NULL（跟随类型默认）。 */
     imageModelId?: number | null,
     audioModelId?: number | null,
+    /** 问题上报按 Agent 开关（2026-11-27）：false=关闭；缺省开启。追加在参数表末尾，不挤位既有调用。 */
+    reportIssueEnabled?: boolean | null,
   ): Promise<Agent> {
     validateAgentAvatarUrl(avatarUrl);
     await this.requireFeaturedModel(imageModelId, 'image');
@@ -124,6 +126,7 @@ export class AgentService {
       enabled: 1,
       clientVisible: clientVisibleFlag,
       experienceLibraryEnabled: experienceLibraryEnabled === false ? 0 : 1,
+      reportIssueEnabled: reportIssueEnabled === false ? 0 : 1,
     };
     if (skillNames != null && skillNames.length > 0) {
       agent.skillNames = JSON.stringify(skillNames);
@@ -177,6 +180,8 @@ export class AgentService {
     /** 特色工具模型绑定（2026-11-27）：undefined=不修改；null=清空（跟随类型默认）；正整数=绑定。 */
     imageModelId?: number | null,
     audioModelId?: number | null,
+    /** 问题上报按 Agent 开关（2026-11-27）：undefined/null=不修改；false=关闭；true=开启。追加在参数表末尾。 */
+    reportIssueEnabled?: boolean | null,
   ): Promise<Agent> {
     validateAgentAvatarUrl(avatarUrl);
     const agent = await this.getAgent(id);
@@ -222,6 +227,9 @@ export class AgentService {
     if (featuredTools != null) {
       // null / undefined 不修改（管理端始终提交数组）；[] 显式清空。
       agent.featuredTools = featuredTools.length === 0 ? null : JSON.stringify(featuredTools);
+    }
+    if (reportIssueEnabled != null) {
+      agent.reportIssueEnabled = reportIssueEnabled ? 1 : 0;
     }
     // 绑定与 featuredTools 独立：未勾选对应能力时绑定仍可保存（休眠状态，UI 禁用下拉但保留值）。
     if (imageModelId !== undefined) agent.imageModelId = imageModelId;

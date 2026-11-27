@@ -1,6 +1,7 @@
 import type { AgentEventListener } from '../harness/core/agent-event-listener.js';
 import type { ChatUsage, ToolCall } from '../harness/llm/chat-request.js';
 import { ToolResultSummarizer } from '../session/util/tool-result-summarizer.js';
+import { USER_HIDDEN_TOOL_NAMES } from '../harness/tool/user-hidden-tools.js';
 import { stripCitationMarkers } from '../session/util/citation-markers.js';
 import { clipByCodePoints } from '../common/utf8.js';
 import { formatFeishuDuration } from './progress-card.js';
@@ -39,6 +40,8 @@ export class FeishuCardProgressListener implements AgentEventListener {
   /** 首次思考的起表时刻：占位「正在思考…」显示期间用于耗时刷新；思考结束（首段内容/工具/轮收尾）置 null。 */
   private thinkingStartedAtMs: number | null = null;
   private readonly tools = new Map<string, ToolProgress>();
+  /** 用户隐藏工具（report_issue，2026-11-27 §6.3 #7）：start 早退登记 id，result/args 据此跳过，卡片无痕迹。 */
+  private readonly hiddenToolCallIds = new Set<string>();
   private pending: Promise<void> = Promise.resolve();
   /** 在途工具耗时的周期刷新定时器；仅在有工具在跑期间存在（见 ensureTicker/stopTicker）。 */
   private ticker: ReturnType<typeof setInterval> | null = null;
@@ -98,6 +101,11 @@ export class FeishuCardProgressListener implements AgentEventListener {
   onToolCallStart(toolCall: ToolCall): void {
     const toolCallId = toolCall.id ?? `tool-${this.tools.size}`;
     const name = toolCall.function?.name ?? '未知工具';
+    // 用户隐藏工具：登记 id 后早退——不建工具行、不推卡片、不挂耗时刷新。
+    if (USER_HIDDEN_TOOL_NAMES.has(name)) {
+      this.hiddenToolCallIds.add(toolCallId);
+      return;
+    }
     const previous = this.tools.get(toolCallId);
     // 起表时刻只在首次登记时打点：同 id 的重复 start / 参数增量都不重置，否则耗时永远走不起来。
     this.tools.set(toolCallId, {
@@ -115,6 +123,7 @@ export class FeishuCardProgressListener implements AgentEventListener {
   }
 
   onToolCallArgsDelta(toolCallId: string, argumentsJson: string): void {
+    if (this.hiddenToolCallIds.has(toolCallId)) return;
     const tool = this.tools.get(toolCallId);
     if (tool == null) return;
     const before = formatToolLine(tool, this.now());
@@ -126,6 +135,8 @@ export class FeishuCardProgressListener implements AgentEventListener {
   }
 
   onToolCallResult(toolCallId: string, result: string): void {
+    // 用户隐藏工具：start 已早退，result 同样跳过（下方乱序兜底对它不建卡片）。
+    if (this.hiddenToolCallIds.delete(toolCallId)) return;
     const tool = this.tools.get(toolCallId);
     if (tool == null) {
       // 乱序兜底：结果先于 start 到达的 entry 没有起表时刻，不参与计时。
@@ -149,6 +160,7 @@ export class FeishuCardProgressListener implements AgentEventListener {
     if (this.content.trim() !== '') this.carriedContent = this.content;
     this.content = '';
     this.tools.clear();
+    this.hiddenToolCallIds.clear();
   }
 
   onError(error: unknown): void {

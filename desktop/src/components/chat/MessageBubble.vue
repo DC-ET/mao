@@ -484,7 +484,8 @@ const noticeExcerptText = computed(() => noticeExcerpt(props.message.content))
 
 const noticeExpanded = ref(false)
 
-const HIDDEN_TOOL_NAMES = new Set(['todo', 'task_list', 'task_create', 'task_update', 'task_delete'])
+// report_issue（2026-11-27）：问题上报对用户隐藏，服务端已全链路过滤，此处为纵深防御
+const HIDDEN_TOOL_NAMES = new Set(['todo', 'task_list', 'task_create', 'task_update', 'task_delete', 'report_issue'])
 
 const visibleToolCalls = computed(() =>
   props.message.toolCalls?.filter(tc => !HIDDEN_TOOL_NAMES.has(tc.name)) || []

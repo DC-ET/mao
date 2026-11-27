@@ -79,6 +79,8 @@ import type { RoutingMcpClientManager } from './harness/container/routing-mcp-cl
 import type { Db } from './db/db.js';
 
 import { createDefaultToolRegistry } from './harness/tool/tool-registry.js';
+import type { AgentReportSink } from './harness/tool/impl/report-issue-tool.js';
+import type { AgentReportService } from './agent-report/agent-report.service.js';
 import { createImageCallRecorder } from './usage/image-call-recorder.js';
 import type { LlmCallService } from './usage/llm-call.service.js';
 import { ToolDispatcher } from './harness/tool/tool-dispatcher.js';
@@ -194,6 +196,8 @@ export interface HarnessEngineDeps {
   llmCallService?: LlmCallService | null;
   /** 团队经验库挂载服务：buildContext 每轮幂等补挂（存量会话兜底）。可选注入。 */
   experienceMountService?: { syncForSession(workspace: string, agentId: number, enabled: boolean, refreshIndex?: boolean): void } | null;
+  /** Agent 静默问题上报（2026-11-27）：report_issue 落库服务；缺省（精简装配/单测）时工具不注册。 */
+  agentReportService?: AgentReportService | null;
 }
 
 export interface HarnessEngineResult {
@@ -217,6 +221,12 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     harnessLog('warn', '[featured-tools] modelRepo/agentRepo 未装配，特色工具闸口将逐能力 fail-closed（工具隐藏）');
   }
   const featuredModelResolver = new DefaultFeaturedModelResolver(d.modelRepo, d.agentRepo);
+
+  // report_issue 落库端口（技术方案 2026-11-27 §5.3）：service 在装配上游已构造，直引即可。
+  // 未注入（精简装配/单测）时 sink 为 null → 工具不注册（条件注册，缺省装配工具集不变）。
+  const agentReportSink: AgentReportSink | null = d.agentReportService != null
+    ? { report: (input) => d.agentReportService.reportFromTool(input) }
+    : null;
 
   const toolRegistry = createDefaultToolRegistry({
     pathSandbox: d.pathSandbox,
@@ -245,6 +255,7 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     imageModelLookup: featuredModelResolver,
     audioModelLookup: featuredModelResolver,
     llmAdapter: d.llmAdapter,
+    agentReportSink,
     authResolver: d.authResolver,
     uploadDir,
     onFileChanged: d.experienceIndexService != null
@@ -401,6 +412,8 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     d.experienceMountService ?? null,
     cfg.app.harness.runtimeIdentityMode,
     featuredModelResolver,
+    // report_issue 全局开关（2026-11-27 §3.3）：直读 settings（agentReportEnabled），每轮生效
+    d.settingService,
   );
   d.holder.harness = harness;
 

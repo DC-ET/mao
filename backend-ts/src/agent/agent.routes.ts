@@ -47,6 +47,8 @@ interface CreateAgentRequest {
   httpToolIds?: number[];
   gitAllowedDomains?: string[] | null;
   featuredTools?: AgentFeaturedTool[] | null;
+  /** 问题上报按 Agent 开关：false=关闭；缺省开启。 */
+  reportIssueEnabled?: boolean | null;
   /** 指定文生图模型 id：正整数=绑定；null/缺省=跟随图片默认模型。 */
   imageModelId?: number | null;
   /** 指定语音模型 id：正整数=绑定；null/缺省=跟随语音默认模型。 */
@@ -71,6 +73,8 @@ interface UpdateAgentRequest {
   gitAllowedDomains?: string[] | null;
   /** 特色工具：undefined/null=不修改；[]=清空；非空=启用列表。 */
   featuredTools?: AgentFeaturedTool[] | null;
+  /** 问题上报按 Agent 开关：undefined/null=不修改；false=关闭；true=开启。 */
+  reportIssueEnabled?: boolean | null;
   /** 指定文生图模型 id：undefined=不修改；null=清空（跟随图片默认模型）；正整数=绑定。 */
   imageModelId?: number | null;
   /** 指定语音模型 id：undefined=不修改；null=清空（跟随语音默认模型）；正整数=绑定。 */
@@ -233,6 +237,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       featuredTools,
       imageModelId,
       audioModelId,
+      body.reportIssueEnabled,
     );
     return sendOk(reply, await toVO(agent, agentService, userRepo));
   });
@@ -277,6 +282,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       featuredTools,
       imageModelId,
       audioModelId,
+      body.reportIssueEnabled,
     );
     return sendOk(reply, await toVO(agent, agentService, userRepo));
   });
@@ -422,6 +428,8 @@ async function toVO(
     experienceLibraryEnabled: agent.experienceLibraryEnabled !== 0,
     defaultModelId: agent.defaultModelId ?? null,
     featuredTools: [],
+    // 问题上报按 Agent 开关：缺省/1 为开启（与全局开关 AND，0 才关闭）
+    reportIssueEnabled: agent.reportIssueEnabled !== 0,
     imageModelId: agent.imageModelId ?? null,
     audioModelId: agent.audioModelId ?? null,
     createdAt: agent.createdAt ?? null,
