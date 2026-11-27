@@ -17,6 +17,7 @@
 #   MAO_PUBLIC_BASE_URL      android-latest.json 的 downloadUrl 基址（默认官方）
 #
 # 环境要求：
+#   - Node.js 可用（npm/npx 不必需：脚本用 node 直调 Capacitor CLI，android/ 需已 npm ci）
 #   - ANDROID_HOME 已设置
 #   - MAO_KEYSTORE_PATH / MAO_KEYSTORE_PASSWORD / MAO_KEY_ALIAS / MAO_KEY_PASSWORD
 #     已设置或写在 /opt/mao/keystore/keystore-credentials.env
@@ -150,8 +151,13 @@ echo ""
 # ---- Step 1: Capacitor sync（web-stub + 远程 server.url）----
 echo "[1/3] Capacitor sync..."
 cd "$ANDROID_DIR"
-npx cap copy android
-npx cap update android
+# 构建机可能只装了 node 而没有 npm/npx（服务器即如此），用 node 直调 Capacitor CLI。
+CAPACITOR_CLI="$ANDROID_DIR/node_modules/@capacitor/cli/bin/capacitor"
+if [ ! -f "$CAPACITOR_CLI" ]; then
+  echo "错误：缺少 Capacitor CLI，请先在 android/ 执行 npm ci"; exit 1
+fi
+node "$CAPACITOR_CLI" copy android
+node "$CAPACITOR_CLI" update android
 echo "      sync 完成"
 
 # ---- Step 2: Gradle assembleRelease ----
