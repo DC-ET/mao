@@ -113,12 +113,20 @@ export interface FeishuMessageRepository {
 export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
   constructor(private readonly db: Db) {}
 
+  /**
+   * 活跃指针读取：会话可能已被用户删除（删会话不清理通道指针），这里只认存活会话——
+   * 失效指针按「无指针」返回，由上层重建并改写指针。否则后续 getSession 抛「会话不存在」，
+   * 异常在合窗 flush 里被吞掉，用户侧零回复（2026-11-27 飞书私聊事故）。
+   */
   findGroupConversation(appId: string, chatId: string, ownerUserId?: number): Promise<FeishuConversation | null> {
-    const sql = ownerUserId == null
-      ? 'SELECT * FROM feishu_chat WHERE app_id = ? AND chat_id = ? LIMIT 1'
-      : 'SELECT * FROM feishu_chat WHERE app_id = ? AND chat_id = ? AND owner_user_id = ? LIMIT 1';
+    const ownerFilter = ownerUserId == null ? '' : ' AND c.owner_user_id = ?';
     const params = ownerUserId == null ? [appId, chatId] : [appId, chatId, ownerUserId];
-    return this.db.queryOne<FeishuConversation>(sql, params);
+    return this.db.queryOne<FeishuConversation>(
+      `SELECT c.* FROM feishu_chat c
+       JOIN \`session\` s ON s.id = c.session_id AND s.deleted = 0
+       WHERE c.app_id = ? AND c.chat_id = ?${ownerFilter} LIMIT 1`,
+      params,
+    );
   }
 
   findMediaByMessageId(messageId: string): Promise<{ appId: string; fileKey: string | null; fileName: string | null; msgType: string | null } | null> {
@@ -306,18 +314,26 @@ export class MysqlFeishuMessageRepository implements FeishuMessageRepository {
     return row?.sessionId ?? null;
   }
 
+  /** 话题映射写入：同一话题换了会话时要覆盖旧指针。曾用 INSERT IGNORE，映射指向已删会话后
+   *  无法替换，话题里的每条消息都会再建一个会话且映射永远过期；水位线归零让新会话重新取近期上下文。 */
   async recordThreadSession(params: { appId: string; chatId: string; threadId: string; rootMessageId: string; sessionId: number }): Promise<void> {
     if (params.threadId == null || params.threadId === '') return;
     await this.db.execute(
-      'INSERT IGNORE INTO feishu_thread_session (app_id, chat_id, thread_id, root_message_id, session_id) VALUES (?, ?, ?, ?, ?)',
+      `INSERT INTO feishu_thread_session (app_id, chat_id, thread_id, root_message_id, session_id)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE chat_id = VALUES(chat_id), root_message_id = VALUES(root_message_id),
+        session_id = VALUES(session_id), last_context_log_id = 0`,
       [params.appId, params.chatId, params.threadId, params.rootMessageId, params.sessionId],
     );
   }
 
+  /** 话题映射读取：与 feishu_chat 同口径只认存活会话，失效映射按「无映射」返回（上层重建并覆盖）。 */
   async findThreadSession(appId: string, threadId: string): Promise<{ sessionId: number; rootMessageId: string; lastContextLogId?: number | null } | null> {
     if (threadId == null || threadId === '') return null;
     const row = await this.db.queryOne<{ sessionId: number; rootMessageId: string; lastContextLogId?: number | null }>(
-      'SELECT session_id, root_message_id, last_context_log_id FROM feishu_thread_session WHERE app_id = ? AND thread_id = ? LIMIT 1',
+      `SELECT t.session_id, t.root_message_id, t.last_context_log_id FROM feishu_thread_session t
+       JOIN \`session\` s ON s.id = t.session_id AND s.deleted = 0
+       WHERE t.app_id = ? AND t.thread_id = ? LIMIT 1`,
       [appId, threadId],
     );
     return row ?? null;

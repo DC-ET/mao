@@ -224,3 +224,55 @@ describe('MysqlFeishuMessageRepository group /new switch', () => {
     expect(query).toHaveBeenCalled();
   });
 });
+
+// 用户删会话不清理通道指针：读取时必须只认存活会话，失效指针按「无指针」返回由上层重建。
+// 漏掉过滤会让每条消息都在 getSession 抛「会话不存在」，整条飞书消息静默无回复。
+describe('MysqlFeishuMessageRepository 活跃指针读取', () => {
+  it('只返回会话仍存活的私聊指针（JOIN session 过滤已删会话）', async () => {
+    const { repo, query } = setup([{ session_id: 9, owner_user_id: 3 }]);
+    const conversation = await repo.findGroupConversation('1', 'p2p:union:on_user', 3);
+    expect(conversation).toEqual({ sessionId: 9, ownerUserId: 3 });
+    expect(query).toHaveBeenCalledWith(
+      `SELECT c.* FROM feishu_chat c
+       JOIN \`session\` s ON s.id = c.session_id AND s.deleted = 0
+       WHERE c.app_id = ? AND c.chat_id = ? AND c.owner_user_id = ? LIMIT 1`,
+      ['1', 'p2p:union:on_user', 3],
+    );
+  });
+
+  it('群指针查询不带 owner 过滤', async () => {
+    const { repo, query } = setup([]);
+    expect(await repo.findGroupConversation('1', 'oc_group')).toBeNull();
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE c.app_id = ? AND c.chat_id = ? LIMIT 1'),
+      ['1', 'oc_group'],
+    );
+  });
+
+  it('只返回会话仍存活的话题映射', async () => {
+    const { repo, query } = setup([{ session_id: 12, root_message_id: 'om_root', last_context_log_id: 3 }]);
+    expect(await repo.findThreadSession('1', 'omt_1')).toEqual({
+      sessionId: 12, rootMessageId: 'om_root', lastContextLogId: 3,
+    });
+    expect(query).toHaveBeenCalledWith(
+      `SELECT t.session_id, t.root_message_id, t.last_context_log_id FROM feishu_thread_session t
+       JOIN \`session\` s ON s.id = t.session_id AND s.deleted = 0
+       WHERE t.app_id = ? AND t.thread_id = ? LIMIT 1`,
+      ['1', 'omt_1'],
+    );
+  });
+
+  it('话题映射改指新会话时覆盖旧行并重置水位线', async () => {
+    const { repo, execute } = setup([]);
+    await repo.recordThreadSession({
+      appId: '1', chatId: 'oc_group', threadId: 'omt_1', rootMessageId: 'om_root', sessionId: 12,
+    });
+    expect(execute).toHaveBeenCalledWith(
+      `INSERT INTO feishu_thread_session (app_id, chat_id, thread_id, root_message_id, session_id)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE chat_id = VALUES(chat_id), root_message_id = VALUES(root_message_id),
+        session_id = VALUES(session_id), last_context_log_id = 0`,
+      ['1', 'oc_group', 'omt_1', 'om_root', 12],
+    );
+  });
+});
