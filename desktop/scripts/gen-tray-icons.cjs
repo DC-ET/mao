@@ -1,10 +1,12 @@
 'use strict'
 
 /**
- * 一次性资产生成器：产出桌面托盘图标 PNG（electron/assets/）。
+ * 从应用 logo 生成桌面托盘图标（electron/assets/）。
  * 运行：node scripts/gen-tray-icons.cjs（提交产物，脚本保留以便再生成）。
- * - tray-icon-template.png  16x16  纯黑 M 字形 + alpha（macOS Template，明暗自适应）
- * - tray-icon.png           32x32  蓝底圆角白 M（Windows / Linux）
+ * 源图：src/assets/app-icon.png（金色羽毛）。
+ * - tray-icon-mac.png / tray-icon-mac@2x.png  22pt 彩色 logo（macOS 菜单栏）
+ * - tray-icon.png                             32px 彩色 logo（Windows / Linux）
+ * 不用 Template：Template 只保留透明度，会把羽毛压成单色剪影。
  */
 
 const fs = require('fs')
@@ -54,84 +56,147 @@ function encodePng(size, pixelFn) {
   return Buffer.concat([sig, chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))])
 }
 
-/** M 字形判定：左/右竖笔画 + 两段对角笔画，2px 笔宽，画布中央留 1px 边距 */
-function isGlyphM(x, y, size) {
-  const scale = size / 16
-  const px = (x + 0.5) / scale
-  const py = (y + 0.5) / scale
-  const stroke = 2.2
-  const inRect = (cx, cy, w, h) =>
-    Math.abs(px - cx) <= w / 2 && Math.abs(py - cy) <= h / 2
-  // 左竖 / 右竖
-  if (inRect(3.6, 8, stroke, 10)) return true
-  if (inRect(12.4, 8, stroke, 10)) return true
-  // 左对角（3.6,3）→（8,8）；右对角（12.4,3）→（8,8）
-  const onDiagonal = (x0, y0, x1, y1) => {
-    const dx = x1 - x0
-    const dy = y1 - y0
-    const len2 = dx * dx + dy * dy
-    let t = ((px - x0) * dx + (py - y0) * dy) / len2
-    t = Math.max(0, Math.min(1, t))
-    const cx = x0 + t * dx
-    const cy = y0 + t * dy
-    return (px - cx) * (px - cx) + (py - cy) * (py - cy) <= (stroke / 2) * (stroke / 2)
-  }
-  if (onDiagonal(3.6, 3, 8, 8)) return true
-  if (onDiagonal(12.4, 3, 8, 8)) return true
-  return false
+function paeth(a, b, c) {
+  const p = a + b - c
+  const pa = Math.abs(p - a)
+  const pb = Math.abs(p - b)
+  const pc = Math.abs(p - c)
+  if (pa <= pb && pa <= pc) return a
+  if (pb <= pc) return b
+  return c
 }
 
-function inRoundedRect(x, y, size, radius) {
-  const px = x + 0.5
-  const py = y + 0.5
-  const m = size * 0.08
-  const left = m
-  const right = size - m
-  const top = m
-  const bottom = size - m
-  if (px < left || px > right || py < top || py > bottom) return false
-  // 圆角：距角心 > radius 且在角区外
-  const cx = px < left + radius ? left + radius : px > right - radius ? right - radius : px
-  const cy = py < top + radius ? top + radius : py > bottom - radius ? bottom - radius : py
-  return (px - cx) * (px - cx) + (py - cy) * (py - cy) <= radius * radius
+/** 就地反滤波一行。bpp 为每像素字节数。 */
+function unfilter(filter, row, prev, bpp) {
+  if (filter === 0) return
+  for (let i = 0; i < row.length; i++) {
+    const left = i >= bpp ? row[i - bpp] : 0
+    const up = prev[i]
+    const ul = i >= bpp ? prev[i - bpp] : 0
+    if (filter === 1) row[i] = (row[i] + left) & 255
+    else if (filter === 2) row[i] = (row[i] + up) & 255
+    else if (filter === 3) row[i] = (row[i] + ((left + up) >> 1)) & 255
+    else if (filter === 4) row[i] = (row[i] + paeth(left, up, ul)) & 255
+    else throw new Error(`不支持的 PNG 滤波: ${filter}`)
+  }
+}
+
+/** 解码 8-bit RGB / RGBA PNG，返回 { width, height, pixels }，pixels 为 RGBA。 */
+function decodePng(buf) {
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  if (!buf.subarray(0, 8).equals(sig)) throw new Error('PNG 签名错误')
+  let offset = 8
+  let width = 0
+  let height = 0
+  let colorType = -1
+  const idats = []
+  while (offset + 8 <= buf.length) {
+    const len = buf.readUInt32BE(offset)
+    const type = buf.toString('ascii', offset + 4, offset + 8)
+    const data = buf.subarray(offset + 8, offset + 8 + len)
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0)
+      height = data.readUInt32BE(4)
+      if (data[8] !== 8 || (data[9] !== 2 && data[9] !== 6)) {
+        throw new Error(`只支持 8-bit RGB/RGBA，实际 bitDepth=${data[8]} colorType=${data[9]}`)
+      }
+      colorType = data[9]
+    } else if (type === 'IDAT') {
+      idats.push(data)
+    } else if (type === 'IEND') {
+      break
+    }
+    offset += 12 + len
+  }
+  if (!width || !height || colorType < 0 || idats.length === 0) throw new Error('PNG 缺少 IHDR/IDAT')
+  const bpp = colorType === 6 ? 4 : 3
+  const raw = zlib.inflateSync(Buffer.concat(idats))
+  const stride = width * bpp
+  if (raw.length !== (stride + 1) * height) throw new Error('PNG 解压长度错误')
+  const pixels = Buffer.alloc(width * height * 4)
+  const prev = Buffer.alloc(stride)
+  let src = 0
+  for (let y = 0; y < height; y++) {
+    const filter = raw[src++]
+    const row = Buffer.from(raw.subarray(src, src + stride))
+    src += stride
+    unfilter(filter, row, prev, bpp)
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4
+      const j = x * bpp
+      pixels[i] = row[j]
+      pixels[i + 1] = row[j + 1]
+      pixels[i + 2] = row[j + 2]
+      pixels[i + 3] = bpp === 4 ? row[j + 3] : 255
+    }
+    row.copy(prev)
+  }
+  return { width, height, pixels }
+}
+
+/** 面积加权缩小，避免 512→22 时最近邻发糊或锯齿。 */
+function areaSample(src, sw, sh, size) {
+  return (x, y) => {
+    const x0 = (x * sw) / size
+    const x1 = ((x + 1) * sw) / size
+    const y0 = (y * sh) / size
+    const y1 = ((y + 1) * sh) / size
+    let r = 0
+    let g = 0
+    let b = 0
+    let a = 0
+    let wsum = 0
+    const ix0 = Math.floor(x0)
+    const ix1 = Math.min(sw - 1, Math.ceil(x1) - 1)
+    const iy0 = Math.floor(y0)
+    const iy1 = Math.min(sh - 1, Math.ceil(y1) - 1)
+    for (let iy = iy0; iy <= iy1; iy++) {
+      const wy = Math.min(iy + 1, y1) - Math.max(iy, y0)
+      for (let ix = ix0; ix <= ix1; ix++) {
+        const wx = Math.min(ix + 1, x1) - Math.max(ix, x0)
+        const w = wx * wy
+        const p = (iy * sw + ix) * 4
+        r += src[p] * w
+        g += src[p + 1] * w
+        b += src[p + 2] * w
+        a += src[p + 3] * w
+        wsum += w
+      }
+    }
+    const scale = wsum || 1
+    return [Math.round(r / scale), Math.round(g / scale), Math.round(b / scale), Math.round(a / scale)]
+  }
 }
 
 function writePng(filePath, size, pixelFn) {
   const png = encodePng(size, pixelFn)
   fs.writeFileSync(filePath, png)
-  // 自检：签名 + IHDR 尺寸 + IDAT 可解压
-  const head = png.subarray(0, 33)
   if (!png.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
     throw new Error(`PNG 签名错误: ${filePath}`)
   }
+  const head = png.subarray(0, 33)
   if (head.readUInt32BE(8) !== 13) throw new Error(`IHDR 长度错误: ${filePath}`)
   if (head.readUInt32BE(16) !== size || head.readUInt32BE(20) !== size) {
     throw new Error(`PNG 尺寸错误: ${filePath}`)
   }
-  const idatStart = png.indexOf(Buffer.from('IDAT', 'ascii'))
-  const compressed = png.subarray(idatStart + 4, png.length - 12)
-  const raw = zlib.inflateSync(compressed)
-  if (raw.length !== (size * 4 + 1) * size) throw new Error(`PNG 解压长度错误: ${filePath}`)
   console.log(`ok ${path.relative(process.cwd(), filePath)} ${size}x${size} ${png.length}B`)
 }
 
+const srcPath = path.join(__dirname, '..', 'src', 'assets', 'app-icon.png')
 const outDir = path.join(__dirname, '..', 'electron', 'assets')
+const decoded = decodePng(fs.readFileSync(srcPath))
 fs.mkdirSync(outDir, { recursive: true })
 
-// macOS Template：纯黑字形，透明背景（系统自动适配明暗，无需双份）
-writePng(
-  path.join(outDir, 'tray-icon-template.png'),
-  16,
-  (x, y) => (isGlyphM(x, y, 16) ? [0, 0, 0, 255] : [0, 0, 0, 0])
-)
+for (const [name, size] of [
+  ['tray-icon-mac.png', 22],
+  ['tray-icon-mac@2x.png', 44],
+  ['tray-icon.png', 32],
+]) {
+  writePng(path.join(outDir, name), size, areaSample(decoded.pixels, decoded.width, decoded.height, size))
+}
 
-// Windows / Linux：蓝底圆角 + 白字形（任务栏可见性优先，不用 Template）
-writePng(
-  path.join(outDir, 'tray-icon.png'),
-  32,
-  (x, y) => {
-    if (!inRoundedRect(x, y, 32, 7)) return [0, 0, 0, 0]
-    if (isGlyphM(x, y, 32)) return [255, 255, 255, 255]
-    return [59, 130, 246, 255]
-  }
-)
+const legacy = path.join(outDir, 'tray-icon-template.png')
+if (fs.existsSync(legacy)) {
+  fs.unlinkSync(legacy)
+  console.log(`removed ${path.relative(process.cwd(), legacy)}`)
+}

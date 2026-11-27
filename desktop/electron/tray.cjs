@@ -2,7 +2,9 @@
 
 /**
  * 系统托盘（P2）：app ready 后创建。菜单：显示/隐藏主窗、新建任务、退出。
- * 图标资产：mac 用 Template png（明暗自适应，setTemplateImage）；win/linux 用普通 png。
+ * 图标资产：各端都用应用 logo（金色羽毛）。mac 用 22pt 彩色图（另有 @2x），
+ * 不用 Template——Template 只保留透明度，会把羽毛压成单色剪影。
+ * win/linux 用 32px 彩色图。
  * 资产放 electron/assets/（package.json 的 files 只打包 electron/** 与 package.json，
  * public/ 不进包，不能放运行时资产）。
  */
@@ -12,13 +14,9 @@ const path = require('path')
 
 function resolveTrayIcon(platform) {
   if (platform === 'darwin') {
-    const template = nativeImage.createFromPath(path.join(__dirname, 'assets', 'tray-icon-template.png'))
-    if (template.isEmpty()) {
-      // 资产缺失时退回普通图标，避免托盘空白
-      return nativeImage.createFromPath(path.join(__dirname, 'assets', 'tray-icon.png'))
-    }
-    template.setTemplateImage(true)
-    return template
+    // createFromPath 会一并装入同名 @2x，菜单栏按 22pt 显示。
+    const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'tray-icon-mac.png'))
+    if (!icon.isEmpty()) return icon
   }
   return nativeImage.createFromPath(path.join(__dirname, 'assets', 'tray-icon.png'))
 }
