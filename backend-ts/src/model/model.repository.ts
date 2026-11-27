@@ -95,6 +95,26 @@ export class MysqlLlmModelRepository implements LlmModelRepository {
     );
   }
 
+  /** audio 的协议兼容过滤片段（默认查询 / 候选列表共用，口径同 findFirstActiveAudioModel）。 */
+  private static readonly AUDIO_PROTOCOL_SQL =
+    ` AND (api_protocol IS NULL OR api_protocol = '' OR api_protocol = 'openai-compatible')`;
+
+  findDefaultByType(modelType: string): Promise<LlmModel | null> {
+    const audioFilter = modelType === 'audio' ? MysqlLlmModelRepository.AUDIO_PROTOCOL_SQL : '';
+    return this.db.queryOne<LlmModel>(
+      `SELECT * FROM llm_model WHERE is_default = 1 AND status = 1 AND model_type = ?${audioFilter} AND ${notDeleted()} LIMIT 1`,
+      [modelType],
+    );
+  }
+
+  listActiveByType(modelType: string): Promise<LlmModel[]> {
+    const audioFilter = modelType === 'audio' ? MysqlLlmModelRepository.AUDIO_PROTOCOL_SQL : '';
+    return this.db.query<LlmModel>(
+      `SELECT * FROM llm_model WHERE status = 1 AND model_type = ?${audioFilter} AND ${notDeleted()} ORDER BY id ASC`,
+      [modelType],
+    );
+  }
+
   findDefault(): Promise<LlmModel | null> {
     return this.db.queryOne<LlmModel>(
       `SELECT * FROM llm_model WHERE is_default = 1 AND status = 1 AND model_type = 'text' AND ${notDeleted()} LIMIT 1`,
@@ -182,8 +202,12 @@ export class MysqlLlmModelRepository implements LlmModelRepository {
     await this.db.updateById('llm_model', id, { deleted: 1 });
   }
 
-  async clearDefaultFlag(): Promise<void> {
-    await this.db.execute(`UPDATE llm_model SET is_default = 0 WHERE is_default = 1 AND ${notDeleted()}`);
+  /** 只清同一 model_type 的默认标记：图片/语音默认与文本默认互不影响（2026-11-27 特色工具模型绑定）。 */
+  async clearDefaultFlag(modelType: string): Promise<void> {
+    await this.db.execute(
+      `UPDATE llm_model SET is_default = 0 WHERE is_default = 1 AND model_type = ? AND ${notDeleted()}`,
+      [modelType],
+    );
   }
 
   /** 除 id 外启用中的 text 模型数：停用默认模型前的「还有没有别的默认可用」守位。 */

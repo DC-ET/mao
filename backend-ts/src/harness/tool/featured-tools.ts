@@ -1,5 +1,6 @@
 import type { AgentFeaturedTool } from '@mao/contracts';
 import { harnessLog } from '../log.js';
+import type { FeaturedModelAgent } from './featured-model-resolver.js';
 
 /**
  * Agent 特色工具（技术方案 2026-11-27）：把内置工具按「能力」分组，
@@ -18,10 +19,14 @@ export const FEATURED_TOOL_NAMES: ReadonlySet<string> = new Set(
 
 const FEATURED_TOOL_VALUES: ReadonlySet<string> = new Set(Object.keys(TOOL_NAMES_BY_FEATURE));
 
-/** 模型可用性查询端口（ModelService 天然满足）；未注入时保持改造前行为。 */
+/**
+ * 特色工具模型解析端口（2026-11-27 默认模型 + Agent 指定模型）：
+ * 与工具执行共用同一个 FeaturedModelResolver 实例，门控与执行口径不漂移。
+ * 返回 null = 该能力本会话不可用（未配模型 / 绑定失效）。未注入时保持改造前行为。
+ */
 export interface FeaturedToolModelLookup {
-  findFirstActiveImageModel(): Promise<unknown | null>;
-  findFirstActiveAudioModel(): Promise<unknown | null>;
+  resolveImageModel(agent: FeaturedModelAgent | null): Promise<unknown | null>;
+  resolveAudioModel(agent: FeaturedModelAgent | null): Promise<unknown | null>;
 }
 
 /** 安全解析 Agent 列；非法 JSON / 未知值一律当未启用（脏数据不打崩会话）。 */
@@ -47,12 +52,14 @@ export function parseFeaturedTools(raw: string | null | undefined): AgentFeature
  * 配置 ∩ 模型可用性 → 本会话可保留的工具名。
  *
  * - `lookup == null`（精简装配 / 单测）：返回全部 gated 工具名，保持改造前行为；
+ * - `agent` 为 buildContext 已加载的 Agent 行（含 imageModelId/audioModelId），直接透传解析器；
  * - 某个能力的模型查询抛错：只丢弃该能力，其他能力继续（逐能力 fail-closed）；
  * - 只查配置了的能力；配置为空时零查库。
  */
 export async function resolveFeaturedToolNames(
   featured: readonly AgentFeaturedTool[],
   lookup: FeaturedToolModelLookup | null,
+  agent: FeaturedModelAgent | null = null,
 ): Promise<Set<string>> {
   if (lookup == null) {
     return new Set(FEATURED_TOOL_NAMES);
@@ -64,8 +71,8 @@ export async function resolveFeaturedToolNames(
     let available: boolean;
     try {
       available = feature === 'image_generation'
-        ? (await lookup.findFirstActiveImageModel()) != null
-        : (await lookup.findFirstActiveAudioModel()) != null;
+        ? (await lookup.resolveImageModel(agent)) != null
+        : (await lookup.resolveAudioModel(agent)) != null;
     } catch (e) {
       harnessLog('warn', `[featured-tools] model lookup failed feature=${feature}: ${(e as Error).message}`);
       available = false;

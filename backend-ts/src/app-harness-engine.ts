@@ -24,6 +24,7 @@ import type { LocalToolSessionRegistry } from './harness/local/local-tool-sessio
 import type { LocalDeliveryFetchService } from './harness/local/delivery-fetch.service.js';
 import type { SendFileStore } from './harness/tool/impl/send-media-tool.js';
 import { toStaticUploadBase } from './harness/tool/impl/generate-image-tool.js';
+import { DefaultFeaturedModelResolver } from './harness/tool/featured-model-resolver.js';
 import type { SendDownloadTicketService } from './file/send-download-ticket.service.js';
 import { SEND_DOWNLOAD_TICKET_TTL_MS } from './file/send-download-ticket.service.js';
 import { harnessLog } from './harness/log.js';
@@ -208,6 +209,15 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
   const { cfg, apiPrefix, uploadDir, harnessTuning } = d;
   const sendDownloadTickets = d.sendDownloadTickets ?? null;
 
+  // 特色工具模型统一解析器（技术方案 2026-11-27 默认模型 + Agent 指定模型）：
+  // 门控（HarnessService）与工具执行（generate_image / edit_image / text_to_speech）共用同一实例，
+  // 避免两道门各查一套、口径漂移。运行期兜一层告警——缺依赖时 resolver 查询会抛错，
+  // 门控逐能力 fail-closed（工具被隐藏），不能静默。
+  if (d.modelRepo == null || d.agentRepo == null) {
+    harnessLog('warn', '[featured-tools] modelRepo/agentRepo 未装配，特色工具闸口将逐能力 fail-closed（工具隐藏）');
+  }
+  const featuredModelResolver = new DefaultFeaturedModelResolver(d.modelRepo, d.agentRepo);
+
   const toolRegistry = createDefaultToolRegistry({
     pathSandbox: d.pathSandbox,
     sessionTodoMapper: d.todoMapper,
@@ -232,8 +242,8 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     webSearch: () => d.settingService.getWebSearchConfig(),
     webPage: harnessTuning.webPage,
     runtimeDataResolver: d.runtimeResolver,
-    imageModelLookup: d.modelService,
-    audioModelLookup: d.modelService,
+    imageModelLookup: featuredModelResolver,
+    audioModelLookup: featuredModelResolver,
     llmAdapter: d.llmAdapter,
     authResolver: d.authResolver,
     uploadDir,
@@ -376,11 +386,6 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
   );
   d.holder.loop = agentLoop;
   d.holder.compactionSignalBus = compactionSignalBus;
-  // 特色工具闸口总开关（技术方案 2026-11-27 §13.3）：装配层必须传 modelService。
-  // 运行期再兜一层告警——缺依赖时 buildContext 会跳过过滤（fail-open），不能静默。
-  if ((d.modelService as unknown) == null) {
-    harnessLog('warn', '[featured-tools] modelService 未装配，特色工具闸口将跳过过滤（fail-open）');
-  }
   const harness = new HarnessService(
     agentLoop, toolRegistry, d.skillLoader, d.skillSync, d.localSkills, d.localAgentsMd,
     d.sessionMap, d.agentRepo as never, d.experienceService, d.modelRepo as never, d.fileChangeRepo as never,
@@ -395,7 +400,7 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     d.httpToolService,
     d.experienceMountService ?? null,
     cfg.app.harness.runtimeIdentityMode,
-    d.modelService,
+    featuredModelResolver,
   );
   d.holder.harness = harness;
 

@@ -39,7 +39,9 @@
 
 这是**管理端口径的全量列表**（启用中的文本模型，不论客户端是否可选）。客户端模型选择器走 `GET /models/active?scope=client`，只列 `clientVisible = true`；`mao chat` 已按客户端口径取数。
 
-Agent 特色工具可用性走 `GET /models/availability`（登录即可，不要求 `model:read`）：返回 `image` / `audio` 两项的 `available`（布尔）与 `modelName`，供管理后台显示「当前模型 / 无可用模型」。`audio` 只统计启用的 OpenAI 兼容语音模型（Anthropic / Responses 协议会被跳过）。
+Agent 特色工具可用性走 `GET /models/availability`（登录即可，不要求 `model:read`）：返回 `image` / `audio` 两项的 `available`（布尔）、`modelName` 与 `models` 候选数组（`id` / `name` / `isDefault`，默认模型在前、其余按 id 升序；只含启用、未删除、协议兼容的模型），供管理后台显示「当前模型 / 无可用模型」与 Agent 表单的模型下拉。`audio` 只统计启用的 OpenAI 兼容语音模型（Anthropic / Responses 协议会被跳过）。
+
+默认模型按 `modelType` 作用域（2026-11-27 起）：文本 / 语音 / 图片各有一个默认，互不影响——设置图片默认不会动文本默认。文本默认仍只影响新会话；图片 / 语音默认分别影响未指定模型的 Agent 的 `generate_image` / `edit_image` / `text_to_speech` 与微信语音回复。`create` / `update` 的 `--is-default 1` 对三种类型同样生效；语音默认模型必须是 OpenAI 兼容协议，否则被拒绝。
 
 ### 示例
 

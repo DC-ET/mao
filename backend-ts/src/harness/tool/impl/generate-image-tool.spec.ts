@@ -235,7 +235,7 @@ describe('GenerateImageTool', () => {
   function makeTool(extra?: Record<string, unknown> | null) {
     const dir = useTmpDir('img-');
     const tool = new GenerateImageTool({
-      findFirstActiveImageModel: async () => model(extra) as never,
+      findImageModel: async () => model(extra) as never,
     }, dir, async () => 'https://mao.example/api');
     return { tool, dir };
   }
@@ -249,7 +249,7 @@ describe('GenerateImageTool', () => {
     const missing = JSON.parse(await tool.execute('{}', 1, null));
     expect(missing.error).toContain('prompt');
 
-    const emptyModel = new GenerateImageTool({ findFirstActiveImageModel: async () => null }, dir);
+    const emptyModel = new GenerateImageTool({ findImageModel: async () => null }, dir);
     expect(JSON.parse(await emptyModel.execute(JSON.stringify({ prompt: 'cat' }), 1, null)).error).toContain('文生图');
 
     const result = JSON.parse(await tool.execute(JSON.stringify({
@@ -301,6 +301,17 @@ describe('GenerateImageTool', () => {
     expect(image.image_path.startsWith(dir + sep)).toBe(true);
     expect(image.image_path).not.toContain(`${join(dir, '7')}`);
     expect(image.image_url.startsWith('https://mao.example/uploads/gen-')).toBe(true);
+  });
+
+  it('passes the current agentId to the model lookup（绑定模型按 Agent 解析）', async () => {
+    const dir = useTmpDir('img-agent-');
+    const seen: Array<number | null> = [];
+    const tool = new GenerateImageTool({
+      findImageModel: async (agentId: number | null) => { seen.push(agentId); return model() as never; },
+    }, dir, async () => 'https://mao.example/api');
+    const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'cat' }), 1, null, null, 42));
+    expect(result.error).toBeUndefined();
+    expect(seen).toEqual([42]);
   });
 
   it('clamps n and normalizes model override aliases', async () => {
@@ -373,7 +384,7 @@ describe('GenerateImageTool', () => {
     const seen: Array<{ userId?: number | null; authType?: string | null }> = [];
     const dir = useTmpDir('img-ecp-');
     const tool = new GenerateImageTool(
-      { findFirstActiveImageModel: async () => model({ authType: 'ecp' }) as never },
+      { findImageModel: async () => model({ authType: 'ecp' }) as never },
       dir,
       async () => 'https://mao.example/api',
       '/api',
@@ -418,7 +429,7 @@ describe('EditImageTool', () => {
       }
       : (support ?? null);
     const tool = new EditImageTool(
-      { findFirstActiveImageModel: async () => model(extra) as never },
+      { findImageModel: async () => model(extra) as never },
       new PathSandbox(ws),
       out,
       async () => 'https://mao.example/api',
@@ -603,7 +614,7 @@ describe('图片调用流水埋点（技术方案 2026-11-24）', () => {
   function makeGenTool(recorder: unknown = null) {
     const dir = useTmpDir('img-rec-');
     const tool = new GenerateImageTool({
-      findFirstActiveImageModel: async () => model() as never,
+      findImageModel: async () => model() as never,
     }, dir, async () => 'https://mao.example/api', '/api', undefined, recorder as never);
     return { tool, dir };
   }
@@ -614,7 +625,7 @@ describe('图片调用流水埋点（技术方案 2026-11-24）', () => {
     mkdirSync(join(ws, 'chat-files'), { recursive: true });
     writeFileSync(join(ws, 'input.png'), PNG_BYTES);
     const tool = new EditImageTool(
-      { findFirstActiveImageModel: async () => model() as never },
+      { findImageModel: async () => model() as never },
       new PathSandbox(ws),
       out,
       async () => 'https://mao.example/api',
@@ -676,7 +687,7 @@ describe('图片调用流水埋点（技术方案 2026-11-24）', () => {
     // 参数非法 / 无可用模型：早退分支，不是模型调用
     expect(JSON.parse(await tool.execute('{}', 11, 7, 'ws', 3)).error).toContain('prompt');
     expect(JSON.parse(await tool.execute(JSON.stringify({ prompt: 'x', size: '1x1' }), 11, 7, 'ws', 3)).error).toContain('size');
-    const noModel = new GenerateImageTool({ findFirstActiveImageModel: async () => null } as never, useTmpDir('img-nomodel-'), async () => '', '/api', undefined, recorder);
+    const noModel = new GenerateImageTool({ findImageModel: async () => null } as never, useTmpDir('img-nomodel-'), async () => '', '/api', undefined, recorder);
     expect(JSON.parse(await noModel.execute(JSON.stringify({ prompt: 'x' }), 11, 7, 'ws', 3)).error).toContain('文生图');
     expect(calls).toHaveLength(0);
   });
@@ -733,7 +744,7 @@ describe('图片调用流水埋点（技术方案 2026-11-24）', () => {
     const { calls, recorder } = spyRecorder();
     const dir = useTmpDir('img-rec-b2-');
     const tool = new GenerateImageTool({
-      findFirstActiveImageModel: async () => model() as never,
+      findImageModel: async () => model() as never,
     }, dir, async () => { throw new Error('boom: base url unavailable'); }, '/api', undefined, recorder as never);
     const result = JSON.parse(await tool.execute(JSON.stringify({ prompt: 'a cat' }), 11, 7, 'ws', 3));
     expect(result.error).toBeTruthy();
@@ -750,7 +761,7 @@ describe('图片调用流水埋点（技术方案 2026-11-24）', () => {
     const { calls, recorder } = spyRecorder();
     const dir = useTmpDir('img-rec-d9-');
     const tool = new GenerateImageTool({
-      findFirstActiveImageModel: async () => model() as never,
+      findImageModel: async () => model() as never,
     }, dir, async () => { throw new Error('boom'); }, '/api', undefined, recorder as never);
     await tool.execute(JSON.stringify({ prompt: 'a cat' }), 11, 7, 'ws', 3);
     expect(calls).toHaveLength(1);
@@ -778,7 +789,7 @@ describe('图片调用流水埋点（技术方案 2026-11-24）', () => {
     // 一次成功的出图会变成 errorJson。D8 要求「记账失败绝不影响工具返回」。
     const dir = useTmpDir('img-rec-d8-');
     const tool = new GenerateImageTool({
-      findFirstActiveImageModel: async () => model() as never,
+      findImageModel: async () => model() as never,
     }, dir, async () => 'https://mao.example/api', '/api', undefined, {
       record: async () => { throw new Error('db down'); },
     } as never);
@@ -794,7 +805,7 @@ describe('图片调用流水埋点（技术方案 2026-11-24）', () => {
     mkdirSync(join(ws, 'chat-files'), { recursive: true });
     writeFileSync(join(ws, 'input.png'), PNG_BYTES);
     const tool = new EditImageTool(
-      { findFirstActiveImageModel: async () => model() as never },
+      { findImageModel: async () => model() as never },
       new PathSandbox(ws),
       out,
       async () => { throw new Error('boom'); },
@@ -818,7 +829,7 @@ describe('图片调用流水埋点（技术方案 2026-11-24）', () => {
     mkdirSync(join(ws, 'chat-files'), { recursive: true });
     writeFileSync(join(ws, 'input.png'), PNG_BYTES);
     const tool = new EditImageTool(
-      { findFirstActiveImageModel: async () => model() as never },
+      { findImageModel: async () => model() as never },
       new PathSandbox(ws),
       out,
       async () => 'https://mao.example/api',

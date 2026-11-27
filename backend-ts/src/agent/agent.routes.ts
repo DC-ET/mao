@@ -47,6 +47,10 @@ interface CreateAgentRequest {
   httpToolIds?: number[];
   gitAllowedDomains?: string[] | null;
   featuredTools?: AgentFeaturedTool[] | null;
+  /** 指定文生图模型 id：正整数=绑定；null/缺省=跟随图片默认模型。 */
+  imageModelId?: number | null;
+  /** 指定语音模型 id：正整数=绑定；null/缺省=跟随语音默认模型。 */
+  audioModelId?: number | null;
   experiences?: ExperienceVO[];
   suggestedQuestions?: SuggestedQuestionVO[];
   isDefault?: number | null;
@@ -67,6 +71,10 @@ interface UpdateAgentRequest {
   gitAllowedDomains?: string[] | null;
   /** 特色工具：undefined/null=不修改；[]=清空；非空=启用列表。 */
   featuredTools?: AgentFeaturedTool[] | null;
+  /** 指定文生图模型 id：undefined=不修改；null=清空（跟随图片默认模型）；正整数=绑定。 */
+  imageModelId?: number | null;
+  /** 指定语音模型 id：undefined=不修改；null=清空（跟随语音默认模型）；正整数=绑定。 */
+  audioModelId?: number | null;
   experiences?: ExperienceVO[] | null;
   suggestedQuestions?: SuggestedQuestionVO[] | null;
   isDefault?: number | null;
@@ -137,6 +145,21 @@ function normalizeFeaturedTools(
   return normalized;
 }
 
+/**
+ * 特色工具模型绑定 id 校验（2026-11-27）：undefined=不修改；null=清空；正整数=绑定。
+ * 不依赖 MySQL 隐式转换：字符串/0/负数/浮点落库后运行时解析失败（静默换模型），一律拒绝。
+ */
+function normalizeFeaturedModelId(
+  input: number | null | undefined,
+  field: string,
+): number | null | undefined {
+  if (input === undefined || input === null) return input;
+  if (typeof input !== 'number' || !Number.isSafeInteger(input) || input <= 0) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, `${field} 必须是正整数或 null`);
+  }
+  return input;
+}
+
 export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps): void {
   const { agentService, experienceService, userRepo, mcpServerValidator, httpToolValidator, permissionService } = deps;
 
@@ -189,6 +212,8 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
     const httpToolIds = await resolveHttpToolIds(httpToolValidator, body.httpToolIds);
     const gitAllowedDomains = normalizeGitDomains(body.gitAllowedDomains);
     const featuredTools = normalizeFeaturedTools(body.featuredTools);
+    const imageModelId = normalizeFeaturedModelId(body.imageModelId, 'imageModelId');
+    const audioModelId = normalizeFeaturedModelId(body.audioModelId, 'audioModelId');
     const agent = await agentService.createAgent(
       userId,
       body.name!,
@@ -206,6 +231,8 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       body.experienceLibraryEnabled,
       gitAllowedDomains,
       featuredTools,
+      imageModelId,
+      audioModelId,
     );
     return sendOk(reply, await toVO(agent, agentService, userRepo));
   });
@@ -228,6 +255,8 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
     );
     const gitAllowedDomains = normalizeGitDomains(body.gitAllowedDomains);
     const featuredTools = normalizeFeaturedTools(body.featuredTools);
+    const imageModelId = normalizeFeaturedModelId(body.imageModelId, 'imageModelId');
+    const audioModelId = normalizeFeaturedModelId(body.audioModelId, 'audioModelId');
     const agent = await agentService.updateAgent(
       userId,
       agentId,
@@ -246,6 +275,8 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       body.experienceLibraryEnabled,
       gitAllowedDomains,
       featuredTools,
+      imageModelId,
+      audioModelId,
     );
     return sendOk(reply, await toVO(agent, agentService, userRepo));
   });
@@ -391,6 +422,8 @@ async function toVO(
     experienceLibraryEnabled: agent.experienceLibraryEnabled !== 0,
     defaultModelId: agent.defaultModelId ?? null,
     featuredTools: [],
+    imageModelId: agent.imageModelId ?? null,
+    audioModelId: agent.audioModelId ?? null,
     createdAt: agent.createdAt ?? null,
     experiences: [],
     suggestedQuestions: [],

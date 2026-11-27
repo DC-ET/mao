@@ -350,7 +350,8 @@ describeGit('WorkspaceGitService', () => {
     const blank = await service.getLog(repo, null, { keyword: '   ' });
     expect(blank.map((e) => e.title)).toEqual(baseline.map((e) => e.title));
     expect(baseline.length).toBe(4);
-  });
+    // 真实 git 建仓 + 多次提交，全量并行跑时资源竞争可能超过默认 5s 超时
+  }, 30000);
 
   it('getLogKeywordTruncatedTo100Chars', async () => {
     const { service, repo } = await setupKeywordRepo();
@@ -754,7 +755,8 @@ describeGit('WorkspaceGitService', () => {
     expect(binary.binary).toBe(true);
     expect(binary.insertions).toBe(0);
     expect(binary.deletions).toBe(0);
-  });
+    // 真实 git 建仓 + 多次提交，全量并行跑时资源竞争可能超过默认 5s 超时
+  }, 30000);
 
   it('compareBranchesRejectsUnknownRefsAndInvalidBranchNames', async () => {
     const { dir, service, repo, branch } = await setupRepo();

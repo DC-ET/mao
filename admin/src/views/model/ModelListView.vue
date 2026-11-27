@@ -52,7 +52,7 @@
               <el-option label="不支持" :value="0" />
             </el-select>
           </el-form-item>
-          <el-form-item v-if="isTextTab" label="默认">
+          <el-form-item label="默认">
             <el-select v-model="state.filters.isDefault" clearable placeholder="全部" style="width: 120px" @change="handleSearch">
               <el-option label="默认" :value="1" />
               <el-option label="非默认" :value="0" />
@@ -77,7 +77,7 @@
             <div class="model-name-cell">
               <span>{{ row.name }}</span>
               <el-tag v-if="row.authType === 'ecp'" type="success" size="small" title="调用时使用当前用户的 ECP Token">ECP</el-tag>
-              <el-tag v-if="row.isDefault" type="warning" size="small">默认</el-tag>
+              <el-tag v-if="row.isDefault" type="warning" size="small" :title="row.status !== 1 ? '默认（已停用）：未指定模型的 Agent 将回退到该类型首个启用模型' : undefined">默认</el-tag>
               <el-tag v-if="row.clientVisible === false" type="warning" size="small" title="仅管理端可见：客户端新建会话与切换模型不展示">仅管理端</el-tag>
               <el-icon v-if="row.supportsVision" class="name-badge is-vision" title="支持视觉"><Picture /></el-icon>
               <el-icon v-if="row.status === 1" class="name-badge is-enabled" title="已启用"><CircleCheckFilled /></el-icon>

@@ -467,11 +467,12 @@ export class HarnessService {
     const isEmbedSession = this.embedSessionLookup?.isEmbedSession?.(sessionId) === true;
     const pageOpsEnabled = this.embedSessionLookup?.isEmbedPageSession?.(sessionId) === true;
     sessionTools = HarnessService.filterPageTools(sessionTools, isEmbedSession, pageOpsEnabled);
-    // 特色工具（技术方案 2026-11-27 §5.2）：Agent 配置 ∩ 模型可用性。未配置时全部隐藏；
-    // 配置了但模型不可用/查询失败时逐能力 fail-closed；原地过滤保持 registry 顺序。
+    // 特色工具（技术方案 2026-11-27 §5.2 + 默认模型/Agent 指定模型）：Agent 配置 ∩ 模型可用性。
+    // 未配置时全部隐藏；配置了但模型不可用/绑定失效/查询失败时逐能力 fail-closed；原地过滤保持 registry 顺序。
+    // agent 行已含 imageModelId/audioModelId（SELECT * 自动映射），直接透传解析器，不重复查库。
     const featured = parseFeaturedTools(agent.featuredTools);
     if (featured.length > 0 || this.featuredToolModels != null) {
-      const allowed = await resolveFeaturedToolNames(featured, this.featuredToolModels ?? null);
+      const allowed = await resolveFeaturedToolNames(featured, this.featuredToolModels ?? null, agent);
       const beforeFeaturedFilter = sessionTools.length;
       sessionTools = sessionTools.filter(
         (tool) => !FEATURED_TOOL_NAMES.has(tool.getName()) || allowed.has(tool.getName()),

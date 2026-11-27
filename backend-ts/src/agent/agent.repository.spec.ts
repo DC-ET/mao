@@ -57,6 +57,44 @@ describe('MysqlAgentRepository', () => {
     await repo.updateById({ ...agent, featuredTools: null }, 7, false);
     expect(db.updateById).toHaveBeenLastCalledWith('agent', 5, expect.objectContaining({ featuredTools: null }));
   });
+  it('persists imageModelId / audioModelId on insert/update, defaulting to null（2026-11-27 特色工具模型绑定）', async () => {
+    const db = mockDb({ id: 5, name: 'A', systemPrompt: 'p' });
+    db.transaction.mockImplementation(async (fn) => fn(db));
+    const repo = new MysqlAgentRepository(db as never);
+    const agent = { id: 5, name: 'A', systemPrompt: 'p', imageModelId: 12, audioModelId: 5 };
+    await repo.insert(agent);
+    expect(db.insert).toHaveBeenCalledWith('agent', expect.objectContaining({ imageModelId: 12, audioModelId: 5 }));
+    await repo.updateById(agent, 7, false);
+    expect(db.updateById).toHaveBeenCalledWith('agent', 5, expect.objectContaining({ imageModelId: 12, audioModelId: 5 }));
+    // 清空绑定：null 原样落库（跟随类型默认）
+    await repo.updateById({ ...agent, imageModelId: null, audioModelId: null }, 7, false);
+    expect(db.updateById).toHaveBeenLastCalledWith('agent', 5, expect.objectContaining({ imageModelId: null, audioModelId: null }));
+    // 未提供 = NULL（跟随类型默认）
+    await repo.insert({ name: 'B', systemPrompt: 'p' });
+    expect(db.insert).toHaveBeenCalledWith('agent', expect.objectContaining({ imageModelId: null, audioModelId: null }));
+  });
+  it('countBindingsByModelId / clearByModelId：反查与清理绑定（模型删除/类型变更用）', async () => {
+    const db = mockDb();
+    const repo = new MysqlAgentRepository(db as never);
+
+    await repo.countBindingsByModelId(12);
+    const countSql = String(db.queryOne.mock.calls.at(-1)?.[0]);
+    expect(countSql).toContain('image_model_id = ?');
+    expect(countSql).toContain('audio_model_id = ?');
+    expect(countSql).toContain('deleted = 0');
+    expect(db.queryOne.mock.calls.at(-1)?.[1]).toEqual([12, 12]);
+
+    // 两列分别 UPDATE 置 NULL；返回值为两次 affectedRows 之和（mock 各 1）
+    const cleared = await repo.clearByModelId(12);
+    expect(cleared).toBe(2);
+    const statements = db.execute.mock.calls.map((call) => String(call[0]));
+    expect(statements.some((sql) => sql.includes('SET image_model_id = NULL'))).toBe(true);
+    expect(statements.some((sql) => sql.includes('SET audio_model_id = NULL'))).toBe(true);
+    for (const call of db.execute.mock.calls) {
+      expect(String(call[0])).toContain('deleted = 0');
+      expect(call[1]).toEqual([12]);
+    }
+  });
   it('selectGitAllowedDomainsById distinguishes missing row from unconfigured, and keeps [] intact on write', async () => {
     const db = mockDb();
     db.transaction.mockImplementation(async (fn) => fn(db));

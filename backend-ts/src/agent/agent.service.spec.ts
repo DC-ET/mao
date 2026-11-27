@@ -270,6 +270,104 @@ describe('AgentService', () => {
     });
   });
 
+  describe('featuredModelBinding（imageModelId / audioModelId，2026-11-27）', () => {
+    // 12=启用图片模型；5=启用 OpenAI 兼容语音模型；6=协议不兼容语音模型；9=文本模型；停用模型允许绑定
+    const modelLookup = {
+      findById: vi.fn(async (id: number) => {
+        if (id === 12) return { id: 12, status: 1, modelType: 'image', apiProtocol: '' };
+        if (id === 5) return { id: 5, status: 1, modelType: 'audio', apiProtocol: '' };
+        if (id === 6) return { id: 6, status: 1, modelType: 'audio', apiProtocol: 'anthropic' };
+        if (id === 9) return { id: 9, status: 1, modelType: 'text', apiProtocol: '' };
+        if (id === 13) return { id: 13, status: 0, modelType: 'image', apiProtocol: '' };
+        return null;
+      }),
+    };
+    const serviceWithLookup = new AgentService(agentRepo, experienceService, suggestedQuestionService, modelLookup);
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      vi.mocked(agentRepo.findById).mockResolvedValue(agent(1, 'a', 0));
+      vi.mocked(agentRepo.insert).mockImplementation(async (a) => {
+        a.id = a.id ?? 1;
+        return a.id;
+      });
+    });
+
+    it('create：绑定合法模型落库；null/未提供存 NULL', async () => {
+      const created = await serviceWithLookup.createAgent(
+        7, 'a', null, 'p', null, null, null, null, null, 0, null,
+        undefined, undefined, undefined, undefined, undefined, 12, 5,
+      );
+      expect(created.imageModelId).toBe(12);
+      expect(created.audioModelId).toBe(5);
+
+      const plain = await serviceWithLookup.createAgent(7, 'b', null, 'p', null, null, null, null, null, 0, null);
+      expect(plain.imageModelId ?? null).toBeNull();
+      expect(plain.audioModelId ?? null).toBeNull();
+    });
+
+    it('create/update：模型不存在、类型不匹配、语音协议不兼容一律 PARAM_INVALID', async () => {
+      // 不存在
+      await expect(
+        serviceWithLookup.createAgent(7, 'a', null, 'p', null, null, null, null, null, 0, null,
+          undefined, undefined, undefined, undefined, undefined, 404),
+      ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+      // 类型不匹配（图片位传文本模型 / 语音位传图片模型）
+      await expect(
+        serviceWithLookup.createAgent(7, 'a', null, 'p', null, null, null, null, null, 0, null,
+          undefined, undefined, undefined, undefined, undefined, 9),
+      ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+      await expect(
+        serviceWithLookup.updateAgent(7, 1, null, null, null, null, null, null, null, null, null, undefined,
+          undefined, undefined, undefined, undefined, undefined, undefined, 12),
+      ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+      // 语音协议不兼容
+      await expect(
+        serviceWithLookup.updateAgent(7, 1, null, null, null, null, null, null, null, null, null, undefined,
+          undefined, undefined, undefined, undefined, undefined, undefined, 6),
+      ).rejects.toMatchObject({ code: ErrorCode.PARAM_INVALID.code });
+      expect(agentRepo.insert).not.toHaveBeenCalled();
+      expect(agentRepo.updateById).not.toHaveBeenCalled();
+    });
+
+    it('允许绑定停用模型（保存不报错，运行时 fail-closed）', async () => {
+      const created = await serviceWithLookup.createAgent(
+        7, 'a', null, 'p', null, null, null, null, null, 0, null,
+        undefined, undefined, undefined, undefined, undefined, 13,
+      );
+      expect(created.imageModelId).toBe(13);
+    });
+
+    it('update：undefined 不修改 / null 清空 / 正整数改绑', async () => {
+      const existing = { ...agent(1, 'a', 0), imageModelId: 12, audioModelId: 5 };
+      vi.mocked(agentRepo.findById).mockResolvedValue(existing);
+
+      // undefined：不改动
+      await serviceWithLookup.updateAgent(7, 1, 'renamed', null, null, null, null, null, null, null, null, undefined);
+      expect(existing.imageModelId).toBe(12);
+      expect(existing.audioModelId).toBe(5);
+
+      // null：清空（跟随类型默认）
+      await serviceWithLookup.updateAgent(7, 1, null, null, null, null, null, null, null, null, null, undefined,
+        undefined, undefined, undefined, undefined, undefined, null);
+      expect(existing.imageModelId).toBeNull();
+      expect(existing.audioModelId).toBe(5);
+
+      // 正整数：改绑
+      await serviceWithLookup.updateAgent(7, 1, null, null, null, null, null, null, null, null, null, undefined,
+        undefined, undefined, undefined, undefined, undefined, undefined, 5);
+      expect(existing.audioModelId).toBe(5);
+    });
+
+    it('modelLookup 未注入（精简单测装配）时跳过绑定校验', async () => {
+      const created = await service.createAgent(
+        7, 'a', null, 'p', null, null, null, null, null, 0, null,
+        undefined, undefined, undefined, undefined, undefined, 404, 404,
+      );
+      expect(created.imageModelId).toBe(404);
+    });
+  });
+
   describe('client visibility', () => {
     beforeEach(() => {
       vi.clearAllMocks();

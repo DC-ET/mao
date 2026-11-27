@@ -31,6 +31,8 @@ describe('ModelService', () => {
     listActiveText: vi.fn(),
     findFirstActiveByType: vi.fn(),
     findFirstActiveAudioModel: vi.fn(),
+    findDefaultByType: vi.fn(),
+    listActiveByType: vi.fn(async () => []),
     findDefault: vi.fn(),
     findById: vi.fn(),
     insert: vi.fn(async (m) => {
@@ -783,6 +785,8 @@ describe('ModelService 客户端可选（技术方案 2026-11-24）', () => {
       listActiveText: vi.fn(async () => []),
       findFirstActiveByType: vi.fn(),
       findFirstActiveAudioModel: vi.fn(),
+      findDefaultByType: vi.fn(async () => null),
+      listActiveByType: vi.fn(async () => []),
       findDefault: vi.fn(),
       findById: vi.fn(),
       insert: vi.fn(async (m) => {
@@ -910,5 +914,190 @@ describe('ModelService 客户端可选（技术方案 2026-11-24）', () => {
     const saved = vi.mocked(repo.updateById).mock.calls[0][0];
     expect(saved.isDefault).toBe(0);
     expect(saved.clientVisible).toBe(0);
+  });
+});
+
+describe('ModelService 特色工具模型默认（2026-11-27 默认模型 + Agent 指定模型）', () => {
+  function makeRepo(): LlmModelRepository {
+    return {
+      selectPage: vi.fn(),
+      listProviders: vi.fn(),
+      listActiveText: vi.fn(async () => []),
+      findFirstActiveByType: vi.fn(async () => null),
+      findFirstActiveAudioModel: vi.fn(async () => null),
+      findDefaultByType: vi.fn(async () => null),
+      listActiveByType: vi.fn(async () => []),
+      findDefault: vi.fn(async () => null),
+      findById: vi.fn(async () => null),
+      insert: vi.fn(async (m) => {
+        m.id = m.id ?? 1;
+        return m.id;
+      }),
+      updateById: vi.fn(async () => undefined),
+      deleteById: vi.fn(async () => undefined),
+      clearDefaultFlag: vi.fn(async () => undefined),
+      countActiveTextExcept: vi.fn(async () => 1),
+      countEnabledWithApiKey: vi.fn(async () => 1),
+    };
+  }
+
+  function featuredModel(overrides: Partial<LlmModel> = {}): LlmModel {
+    return {
+      id: 1,
+      name: 'm',
+      provider: 'openai',
+      baseUrl: 'https://api.example.test',
+      apiKey: 'key',
+      modelId: 'model-m',
+      modelType: 'text',
+      apiProtocol: '',
+      isDefault: 0,
+      status: 1,
+      ...overrides,
+    };
+  }
+
+  function makeBindings(overrides: { count?: number; clearError?: Error } = {}) {
+    return {
+      countBindingsByModelId: vi.fn(async () => overrides.count ?? 0),
+      clearByModelId: vi.fn(async () => {
+        if (overrides.clearError) throw overrides.clearError;
+        return 2;
+      }),
+    };
+  }
+
+  it('createModel：图片默认只清同类型默认，且不受「客户端可选」约束', async () => {
+    const repo = makeRepo();
+    const service = new ModelService(repo, { reassignModelId: vi.fn() }, { chat: vi.fn() });
+    const created = await service.createModel(
+      'img', 'openai', 'https://x', 'k', 'gpt-image-2', 0, 1, null, 'image', null, null, null,
+      null, null, null, null, null, 'api_key', 0,
+    );
+    expect(created.isDefault).toBe(1);
+    expect(created.modelType).toBe('image');
+    expect(repo.clearDefaultFlag).toHaveBeenCalledWith('image');
+  });
+
+  it('createModel：语音默认协议不兼容被拒，且不清默认标记', async () => {
+    const repo = makeRepo();
+    const service = new ModelService(repo, { reassignModelId: vi.fn() }, { chat: vi.fn() });
+    await expect(
+      service.createModel(
+        'tts', 'p', 'https://x', 'k', 'm', null, 1, null, 'audio', null, 'anthropic', null,
+        null, null, null, null,
+      ),
+    ).rejects.toBeInstanceOf(BusinessException);
+    expect(repo.clearDefaultFlag).not.toHaveBeenCalled();
+    expect(repo.insert).not.toHaveBeenCalled();
+
+    // OpenAI 兼容协议（含空串）可设为语音默认
+    await service.createModel(
+      'tts', 'p', 'https://x', 'k', 'm', null, 1, null, 'audio', null, 'openai-compatible', null,
+      null, null, null, null,
+    );
+    expect(repo.clearDefaultFlag).toHaveBeenCalledWith('audio');
+  });
+
+  it('updateModel：默认语音模型协议改成不兼容被拒', async () => {
+    const repo = makeRepo();
+    const service = new ModelService(repo, { reassignModelId: vi.fn() }, { chat: vi.fn() });
+    vi.mocked(repo.findById).mockResolvedValue(
+      featuredModel({ modelType: 'audio', isDefault: 1, apiProtocol: '' }),
+    );
+    await expect(
+      service.updateModel(1, null, null, null, null, null, null, null, null, null, null, 'anthropic', null,
+        null, null, null, null),
+    ).rejects.toBeInstanceOf(BusinessException);
+    expect(repo.updateById).not.toHaveBeenCalled();
+  });
+
+  it('updateModel：类型变更——有 Agent 绑定拒绝；无绑定放行且默认标记归零', async () => {
+    const repo = makeRepo();
+    const bindings = makeBindings({ count: 0 });
+    const service = new ModelService(
+      repo, { reassignModelId: vi.fn() }, { chat: vi.fn() }, undefined, undefined, undefined, bindings,
+    );
+    // 无绑定：允许改类型；原默认标记被强制归零（不继承为新类型默认）
+    vi.mocked(repo.findById).mockResolvedValue(featuredModel({ isDefault: 1 }));
+    const updated = await service.updateModel(
+      1, null, null, null, null, null, null, null, null, 'image', null, null, null,
+      null, null, null, null,
+    );
+    expect(updated.modelType).toBe('image');
+    expect(updated.isDefault).toBe(0);
+    expect(bindings.countBindingsByModelId).toHaveBeenCalledWith(1);
+    expect(repo.clearDefaultFlag).not.toHaveBeenCalled();
+
+    // 有绑定：拒绝类型变更
+    vi.mocked(repo.findById).mockResolvedValue(featuredModel({ id: 2 }));
+    bindings.countBindingsByModelId.mockResolvedValue(3);
+    await expect(
+      service.updateModel(2, null, null, null, null, null, null, null, null, 'image', null, null, null,
+        null, null, null, null),
+    ).rejects.toBeInstanceOf(BusinessException);
+    expect(repo.updateById).toHaveBeenCalledTimes(1);
+  });
+
+  it('updateStatus：图片/语音默认允许停用，默认标记保留，不触发文本守卫', async () => {
+    const repo = makeRepo();
+    const service = new ModelService(repo, { reassignModelId: vi.fn() }, { chat: vi.fn() });
+    const imageDefault = featuredModel({ modelType: 'image', isDefault: 1 });
+    vi.mocked(repo.findById).mockResolvedValue(imageDefault);
+    await service.updateStatus(1, 0);
+    expect(imageDefault.status).toBe(0);
+    expect(imageDefault.isDefault).toBe(1);
+    expect(repo.countActiveTextExcept).not.toHaveBeenCalled();
+    expect(repo.updateById).toHaveBeenCalledWith(imageDefault);
+  });
+
+  it('图片/语音解析：显式默认优先，无默认回退首个启用', async () => {
+    const repo = makeRepo();
+    const service = new ModelService(repo, { reassignModelId: vi.fn() }, { chat: vi.fn() });
+    vi.mocked(repo.findDefaultByType).mockImplementation(async (type) =>
+      type === 'image' ? featuredModel({ id: 9, name: 'img-default', modelType: 'image', isDefault: 1 }) : null);
+    vi.mocked(repo.findFirstActiveByType).mockResolvedValue(featuredModel({ id: 2, name: 'img-first', modelType: 'image' }));
+    vi.mocked(repo.findFirstActiveAudioModel).mockResolvedValue(featuredModel({ id: 5, name: 'audio-first', modelType: 'audio' }));
+
+    expect((await service.findFirstActiveImageModel())?.name).toBe('img-default');
+    // audio 无默认 → 首个启用兜底
+    expect((await service.findFirstActiveAudioModel())?.name).toBe('audio-first');
+    // getDefaultModelByType：text 走 findDefault，其余走 findDefaultByType
+    vi.mocked(repo.findDefault).mockResolvedValue(featuredModel({ id: 3, name: 'text-default' }));
+    expect((await service.getDefaultModelByType('text'))?.name).toBe('text-default');
+    expect((await service.getDefaultModelByType('image'))?.name).toBe('img-default');
+    expect(await service.getDefaultModelByType('audio')).toBeNull();
+  });
+
+  it('listFeaturedModelOptions：按类型委派仓储', async () => {
+    const repo = makeRepo();
+    const service = new ModelService(repo, { reassignModelId: vi.fn() }, { chat: vi.fn() });
+    vi.mocked(repo.listActiveByType).mockImplementation(async (type) =>
+      type === 'image'
+        ? [featuredModel({ id: 1, name: 'img', modelType: 'image' })]
+        : [featuredModel({ id: 2, name: 'tts', modelType: 'audio' })]);
+    const options = await service.listFeaturedModelOptions();
+    expect(options.image[0].name).toBe('img');
+    expect(options.audio[0].name).toBe('tts');
+    expect(repo.listActiveByType).toHaveBeenCalledWith('image');
+    expect(repo.listActiveByType).toHaveBeenCalledWith('audio');
+  });
+
+  it('deleteModel：软删前清理 Agent 绑定；清理失败不阻断删除', async () => {
+    const repo = makeRepo();
+    const bindings = makeBindings();
+    const service = new ModelService(
+      repo, { reassignModelId: vi.fn() }, { chat: vi.fn() }, undefined, undefined, undefined, bindings,
+    );
+    vi.mocked(repo.findById).mockResolvedValue(featuredModel({ id: 2 }));
+    await service.deleteModel(2);
+    expect(bindings.clearByModelId).toHaveBeenCalledWith(2);
+    expect(repo.deleteById).toHaveBeenCalledWith(2);
+
+    // 清理失败不阻断删除（运行时 findById 为 null 同样 fail-closed）
+    bindings.clearByModelId.mockRejectedValue(new Error('db down'));
+    vi.mocked(repo.findById).mockResolvedValue(featuredModel({ id: 3 }));
+    await service.deleteModel(3);
+    expect(repo.deleteById).toHaveBeenCalledWith(3);
   });
 });

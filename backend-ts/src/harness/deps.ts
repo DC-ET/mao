@@ -61,6 +61,10 @@ export interface Agent {
   httpToolIds?: string | null;
   /** 特色工具（JSON 数组字符串）：image_generation / text_to_speech；null / '[]' = 未启用 */
   featuredTools?: string | null;
+  /** 指定文生图模型 id（2026-11-27 特色工具模型绑定）；NULL=跟随图片默认模型 */
+  imageModelId?: number | null;
+  /** 指定语音模型 id（2026-11-27 特色工具模型绑定）；NULL=跟随语音默认模型 */
+  audioModelId?: number | null;
   defaultModelId?: number | null;
   /** 软删标记（与 agent/types.ts 的 Agent.deleted 同义）：角色技能授权按它判断是否还要带上限定到该 Agent 的授权。 */
   deleted?: number | null;

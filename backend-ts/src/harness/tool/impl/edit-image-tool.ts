@@ -179,7 +179,7 @@ export class EditImageTool extends BaseTool {
     workspace: string | null,
     agentId: number | null = null,
   ): Promise<string> {
-    let model: Awaited<ReturnType<ImageModelLookup['findFirstActiveImageModel']>> = null;
+    let model: Awaited<ReturnType<ImageModelLookup['findImageModel']>> = null;
     // 记账口径（技术方案 2026-11-24 §6.4 + 评审定案）：只记「真的打到上游」的调用。
     // 参数/配置类早退错误（prompt 空、路径不合法、无可用模型、读字节失败…）不是模型调用，
     // 记进来只会用与图片模型无关的噪音污染调用数与成功率。
@@ -210,8 +210,8 @@ export class EditImageTool extends BaseTool {
       if (pathArgs.length === 0) return errorJson('image_paths 至少需要一张本地图片路径');
       if (pathArgs.length > 10) return errorJson('image_paths 最多 10 张');
 
-      model = await this.modelService.findFirstActiveImageModel();
-      if (!model) return errorJson('没有可用的文生图模型，请先在管理后台配置 model_type=image 的模型');
+      model = await this.modelService.findImageModel(agentId);
+      if (!model) return errorJson('没有可用的文生图模型（未配置默认模型，或当前 Agent 绑定的模型不可用）');
 
       const sizeRaw = (asText(args.size) ?? 'auto').trim();
       if (!SIZES.has(sizeRaw)) return errorJson(`size 不合法: ${sizeRaw}`);

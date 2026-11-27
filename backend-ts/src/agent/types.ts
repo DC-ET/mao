@@ -24,6 +24,10 @@ export interface Agent {
   httpToolIds?: string | null;
   /** 特色工具（JSON 数组字符串）：image_generation / text_to_speech；null / '[]' = 未启用 */
   featuredTools?: string | null;
+  /** 指定文生图模型 id（2026-11-27 特色工具模型绑定）；NULL=跟随图片默认模型 */
+  imageModelId?: number | null;
+  /** 指定语音模型 id（2026-11-27 特色工具模型绑定）；NULL=跟随语音默认模型 */
+  audioModelId?: number | null;
   /**
    * Git 凭据域白名单（JSON 数组字符串，技术方案 2026-11-06）：
    * null=未配置（跟随全局策略 gitToken.scopePolicy）；'[]'=显式禁止注入；非空=白名单。
@@ -139,4 +143,15 @@ export interface McpServerRecord {
 
 export interface McpServerValidator {
   validateForAgent(ids: number[]): Promise<number[]>;
+}
+
+/**
+ * Agent 特色工具模型绑定端口（2026-11-27）：供 model 领域反查/清理绑定，
+ * 避免 model 直接写 agent 表 SQL。实现放 MysqlAgentRepository。
+ */
+export interface AgentFeaturedModelBindingRepository {
+  /** 绑定该模型（image_model_id 或 audio_model_id）的未删除 Agent 数（模型类型变更守卫用）。 */
+  countBindingsByModelId(modelId: number): Promise<number>;
+  /** 把绑定该模型的 Agent 两列置 NULL（模型软删前调用）；返回清理的绑定列数。 */
+  clearByModelId(modelId: number): Promise<number>;
 }

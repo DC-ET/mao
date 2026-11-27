@@ -118,6 +118,9 @@ test('all three tabs preserve values and save the complete payload', async ({ pa
     clientVisible: true, httpToolIds: [],
     // 特色工具（2026-11-27）：未勾选时提交空数组，后端按未启用处理
     featuredTools: [],
+    // 特色工具模型绑定（2026-11-27）：未指定 = null（跟随该类型默认模型）
+    imageModelId: null,
+    audioModelId: null,
     // 凭据域开关未开 = null（不限制）；见 AgentFormDialog.gitDomainsPayload 三态
     gitAllowedDomains: null,
     experiences: [{ id: null, content: '保留经验', sortOrder: 0, enabled: false }],

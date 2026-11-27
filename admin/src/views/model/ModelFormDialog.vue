@@ -69,11 +69,11 @@
             <el-switch v-model="form.supportsVision" />
             <span class="form-hint-inline">开启后可在任务中发送图片</span>
           </el-form-item>
-          <el-form-item v-if="isTextType" label="默认模型">
-            <el-switch v-model="form.isDefault" />
-            <span class="form-hint-inline">新会话默认使用此模型</span>
+          <el-form-item label="默认模型">
+            <el-switch v-model="form.isDefault" :disabled="audioDefaultDisabled" />
+            <span class="form-hint-inline">{{ defaultModelHint }}</span>
           </el-form-item>
-          <el-form-item label="客户端可选">
+          <el-form-item v-if="isTextType" label="客户端可选">
             <el-switch v-model="form.clientVisible" :disabled="form.isDefault" />
             <span class="form-hint-inline">
               关闭后，客户端「新建会话」与「切换模型」不再展示该模型；Agent 默认模型、机器人、浮窗与已绑定会话不受影响。默认模型必须保持客户端可选。
@@ -239,6 +239,19 @@ const dialogTitle = computed(() => {
 const submitButtonText = computed(() => (isEdit.value ? '保存' : '添加'))
 const isTextType = computed(() => form.modelType === 'text')
 const isImageType = computed(() => form.modelType === 'image')
+const isAudioType = computed(() => form.modelType === 'audio')
+// 语音默认模型必须 OpenAI 兼容（2026-11-27 特色工具模型绑定）：anthropic / openai-responses
+// 适配器不序列化 audio 字段，默认指向这类模型会让 TTS / 微信语音「成功但无音频」。后端有二次校验。
+const audioDefaultDisabled = computed(() => isAudioType.value && form.apiProtocol !== 'openai-compatible')
+const defaultModelHint = computed(() => {
+  if (isImageType.value) return '未指定图片模型的 Agent 使用此模型生成 / 编辑图片'
+  if (isAudioType.value) {
+    return audioDefaultDisabled.value
+      ? '语音默认模型必须使用 OpenAI 兼容协议（当前协议不可设为默认）'
+      : '未指定语音模型的 Agent 与微信语音回复使用此模型'
+  }
+  return '新会话默认使用此模型'
+})
 // 推理力度仅对 OpenAI 兼容 / Responses 协议的文本模型有意义，Anthropic 协议不支持该参数
 const supportsEffort = computed(() => isTextType.value && form.apiProtocol !== 'anthropic')
 // 文本/语音后缀与各 LLM 适配器拼接一致；文生图固定走 Images API，不看 apiProtocol
@@ -352,12 +365,21 @@ watch(() => form.modelType, (type) => {
   if (type !== 'text' && activeTab.value === 'price') activeTab.value = 'basic'
 })
 
-// 默认模型必须对客户端可见（后端 §6.3 D4）：勾上默认时自动打开可见性，
-// 与 Agent 表单「默认 Agent 必须客户端可见」的同款回弹（AgentFormDialog.vue:706-712）。
+// 默认模型必须对客户端可见（后端 §6.3 D4，仅文本模型；image/audio 不参与客户端选择器）：
+// 勾上默认时自动打开可见性，与 Agent 表单「默认 Agent 必须客户端可见」的同款回弹。
 watch(() => form.isDefault, (isDefault) => {
-  if (isDefault && !form.clientVisible) {
+  if (isDefault && isTextType.value && !form.clientVisible) {
     form.clientVisible = true
     ElMessage.warning('默认模型必须对客户端可见，已自动打开「客户端可选」')
+  }
+})
+
+// 语音默认模型协议劣化（改成 anthropic / openai-responses）时自动取消默认勾选，
+// 避免「开关勾选但被禁用、提交才被后端拒绝」的死胡同（后端仍有 PARAM_INVALID 兜底）。
+watch(audioDefaultDisabled, (disabled) => {
+  if (disabled && form.isDefault) {
+    form.isDefault = false
+    ElMessage.warning('语音默认模型必须使用 OpenAI 兼容协议，已自动取消默认')
   }
 })
 
@@ -426,15 +448,17 @@ async function handleSubmit() {
       supportsVision: form.supportsVision ? 1 : 0,
       isDefault: form.isDefault ? 1 : 0
     }
-    // 语音/文生图模型不参与默认模型与上下文压缩，强制归零；价格同样不参与成本核算
+    // 语音/文生图模型不参与上下文压缩与成本核算，相关字段强制归零；
+    // isDefault 自 2026-11-27 起按类型作用域（语音/图片各有默认），不再强制清零；
+    // 「客户端可选」仅对文本模型有意义，非文本不提交（创建缺省可见，更新保持原值）。
     if (form.modelType !== 'text') {
       payload.supportsVision = 0
-      payload.isDefault = 0
       payload.maxRequestBodyBytes = null
       payload.priceInput = null
       payload.priceCacheRead = null
       payload.priceCacheWrite = null
       payload.priceOutput = null
+      delete payload.clientVisible
     }
     // 文生图不使用聊天协议与推理力度，不提交这两项（后端也会强制清空）
     if (form.modelType === 'image') {

@@ -16,8 +16,13 @@ import {
   type ImageApiResult,
 } from '../image-api-client.js';
 
+/**
+ * 图片模型解析端口（2026-11-27 默认模型 + Agent 指定模型）：按 agentId 解析
+ * 「Agent 绑定 → 图片默认 → 首个启用」；null = 本会话该能力不可用（fail-closed）。
+ * 实现为 FeaturedModelResolver（与门控同实例，口径一致）。
+ */
 export interface ImageModelLookup {
-  findFirstActiveImageModel(): Promise<LlmModel | null>;
+  findImageModel(agentId: number | null): Promise<LlmModel | null>;
 }
 
 /**
@@ -224,8 +229,8 @@ export class GenerateImageTool extends BaseTool {
       const args = parseObject(argumentsJson) ?? {};
       const prompt = asText(args.prompt);
       if (!prompt || prompt.trim() === '') return errorJson('prompt 不能为空');
-      model = await this.modelService.findFirstActiveImageModel();
-      if (!model) return errorJson('没有可用的文生图模型，请先在管理后台配置 model_type=image 的模型');
+      model = await this.modelService.findImageModel(agentId);
+      if (!model) return errorJson('没有可用的文生图模型（未配置默认模型，或当前 Agent 绑定的模型不可用）');
 
       const sizeRaw = (asText(args.size) ?? 'auto').trim();
       if (!SIZES.has(sizeRaw)) return errorJson(`size 不合法: ${sizeRaw}，可选 auto / 1024x1024 / 1536x1024 / 1024x1536`);

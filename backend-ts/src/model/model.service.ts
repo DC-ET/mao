@@ -24,6 +24,8 @@ import {
   type ImageApiResult,
 } from '../harness/tool/image-api-client.js';
 import { LLM_CALL_SCENES, LlmCallContext } from '../usage/llm-call-context.js';
+import { harnessLog } from '../harness/log.js';
+import type { AgentFeaturedModelBindingRepository } from '../agent/types.js';
 
 const TTS_TEST_TEXT = '你好，欢迎使用 Mao 语音合成测试。';
 const TTS_TEST_AUDIO = { format: 'wav' };
@@ -113,6 +115,20 @@ function requireDefaultModelVisible(isDefault: number, clientVisible: number): v
   }
 }
 
+/**
+ * 语音默认模型必须 OpenAI 兼容（2026-11-27 特色工具模型绑定）：anthropic / openai-responses
+ * 适配器不序列化 audio 字段，默认指向这类模型会让所有未绑定 Agent 的 TTS / 微信语音
+ * 「成功但无音频」。apiProtocol 已归一：'' = OpenAI 兼容。
+ */
+function requireAudioDefaultCompatible(isDefault: number, modelType: string, apiProtocol: string): void {
+  if (isDefault === 1 && modelType === 'audio' && apiProtocol !== '') {
+    throw new BusinessException(
+      ErrorCode.PARAM_INVALID.code,
+      '语音默认模型必须使用 OpenAI 兼容协议',
+    );
+  }
+}
+
 const API_PROTOCOL_VALUES = ['', 'openai-compatible', 'anthropic', 'openai-responses'] as const;
 
 /** 校验并归一 API 协议：openai-compatible 与空串都归一为 ''（OpenAI 兼容）；null/undefined 表示未提供。 */
@@ -198,6 +214,11 @@ export class ModelService {
     private readonly isEcpEnabled?: () => Promise<boolean>,
     /** 文生图试生成依赖；缺省用固定 Key 解析器 + 真实 Images API，不记流水。 */
     imageProbe?: ImageModelProbe,
+    /**
+     * Agent 特色工具模型绑定端口（2026-11-27）：deleteModel 清理绑定、updateModel 类型变更守卫用。
+     * 可选注入：精简单测不传时跳过这两步（与 modelLookup 缺省同款的精简装配口径）。
+     */
+    private readonly featuredModelBindings?: AgentFeaturedModelBindingRepository,
   ) {
     this.imageAuthResolver = imageProbe?.authResolver ?? createStaticOnlyAuthResolver();
     this.imageCallGenerations = imageProbe?.callGenerations ?? callImageGenerations;
@@ -258,12 +279,32 @@ export class ModelService {
     return this.modelRepo.listActiveText(clientVisibleOnly);
   }
 
-  findFirstActiveAudioModel(): Promise<LlmModel | null> {
-    return this.modelRepo.findFirstActiveAudioModel();
+  /**
+   * 语音模型解析（2026-11-27 特色工具模型绑定）：显式默认（is_default=1 且启用且协议兼容）
+   * → 首个启用（改造前行为兜底）。微信语音回复经此方法，改默认后立即跟随。
+   */
+  async findFirstActiveAudioModel(): Promise<LlmModel | null> {
+    return (await this.modelRepo.findDefaultByType('audio')) ?? this.modelRepo.findFirstActiveAudioModel();
   }
 
-  findFirstActiveImageModel(): Promise<LlmModel | null> {
-    return this.modelRepo.findFirstActiveByType('image');
+  /** 图片模型解析：显式默认（is_default=1 且启用）→ 首个启用（改造前行为兜底）。 */
+  async findFirstActiveImageModel(): Promise<LlmModel | null> {
+    return (await this.modelRepo.findDefaultByType('image')) ?? this.modelRepo.findFirstActiveByType('image');
+  }
+
+  /** 按类型取默认模型（is_default=1 且启用；audio 额外要求协议兼容）；无默认返回 null。 */
+  getDefaultModelByType(type: 'text' | 'image' | 'audio'): Promise<LlmModel | null> {
+    if (type === 'text') return this.modelRepo.findDefault();
+    return this.modelRepo.findDefaultByType(type);
+  }
+
+  /** Agent 表单候选（2026-11-27）：启用、未软删的同类型模型（audio 仅 OpenAI 兼容），id ASC。 */
+  async listFeaturedModelOptions(): Promise<{ image: LlmModel[]; audio: LlmModel[] }> {
+    const [image, audio] = await Promise.all([
+      this.modelRepo.listActiveByType('image'),
+      this.modelRepo.listActiveByType('audio'),
+    ]);
+    return { image, audio };
   }
 
   getDefaultModel(): Promise<LlmModel | null> {
@@ -306,7 +347,18 @@ export class ModelService {
     // 客户端可选：缺省可见；0/false 显式关闭。与 isDefault 共用同一套 0/1 归一。
     const clientVisibleValue = normalizeFlag01(clientVisible) ?? 1;
     const isDefaultValue = normalizeFlag01(isDefault) ?? 0;
-    requireDefaultModelVisible(isDefaultValue, clientVisibleValue);
+    // 最终类型/协议必须先算出来：is_default 按 model_type 作用域（2026-11-27 特色工具模型绑定），
+    // 清默认与默认校验都要用到；且归一化可能抛 PARAM_INVALID，必须先于清默认（否则校验失败时旧默认已被清）。
+    const modelTypeValue = hasText(modelType) ? modelType!.trim() : 'text';
+    // 文生图只走 Images API，不保存聊天协议与推理力度（提交值一律忽略）。
+    const imageModel = modelTypeValue === 'image';
+    const apiProtocolValue = imageModel ? '' : (normalizeApiProtocol(apiProtocol) ?? '');
+    const effortValue = imageModel ? '' : (normalizeEffort(effort) ?? '');
+    // 「默认必须客户端可见」仅约束 text：image/audio 不参与客户端模型选择器。
+    if (modelTypeValue === 'text') {
+      requireDefaultModelVisible(isDefaultValue, clientVisibleValue);
+    }
+    requireAudioDefaultCompatible(isDefaultValue, modelTypeValue, apiProtocolValue);
     if (authTypeValue === 'ecp') await this.requireEcpEnabled();
     // api_key 模式必须有固定 Key：避免直连 API 创建出必然 401 的空 Key 模型（前端/CLI 均有必填校验）。
     if (authTypeValue === 'api_key' && !hasText(apiKey)) {
@@ -314,16 +366,13 @@ export class ModelService {
     }
     // 用归一后的值判断：前端可能提交布尔 true，裸比较会漏清旧默认标记（出现两个 is_default=1）。
     if (isDefaultValue === 1) {
-      await this.modelRepo.clearDefaultFlag();
+      await this.modelRepo.clearDefaultFlag(modelTypeValue);
     }
-    const modelTypeValue = hasText(modelType) ? modelType!.trim() : 'text';
-    // 文生图只走 Images API，不保存聊天协议与推理力度（提交值一律忽略）。
-    const imageModel = modelTypeValue === 'image';
     const model: LlmModel = {
       name,
       provider,
-      apiProtocol: imageModel ? '' : (normalizeApiProtocol(apiProtocol) ?? ''),
-      effort: imageModel ? '' : (normalizeEffort(effort) ?? ''),
+      apiProtocol: apiProtocolValue,
+      effort: effortValue,
       baseUrl,
       // api_key 列 NOT NULL：ecp 模式（或未提供 Key 的创建请求）统一写空串占位。
       apiKey: apiKey ?? '',
@@ -374,22 +423,51 @@ export class ModelService {
     const model = await this.getModel(id);
     const nextClientVisible = normalizeFlag01(clientVisible) ?? (model.clientVisible ?? 1);
     const isDefaultValue = normalizeFlag01(isDefault);
-    const nextIsDefault = isDefaultValue ?? (model.isDefault ?? 0);
-    // 先按「最终状态」校验，避免 clearDefaultFlag() 之后才发现组合非法（默认标记已被别的模型抢走）。
-    requireDefaultModelVisible(nextIsDefault, nextClientVisible);
+    // 先算「最终状态」再校验/清默认：is_default 按 model_type 作用域（2026-11-27 特色工具模型绑定），
+    // 顺序颠倒会在 clearDefaultFlag 之后才发现组合非法（默认标记已被别的模型抢走）。
+    const prevModelType = (model.modelType ?? 'text').trim() || 'text';
+    const nextModelType = hasText(modelType) ? modelType!.trim() : prevModelType;
+    const typeChanged = nextModelType !== prevModelType;
+    // image 无聊天协议（强制清空）；其它类型按提交值归一，未提交则保留原值。
+    const nextApiProtocol = nextModelType === 'image'
+      ? ''
+      : (normalizeApiProtocol(apiProtocol) ?? (model.apiProtocol ?? ''));
+    let nextIsDefault = isDefaultValue ?? (model.isDefault ?? 0);
+    if (typeChanged) {
+      // 绑定按 id 指向本模型，类型一变绑定语义就漂了（Agent 绑图片模型却变成文本模型）。
+      // 有绑定时拒绝，提示先解绑（API 层能力，UI 本就禁用类型修改）。
+      const bindings = this.featuredModelBindings != null
+        ? await this.featuredModelBindings.countBindingsByModelId(id)
+        : 0;
+      if (bindings > 0) {
+        throw new BusinessException(
+          ErrorCode.PARAM_INVALID.code,
+          '该模型已被 Agent 绑定为特色工具模型，请先在 Agent 中解绑后再修改类型',
+        );
+      }
+      // 类型变更不继承默认标记：请求没有显式 isDefault=1 时强制归零，
+      // 避免「文本默认模型改成图片后自动变成图片默认」。
+      if (isDefaultValue == null) nextIsDefault = 0;
+    }
+    // 「默认必须客户端可见」仅约束 text：image/audio 不参与客户端模型选择器。
+    if (nextModelType === 'text') {
+      requireDefaultModelVisible(nextIsDefault, nextClientVisible);
+    }
+    // 协议从兼容改成不兼容且最终是默认语音模型：拒绝，保证默认语音模型始终可用。
+    requireAudioDefaultCompatible(nextIsDefault, nextModelType, nextApiProtocol);
     if (name != null) model.name = name;
     if (provider != null) model.provider = provider;
     if (baseUrl != null) model.baseUrl = baseUrl;
     if (apiKey != null) model.apiKey = apiKey;
     if (modelId != null) model.modelId = modelId;
-    if (hasText(modelType)) model.modelType = modelType!.trim();
-    if ((model.modelType ?? '').trim() === 'image') {
+    if (typeChanged) model.modelType = nextModelType;
+    if (nextModelType === 'image') {
       // 文生图没有聊天协议：无论本次是否提交，都清掉已存的协议与推理力度。
       model.apiProtocol = '';
       model.effort = '';
     } else {
-      const apiProtocolValue = normalizeApiProtocol(apiProtocol);
-      if (apiProtocolValue != null) model.apiProtocol = apiProtocolValue;
+      // 协议值已在上方按最终类型归一过（nextApiProtocol），这里只在显式提交时回写。
+      if (apiProtocol != null) model.apiProtocol = nextApiProtocol;
       const effortValue = normalizeEffort(effort);
       if (effortValue != null) model.effort = effortValue;
     }
@@ -415,12 +493,11 @@ export class ModelService {
     if (priceCacheWrite !== undefined) model.priceCacheWrite = normalizePrice(priceCacheWrite, 'priceCacheWrite');
     if (priceOutput !== undefined) model.priceOutput = normalizePrice(priceOutput, 'priceOutput');
     model.clientVisible = nextClientVisible;
-    if (isDefaultValue != null) {
-      if (isDefaultValue === 1) {
-        await this.modelRepo.clearDefaultFlag();
-      }
-      model.isDefault = isDefaultValue;
+    // 显式设默认时只清同类型旧默认；类型变更且未显式 isDefault=1 时 nextIsDefault 已被强制归零。
+    if (isDefaultValue === 1) {
+      await this.modelRepo.clearDefaultFlag(nextModelType);
     }
+    model.isDefault = nextIsDefault;
     await this.modelRepo.updateById(model);
     return model;
   }
@@ -429,6 +506,18 @@ export class ModelService {
     const model = await this.getModel(id);
     if (model.isDefault != null && model.isDefault === 1) {
       throw new BusinessException(ErrorCode.MODEL_IS_DEFAULT);
+    }
+    // 清理 Agent 特色工具绑定（2026-11-27），避免悬空 id；清理失败的兜底是运行时
+    // findById 返回 null → 工具隐藏（fail-closed），所以这里失败不阻断删除，但优先保证清成。
+    if (this.featuredModelBindings != null) {
+      try {
+        const cleared = await this.featuredModelBindings.clearByModelId(id);
+        if (cleared > 0) {
+          harnessLog('info', `[featured-model] deleteModel id=${id} 清理了 ${cleared} 个 Agent 绑定列`);
+        }
+      } catch (e) {
+        harnessLog('warn', `[featured-model] deleteModel id=${id} 清理 Agent 绑定失败（运行时按绑定失效处理）: ${(e as Error).message}`);
+      }
     }
     const defaultModel = await this.getDefaultModel();
     const defaultModelId = defaultModel != null ? defaultModel.id! : null;
@@ -441,7 +530,10 @@ export class ModelService {
       throw new BusinessException(ErrorCode.PARAM_INVALID.code, '状态值只能是 0 或 1');
     }
     const model = await this.getModel(id);
-    if (status === 0 && model.isDefault != null && model.isDefault === 1) {
+    // 「不能停用唯一启用模型」守卫仅约束 text（2026-11-27 特色工具模型绑定）：
+    // image/audio 默认允许停用——解析器忽略停用默认并回退首个启用模型。
+    if (status === 0 && model.isDefault != null && model.isDefault === 1
+      && (model.modelType ?? 'text') === 'text') {
       // 只数「同样能当默认」的启用中 text 模型——findDefault() 带 model_type = 'text'，
       // 拿 audio/image 计数会让守卫在"还有别的默认可用"时误判为唯一而拒绝停用。
       const activeCount = await this.modelRepo.countActiveTextExcept(model.id!);

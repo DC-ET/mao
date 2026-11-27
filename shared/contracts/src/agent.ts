@@ -47,6 +47,10 @@ export interface AgentVO {
   httpToolIds?: number[];
   /** 特色工具（管理后台多选）：[] = 未启用 */
   featuredTools?: AgentFeaturedTool[];
+  /** 指定文生图模型 id（2026-11-27 特色工具模型绑定）；null=跟随图片默认模型 */
+  imageModelId?: number | null;
+  /** 指定语音模型 id（2026-11-27 特色工具模型绑定）；null=跟随语音默认模型 */
+  audioModelId?: number | null;
   /**
    * Git 凭据域白名单（技术方案 2026-11-06）：
    * null=未配置（跟随全局策略 gitToken.scopePolicy），[]=禁止注入任何 Git 凭据，非空=白名单。

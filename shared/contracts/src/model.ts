@@ -72,3 +72,21 @@ export interface ModelListFilter {
   /** 客户端可选筛选：1=可选 0=仅管理端；null/undefined=不筛。 */
   clientVisible?: number | null;
 }
+
+/** 特色工具模型候选项（2026-11-27 特色工具模型绑定）：只含启用、未软删、协议兼容（audio）的模型。 */
+export interface FeaturedModelOption {
+  id: number;
+  name: string;
+  /** 该类型（image / audio）的默认模型标记。 */
+  isDefault: boolean;
+}
+
+/** 特色工具能力可用性（GET /v1/models/availability 的 image / audio 成员）。 */
+export interface FeaturedModelAvailability {
+  /** 未绑定 Agent 时是否至少有一个可用模型 */
+  available: boolean;
+  /** 未绑定 Agent 时的实际模型名（默认 → 首个启用） */
+  modelName: string | null;
+  /** Agent 表单候选列表；默认模型在前，其余按 id ASC。 */
+  models: FeaturedModelOption[];
+}

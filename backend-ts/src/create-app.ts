@@ -496,6 +496,8 @@ export async function createMaoApp(cfg: AppConfig = loadConfig(), existing?: Fas
       authResolver: llmAuthResolver,
       recorder: createImageCallRecorder(llmCallService),
     },
+    // 特色工具模型绑定（2026-11-27）：删除模型清理 Agent 绑定、类型变更守卫。
+    agentRepo,
   );
 
   const settingService = new SystemSettingService(

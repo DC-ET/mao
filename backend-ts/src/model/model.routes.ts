@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import type { ClientImpersonation } from '@mao/contracts';
+import type { ClientImpersonation, FeaturedModelOption } from '@mao/contracts';
 import { BusinessException } from '../common/business-exception.js';
 import { ErrorCode } from '../common/error-code.js';
 import { requirePermission, requireUserId, sendOk } from '../common/http-error.js';
@@ -104,17 +104,27 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
     return sendOk(reply, { enabled });
   });
 
-  // Agent 特色工具可用性（技术方案 2026-11-27 §5.3.2）：只返回布尔与模型名，
-// 不返回 key / baseUrl。登录即可，不要求 model:read（Agent 管理员不一定有模型权限）。
+  // Agent 特色工具可用性（技术方案 2026-11-27 §5.3.2 + 默认模型/Agent 指定模型）：只返回布尔、
+// 模型名与候选列表（id / name / isDefault），不返回 key / baseUrl。
+// 登录即可，不要求 model:read（Agent 管理员不一定有模型权限）。
   app.get('/v1/models/availability', async (request, reply) => {
     requireUserId(request);
-    const [image, audio] = await Promise.all([
+    const [image, audio, options] = await Promise.all([
       modelService.findFirstActiveImageModel(),
       modelService.findFirstActiveAudioModel(),
+      modelService.listFeaturedModelOptions(),
     ]);
     return sendOk(reply, {
-      image: { available: image != null, modelName: image?.name ?? null },
-      audio: { available: audio != null, modelName: audio?.name ?? null },
+      image: {
+        available: image != null,
+        modelName: image?.name ?? null,
+        models: toFeaturedOptions(options.image),
+      },
+      audio: {
+        available: audio != null,
+        modelName: audio?.name ?? null,
+        models: toFeaturedOptions(options.audio),
+      },
     });
   });
 
@@ -243,4 +253,12 @@ function toVO(entity: LlmModel, revealApiKey: boolean): ModelVO {
 function normalizeVoClientImpersonation(value: string | null | undefined): ClientImpersonation {
   if (value === 'codex' || value === 'claude_code') return value;
   return 'none';
+}
+
+/** 特色工具候选（2026-11-27）：最小暴露 id / name / isDefault；默认模型在前，其余按 id ASC。 */
+function toFeaturedOptions(models: LlmModel[]): FeaturedModelOption[] {
+  return models
+    .filter((m) => m.id != null)
+    .map((m) => ({ id: m.id!, name: m.name, isDefault: m.isDefault === 1 }))
+    .sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.id - b.id);
 }

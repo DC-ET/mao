@@ -6,13 +6,14 @@ import type {
   Agent,
   AgentExperience,
   AgentExperienceRepository,
+  AgentFeaturedModelBindingRepository,
   AgentRepository,
   AgentPromptVersion,
   AgentSuggestedQuestion,
   AgentSuggestedQuestionRepository,
 } from './types.js';
 
-export class MysqlAgentRepository implements AgentRepository {
+export class MysqlAgentRepository implements AgentRepository, AgentFeaturedModelBindingRepository {
   constructor(private readonly db: Db) {}
 
   selectList(
@@ -80,6 +81,29 @@ export class MysqlAgentRepository implements AgentRepository {
     return { domains: rows[0].domains ?? null };
   }
 
+  /** 绑定该模型（image_model_id / audio_model_id 任一）的未删除 Agent 数（模型类型变更守卫用）。 */
+  async countBindingsByModelId(modelId: number): Promise<number> {
+    const row = await this.db.queryOne<{ cnt: number }>(
+      `SELECT COUNT(*) AS cnt FROM agent
+       WHERE (image_model_id = ? OR audio_model_id = ?) AND ${notDeleted()}`,
+      [modelId, modelId],
+    );
+    return Number(row?.cnt ?? 0);
+  }
+
+  /** 模型软删前清理 Agent 绑定（2026-11-27）：两列分别置 NULL；返回清理的绑定列总数。 */
+  async clearByModelId(modelId: number): Promise<number> {
+    const image = await this.db.execute(
+      `UPDATE agent SET image_model_id = NULL WHERE image_model_id = ? AND ${notDeleted()}`,
+      [modelId],
+    );
+    const audio = await this.db.execute(
+      `UPDATE agent SET audio_model_id = NULL WHERE audio_model_id = ? AND ${notDeleted()}`,
+      [modelId],
+    );
+    return Number(image.affectedRows ?? 0) + Number(audio.affectedRows ?? 0);
+  }
+
   async insert(agent: Agent): Promise<number> {
     const id = await this.db.transaction(async (tx) => {
       const id = await tx.insert('agent', {
@@ -93,6 +117,8 @@ export class MysqlAgentRepository implements AgentRepository {
         mcpServerIds: agent.mcpServerIds,
         httpToolIds: agent.httpToolIds,
         featuredTools: agent.featuredTools ?? null,
+        imageModelId: agent.imageModelId ?? null,
+        audioModelId: agent.audioModelId ?? null,
         gitAllowedDomains: agent.gitAllowedDomains ?? null,
         defaultModelId: agent.defaultModelId ?? null,
         isDefault: agent.isDefault ?? 0,
@@ -130,6 +156,9 @@ export class MysqlAgentRepository implements AgentRepository {
         mcpServerIds: agent.mcpServerIds ?? null,
         httpToolIds: agent.httpToolIds ?? null,
         featuredTools: agent.featuredTools ?? null,
+        // 全量回写：service 层已按「undefined=不修改 / null=清空」合并好最终值（与 featuredTools 同款口径）。
+        imageModelId: agent.imageModelId ?? null,
+        audioModelId: agent.audioModelId ?? null,
         // 全量回写：'[]' 字符串原样保留（不能被 ?? null 折叠），否则无法表达「显式禁止」（技术方案 2026-11-06）
         gitAllowedDomains: agent.gitAllowedDomains ?? null,
         defaultModelId: agent.defaultModelId ?? null,

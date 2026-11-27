@@ -75,12 +75,23 @@ export interface LlmModelRepository {
    * 调用会「成功但没有音频」，必须 fail-closed。
    */
   findFirstActiveAudioModel(): Promise<LlmModel | null>;
+  /**
+   * 按类型的默认模型（2026-11-27 特色工具模型绑定）：is_default=1 且启用、未软删；
+   * audio 额外要求 OpenAI 兼容协议（与 findFirstActiveAudioModel 同口径，防脏数据默认「成功但无音频」）。
+   */
+  findDefaultByType(modelType: string): Promise<LlmModel | null>;
+  /**
+   * 启用、未软删的同类型模型，id ASC（Agent 表单候选）；
+   * audio 同样只含 OpenAI 兼容协议——协议不兼容的语音模型不允许被绑定。
+   */
+  listActiveByType(modelType: string): Promise<LlmModel[]>;
   findDefault(): Promise<LlmModel | null>;
   findById(id: number): Promise<LlmModel | null>;
   insert(model: LlmModel): Promise<number>;
   updateById(model: LlmModel): Promise<void>;
   deleteById(id: number): Promise<void>;
-  clearDefaultFlag(): Promise<void>;
+  /** 只清同一 model_type 的默认标记（is_default 语义 = 按类型各一个默认）。 */
+  clearDefaultFlag(modelType: string): Promise<void>;
   /** 除 id 外启用中的 text 模型数（与 findDefault 的 model_type = 'text' 口径一致）。 */
   countActiveTextExcept(id: number): Promise<number>;
   /** 启用且可用的 text 模型数（api_key 非空或 auth_type='ecp'；readiness 就绪判定，口径同 findDefault）。 */

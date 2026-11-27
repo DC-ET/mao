@@ -15,8 +15,13 @@ export const TTS_MAX_TEXT_CHARS = 2000;
 /** 微信 / 钉钉通道单文件上限（20MB）：超出时提前提示，避免「已生成但发不出去」。 */
 export const TTS_CHANNEL_WARN_BYTES = 20 * 1024 * 1024;
 
+/**
+ * 语音模型解析端口（2026-11-27 默认模型 + Agent 指定模型）：按 agentId 解析
+ * 「Agent 绑定 → 语音默认 → 首个启用（OpenAI 兼容）」；null = 本会话该能力不可用（fail-closed）。
+ * 实现为 FeaturedModelResolver（与门控同实例，口径一致）。
+ */
 export interface AudioModelLookup {
-  findFirstActiveAudioModel(): Promise<LlmModel | null>;
+  findAudioModel(agentId: number | null): Promise<LlmModel | null>;
 }
 
 function toClientImpersonation(value: string | null | undefined): ClientImpersonation {
@@ -122,9 +127,9 @@ export class TextToSpeechTool extends BaseTool {
         return errorJson(`text 过长（最多 ${TTS_MAX_TEXT_CHARS} 字），请分段调用`, 'text_too_long');
       }
 
-      model = await this.modelLookup.findFirstActiveAudioModel();
+      model = await this.modelLookup.findAudioModel(agentId);
       if (model == null) {
-        return errorJson('没有可用的语音模型，请先在管理后台配置 model_type=audio 且协议为 OpenAI 兼容的模型', 'no_model');
+        return errorJson('没有可用的语音模型（未配置 OpenAI 兼容的默认模型，或当前 Agent 绑定的模型不可用）', 'no_model');
       }
       const apiProtocol = (model.apiProtocol ?? '').trim();
       if (apiProtocol !== '' && apiProtocol !== 'openai-compatible') {

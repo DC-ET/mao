@@ -103,32 +103,61 @@
       <el-form-item label="特色工具">
         <el-checkbox-group v-model="form.featuredTools" class="featured-tools">
           <div v-for="opt in featuredToolOptions" :key="opt.value" class="featured-tool-row">
-            <el-checkbox :value="opt.value" :disabled="isFeaturedToolDisabled(opt.value)">
-              {{ opt.label }}
-            </el-checkbox>
-            <span
-              v-if="featuredToolAvailabilityLoaded && featuredToolAvailability?.[opt.modelKey]?.available"
-              class="featured-tool-model"
-            >
-              当前模型：{{ featuredToolAvailability[opt.modelKey]?.modelName || '未知' }}
-            </span>
+            <div class="featured-tool-main">
+              <el-checkbox :value="opt.value" :disabled="isFeaturedToolDisabled(opt.value)">
+                {{ opt.label }}
+              </el-checkbox>
+              <el-select
+                :model-value="featuredModelValueOf(opt.value)"
+                :disabled="!form.featuredTools.includes(opt.value)"
+                :loading="featuredToolAvailabilityLoading"
+                :empty-values="[undefined, '']"
+                class="featured-tool-select"
+                @update:model-value="setFeaturedModel(opt.value, $event)"
+              >
+                <el-option :value="null" :label="featuredModelDefaultLabel(opt.modelKey)" />
+                <el-option
+                  v-for="m in featuredModelCandidates(opt.modelKey)"
+                  :key="m.id"
+                  :value="m.id"
+                  :label="m.isDefault ? `${m.name}（默认）` : m.name"
+                />
+                <el-option
+                  v-if="featuredModelUnavailable(opt.value)"
+                  :value="featuredModelValueOf(opt.value)"
+                  :label="`模型 #${featuredModelValueOf(opt.value)}（当前不可用）`"
+                  disabled
+                />
+              </el-select>
+              <el-tag
+                v-if="featuredToolAvailabilityLoaded && featuredToolAvailability?.[opt.modelKey]?.available === false"
+                type="warning"
+                size="small"
+              >
+                无可用模型
+              </el-tag>
+              <span v-else-if="featuredToolAvailabilityLoading" class="featured-tool-model">
+                正在检测模型可用性…
+              </span>
+              <span v-else-if="featuredToolAvailabilityError" class="featured-tool-model">
+                可用性检测失败，运行时将再次校验
+              </span>
+            </div>
             <el-tag
-              v-else-if="featuredToolAvailabilityLoaded && featuredToolAvailability?.[opt.modelKey]?.available === false"
-              type="warning"
+              v-if="featuredModelUnavailable(opt.value)"
+              type="danger"
               size="small"
+              class="featured-tool-binding-warn"
             >
-              无可用模型
+              已绑定模型不可用（停用 / 删除 / 类型或协议变更），运行时该能力不会注入；请改选或清空
             </el-tag>
-            <span v-else-if="featuredToolAvailabilityLoading" class="featured-tool-model">
-              正在检测模型可用性…
-            </span>
-            <span v-else-if="featuredToolAvailabilityError" class="featured-tool-model">
-              可用性检测失败，运行时将再次校验
-            </span>
             <span class="featured-tool-hint">{{ opt.hint }}</span>
           </div>
         </el-checkbox-group>
-        <div class="form-hint">仅当对应类型的模型启用时才注入工具；模型停用后，下一次执行自动隐藏。</div>
+        <div class="form-hint">
+          仅当对应类型的模型启用时才注入工具；模型停用后，下一次执行自动隐藏。
+          默认跟随该类型的默认模型；指定模型后失效（停用/删除）不会回退默认，对应能力直接不可用。
+        </div>
       </el-form-item>
       <el-form-item label="Git 凭据域">
         <el-switch v-model="form.gitAllowedDomainsEnabled" />
@@ -338,6 +367,21 @@ interface SuggestedQuestionFormItem {
 
 type FeaturedToolModelKey = 'image' | 'audio'
 
+/** 特色工具模型候选项（GET /models/availability 的 models 成员；与 @mao/contracts FeaturedModelOption 同形）。 */
+interface FeaturedModelOptionItem {
+  id: number
+  name: string
+  isDefault: boolean
+}
+
+interface FeaturedToolAvailability {
+  available: boolean
+  modelName: string | null
+  models: FeaturedModelOptionItem[]
+  /** 后端是否返回了 models 数组（旧后端无此字段 → 不可用时退化为 available 布尔判断）。 */
+  hasModelsList: boolean
+}
+
 interface FeaturedToolOption {
   value: AgentFeaturedTool
   label: string
@@ -398,7 +442,7 @@ const skillDocs = ref<any[]>([])
 const mcpServers = ref<any[]>([])
 const httpTools = ref<any[]>([])
 const models = ref<any[]>([])
-const featuredToolAvailability = ref<Record<FeaturedToolModelKey, { available: boolean; modelName: string | null }> | null>(null)
+const featuredToolAvailability = ref<Record<FeaturedToolModelKey, FeaturedToolAvailability> | null>(null)
 const featuredToolAvailabilityLoaded = ref(false)
 const featuredToolAvailabilityLoading = ref(false)
 const featuredToolAvailabilityError = ref(false)
@@ -460,6 +504,9 @@ const form = reactive({
   mcpServerIds: [] as number[],
   httpToolIds: [] as number[],
   featuredTools: [] as AgentFeaturedTool[],
+  // 特色工具模型绑定（2026-11-27）：null=跟随该类型默认模型；未勾选对应能力时保留值（休眠）
+  imageModelId: null as number | null,
+  audioModelId: null as number | null,
   // Git 凭据域（技术方案 2026-11-06）：enabled=false → null（不限制）；enabled=true + 空列表 → []（禁止注入）
   gitAllowedDomainsEnabled: false,
   gitAllowedDomains: [] as string[],
@@ -477,12 +524,57 @@ function featuredToolOptionOf(value: AgentFeaturedTool): FeaturedToolOption {
   return featuredToolOptions.find((option) => option.value === value) ?? featuredToolOptions[0]
 }
 
-/** 未知（加载中 / 检测失败）= 不置灰，只有确认不可用才锁死未勾选项。 */
+/** 未知（加载中 / 检测失败）= 不置灰，只有确认候选为空才锁死未勾选项（已勾选但绑定失效的仍可取消）。 */
 function isFeaturedToolDisabled(value: AgentFeaturedTool): boolean {
   if (!featuredToolAvailabilityLoaded.value || featuredToolAvailabilityError.value) return false
-  if (featuredToolAvailability.value == null) return false
-  const available = featuredToolAvailability.value[featuredToolOptionOf(value).modelKey]?.available
-  return available === false && !form.featuredTools.includes(value)
+  const availability = featuredToolAvailability.value?.[featuredToolOptionOf(value).modelKey]
+  if (availability == null) return false
+  // 旧后端无 models 字段：退化为 available 布尔；新后端以候选列表是否为空为准
+  const unusable = availability.hasModelsList ? availability.models.length === 0 : availability.available === false
+  return unusable && !form.featuredTools.includes(value)
+}
+
+/** 能力 → 绑定字段映射（与 FEATURED_TOOL_META 的 modelKey 同口径）。 */
+function featuredModelFieldOf(value: AgentFeaturedTool): 'imageModelId' | 'audioModelId' {
+  return featuredToolOptionOf(value).modelKey === 'image' ? 'imageModelId' : 'audioModelId'
+}
+
+function featuredModelValueOf(value: AgentFeaturedTool): number | null {
+  return form[featuredModelFieldOf(value)]
+}
+
+function setFeaturedModel(value: AgentFeaturedTool, modelId: number | string | null | undefined) {
+  form[featuredModelFieldOf(value)] = typeof modelId === 'number' ? modelId : null
+}
+
+function featuredModelCandidates(modelKey: FeaturedToolModelKey): FeaturedModelOptionItem[] {
+  return featuredToolAvailability.value?.[modelKey]?.models ?? []
+}
+
+function featuredModelDefaultLabel(modelKey: FeaturedToolModelKey): string {
+  const current = featuredToolAvailability.value?.[modelKey]?.modelName
+  return current ? `跟随默认模型（当前：${current}）` : '跟随默认模型'
+}
+
+/** 绑定 id 不在候选列表 = 被停用/删除/类型或协议变更 → 运行时不可用（fail-closed），提示改选或清空。
+ *  加载中 / 检测失败（候选列表为空但非「确认不可用」）不误报。 */
+function featuredModelUnavailable(value: AgentFeaturedTool): boolean {
+  if (!featuredToolAvailabilityLoaded.value || featuredToolAvailabilityError.value) return false
+  const bound = featuredModelValueOf(value)
+  if (bound == null) return false
+  return !featuredModelCandidates(featuredToolOptionOf(value).modelKey).some((m) => m.id === bound)
+}
+
+/** 防御式归一 availability 的 models 数组：只保留 {id:number, name:string} 形态，isDefault 缺省按 false。 */
+function normalizeFeaturedModelOptions(input: unknown): FeaturedModelOptionItem[] {
+  if (!Array.isArray(input)) return []
+  const result: FeaturedModelOptionItem[] = []
+  for (const raw of input) {
+    const item = raw as Partial<FeaturedModelOptionItem> | null | undefined
+    if (item == null || typeof item.id !== 'number' || typeof item.name !== 'string') continue
+    result.push({ id: item.id, name: item.name, isDefault: item.isDefault === true })
+  }
+  return result
 }
 
 const rules: FormRules = {
@@ -531,6 +623,8 @@ function resetForm() {
     mcpServerIds: [],
     httpToolIds: [],
     featuredTools: [],
+    imageModelId: null,
+    audioModelId: null,
     gitAllowedDomainsEnabled: false,
     gitAllowedDomains: [],
     experiences: [],
@@ -755,6 +849,9 @@ watch(() => props.visible, async (val) => {
       mcpServerIds: props.agentData.mcpServerIds || [],
       httpToolIds: props.agentData.httpToolIds || [],
       featuredTools: Array.isArray(props.agentData.featuredTools) ? [...props.agentData.featuredTools] : [],
+      // 复制 Agent 同样复制绑定（2026-11-27 特色工具模型绑定；与 isDefault/defaultModelId 不同，这两列跟随副本）
+      imageModelId: props.agentData.imageModelId ?? null,
+      audioModelId: props.agentData.audioModelId ?? null,
       // 回显要区分后端返回的 null（未配置=关闭）与 []（显式禁止=开启+空列表），否则「开启+空」会显示成关闭
       gitAllowedDomainsEnabled: gitDomainsEnabledOf(props.agentData.gitAllowedDomains),
       gitAllowedDomains: gitDomainsListOf(props.agentData.gitAllowedDomains),
@@ -845,11 +942,15 @@ async function loadOptions() {
       featuredToolAvailability.value = {
         image: {
           available: imageAvailable,
-          modelName: typeof availability.image.modelName === 'string' ? availability.image.modelName : null
+          modelName: typeof availability.image.modelName === 'string' ? availability.image.modelName : null,
+          models: normalizeFeaturedModelOptions(availability.image.models),
+          hasModelsList: Array.isArray(availability.image.models)
         },
         audio: {
           available: audioAvailable,
-          modelName: typeof availability.audio.modelName === 'string' ? availability.audio.modelName : null
+          modelName: typeof availability.audio.modelName === 'string' ? availability.audio.modelName : null,
+          models: normalizeFeaturedModelOptions(availability.audio.models),
+          hasModelsList: Array.isArray(availability.audio.models)
         }
       }
       featuredToolAvailabilityLoaded.value = true
@@ -951,6 +1052,9 @@ async function handleSubmit() {
     mcpServerIds: form.mcpServerIds,
     httpToolIds: form.httpToolIds,
     featuredTools: form.featuredTools,
+    // null = 跟随该类型默认模型（2026-11-27）
+    imageModelId: form.imageModelId,
+    audioModelId: form.audioModelId,
     // 三态（技术方案 2026-11-06）：关闭开关 = null（不限制）；开启 + 空列表 = []（禁止注入）；非空 = 白名单
     gitAllowedDomains: gitDomainsPayload(form.gitAllowedDomainsEnabled, form.gitAllowedDomains),
     isDefault: form.isDefault ? 1 : 0,
@@ -1165,6 +1269,22 @@ async function handleSubmit() {
   align-items: center;
   flex-wrap: wrap;
   gap: 6px 12px;
+}
+
+.featured-tool-main {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  min-width: 0;
+}
+
+.featured-tool-select {
+  width: 280px;
+}
+
+.featured-tool-binding-warn {
+  margin-left: 4px;
 }
 
 .featured-tool-model,

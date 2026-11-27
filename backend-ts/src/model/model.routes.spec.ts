@@ -36,6 +36,10 @@ function buildApp(options: {
     createModel: vi.fn(async () => modelFixture({ authType: 'ecp', apiKey: '' })),
     findFirstActiveImageModel: vi.fn(async () => model),
     findFirstActiveAudioModel: vi.fn(async () => null),
+    listFeaturedModelOptions: vi.fn(async () => ({
+      image: [modelFixture({ id: 18, name: 'Flux Pro', isDefault: 0 }), modelFixture({ id: 12, name: 'GPT image 2', isDefault: 1 })],
+      audio: [],
+    })),
   } as unknown as ModelService;
   const app = Fastify();
   app.setErrorHandler(handleError);
@@ -173,17 +177,30 @@ describe('model routes（客户端可选）', () => {
     expect((visible.json().data as Record<string, unknown>).clientVisible).toBe(true);
   });
 
-  it('GET /models/availability：只返回 image/audio 布尔与模型名', async () => {
+  it('GET /models/availability：返回布尔、模型名与候选列表（默认在前、最小暴露）', async () => {
     const { app } = buildApp();
     const res = await app.inject({ method: 'GET', url: '/v1/models/availability' });
     expect(res.statusCode).toBe(200);
     const data = res.json().data as {
-      image: { available: boolean; modelName?: string | null };
-      audio: { available: boolean; modelName?: string | null };
+      image: {
+        available: boolean;
+        modelName?: string | null;
+        models: Array<{ id: number; name: string; isDefault: boolean } & Record<string, unknown>>;
+      };
+      audio: { available: boolean; modelName?: string | null; models: unknown[] };
     };
-    expect(data.image).toEqual({ available: true, modelName: 'gpt-test' });
+    // 旧字段保持：available + modelName 语义不变
+    expect(data.image.available).toBe(true);
+    expect(data.image.modelName).toBe('gpt-test');
     expect(data.audio.available).toBe(false);
     expect(data.audio.modelName ?? null).toBeNull();
+    // models：默认模型在前，其余按 id ASC
+    expect(data.image.models.map((m) => m.id)).toEqual([12, 18]);
+    expect(data.image.models[0]).toMatchObject({ id: 12, name: 'GPT image 2', isDefault: true });
+    // 最小暴露：候选列表不携带 key / baseUrl / 协议等敏感或冗余字段
+    expect(data.image.models[0]).not.toHaveProperty('apiKey');
+    expect(data.image.models[0]).not.toHaveProperty('baseUrl');
+    expect(data.audio.models).toEqual([]);
   });
 
   it('GET /models/availability：未登录返回 UNAUTHORIZED', async () => {

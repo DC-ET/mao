@@ -1242,6 +1242,8 @@ describe('HarnessService featured tools（Agent 配置 ∩ 模型可用性）', 
 
   function make(options: {
     featuredTools?: string | null;
+    imageModelId?: number | null;
+    audioModelId?: number | null;
     image?: unknown;
     audio?: unknown;
     imageError?: Error;
@@ -1259,14 +1261,16 @@ describe('HarnessService featured tools（Agent 配置 ∩ 模型可用性）', 
         systemPrompt: 'p',
         skillNames: null,
         featuredTools: options.featuredTools ?? null,
+        imageModelId: options.imageModelId ?? null,
+        audioModelId: options.audioModelId ?? null,
       })),
     };
     const lookup = {
-      findFirstActiveImageModel: vi.fn(async () => {
+      resolveImageModel: vi.fn(async () => {
         if (options.imageError) throw options.imageError;
         return options.image ?? null;
       }),
-      findFirstActiveAudioModel: vi.fn(async () => {
+      resolveAudioModel: vi.fn(async () => {
         if (options.audioError) throw options.audioError;
         return options.audio ?? null;
       }),
@@ -1301,6 +1305,32 @@ describe('HarnessService featured tools（Agent 配置 ∩ 模型可用性）', 
     expect(names).toContain('text_to_speech');
     expect(names).not.toContain('generate_image');
     expect(names).not.toContain('edit_image');
+  });
+
+  it('passes the loaded agent (with model bindings) to the resolver', async () => {
+    const { service } = make({
+      featuredTools: '["image_generation"]',
+      imageModelId: 12,
+      image: { id: 12 },
+    });
+    const ctx = await service.buildContext(10);
+    expect(ctx.tools.map((tool) => tool.getName())).toEqual(
+      expect.arrayContaining(['generate_image', 'edit_image']),
+    );
+  });
+
+  it('drops the capability when the bound model is unusable even if a default exists（绑定失效不回退）', async () => {
+    const { service } = make({
+      featuredTools: '["image_generation","text_to_speech"]',
+      imageModelId: 99,
+      image: null,
+      audio: { id: 2 },
+    });
+    const ctx = await service.buildContext(10);
+    const names = ctx.tools.map((tool) => tool.getName());
+    expect(names).not.toContain('generate_image');
+    expect(names).not.toContain('edit_image');
+    expect(names).toContain('text_to_speech');
   });
 
   it('drops configured tools whose model is unavailable', async () => {

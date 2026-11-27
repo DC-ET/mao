@@ -36,7 +36,7 @@ function makeTool(options: {
   }));
   const adapter = { chat, stream: vi.fn() } as unknown as LlmAdapter;
   const tool = new TextToSpeechTool(
-    { findFirstActiveAudioModel: async () => (options.model === undefined ? audioModel() : options.model) },
+    { findAudioModel: async () => (options.model === undefined ? audioModel() : options.model) },
     adapter,
     uploadDir,
     async () => options.baseUrl ?? 'https://mao.example/api',
@@ -123,6 +123,23 @@ describe('TextToSpeechTool', () => {
     const tooLong = JSON.parse(await tool.execute(JSON.stringify({ text: '字'.repeat(TTS_MAX_TEXT_CHARS + 1) }), 11, 7, null));
     expect(tooLong.error_code).toBe('text_too_long');
     expect(chat).not.toHaveBeenCalled();
+  });
+
+  it('passes the current agentId to the model lookup（绑定模型按 Agent 解析）', async () => {
+    const seen: Array<number | null> = [];
+    const chat = vi.fn(async () => ({
+      choices: [{ message: { audio: { data: WAV_BYTES.toString('base64'), format: 'wav' } } }],
+    }));
+    const adapter = { chat, stream: vi.fn() } as unknown as LlmAdapter;
+    const tool = new TextToSpeechTool(
+      { findAudioModel: async (agentId: number | null) => { seen.push(agentId); return audioModel(); } },
+      adapter,
+      useTmpDir('tts-agent-'),
+      async () => 'https://mao.example/api',
+    );
+    const result = JSON.parse(await tool.execute(JSON.stringify({ text: '你好' }), 1, null, null, 42));
+    expect(result.error).toBeUndefined();
+    expect(seen).toEqual([42]);
   });
 
   it('returns no_model when there is no active audio model', async () => {

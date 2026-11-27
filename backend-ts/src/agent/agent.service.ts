@@ -13,9 +13,14 @@ import type {
   SuggestedQuestionInput,
 } from './types.js';
 
-/** Agent 默认模型校验所需的最小模型查询能力 */
+/** Agent 默认模型 / 特色工具模型绑定校验所需的最小模型查询能力 */
 export interface AgentModelLookup {
-  findById(id: number): Promise<{ id?: number; status?: number | null } | null>;
+  findById(id: number): Promise<{
+    id?: number;
+    status?: number | null;
+    modelType?: string | null;
+    apiProtocol?: string | null;
+  } | null>;
 }
 
 /**
@@ -90,8 +95,13 @@ export class AgentService {
     experienceLibraryEnabled?: boolean | null,
     gitAllowedDomains?: string[] | null,
     featuredTools?: AgentFeaturedTool[] | null,
+    /** 特色工具模型绑定（2026-11-27）：null/未提供都存 NULL（跟随类型默认）。 */
+    imageModelId?: number | null,
+    audioModelId?: number | null,
   ): Promise<Agent> {
     validateAgentAvatarUrl(avatarUrl);
+    await this.requireFeaturedModel(imageModelId, 'image');
+    await this.requireFeaturedModel(audioModelId, 'audio');
     const clientVisibleFlag = clientVisible === false ? 0 : 1;
     if (isDefault != null && isDefault === 1 && clientVisibleFlag === 0) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '默认 Agent 必须客户端可见，请先更改默认 Agent 或开启客户端可见');
@@ -131,6 +141,8 @@ export class AgentService {
     if (featuredTools != null && featuredTools.length > 0) {
       agent.featuredTools = JSON.stringify(featuredTools);
     }
+    agent.imageModelId = imageModelId ?? null;
+    agent.audioModelId = audioModelId ?? null;
     await this.agentRepo.insert(agent);
     if (skillNames != null) this.skillDepsEnsurer?.ensureForSkills(skillNames);
 
@@ -162,9 +174,14 @@ export class AgentService {
     experienceLibraryEnabled?: boolean | null,
     gitAllowedDomains?: string[] | null,
     featuredTools?: AgentFeaturedTool[] | null,
+    /** 特色工具模型绑定（2026-11-27）：undefined=不修改；null=清空（跟随类型默认）；正整数=绑定。 */
+    imageModelId?: number | null,
+    audioModelId?: number | null,
   ): Promise<Agent> {
     validateAgentAvatarUrl(avatarUrl);
     const agent = await this.getAgent(id);
+    if (imageModelId !== undefined) await this.requireFeaturedModel(imageModelId, 'image');
+    if (audioModelId !== undefined) await this.requireFeaturedModel(audioModelId, 'audio');
     const nextClientVisible = clientVisible == null
       ? (agent.clientVisible ?? 1)
       : (clientVisible ? 1 : 0);
@@ -206,6 +223,9 @@ export class AgentService {
       // null / undefined 不修改（管理端始终提交数组）；[] 显式清空。
       agent.featuredTools = featuredTools.length === 0 ? null : JSON.stringify(featuredTools);
     }
+    // 绑定与 featuredTools 独立：未勾选对应能力时绑定仍可保存（休眠状态，UI 禁用下拉但保留值）。
+    if (imageModelId !== undefined) agent.imageModelId = imageModelId;
+    if (audioModelId !== undefined) agent.audioModelId = audioModelId;
     if (isDefault != null) {
       if (isDefault === 1) {
         if (agent.enabled === 0) {
@@ -276,6 +296,33 @@ export class AgentService {
     const model = await this.modelLookup.findById(defaultModelId);
     if (model == null || model.status !== 1) {
       throw new BusinessException(ErrorCode.PARAM_INVALID, '默认模型不存在或未启用');
+    }
+  }
+
+  /**
+   * 特色工具模型绑定校验（2026-11-27）：模型必须存在（未软删）、类型匹配；
+   * audio 额外要求 OpenAI 兼容协议（anthropic / openai-responses 不序列化 audio，配了也「成功但无音频」）。
+   * 不校验 status：允许先绑定后停用，运行时解析为不可用（fail-closed），表单提示「已绑定模型不可用」。
+   */
+  private async requireFeaturedModel(
+    modelId: number | null | undefined,
+    expectedType: 'image' | 'audio',
+  ): Promise<void> {
+    if (modelId == null) return;
+    if (this.modelLookup == null) return;
+    const label = expectedType === 'image' ? '图片模型' : '语音模型';
+    const model = await this.modelLookup.findById(modelId);
+    if (model == null) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, `${label}不存在`);
+    }
+    if ((model.modelType ?? null) !== expectedType) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, `${label}类型不匹配`);
+    }
+    if (expectedType === 'audio') {
+      const protocol = (model.apiProtocol ?? '').trim();
+      if (protocol !== '' && protocol !== 'openai-compatible') {
+        throw new BusinessException(ErrorCode.PARAM_INVALID, '语音模型协议需为 OpenAI 兼容');
+      }
     }
   }
 
