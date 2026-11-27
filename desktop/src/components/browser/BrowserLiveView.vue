@@ -14,43 +14,36 @@
           @confirm="onStop"
         >
           <template #reference>
-            <button class="icon-btn" type="button" aria-label="停止浏览器" title="停止浏览器">
-              <el-icon><VideoPause /></el-icon>
-            </button>
+            <!-- 图标按钮统一用 el-tooltip（:show-after 快速出现）；原生 title 提示延迟数秒 -->
+            <el-tooltip content="停止浏览器" placement="bottom" :show-after="150">
+              <button class="icon-btn" type="button" aria-label="停止浏览器">
+                <el-icon><VideoPause /></el-icon>
+              </button>
+            </el-tooltip>
           </template>
         </el-popconfirm>
-        <button
+        <el-tooltip
           v-if="variant === 'tab' && isElectron && viewMode === 'live'"
-          class="icon-btn"
-          type="button"
-          aria-label="还原为画中画窗口"
-          title="还原为画中画窗口"
-          @click="onRestore"
+          content="还原为画中画窗口"
+          placement="bottom"
+          :show-after="150"
         >
-          <el-icon><CopyDocument /></el-icon>
-        </button>
-        <button
-          v-if="viewMode === 'replay'"
-          class="icon-btn"
-          type="button"
-          aria-label="退出回放"
-          title="退出回放"
-          @click="exitReplay"
-        >
-          <el-icon><Back /></el-icon>
-        </button>
+          <button class="icon-btn" type="button" aria-label="还原为画中画窗口" @click="onRestore">
+            <el-icon><CopyDocument /></el-icon>
+          </button>
+        </el-tooltip>
+        <el-tooltip v-if="viewMode === 'replay'" content="退出回放" placement="bottom" :show-after="150">
+          <button class="icon-btn" type="button" aria-label="退出回放" @click="exitReplay">
+            <el-icon><Back /></el-icon>
+          </button>
+        </el-tooltip>
         <!-- 画中画无边框、没有系统关闭键：提供与关窗同语义的收起按钮（仅停止观看），
              避免用户把「停止浏览器」的 ✕ 当成关窗而误杀 Agent 的浏览器 -->
-        <button
-          v-if="variant === 'pip'"
-          class="icon-btn"
-          type="button"
-          aria-label="关闭画中画（仅停止观看）"
-          title="关闭画中画（仅停止观看）"
-          @click="onHidePip"
-        >
-          <el-icon><Close /></el-icon>
-        </button>
+        <el-tooltip v-if="variant === 'pip'" content="关闭画中画（仅停止观看）" placement="bottom" :show-after="150">
+          <button class="icon-btn" type="button" aria-label="关闭画中画（仅停止观看）" @click="onHidePip">
+            <el-icon><Close /></el-icon>
+          </button>
+        </el-tooltip>
       </span>
     </header>
 
