@@ -9,11 +9,12 @@ import android.os.Looper;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
-import android.view.Gravity;
-import android.view.ViewGroup;
+import android.view.LayoutInflater;
+import android.view.View;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -21,7 +22,11 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
+import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -75,7 +80,7 @@ public class ServerPickerActivity extends AppCompatActivity {
         cancelButton.setAllCaps(false);
 
         String current = ServerConfigStore.getEffectiveBaseUrl(this);
-        currentUrlText.setText(getString(R.string.server_current, current));
+        currentUrlText.setText(current);
 
         boolean defaultAllowHttp = current.startsWith("http://") || ServerConfigStore.getAllowHttp(this);
         if (savedInstanceState != null) {
@@ -163,7 +168,7 @@ public class ServerPickerActivity extends AppCompatActivity {
                         }
                         clearProbe();
                     })
-                    .setNegativeButton(android.R.string.cancel, null)
+                    .setNegativeButton(R.string.server_cancel, null)
                     .show();
             return;
         }
@@ -175,7 +180,7 @@ public class ServerPickerActivity extends AppCompatActivity {
                     .setTitle(R.string.server_probe_failed_title)
                     .setMessage(getString(R.string.server_probe_failed_message, readable))
                     .setPositiveButton(R.string.server_save, (dialog, which) -> saveNow(base))
-                    .setNegativeButton(android.R.string.cancel, null)
+                    .setNegativeButton(R.string.server_cancel, null)
                     .show();
         }
     }
@@ -190,7 +195,7 @@ public class ServerPickerActivity extends AppCompatActivity {
                     .setTitle(R.string.server_http_confirm_title)
                     .setMessage(R.string.server_http_confirm_message)
                     .setPositiveButton(android.R.string.ok, (dialog, which) -> proceedSave(base))
-                    .setNegativeButton(android.R.string.cancel, null)
+                    .setNegativeButton(R.string.server_cancel, null)
                     .show();
             return;
         }
@@ -282,35 +287,34 @@ public class ServerPickerActivity extends AppCompatActivity {
             return;
         }
 
+        String current = ServerConfigStore.getEffectiveBaseUrl(this);
+        LayoutInflater inflater = LayoutInflater.from(this);
         for (ServerHistory.Entry entry : entries) {
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(0, dp(6), 0, dp(6));
+            View row = inflater.inflate(R.layout.item_server_history, historyContainer, false);
 
-            LinearLayout info = new LinearLayout(this);
-            info.setOrientation(LinearLayout.VERTICAL);
-            info.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            TextView urlView = row.findViewById(R.id.historyUrl);
+            TextView timeView = row.findViewById(R.id.historyTime);
+            TextView httpTag = row.findViewById(R.id.historyHttpTag);
+            Button switchButton = row.findViewById(R.id.switchButton);
+            ImageButton deleteButton = row.findViewById(R.id.deleteButton);
 
-            TextView url = new TextView(this);
+            urlView.setText(entry.serverBaseUrl);
             boolean isHttpUrl = entry.serverBaseUrl.startsWith("http://");
-            url.setText(entry.serverBaseUrl + (isHttpUrl ? "  ·  " + getString(R.string.server_history_http) : ""));
-            url.setTextColor(Color.parseColor("#111827"));
-            url.setTextSize(13);
-            url.setSingleLine(true);
-            url.setEllipsize(TextUtils.TruncateAt.END);
-            info.addView(url);
+            httpTag.setVisibility(isHttpUrl ? View.VISIBLE : View.GONE);
+            String relative = entry.lastConnectedAt == null ? "" : formatRelative(entry.lastConnectedAt);
+            timeView.setVisibility(TextUtils.isEmpty(relative) ? View.GONE : View.VISIBLE);
+            timeView.setText(relative);
 
-            Button delete = new Button(this);
-            delete.setText(R.string.server_delete);
-            delete.setAllCaps(false);
-            delete.setOnClickListener(v -> {
-                ServerConfigStore.removeHistory(this, entry.serverBaseUrl);
-                renderHistory();
-            });
+            boolean isCurrent = entry.serverBaseUrl.equals(current);
+            switchButton.setEnabled(!isCurrent);
+            switchButton.setText(isCurrent
+                    ? getString(R.string.server_current_entry)
+                    : getString(R.string.server_switch));
+            switchButton.setOnClickListener(v -> switchTo(entry));
 
-            row.addView(info);
-            row.addView(delete);
+            deleteButton.setOnClickListener(v -> confirmDelete(entry));
+
+            // 点行只回填输入框（可编辑后再保存），一键切换走「切换」按钮。
             row.setOnClickListener(v -> {
                 urlInput.setText(entry.serverBaseUrl);
                 urlInput.setSelection(urlInput.getText().length());
@@ -318,6 +322,54 @@ public class ServerPickerActivity extends AppCompatActivity {
                 clearProbe();
             });
             historyContainer.addView(row);
+        }
+    }
+
+    /** 历史条目一键切换：条目保存时已归一化并已确认过 allowHttp，直接保存并重启。 */
+    private void switchTo(ServerHistory.Entry entry) {
+        boolean saved = ServerConfigStore.save(this, entry.serverBaseUrl, entry.allowHttp);
+        if (!saved) {
+            setStatus(getString(R.string.server_save_failed), true);
+            return;
+        }
+        Intent data = new Intent();
+        data.putExtra(EXTRA_CHANGED, true);
+        setResult(Activity.RESULT_OK, data);
+        if (getCallingActivity() == null) {
+            AppRestart.restart(this);
+        } else {
+            finish();
+        }
+    }
+
+    private void confirmDelete(ServerHistory.Entry entry) {
+        new AlertDialog.Builder(this)
+                .setMessage(getString(R.string.server_delete_confirm, entry.serverBaseUrl))
+                .setPositiveButton(R.string.server_delete, (dialog, which) -> {
+                    ServerConfigStore.removeHistory(this, entry.serverBaseUrl);
+                    renderHistory();
+                })
+                .setNegativeButton(R.string.server_cancel, null)
+                .show();
+    }
+
+    /** 相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前，更早给日期。 */
+    private String formatRelative(String iso) {
+        try {
+            SimpleDateFormat parser = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
+            parser.setTimeZone(TimeZone.getTimeZone("UTC"));
+            Date date = parser.parse(iso);
+            if (date == null) return "";
+            long minutes = Math.max(0, System.currentTimeMillis() - date.getTime()) / 60_000;
+            if (minutes < 1) return "刚刚";
+            if (minutes < 60) return minutes + " 分钟前";
+            long hours = minutes / 60;
+            if (hours < 24) return hours + " 小时前";
+            long days = hours / 24;
+            if (days < 30) return days + " 天前";
+            return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(date);
+        } catch (Exception e) {
+            return "";
         }
     }
 

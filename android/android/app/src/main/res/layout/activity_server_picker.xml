@@ -2,30 +2,29 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#f5f5f7"
+    android:background="#f3f4f6"
     android:fitsSystemWindows="true"
     android:orientation="vertical">
 
+    <!-- 顶部栏 -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="52dp"
+        android:layout_height="56dp"
         android:background="#ffffff"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingStart="8dp"
+        android:paddingStart="4dp"
         android:paddingEnd="16dp">
 
-        <TextView
+        <ImageButton
             android:id="@+id/backButton"
             android:layout_width="44dp"
             android:layout_height="44dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/server_settings_back"
-            android:clickable="true"
-            android:focusable="true"
-            android:gravity="center"
-            android:text="‹"
-            android:textColor="#111827"
-            android:textSize="30sp" />
+            android:padding="10dp"
+            android:src="@drawable/ic_arrow_back"
+            android:tint="#111827" />
 
         <TextView
             android:layout_width="0dp"
@@ -37,6 +36,11 @@
             android:textStyle="bold" />
     </LinearLayout>
 
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#e5e7eb" />
+
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -47,58 +51,117 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="20dp">
+            android:padding="16dp">
 
-            <TextView
-                android:id="@+id/currentUrlText"
+            <!-- 当前站点 -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:textColor="#6b7280"
-                android:textSize="13sp" />
+                android:background="@drawable/bg_card"
+                android:orientation="vertical"
+                android:padding="16dp">
 
-            <EditText
-                android:id="@+id/urlInput"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:hint="@string/server_address_hint"
-                android:importantForAutofill="no"
-                android:inputType="textUri"
-                android:singleLine="true"
-                android:textColor="#111827"
-                android:textColorHint="#9ca3af" />
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:text="@string/server_address_help"
-                android:textColor="#6b7280"
-                android:textSize="12sp" />
+                    <View
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:background="@drawable/bg_dot_green" />
 
-            <CheckBox
-                android:id="@+id/allowHttpCheck"
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/server_current_label"
+                        android:textColor="#6b7280"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/currentUrlText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:textColor="#111827"
+                    android:textIsSelectable="true"
+                    android:textSize="15sp" />
+            </LinearLayout>
+
+            <!-- 手动切换 -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                android:text="@string/server_allow_http"
-                android:textColor="#374151"
-                android:textSize="13sp" />
+                android:background="@drawable/bg_card"
+                android:orientation="vertical"
+                android:padding="16dp">
 
-            <Button
-                android:id="@+id/probeButton"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:layout_marginTop="16dp"
-                android:text="@string/server_probe" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/server_address_label"
+                    android:textColor="#374151"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
 
-            <TextView
-                android:id="@+id/probeStatus"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:textColor="#374151"
-                android:textSize="13sp" />
+                <EditText
+                    android:id="@+id/urlInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_input"
+                    android:hint="@string/server_address_hint"
+                    android:importantForAutofill="no"
+                    android:inputType="textUri"
+                    android:paddingStart="12dp"
+                    android:paddingTop="12dp"
+                    android:paddingEnd="12dp"
+                    android:paddingBottom="12dp"
+                    android:singleLine="true"
+                    android:textColor="#111827"
+                    android:textColorHint="#9ca3af"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/server_address_help"
+                    android:textColor="#6b7280"
+                    android:textSize="12sp" />
+
+                <CheckBox
+                    android:id="@+id/allowHttpCheck"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:buttonTint="#2563eb"
+                    android:text="@string/server_allow_http"
+                    android:textColor="#374151"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/probeButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="14dp"
+                    android:background="@drawable/bg_button_primary"
+                    android:text="@string/server_probe"
+                    android:textColor="#ffffff"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:id="@+id/probeStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:textColor="#374151"
+                    android:textSize="13sp" />
+            </LinearLayout>
 
             <TextView
                 android:layout_width="match_parent"
@@ -106,38 +169,51 @@
                 android:layout_marginTop="22dp"
                 android:text="@string/server_history_title"
                 android:textColor="#111827"
-                android:textSize="15sp"
+                android:textSize="14sp"
                 android:textStyle="bold" />
 
             <LinearLayout
                 android:id="@+id/historyContainer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="10dp"
                 android:orientation="vertical" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="24dp"
-                android:orientation="horizontal">
-
-                <Button
-                    android:id="@+id/cancelButton"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_marginEnd="8dp"
-                    android:layout_weight="1"
-                    android:text="@string/server_cancel" />
-
-                <Button
-                    android:id="@+id/saveButton"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_marginStart="8dp"
-                    android:layout_weight="1"
-                    android:text="@string/server_save" />
-            </LinearLayout>
         </LinearLayout>
     </ScrollView>
+
+    <!-- 底部操作 -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#e5e7eb" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#ffffff"
+        android:orientation="horizontal"
+        android:padding="12dp">
+
+        <Button
+            android:id="@+id/cancelButton"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_marginEnd="8dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_button_secondary"
+            android:text="@string/server_cancel"
+            android:textColor="#374151"
+            android:textSize="15sp" />
+
+        <Button
+            android:id="@+id/saveButton"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_button_primary"
+            android:text="@string/server_save"
+            android:textColor="#ffffff"
+            android:textSize="15sp" />
+    </LinearLayout>
 </LinearLayout>

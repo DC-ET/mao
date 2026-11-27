@@ -9,7 +9,7 @@
     <string name="server_settings_long">切换 Mao 服务器</string>
     <string name="server_settings_title">服务器设置</string>
     <string name="server_settings_back">返回</string>
-    <string name="server_current">当前站点：%1$s</string>
+    <string name="server_current_label">当前站点</string>
     <string name="server_address_hint">https://mao.example.com</string>
     <string name="server_address_help">支持站点根 / /api / /api/v1；不支持子路径</string>
     <string name="server_allow_http">允许 HTTP（仅内网，传输可能被窃听）</string>
@@ -20,6 +20,10 @@
     <string name="server_history_title">连接过的服务器</string>
     <string name="server_history_empty">暂无历史记录</string>
     <string name="server_history_http">HTTP</string>
+    <string name="server_switch">切换</string>
+    <string name="server_current_entry">当前</string>
+    <string name="server_delete_confirm">从历史中删除 %1$s？</string>
+    <string name="server_address_label">服务器地址</string>
     <string name="server_save">保存并切换</string>
     <string name="server_cancel">取消</string>
     <string name="server_delete">删除</string>
