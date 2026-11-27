@@ -76,6 +76,8 @@ vi.mock('../../composables/useGitRepos', async () => {
       multiRepoMode: ref(state.multiRepoMode),
       selectedRepoPath: ref(state.selectedRepoPath),
       selectedRepo: ref(null),
+      // 仓库身份就绪（生产由 useGitRepos 计算）；缺省 true 让面板进入正常请求态
+      requestReady: ref(true),
       refresh: async () => { state.refreshReposCalls += 1 },
       selectRepo: (path: string) => {
         state.selectedRepoPaths.push(path)
