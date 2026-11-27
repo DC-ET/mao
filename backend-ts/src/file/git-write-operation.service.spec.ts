@@ -566,7 +566,8 @@ describeGit('GitWriteOperationService git', () => {
       .toBe(run(alpha, 'git', 'rev-parse', branch).trim());
     expect(run(repo, 'git', 'rev-parse', `beta/${branch}`).trim())
       .toBe(run(beta, 'git', 'rev-parse', branch).trim());
-  });
+    // 真实 git clone/push/fetch：全量套件并行下常超过默认 5s 超时（非逻辑问题）
+  }, 30_000);
 
   it('fetchRemoteReportsPartialFailureWhenOneRemoteIsUnreachable', async () => {
     const dir = useTmpDir('mao-gfetch-partial-');
