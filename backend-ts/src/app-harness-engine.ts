@@ -229,6 +229,8 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     webPage: harnessTuning.webPage,
     runtimeDataResolver: d.runtimeResolver,
     imageModelLookup: d.modelService,
+    audioModelLookup: d.modelService,
+    llmAdapter: d.llmAdapter,
     authResolver: d.authResolver,
     uploadDir,
     onFileChanged: d.experienceIndexService != null
@@ -370,6 +372,11 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
   );
   d.holder.loop = agentLoop;
   d.holder.compactionSignalBus = compactionSignalBus;
+  // 特色工具闸口总开关（技术方案 2026-11-27 §13.3）：装配层必须传 modelService。
+  // 运行期再兜一层告警——缺依赖时 buildContext 会跳过过滤（fail-open），不能静默。
+  if ((d.modelService as unknown) == null) {
+    harnessLog('warn', '[featured-tools] modelService 未装配，特色工具闸口将跳过过滤（fail-open）');
+  }
   const harness = new HarnessService(
     agentLoop, toolRegistry, d.skillLoader, d.skillSync, d.localSkills, d.localAgentsMd,
     d.sessionMap, d.agentRepo as never, d.experienceService, d.modelRepo as never, d.fileChangeRepo as never,
@@ -384,6 +391,7 @@ export function assembleHarnessEngine(deps: HarnessEngineDeps): HarnessEngineRes
     d.httpToolService,
     d.experienceMountService ?? null,
     cfg.app.harness.runtimeIdentityMode,
+    d.modelService,
   );
   d.holder.harness = harness;
 

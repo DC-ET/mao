@@ -30,6 +30,7 @@ describe('ModelService', () => {
     listProviders: vi.fn(),
     listActiveText: vi.fn(),
     findFirstActiveByType: vi.fn(),
+    findFirstActiveAudioModel: vi.fn(),
     findDefault: vi.fn(),
     findById: vi.fn(),
     insert: vi.fn(async (m) => {
@@ -352,6 +353,7 @@ describe('ModelService', () => {
     vi.mocked(modelRepo.listProviders).mockResolvedValue(['openai', ' ', '']);
     vi.mocked(modelRepo.listActiveText).mockResolvedValue([model(1, 'a', 1, 1)]);
     vi.mocked(modelRepo.findFirstActiveByType).mockResolvedValue(model(2, 'img', 0, 1));
+    vi.mocked(modelRepo.findFirstActiveAudioModel).mockResolvedValue(model(2, 'audio', 0, 1));
     vi.mocked(modelRepo.findDefault).mockResolvedValue(model(1, 'a', 1, 1));
     vi.mocked(modelRepo.findById).mockResolvedValue(model(1, 'a', 1, 1));
     expect((await service.listModels(1, 10, 'a', 'openai', 1, 1, 1, 'text')).total).toBe(1);
@@ -780,6 +782,7 @@ describe('ModelService 客户端可选（技术方案 2026-11-24）', () => {
       listProviders: vi.fn(),
       listActiveText: vi.fn(async () => []),
       findFirstActiveByType: vi.fn(),
+      findFirstActiveAudioModel: vi.fn(),
       findDefault: vi.fn(),
       findById: vi.fn(),
       insert: vi.fn(async (m) => {

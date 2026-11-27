@@ -4,6 +4,8 @@
 
 管理用户可见的 Agent：列表、详情、创建、更新、删除，以及 Agent 经验（experience）独立 CRUD。Agent 可另配推荐问题（suggestedQuestions，Embed SDK 空白态展示，最多 5 条），随创建/更新全量同步，无独立子命令。
 
+`agent create/update` 暂不支持 `featuredTools`（特色工具：`image_generation` / `text_to_speech`）：CLI 新建的 Agent 默认不启用任何特色工具，更新时也不会改动已有配置；需要开启或关闭请在管理后台「Agent → 编辑 → 特色工具」操作。
+
 ## Agent 头像（REST / 管理后台）
 
 - `POST /api/v1/agents/avatar`：需登录及 `agent:write`，以 multipart 字段 `file` 上传 PNG / JPEG / WebP，最大 2 MiB。服务端校验内容并转为 PNG，返回 `data: { avatarUrl: "/uploads/<uuid>.png" }`。

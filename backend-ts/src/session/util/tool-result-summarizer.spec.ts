@@ -224,6 +224,16 @@ describe('tool-result-summarizer success paths unchanged', () => {
     expect(ToolResultSummarizer.summarize('edit_image', args, JSON.stringify({ images: [{}, {}] }))).toBe('编辑图片: 一只猫 (2 张)');
   });
 
+  it('语音合成: text 摘要/字节数/失败/缺参', () => {
+    const args = JSON.stringify({ text: '你好世界' });
+    expect(ToolResultSummarizer.summarize('text_to_speech', args, JSON.stringify({ size_bytes: 1024, audio_url: 'x' })))
+      .toBe('语音合成: 你好世界 (1KB)');
+    expect(ToolResultSummarizer.summarize('text_to_speech', args, null)).toBe('语音合成: 你好世界');
+    expect(ToolResultSummarizer.summarize('text_to_speech', null, null)).toBe('语音合成');
+    expect(ToolResultSummarizer.summarize('text_to_speech', args, JSON.stringify({ error: '没有可用的语音模型' })))
+      .toBe('语音合成: 你好世界 (失败: 没有可用的语音模型)');
+  });
+
   it('微信两工具: 成功口径', () => {
     expect(ToolResultSummarizer.summarize('send_wechat_image', JSON.stringify({ image: 'images/photo.png' }), JSON.stringify({ success: true })))
       .toBe('发送微信图片: images/photo.png (成功)');

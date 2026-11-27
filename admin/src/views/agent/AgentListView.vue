@@ -103,6 +103,7 @@
                 <div>技能：{{ capabilityText(row.skillNames) }}</div>
                 <div>MCP：{{ capabilityText(resolveNames(row.mcpServerIds, mcpNameById)) }}</div>
                 <div>自定义工具：{{ capabilityText(resolveNames(row.httpToolIds, toolNameById)) }}</div>
+                <div>特色工具：{{ featuredToolsText(row.featuredTools) }}</div>
                 <div>Git 域：{{ gitDomainText(row.gitAllowedDomains) }}</div>
               </template>
               <span>{{ capabilitySummary(row) }}</span>
@@ -222,6 +223,7 @@ import { computed, ref, onActivated, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
+import type { AgentFeaturedTool } from '@mao/contracts'
 import { api } from '../../api'
 import { resolveAgentAvatarUrl } from '../../utils/agent-avatar'
 import { formatDateTimeColumn } from '../../utils/datetime'
@@ -360,6 +362,23 @@ function capabilityText(names: string[]): string {
   return names.length > 0 ? names.join('、') : '—'
 }
 
+/** Record 吃 AgentFeaturedTool 的编译期穷尽：新增能力漏文案直接编译失败。 */
+const FEATURED_TOOL_LABELS: Record<AgentFeaturedTool, string> = {
+  image_generation: '出图',
+  text_to_speech: '语音'
+}
+
+/** 特色工具概览：配置值 → 短标签；未知值原样显示，避免脏数据不可见。 */
+function featuredToolsText(values: unknown): string {
+  if (!Array.isArray(values) || values.length === 0) return '—'
+  return values.map((value) => {
+    const key = String(value)
+    return key in FEATURED_TOOL_LABELS
+      ? FEATURED_TOOL_LABELS[key as AgentFeaturedTool]
+      : key
+  }).join('、')
+}
+
 /** 能力概览：Git 凭据域三态文案（null=未配置、[]=已禁止、非空=N 个域）。 */
 function gitDomainText(domains: string[] | null | undefined): string {
   if (domains == null) return '未配置'
@@ -371,10 +390,12 @@ function capabilitySummary(row: any): string {
   const skills = Array.isArray(row.skillNames) ? row.skillNames.length : 0
   const mcp = Array.isArray(row.mcpServerIds) ? row.mcpServerIds.length : 0
   const tools = Array.isArray(row.httpToolIds) ? row.httpToolIds.length : 0
+  const featured = Array.isArray(row.featuredTools) ? row.featuredTools.length : 0
   const parts: string[] = []
   if (skills > 0) parts.push(`技能 ${skills}`)
   if (mcp > 0) parts.push(`MCP ${mcp}`)
   if (tools > 0) parts.push(`工具 ${tools}`)
+  if (featured > 0) parts.push(`特色 ${featured}`)
   return parts.length > 0 ? parts.join(' · ') : '—'
 }
 

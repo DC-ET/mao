@@ -94,6 +94,12 @@ const SIGNAL_WATCHER_SEMANTIC_KEYS = [
 ] as const;
 
 /**
+ * text_to_speech 只取语义字段：audio_url / audio_path 含随机 UUID、size_bytes 随编码波动，
+ * 都不进签名；同一 text 重复合成视为无进展，不同 text 由 arguments 区分。
+ */
+const TTS_SEMANTIC_KEYS = ['format', 'model'] as const;
+
+/**
  * 按工具归一化的语义白名单：key = 工具名，value = 进签名的语义字段（其余一律剔除）。
  * 结果含随机 id / 传输字段的工具必须在这里登记——漏补即漏报（见 VOLATILE_RESULT_KEYS 注释）。
  * 用 Map 而非对象字面量：toolName 来自模型输出，`constructor` 之类会命中对象原型链。
@@ -104,6 +110,7 @@ const SEMANTIC_KEYS_BY_TOOL = new Map<string, readonly string[]>([
   ['shell', SHELL_SEMANTIC_KEYS],
   ['create_scheduled_task', SCHEDULED_TASK_SEMANTIC_KEYS],
   ['create_signal_watcher', SIGNAL_WATCHER_SEMANTIC_KEYS],
+  ['text_to_speech', TTS_SEMANTIC_KEYS],
 ]);
 
 /** 调用级豁免：长等待 / 显式未完成结果不参与 streak。 */

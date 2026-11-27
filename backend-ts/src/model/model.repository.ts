@@ -78,6 +78,23 @@ export class MysqlLlmModelRepository implements LlmModelRepository {
     );
   }
 
+  /**
+   * 语音模型专用查询（技术方案 2026-11-27 §5.3.1）：只认 OpenAI 兼容协议。
+   * Anthropic / Responses 适配器不序列化 audio，配了也「成功但无音频」；
+   * id 最小但协议不兼容时跳过，继续取下一条可用行。
+   */
+  findFirstActiveAudioModel(): Promise<LlmModel | null> {
+    return this.db.queryOne<LlmModel>(
+      `SELECT * FROM llm_model
+       WHERE status = 1
+         AND model_type = 'audio'
+         AND (api_protocol IS NULL OR api_protocol = '' OR api_protocol = 'openai-compatible')
+         AND ${notDeleted()}
+       ORDER BY id ASC
+       LIMIT 1`,
+    );
+  }
+
   findDefault(): Promise<LlmModel | null> {
     return this.db.queryOne<LlmModel>(
       `SELECT * FROM llm_model WHERE is_default = 1 AND status = 1 AND model_type = 'text' AND ${notDeleted()} LIMIT 1`,

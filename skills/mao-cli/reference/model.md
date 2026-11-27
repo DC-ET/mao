@@ -39,6 +39,8 @@
 
 这是**管理端口径的全量列表**（启用中的文本模型，不论客户端是否可选）。客户端模型选择器走 `GET /models/active?scope=client`，只列 `clientVisible = true`；`mao chat` 已按客户端口径取数。
 
+Agent 特色工具可用性走 `GET /models/availability`（登录即可，不要求 `model:read`）：返回 `image` / `audio` 两项的 `available`（布尔）与 `modelName`，供管理后台显示「当前模型 / 无可用模型」。`audio` 只统计启用的 OpenAI 兼容语音模型（Anthropic / Responses 协议会被跳过）。
+
 ### 示例
 
 ```bash

@@ -100,6 +100,36 @@
           在「自定义工具」页停用的工具对所有 Agent 立即失效。
         </div>
       </el-form-item>
+      <el-form-item label="特色工具">
+        <el-checkbox-group v-model="form.featuredTools" class="featured-tools">
+          <div v-for="opt in featuredToolOptions" :key="opt.value" class="featured-tool-row">
+            <el-checkbox :value="opt.value" :disabled="isFeaturedToolDisabled(opt.value)">
+              {{ opt.label }}
+            </el-checkbox>
+            <span
+              v-if="featuredToolAvailabilityLoaded && featuredToolAvailability?.[opt.modelKey]?.available"
+              class="featured-tool-model"
+            >
+              当前模型：{{ featuredToolAvailability[opt.modelKey]?.modelName || '未知' }}
+            </span>
+            <el-tag
+              v-else-if="featuredToolAvailabilityLoaded && featuredToolAvailability?.[opt.modelKey]?.available === false"
+              type="warning"
+              size="small"
+            >
+              无可用模型
+            </el-tag>
+            <span v-else-if="featuredToolAvailabilityLoading" class="featured-tool-model">
+              正在检测模型可用性…
+            </span>
+            <span v-else-if="featuredToolAvailabilityError" class="featured-tool-model">
+              可用性检测失败，运行时将再次校验
+            </span>
+            <span class="featured-tool-hint">{{ opt.hint }}</span>
+          </div>
+        </el-checkbox-group>
+        <div class="form-hint">仅当对应类型的模型启用时才注入工具；模型停用后，下一次执行自动隐藏。</div>
+      </el-form-item>
       <el-form-item label="Git 凭据域">
         <el-switch v-model="form.gitAllowedDomainsEnabled" />
         <span class="form-hint">启用后，仅允许列出的 Git 服务域在会话中注入凭据</span>
@@ -284,6 +314,7 @@ import { computed, ref, watch, reactive, nextTick, onBeforeUnmount } from 'vue'
 import type { FormInstance, FormRules, UploadRawFile, UploadRequestOptions } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import Sortable from 'sortablejs'
+import type { AgentFeaturedTool } from '@mao/contracts'
 import { api } from '../../api'
 import { resolveAgentAvatarUrl } from '../../utils/agent-avatar'
 import ResponsiveDialog from '../../components/ResponsiveDialog.vue'
@@ -304,6 +335,38 @@ interface SuggestedQuestionFormItem {
   content: string
   sortOrder: number
 }
+
+type FeaturedToolModelKey = 'image' | 'audio'
+
+interface FeaturedToolOption {
+  value: AgentFeaturedTool
+  label: string
+  modelKey: FeaturedToolModelKey
+  hint: string
+}
+
+interface FeaturedToolMeta {
+  label: string
+  modelKey: FeaturedToolModelKey
+  hint: string
+}
+
+/** Record 吃 AgentFeaturedTool 的编译期穷尽：新增能力缺文案会直接编译失败。 */
+const FEATURED_TOOL_META: Record<AgentFeaturedTool, FeaturedToolMeta> = {
+  image_generation: {
+    label: '图片生成（文生图 / 改图）',
+    modelKey: 'image',
+    hint: '启用后向模型提供 generate_image / edit_image；两者共用同一图像模型。'
+  },
+  text_to_speech: {
+    label: '语音合成（TTS）',
+    modelKey: 'audio',
+    hint: '启用后向模型提供 text_to_speech；产物为音频文件，需要交付时由模型调用 send_file。'
+  }
+}
+
+const featuredToolOptions: FeaturedToolOption[] = (Object.keys(FEATURED_TOOL_META) as AgentFeaturedTool[])
+  .map((value) => ({ value, ...FEATURED_TOOL_META[value] }))
 
 const props = withDefaults(defineProps<{
   visible: boolean
@@ -335,6 +398,10 @@ const skillDocs = ref<any[]>([])
 const mcpServers = ref<any[]>([])
 const httpTools = ref<any[]>([])
 const models = ref<any[]>([])
+const featuredToolAvailability = ref<Record<FeaturedToolModelKey, { available: boolean; modelName: string | null }> | null>(null)
+const featuredToolAvailabilityLoaded = ref(false)
+const featuredToolAvailabilityLoading = ref(false)
+const featuredToolAvailabilityError = ref(false)
 const optionsLoading = ref(false)
 const optionsLoadFailed = ref(false)
 const experienceView = ref<'table' | 'text'>('table')
@@ -392,6 +459,7 @@ const form = reactive({
   skillNames: [] as string[],
   mcpServerIds: [] as number[],
   httpToolIds: [] as number[],
+  featuredTools: [] as AgentFeaturedTool[],
   // Git 凭据域（技术方案 2026-11-06）：enabled=false → null（不限制）；enabled=true + 空列表 → []（禁止注入）
   gitAllowedDomainsEnabled: false,
   gitAllowedDomains: [] as string[],
@@ -404,6 +472,18 @@ const form = reactive({
 
 /** 域名候选：当前管理员自己配置的 Git 凭据域（零新端点；加载失败不阻塞手工输入）。 */
 const gitDomainOptions = ref<string[]>([])
+
+function featuredToolOptionOf(value: AgentFeaturedTool): FeaturedToolOption {
+  return featuredToolOptions.find((option) => option.value === value) ?? featuredToolOptions[0]
+}
+
+/** 未知（加载中 / 检测失败）= 不置灰，只有确认不可用才锁死未勾选项。 */
+function isFeaturedToolDisabled(value: AgentFeaturedTool): boolean {
+  if (!featuredToolAvailabilityLoaded.value || featuredToolAvailabilityError.value) return false
+  if (featuredToolAvailability.value == null) return false
+  const available = featuredToolAvailability.value[featuredToolOptionOf(value).modelKey]?.available
+  return available === false && !form.featuredTools.includes(value)
+}
 
 const rules: FormRules = {
   name: [{ required: true, message: '请输入 Agent 名称', trigger: 'blur' }],
@@ -450,6 +530,7 @@ function resetForm() {
     skillNames: [],
     mcpServerIds: [],
     httpToolIds: [],
+    featuredTools: [],
     gitAllowedDomainsEnabled: false,
     gitAllowedDomains: [],
     experiences: [],
@@ -673,6 +754,7 @@ watch(() => props.visible, async (val) => {
       skillNames: props.agentData.skillNames || [],
       mcpServerIds: props.agentData.mcpServerIds || [],
       httpToolIds: props.agentData.httpToolIds || [],
+      featuredTools: Array.isArray(props.agentData.featuredTools) ? [...props.agentData.featuredTools] : [],
       // 回显要区分后端返回的 null（未配置=关闭）与 []（显式禁止=开启+空列表），否则「开启+空」会显示成关闭
       gitAllowedDomainsEnabled: gitDomainsEnabledOf(props.agentData.gitAllowedDomains),
       gitAllowedDomains: gitDomainsListOf(props.agentData.gitAllowedDomains),
@@ -747,6 +829,37 @@ async function loadOptions() {
     models.value = []
     failed.push('模型')
   }
+  // 特色工具可用性（技术方案 2026-11-27）：三态——加载中 / 未知（检测失败）/ 已知。
+    // 只用于置灰与提示，不阻塞保存；未知时绝不置灰，运行时还会 fail-closed 再校验一次。
+    featuredToolAvailability.value = null
+    featuredToolAvailabilityLoaded.value = false
+    featuredToolAvailabilityLoading.value = true
+    featuredToolAvailabilityError.value = false
+    try {
+      const { data: availability } = await api.get('/models/availability', { skipErrorToast: true })
+      const imageAvailable = availability?.image?.available
+      const audioAvailable = availability?.audio?.available
+      if (typeof imageAvailable !== 'boolean' || typeof audioAvailable !== 'boolean') {
+        throw new Error('invalid availability payload')
+      }
+      featuredToolAvailability.value = {
+        image: {
+          available: imageAvailable,
+          modelName: typeof availability.image.modelName === 'string' ? availability.image.modelName : null
+        },
+        audio: {
+          available: audioAvailable,
+          modelName: typeof availability.audio.modelName === 'string' ? availability.audio.modelName : null
+        }
+      }
+      featuredToolAvailabilityLoaded.value = true
+    } catch {
+      featuredToolAvailability.value = null
+      featuredToolAvailabilityLoaded.value = false
+      featuredToolAvailabilityError.value = true
+    } finally {
+      featuredToolAvailabilityLoading.value = false
+    }
   try {
     // 候选来源：全站域枚举 = 用户凭据域 ∪ 系统默认域（技术方案 2026-11-12 D4，替代
     // 2026-11-06 的「当前管理员个人凭证域」口径）；接口由 agent:read 守门、仅回域名。
@@ -837,6 +950,7 @@ async function handleSubmit() {
     skillNames: form.skillNames,
     mcpServerIds: form.mcpServerIds,
     httpToolIds: form.httpToolIds,
+    featuredTools: form.featuredTools,
     // 三态（技术方案 2026-11-06）：关闭开关 = null（不限制）；开启 + 空列表 = []（禁止注入）；非空 = 白名单
     gitAllowedDomains: gitDomainsPayload(form.gitAllowedDomainsEnabled, form.gitAllowedDomains),
     isDefault: form.isDefault ? 1 : 0,
@@ -1037,6 +1151,31 @@ async function handleSubmit() {
   margin-left: 12px;
   color: var(--el-text-color-secondary);
   font-size: 12px;
+}
+
+.featured-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.featured-tool-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.featured-tool-model,
+.featured-tool-hint {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.featured-tool-hint::before {
+  content: '·';
+  margin-right: 6px;
 }
 
 .prompt-history-entry {

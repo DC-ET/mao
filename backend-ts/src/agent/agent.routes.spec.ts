@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 import { handleError } from '../common/http-error.js';
+import { ErrorCode } from '../common/error-code.js';
 import { registerAgentRoutes } from './agent.routes.js';
 import { registerModelRoutes } from '../model/model.routes.js';
 import { registerCommandRoutes } from '../command/command.routes.js';
@@ -97,12 +98,12 @@ describe('CRUD routes', () => {
     expect((await app.inject({
       method: 'POST', url: '/v1/agents', payload: { name: 'A', systemPrompt: 'p', avatarUrl: agent.avatarUrl },
     })).json().data.avatarUrl).toBe(agent.avatarUrl);
-    expect(agentService.createAgent.mock.calls[0]?.at(-4)).toBe(agent.avatarUrl);
-    expect(agentService.createAgent.mock.calls[0]?.at(-2)).toBeUndefined();
+    expect(agentService.createAgent.mock.calls[0]?.at(-5)).toBe(agent.avatarUrl);
+    expect(agentService.createAgent.mock.calls[0]?.at(-3)).toBeUndefined();
     expect((await app.inject({
       method: 'PUT', url: '/v1/agents/1', payload: { name: 'B', avatarUrl: null },
     })).statusCode).toBe(200);
-    expect(agentService.updateAgent.mock.calls[0]?.at(-4)).toBeNull();
+    expect(agentService.updateAgent.mock.calls[0]?.at(-5)).toBeNull();
     expect((await app.inject({ method: 'DELETE', url: '/v1/agents/1' })).statusCode).toBe(200);
     expect((await app.inject({ method: 'GET', url: '/v1/agents/1/experiences' })).statusCode).toBe(200);
     expect((await app.inject({
@@ -142,7 +143,7 @@ describe('CRUD routes', () => {
       const cleared = await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { mcpServerIds: [] } });
       expect(cleared.statusCode).toBe(200);
       expect(agentService.updateAgent).toHaveBeenCalledWith(
-        7, 1, undefined, undefined, undefined, undefined, [], undefined, null, null, undefined, undefined, undefined, undefined, undefined, undefined,
+        7, 1, undefined, undefined, undefined, undefined, [], undefined, null, null, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
       );
       expect(mcpServerValidator.validateForAgent).not.toHaveBeenCalled();
 
@@ -159,6 +160,66 @@ describe('CRUD routes', () => {
       const untouched = await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { name: 'B' } });
       expect(untouched.statusCode).toBe(200);
       expect(agentService.updateAgent.mock.calls.at(-1)?.at(6)).toBeUndefined();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('round-trips featuredTools, dedupes, clears with [] and rejects unknown values', async () => {
+    const agent = {
+      id: 1, name: 'A', systemPrompt: 'p', isDefault: 0,
+      // 脏数据：未知值 + 重复项；toVO 必须过滤并去重（与运行时解析同口径）
+      featuredTools: '["image_generation","foo","image_generation","text_to_speech"]',
+    };
+    const agentService = {
+      getAgent: vi.fn(async () => agent),
+      createAgent: vi.fn(async () => agent),
+      updateAgent: vi.fn(async () => agent),
+      getAgentExperiences: vi.fn(async () => []),
+      getAgentSuggestedQuestions: vi.fn(async () => []),
+    };
+    const app = await appWithUser((f) => registerAgentRoutes(f, {
+      agentService: agentService as never,
+      experienceService: {} as never,
+      suggestedQuestionService: {} as never,
+      userRepo: { findById: vi.fn(async () => null) } as never,
+      mcpServerValidator: { validateForAgent: vi.fn(async (ids: number[]) => ids) } as never,
+      httpToolValidator: { validateForAgent: vi.fn(async (ids: number[]) => ids) } as never,
+      permissionService: { hasPermission: vi.fn(async () => true) },
+    }));
+    try {
+      const detail = await app.inject({ method: 'GET', url: '/v1/agents/1' });
+      // 未知值 "foo" 被过滤，重复的 image_generation 只保留一次
+      expect(detail.json().data.featuredTools).toEqual(['image_generation', 'text_to_speech']);
+
+      agent.featuredTools = 'not-json';
+      const broken = await app.inject({ method: 'GET', url: '/v1/agents/1' });
+      expect(broken.json().data.featuredTools).toEqual([]);
+      agent.featuredTools = '["image_generation"]';
+
+      const created = await app.inject({
+        method: 'POST', url: '/v1/agents',
+        payload: {
+          name: 'A', systemPrompt: 'p',
+          featuredTools: ['image_generation', 'text_to_speech', 'image_generation'],
+        },
+      });
+      expect(created.statusCode).toBe(200);
+      expect(agentService.createAgent.mock.calls.at(-1)?.at(-1)).toEqual(['image_generation', 'text_to_speech']);
+
+      await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { featuredTools: ['text_to_speech'] } });
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-1)).toEqual(['text_to_speech']);
+      await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { featuredTools: [] } });
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-1)).toEqual([]);
+
+      const callsBefore = agentService.updateAgent.mock.calls.length;
+      const invalid = await app.inject({
+        method: 'PUT', url: '/v1/agents/1', payload: { featuredTools: ['image_generation', 'foo'] },
+      });
+      expect(invalid.json().code).toBe(ErrorCode.PARAM_INVALID.code);
+      expect(agentService.updateAgent.mock.calls.length).toBe(callsBefore);
+      const notArray = await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { featuredTools: 'foo' } });
+      expect(notArray.json().code).toBe(ErrorCode.PARAM_INVALID.code);
     } finally {
       await app.close();
     }
@@ -239,15 +300,15 @@ describe('CRUD routes', () => {
         payload: { gitAllowedDomains: ['https://Git.ACG.Team/foo', 'git.acg.team'] },
       });
       expect(normalized.statusCode).toBe(200);
-      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-1)).toEqual(['git.acg.team']);
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-2)).toEqual(['git.acg.team']);
 
       // null 清空 / [] 显式禁止 / 未传不改
       await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { gitAllowedDomains: null } });
-      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-1)).toBeNull();
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-2)).toBeNull();
       await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { gitAllowedDomains: [] } });
-      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-1)).toEqual([]);
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-2)).toEqual([]);
       await app.inject({ method: 'PUT', url: '/v1/agents/1', payload: { name: 'B' } });
-      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-1)).toBeUndefined();
+      expect(agentService.updateAgent.mock.calls.at(-1)?.at(-2)).toBeUndefined();
 
       // 非法：空串 / 格式不符 / 非字符串 / 超过 32 条 / 总长超过 1024（最终闸门）
       const callsBefore = agentService.updateAgent.mock.calls.length;

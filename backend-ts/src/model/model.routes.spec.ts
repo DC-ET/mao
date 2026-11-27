@@ -25,6 +25,8 @@ function buildApp(options: {
   permissions?: string[];
   /** undefined = 未注入 ecpEnabled（装配缺失场景）。 */
   ecpEnabled?: boolean;
+  /** true = 不注入登录态（校验未登录分支）。 */
+  unauthenticated?: boolean;
 } = {}) {
   const model = options.model ?? modelFixture();
   const permissions = options.permissions ?? ['model:read', 'model:write'];
@@ -32,13 +34,17 @@ function buildApp(options: {
     getModel: vi.fn(async () => model),
     testConnectivity: vi.fn(async () => ({ connectivity: true, durationMs: 1 })),
     createModel: vi.fn(async () => modelFixture({ authType: 'ecp', apiKey: '' })),
+    findFirstActiveImageModel: vi.fn(async () => model),
+    findFirstActiveAudioModel: vi.fn(async () => null),
   } as unknown as ModelService;
   const app = Fastify();
   app.setErrorHandler(handleError);
-  app.addHook('preHandler', (request, _reply, done) => {
-    (request as unknown as { userId: number }).userId = 9;
-    done();
-  });
+  if (options.unauthenticated !== true) {
+    app.addHook('preHandler', (request, _reply, done) => {
+      (request as unknown as { userId: number }).userId = 9;
+      done();
+    });
+  }
   registerModelRoutes(app, {
     modelService,
     permissionService: {
@@ -165,5 +171,25 @@ describe('model routes（客户端可选）', () => {
     expect((hidden.json().data as Record<string, unknown>).clientVisible).toBe(false);
     const visible = await buildVisibilityApp(undefined).app.inject({ method: 'GET', url: '/v1/models/1' });
     expect((visible.json().data as Record<string, unknown>).clientVisible).toBe(true);
+  });
+
+  it('GET /models/availability：只返回 image/audio 布尔与模型名', async () => {
+    const { app } = buildApp();
+    const res = await app.inject({ method: 'GET', url: '/v1/models/availability' });
+    expect(res.statusCode).toBe(200);
+    const data = res.json().data as {
+      image: { available: boolean; modelName?: string | null };
+      audio: { available: boolean; modelName?: string | null };
+    };
+    expect(data.image).toEqual({ available: true, modelName: 'gpt-test' });
+    expect(data.audio.available).toBe(false);
+    expect(data.audio.modelName ?? null).toBeNull();
+  });
+
+  it('GET /models/availability：未登录返回 UNAUTHORIZED', async () => {
+    const { app } = buildApp({ unauthenticated: true });
+    const res = await app.inject({ method: 'GET', url: '/v1/models/availability' });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().code).toBe(ErrorCode.UNAUTHORIZED.code);
   });
 });

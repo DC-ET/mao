@@ -42,6 +42,7 @@ describe('BUG-5 回归：停用默认模型不得清掉 is_default', () => {
     listProviders: vi.fn(),
     listActiveText: vi.fn(),
     findFirstActiveByType: vi.fn(),
+    findFirstActiveAudioModel: vi.fn(),
     findDefault: vi.fn(),
     findById: vi.fn(),
     insert: vi.fn(async (m) => {

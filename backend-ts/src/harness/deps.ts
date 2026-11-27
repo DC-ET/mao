@@ -59,6 +59,8 @@ export interface Agent {
   configJson?: string | null;
   mcpServerIds?: string | null;
   httpToolIds?: string | null;
+  /** 特色工具（JSON 数组字符串）：image_generation / text_to_speech；null / '[]' = 未启用 */
+  featuredTools?: string | null;
   defaultModelId?: number | null;
   /** 软删标记（与 agent/types.ts 的 Agent.deleted 同义）：角色技能授权按它判断是否还要带上限定到该 Agent 的授权。 */
   deleted?: number | null;

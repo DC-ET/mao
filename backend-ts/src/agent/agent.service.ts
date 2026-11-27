@@ -6,6 +6,7 @@ import type { AgentSuggestedQuestionService } from './agent-suggested-question.s
 import type {
   Agent,
   AgentExperience,
+  AgentFeaturedTool,
   AgentRepository,
   AgentSuggestedQuestion,
   ExperienceInput,
@@ -88,6 +89,7 @@ export class AgentService {
     clientVisible?: boolean | null,
     experienceLibraryEnabled?: boolean | null,
     gitAllowedDomains?: string[] | null,
+    featuredTools?: AgentFeaturedTool[] | null,
   ): Promise<Agent> {
     validateAgentAvatarUrl(avatarUrl);
     const clientVisibleFlag = clientVisible === false ? 0 : 1;
@@ -126,6 +128,9 @@ export class AgentService {
       // '[]'（显式禁止）必须保留，不做「空数组 → null」折叠（技术方案 2026-11-06 三态语义）
       agent.gitAllowedDomains = JSON.stringify(gitAllowedDomains);
     }
+    if (featuredTools != null && featuredTools.length > 0) {
+      agent.featuredTools = JSON.stringify(featuredTools);
+    }
     await this.agentRepo.insert(agent);
     if (skillNames != null) this.skillDepsEnsurer?.ensureForSkills(skillNames);
 
@@ -156,6 +161,7 @@ export class AgentService {
     clientVisible?: boolean | null,
     experienceLibraryEnabled?: boolean | null,
     gitAllowedDomains?: string[] | null,
+    featuredTools?: AgentFeaturedTool[] | null,
   ): Promise<Agent> {
     validateAgentAvatarUrl(avatarUrl);
     const agent = await this.getAgent(id);
@@ -195,6 +201,10 @@ export class AgentService {
       // 四态（技术方案 2026-11-06 §3.6）：undefined=不修改；null=清空；[]=显式禁止；非空=白名单。
       // 不能用 `!= null` 判断，否则 null 与 [] 都会被当成「不修改」——三态语义失效。
       agent.gitAllowedDomains = gitAllowedDomains == null ? null : JSON.stringify(gitAllowedDomains);
+    }
+    if (featuredTools != null) {
+      // null / undefined 不修改（管理端始终提交数组）；[] 显式清空。
+      agent.featuredTools = featuredTools.length === 0 ? null : JSON.stringify(featuredTools);
     }
     if (isDefault != null) {
       if (isDefault === 1) {

@@ -23,8 +23,12 @@ export const BACKGROUND_SUBAGENT_TOOLS = [
   'wait_subagents',
 ] as const;
 
-/** 所有子代理（前台委派与后台）都不可用。提问只由主会话发起。 */
-export const SUBAGENT_EXCLUDED_TOOLS = ['ask_user_questions', 'send_image', 'send_file'] as const;
+/**
+ * 所有子代理（前台委派与后台）都不可用。提问只由主会话发起。
+ * text_to_speech 一并排除：其使用指南要求用 send_file 交付音频，而 send_file 在这里被排除，
+ * 暴露 TTS 只会让子模型发起一次必然被拒的发送；需要语音时由父会话生成并投递。
+ */
+export const SUBAGENT_EXCLUDED_TOOLS = ['ask_user_questions', 'send_image', 'send_file', 'text_to_speech'] as const;
 
 /** waitForAll 阻塞期间的进度通知间隔：渠道卡片只在父侧事件时刷新，等待期间靠它续更。 */
 const WAIT_PROGRESS_TICK_MS = 10_000;

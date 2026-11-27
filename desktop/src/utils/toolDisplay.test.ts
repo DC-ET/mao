@@ -24,6 +24,13 @@ describe('getToolDisplayName', () => {
     expect(getToolDisplayName('custom_tool')).toBe('custom_tool')
   })
 
+  it('text_to_speech 展示中文名并预览朗读文本', () => {
+    expect(getToolDisplayName('text_to_speech')).toBe('语音合成')
+    expect(getToolInputPreview('text_to_speech', { text: '你好，世界' })).toBe('你好，世界')
+    expect(getToolInputPreview('text_to_speech', { text: 'x'.repeat(80) })).toHaveLength(63)
+    expect(getToolInputPreview('text_to_speech', {})).toBe('')
+  })
+
   it('dump_user_messages 展示中文名', () => {
     expect(getToolDisplayName('dump_user_messages')).toBe('导出用户消息')
   })

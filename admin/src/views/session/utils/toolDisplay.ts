@@ -1,5 +1,12 @@
 import type { ToolCall } from '../types/chat'
 
+/** 按码点截断：裸 slice 会把 emoji 从代理对中间切开，预览渲染成 U+FFFD。 */
+function clipByCodePoint(text: string, max: number): string {
+  if (text.length <= max) return text
+  const cut = text.charCodeAt(max - 1)
+  return text.slice(0, cut >= 0xd800 && cut <= 0xdbff ? max - 1 : max)
+}
+
 /** 工具内部名 → 管理后台展示名（与 desktop/src/utils/toolDisplay.ts 同口径，新增内置工具时两端同步） */
 const TOOL_DISPLAY_NAMES: Record<string, string> = {
   glob_search: '搜索文件',
@@ -25,6 +32,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   dump_user_messages: '导出用户消息',
   generate_image: '生成图片',
   edit_image: '编辑图片',
+  text_to_speech: '语音合成',
   feishu_download_file: '下载飞书文件',
   send_image: '发送图片',
   send_file: '发送文件',
@@ -104,11 +112,16 @@ export function getToolInputPreview(name: string, input?: Record<string, unknown
     case 'generate_image':
     case 'edit_image': {
       const prompt = input.prompt
-      if (typeof prompt === 'string' && prompt) return prompt.length > 60 ? prompt.slice(0, 60) + '...' : prompt
+      if (typeof prompt === 'string' && prompt) return prompt.length > 60 ? clipByCodePoint(prompt, 60) + '...' : prompt
       const images = input.image_paths ?? input.image
       if (typeof images === 'string') return images
       if (Array.isArray(images) && typeof images[0] === 'string') return images[0]
       return ''
+    }
+    case 'text_to_speech': {
+      const text = input.text
+      if (typeof text !== 'string' || text === '') return ''
+      return text.length > 60 ? clipByCodePoint(text, 60) + '...' : text
     }
     case 'feishu_download_file':
       return typeof input.message_id === 'string' ? input.message_id : ''

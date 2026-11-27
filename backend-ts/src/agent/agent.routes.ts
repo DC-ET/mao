@@ -16,6 +16,7 @@ import type { AgentService } from './agent.service.js';
 import type {
   Agent,
   AgentExperience,
+  AgentFeaturedTool,
   AgentSuggestedQuestion,
   AgentVO,
   ExperienceInput,
@@ -24,6 +25,7 @@ import type {
   SuggestedQuestionVO,
   McpServerValidator,
 } from './types.js';
+import { AGENT_FEATURED_TOOLS } from './types.js';
 
 export interface AgentRouteDeps {
   agentService: AgentService;
@@ -44,6 +46,7 @@ interface CreateAgentRequest {
   mcpServerIds?: number[];
   httpToolIds?: number[];
   gitAllowedDomains?: string[] | null;
+  featuredTools?: AgentFeaturedTool[] | null;
   experiences?: ExperienceVO[];
   suggestedQuestions?: SuggestedQuestionVO[];
   isDefault?: number | null;
@@ -62,6 +65,8 @@ interface UpdateAgentRequest {
   httpToolIds?: number[] | null;
   /** 四态：undefined=不修改；null=清空；[]=显式禁止注入；非空=白名单（技术方案 2026-11-06 §3.6）。 */
   gitAllowedDomains?: string[] | null;
+  /** 特色工具：undefined/null=不修改；[]=清空；非空=启用列表。 */
+  featuredTools?: AgentFeaturedTool[] | null;
   experiences?: ExperienceVO[] | null;
   suggestedQuestions?: SuggestedQuestionVO[] | null;
   isDefault?: number | null;
@@ -108,6 +113,26 @@ function normalizeGitDomains(input: string[] | null | undefined): string[] | nul
   }
   if (JSON.stringify(normalized).length > MAX_GIT_DOMAINS_JSON_LENGTH) {
     throw new BusinessException(ErrorCode.PARAM_INVALID, `Git 凭据域配置总长度不能超过 ${MAX_GIT_DOMAINS_JSON_LENGTH} 字符`);
+  }
+  return normalized;
+}
+
+/** 特色工具校验：未知 key / 非数组 / 非字符串项一律拒绝；去重保序。 */
+function normalizeFeaturedTools(
+  input: AgentFeaturedTool[] | null | undefined,
+): AgentFeaturedTool[] | null | undefined {
+  if (input === undefined) return undefined;
+  if (input === null) return null;
+  if (!Array.isArray(input)) {
+    throw new BusinessException(ErrorCode.PARAM_INVALID, 'featuredTools 必须是字符串数组或 null');
+  }
+  const normalized: AgentFeaturedTool[] = [];
+  for (const raw of input) {
+    if (typeof raw !== 'string' || !AGENT_FEATURED_TOOLS.includes(raw as AgentFeaturedTool)) {
+      throw new BusinessException(ErrorCode.PARAM_INVALID, `featuredTools 含未知值：${String(raw)}`);
+    }
+    const value = raw as AgentFeaturedTool;
+    if (!normalized.includes(value)) normalized.push(value);
   }
   return normalized;
 }
@@ -163,6 +188,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
     const mcpServerIds = await resolveMcpServerIds(mcpServerValidator, body.mcpServerIds);
     const httpToolIds = await resolveHttpToolIds(httpToolValidator, body.httpToolIds);
     const gitAllowedDomains = normalizeGitDomains(body.gitAllowedDomains);
+    const featuredTools = normalizeFeaturedTools(body.featuredTools);
     const agent = await agentService.createAgent(
       userId,
       body.name!,
@@ -179,6 +205,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       body.clientVisible,
       body.experienceLibraryEnabled,
       gitAllowedDomains,
+      featuredTools,
     );
     return sendOk(reply, await toVO(agent, agentService, userRepo));
   });
@@ -200,6 +227,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       existingHttpToolIds,
     );
     const gitAllowedDomains = normalizeGitDomains(body.gitAllowedDomains);
+    const featuredTools = normalizeFeaturedTools(body.featuredTools);
     const agent = await agentService.updateAgent(
       userId,
       agentId,
@@ -217,6 +245,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRouteDeps):
       body.clientVisible,
       body.experienceLibraryEnabled,
       gitAllowedDomains,
+      featuredTools,
     );
     return sendOk(reply, await toVO(agent, agentService, userRepo));
   });
@@ -361,6 +390,7 @@ async function toVO(
     clientVisible: agent.clientVisible !== 0,
     experienceLibraryEnabled: agent.experienceLibraryEnabled !== 0,
     defaultModelId: agent.defaultModelId ?? null,
+    featuredTools: [],
     createdAt: agent.createdAt ?? null,
     experiences: [],
     suggestedQuestions: [],
@@ -392,6 +422,25 @@ async function toVO(
   if (agent.httpToolIds != null) {
     try {
       vo.httpToolIds = JSON.parse(agent.httpToolIds) as number[];
+    } catch {
+      // ignore deserialization error
+    }
+  }
+
+  if (agent.featuredTools != null) {
+    try {
+      const parsed = JSON.parse(agent.featuredTools) as unknown;
+      if (Array.isArray(parsed)) {
+        // 与运行时 parseFeaturedTools 同口径：过滤未知值并去重保序，脏数据不原样透出。
+        const seen = new Set<AgentFeaturedTool>();
+        vo.featuredTools = parsed.filter((item): item is AgentFeaturedTool => {
+          if (typeof item !== 'string' || !AGENT_FEATURED_TOOLS.includes(item as AgentFeaturedTool)) return false;
+          const value = item as AgentFeaturedTool;
+          if (seen.has(value)) return false;
+          seen.add(value);
+          return true;
+        });
+      }
     } catch {
       // ignore deserialization error
     }

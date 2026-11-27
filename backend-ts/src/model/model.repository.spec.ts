@@ -50,4 +50,17 @@ describe('MysqlLlmModelRepository', () => {
       maxRequestBodyBytes: null,
     }));
   });
+
+  it('findFirstActiveAudioModel only accepts OpenAI-compatible protocols', async () => {
+    const row = model({ id: 9, modelType: 'audio', apiProtocol: 'openai-compatible' });
+    const db = { queryOne: vi.fn(async () => row) };
+    const repo = new MysqlLlmModelRepository(db as unknown as Db);
+    expect(await repo.findFirstActiveAudioModel()).toBe(row);
+    const sql = String(db.queryOne.mock.calls[0]?.[0]);
+    expect(sql).toContain("model_type = 'audio'");
+    expect(sql).toContain('api_protocol IS NULL');
+    expect(sql).toContain("api_protocol = 'openai-compatible'");
+    expect(sql).toContain('deleted = 0');
+    expect(sql).toContain('ORDER BY id ASC');
+  });
 });

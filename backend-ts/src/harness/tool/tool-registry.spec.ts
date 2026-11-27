@@ -17,6 +17,8 @@ function deps(overrides: Partial<DefaultToolRegistryDeps> = {}): DefaultToolRegi
     webPage: {} as never,
     runtimeDataResolver: {} as never,
     imageModelLookup: {} as never,
+    audioModelLookup: {} as never,
+    llmAdapter: { chat: vi.fn(), stream: vi.fn() } as never,
     uploadDir: '/tmp',
     weixinToolSupport: {} as never,
     weixinUploadService: {} as never,
@@ -92,5 +94,17 @@ describe('createDefaultToolRegistry 自定义 HTTP 工具条件注册', () => {
     expect(callSchema).toContain('"arguments"');
     expect(callSchema).not.toContain('city');
     expect(JSON.stringify(registry.getTool('http_describe')!.getInputSchema())).not.toContain('city');
+  });
+
+  it('registers text_to_speech and exposes its text-only schema', () => {
+    const registry = createDefaultToolRegistry(deps({ httpToolService, httpApiExecutor, agentMapper }));
+    const tool = registry.getTool('text_to_speech');
+    expect(tool).toBeDefined();
+    expect(tool!.getDescription()).toContain('语音');
+    expect(tool!.getInputSchema()).toMatchObject({
+      type: 'object',
+      properties: { text: { type: 'string' } },
+      required: ['text'],
+    });
   });
 });

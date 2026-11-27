@@ -40,6 +40,12 @@ import type { McpLoadModeResolver } from '../mcp/workingset/mcp-load-mode.js';
 import { buildMcpWorkingSet, type McpWorkingSet } from '../mcp/workingset/mcp-working-set.js';
 import type { McpConnectionError, McpServer, McpToolRef } from '../mcp/entity/mcp-server.js';
 import { HTTP_TOOL_NAMES } from '../tool/tool-registry.js';
+import {
+  FEATURED_TOOL_NAMES,
+  parseFeaturedTools,
+  resolveFeaturedToolNames,
+  type FeaturedToolModelLookup,
+} from '../tool/featured-tools.js';
 import { buildCustomHttpToolCatalog } from './custom-http-tools-catalog.js';
 import type { HttpTool } from '../../http-tool/types.js';
 import { WEIXIN_PROJECT_KEY } from '../../domain/types.js';
@@ -108,6 +114,12 @@ export class HarnessService {
      * owner=跟随会话归属（应急回退）。唯一分叉点，仅影响 buildContext 的 runtimeUserId 计算。
      */
     private readonly runtimeIdentityMode: 'execution' | 'owner' = 'execution',
+    /**
+     * 特色工具模型可用性查询（技术方案 2026-11-27 §5.2）：Agent 配置 ∩ 模型可用性决定
+     * 是否把 generate_image / edit_image / text_to_speech 留在 context.tools。
+     * 未注入（精简装配 / 单测）时跳过过滤，保持改造前行为。
+     */
+    private readonly featuredToolModels?: FeaturedToolModelLookup | null,
   ) {}
 
   /** 运行身份（技术方案 2026-11-04 §5.2）：execution 下为本次发言者，owner 下为会话归属。 */
@@ -455,6 +467,22 @@ export class HarnessService {
     const isEmbedSession = this.embedSessionLookup?.isEmbedSession?.(sessionId) === true;
     const pageOpsEnabled = this.embedSessionLookup?.isEmbedPageSession?.(sessionId) === true;
     sessionTools = HarnessService.filterPageTools(sessionTools, isEmbedSession, pageOpsEnabled);
+    // 特色工具（技术方案 2026-11-27 §5.2）：Agent 配置 ∩ 模型可用性。未配置时全部隐藏；
+    // 配置了但模型不可用/查询失败时逐能力 fail-closed；原地过滤保持 registry 顺序。
+    const featured = parseFeaturedTools(agent.featuredTools);
+    if (featured.length > 0 || this.featuredToolModels != null) {
+      const allowed = await resolveFeaturedToolNames(featured, this.featuredToolModels ?? null);
+      const beforeFeaturedFilter = sessionTools.length;
+      sessionTools = sessionTools.filter(
+        (tool) => !FEATURED_TOOL_NAMES.has(tool.getName()) || allowed.has(tool.getName()),
+      );
+      const hidden = beforeFeaturedFilter - sessionTools.length;
+      // 未配置且无工具被隐藏时每轮都是噪声：降为 debug；实际有配置/过滤才记 info。
+      harnessLog(featured.length > 0 || hidden > 0 ? 'info' : 'debug',
+        `[featured-tools] session=${sessionId} agent=${agent.id ?? null}`
+        + ` configured=${JSON.stringify(featured)} injected=${JSON.stringify([...allowed])}`
+        + ` hidden=${hidden}`);
+    }
     // 工作集工具只按模式注入：先从默认工具集中剔除，避免全量模式凭空多出两个模型可见工具。
     sessionTools = sessionTools.filter((tool) => !MCP_WORKING_SET_TOOL_NAMES.has(tool.getName()));
     // 自定义 HTTP 工具入口同样先剔除；用户有启用工具时在 MCP 块之后条件推入（§5.4）。

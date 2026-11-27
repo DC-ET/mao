@@ -431,4 +431,37 @@ describe('no-progress-notice', () => {
       }));
     });
   });
+
+  describe('text_to_speech 归一化（技术方案 2026-11-27）', () => {
+    const digestOf = (text: string, result: Record<string, unknown>) => resultDigest({
+      toolName: 'text_to_speech',
+      argumentsJson: JSON.stringify({ text }),
+      resultContent: JSON.stringify(result),
+    });
+
+    it('同一 text 不同 audio_url / audio_path / size_bytes 视为无进展', () => {
+      const first = digestOf('你好', {
+        audio_url: 'https://h/uploads/7/tts-a.wav', audio_path: '/u/7/tts-a.wav',
+        format: 'wav', size_bytes: 100, model: 'mimo-v2.5-tts', text_length: 2,
+      });
+      const second = digestOf('你好', {
+        audio_url: 'https://h/uploads/7/tts-b.wav', audio_path: '/u/7/tts-b.wav',
+        format: 'wav', size_bytes: 200, model: 'mimo-v2.5-tts', text_length: 2,
+      });
+      expect(first).toBe(second);
+    });
+
+    it('不同 text / format / model 视为有进展', () => {
+      const base = { format: 'wav', model: 'mimo-v2.5-tts' };
+      const call = (text: string, result: Record<string, unknown>) => ({
+        toolName: 'text_to_speech',
+        argumentsJson: JSON.stringify({ text }),
+        resultContent: JSON.stringify(result),
+      });
+      // text 由 arguments 进入整轮签名（resultDigest 只归一化结果）。
+      expect(roundSignature([call('你好', base)])).not.toBe(roundSignature([call('再见', base)]));
+      expect(digestOf('你好', base)).not.toBe(digestOf('你好', { format: 'mp3', model: 'mimo-v2.5-tts' }));
+      expect(digestOf('你好', base)).not.toBe(digestOf('你好', { format: 'wav', model: 'other-tts' }));
+    });
+  });
 });

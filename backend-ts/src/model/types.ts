@@ -69,6 +69,12 @@ export interface LlmModelRepository {
   /** clientVisibleOnly=true 时只返回客户端可选（client_visible = 1）的启用 text 模型。 */
   listActiveText(clientVisibleOnly?: boolean): Promise<LlmModel[]>;
   findFirstActiveByType(modelType: string): Promise<LlmModel | null>;
+  /**
+   * 首个启用的 OpenAI 兼容语音模型（技术方案 2026-11-27 §5.3.1）。
+   * 跳过 api_protocol=anthropic / openai-responses：这两类适配器不序列化 audio 字段，
+   * 调用会「成功但没有音频」，必须 fail-closed。
+   */
+  findFirstActiveAudioModel(): Promise<LlmModel | null>;
   findDefault(): Promise<LlmModel | null>;
   findById(id: number): Promise<LlmModel | null>;
   insert(model: LlmModel): Promise<number>;

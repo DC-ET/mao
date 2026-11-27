@@ -26,10 +26,11 @@ describe('ToolDispatcher', () => {
   const serverTool = mockTool('task_create');
   const cloudTool = mockTool('read_file');
   const mcpTool = mockTool('mcp__filesystem__write_file');
+  const ttsTool = mockTool('text_to_speech');
   const scheduledTools = [
     'create_scheduled_task', 'update_scheduled_task', 'list_scheduled_tasks', 'delete_scheduled_task',
   ].map(mockTool);
-  const registry = new ToolRegistry([serverTool, cloudTool, mcpTool, ...scheduledTools]);
+  const registry = new ToolRegistry([serverTool, cloudTool, mcpTool, ttsTool, ...scheduledTools]);
   const localToolExecutor = { execute: vi.fn() } as unknown as LocalToolExecutor & { execute: ReturnType<typeof vi.fn> };
   const dangerAssessor = new DangerAssessor({ chat: vi.fn(), stream: vi.fn() } as unknown as LlmAdapter);
   const assessSpy = vi.spyOn(dangerAssessor, 'assess');
@@ -69,6 +70,7 @@ describe('ToolDispatcher', () => {
     cloudTool.execute.mockReset();
     serverTool.execute.mockReset();
     mcpTool.execute.mockReset();
+    ttsTool.execute.mockReset();
     for (const tool of scheduledTools) tool.execute.mockReset();
     assessSpy.mockClear();
   });
@@ -82,6 +84,13 @@ describe('ToolDispatcher', () => {
     serverTool.execute.mockResolvedValue('server-result');
     const result = await dispatcher.dispatch('task_create', '{}', 'LOCAL', 7, 9, 'workspace', 'FULL', null);
     expect(result).toBe('server-result');
+    expect(localToolExecutor.execute).not.toHaveBeenCalled();
+  });
+
+  it('dispatchesTextToSpeechOnServerEvenInLocalMode', async () => {
+    ttsTool.execute.mockResolvedValue('{"audio_url":"x"}');
+    const result = await dispatcher.dispatch('text_to_speech', '{"text":"hi"}', 'LOCAL', 7, 9, 'workspace', 'FULL', null);
+    expect(result).toBe('{"audio_url":"x"}');
     expect(localToolExecutor.execute).not.toHaveBeenCalled();
   });
 

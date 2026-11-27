@@ -70,6 +70,8 @@ const SERVER_ONLY_TOOLS = new Set([
   'create_scheduled_task', 'update_scheduled_task', 'list_scheduled_tasks', 'delete_scheduled_task',
   'spawn_subagent', 'subagent_followup', 'check_subagent', 'cancel_subagent', 'wait_subagents',
   'web_search', 'open_web_page', 'generate_image', 'edit_image',
+  // 语音合成（技术方案 2026-11-27 §5.4.4）：模型凭证与 uploadDir 都在服务端，LOCAL 也不下发。
+  'text_to_speech',
   // 用户消息文件化（技术方案 2026-10-29）：两种模式都由服务端读消息并决定落点，
   // LOCAL 会话的落盘再经 LocalToolExecutor 委托桌面端 write_local_text_file。
   'dump_user_messages',
@@ -100,7 +102,7 @@ const SEND_BYTES_TOOLS = new Set([
  */
 const RUNTIME_SCOPED_TOOLS = new Set<string>([
   'dump_user_messages', 'open_web_page', 'generate_image', 'edit_image',
-  'send_image', 'send_file',
+  'send_image', 'send_file', 'text_to_speech',
 ]);
 
 export class IllegalArgumentException extends Error {

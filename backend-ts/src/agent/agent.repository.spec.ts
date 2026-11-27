@@ -42,6 +42,21 @@ describe('MysqlAgentRepository', () => {
     await repo.updateById({ ...agent, clientVisible: 0 }, 7, false);
     expect(db.updateById).toHaveBeenLastCalledWith('agent', 5, expect.objectContaining({ clientVisible: 0 }));
   });
+  it('persists and clears featuredTools on insert/update', async () => {
+    const db = mockDb({ id: 5, name: 'A', systemPrompt: 'p' });
+    db.transaction.mockImplementation(async (fn) => fn(db));
+    const repo = new MysqlAgentRepository(db as never);
+    const agent = {
+      id: 5, name: 'A', systemPrompt: 'p',
+      featuredTools: '["image_generation","text_to_speech"]',
+    };
+    await repo.insert(agent);
+    expect(db.insert).toHaveBeenCalledWith('agent', expect.objectContaining({ featuredTools: agent.featuredTools }));
+    await repo.updateById(agent, 7, false);
+    expect(db.updateById).toHaveBeenCalledWith('agent', 5, expect.objectContaining({ featuredTools: agent.featuredTools }));
+    await repo.updateById({ ...agent, featuredTools: null }, 7, false);
+    expect(db.updateById).toHaveBeenLastCalledWith('agent', 5, expect.objectContaining({ featuredTools: null }));
+  });
   it('selectGitAllowedDomainsById distinguishes missing row from unconfigured, and keeps [] intact on write', async () => {
     const db = mockDb();
     db.transaction.mockImplementation(async (fn) => fn(db));

@@ -259,7 +259,7 @@ export class ModelService {
   }
 
   findFirstActiveAudioModel(): Promise<LlmModel | null> {
-    return this.modelRepo.findFirstActiveByType('audio');
+    return this.modelRepo.findFirstActiveAudioModel();
   }
 
   findFirstActiveImageModel(): Promise<LlmModel | null> {

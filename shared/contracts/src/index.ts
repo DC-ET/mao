@@ -34,7 +34,7 @@ export type { ContainerEntrySummary, ContainerAdminRow, ContainerRecycleStatus, 
 export type { ToolVO } from './tool';
 export type { UserInfoVO, LoginVO } from './user';
 export type { ModelVO, ModelPageResult, ModelListFilter, ClientImpersonation, ApiProtocol, ModelAuthType } from './model';
-export type { ExperienceVO, SuggestedQuestionVO, AgentVO, AgentAvatarUploadVO } from './agent';
+export type { ExperienceVO, SuggestedQuestionVO, AgentVO, AgentAvatarUploadVO, AgentFeaturedTool } from './agent';
 export type { WeixinPreferenceVO, TaskPanelPreferenceState } from './preference';
 export type { OnboardingState, ReadinessVO, OnboardingCompleteInput } from './readiness';
 export type { ReplayFrameMeta, ReplayManifest, ReplaySummary, ReplayTimeline } from './browser-replay';

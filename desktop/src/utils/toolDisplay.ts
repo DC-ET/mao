@@ -30,6 +30,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   dump_user_messages: '导出用户消息',
   generate_image: '生成图片',
   edit_image: '编辑图片',
+  text_to_speech: '语音合成',
   feishu_download_file: '下载飞书文件',
   send_image: '发送图片',
   send_file: '发送文件',
@@ -152,6 +153,11 @@ export function getToolInputPreview(name: string, input?: Record<string, unknown
       if (typeof images === 'string') return images
       if (Array.isArray(images) && typeof images[0] === 'string') return images[0]
       return ''
+    }
+    case 'text_to_speech': {
+      const text = input.text
+      if (typeof text !== 'string' || text === '') return ''
+      return text.length > 60 ? clipByCodePoint(text, 60) + '...' : text
     }
     case 'feishu_download_file':
       return typeof input.message_id === 'string' ? input.message_id : ''

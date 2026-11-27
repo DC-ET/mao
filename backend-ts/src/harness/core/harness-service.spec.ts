@@ -284,6 +284,7 @@ function makeHarness(
     sessionMapper, agentMapper, experienceService, llmModelMapper, fileChangeMapper,
     sessionService, sessionCompactionService, sessionHistoryLoader, orchestrator,
     promptEngine, activeContext, compactionConfig, envInfo, mcpClientManager, db,
+    featuredToolModels: null,
     ...overrides,
   };
 
@@ -316,6 +317,7 @@ function makeHarness(
     deps.httpToolService ?? null,
     deps.experienceMount ?? null,
     runtimeIdentityMode,
+    deps.featuredToolModels ?? null,
   );
   return { service, ...deps };
 }
@@ -1230,5 +1232,103 @@ describe('HarnessService 自定义 HTTP 工具装配（技术方案 2026-10-19 �
     });
     const ctx = await service.buildContext(10);
     expect(ctx.customHttpTools).toBeNull();
+  });
+});
+
+describe('HarnessService featured tools（Agent 配置 ∩ 模型可用性）', () => {
+  const gatedTools = [
+    'read_file', 'generate_image', 'edit_image', 'text_to_speech',
+  ].map((name) => fakeTool(name));
+
+  function make(options: {
+    featuredTools?: string | null;
+    image?: unknown;
+    audio?: unknown;
+    imageError?: Error;
+    audioError?: Error;
+    featuredToolModels?: boolean;
+  } = {}) {
+    const toolRegistry = {
+      getAllTools: vi.fn(() => gatedTools),
+      getTool: vi.fn((name: string) => gatedTools.find((tool) => tool.getName() === name)),
+    };
+    const agentMapper = {
+      selectById: vi.fn(async () => ({
+        id: 2,
+        name: 'Coder',
+        systemPrompt: 'p',
+        skillNames: null,
+        featuredTools: options.featuredTools ?? null,
+      })),
+    };
+    const lookup = {
+      findFirstActiveImageModel: vi.fn(async () => {
+        if (options.imageError) throw options.imageError;
+        return options.image ?? null;
+      }),
+      findFirstActiveAudioModel: vi.fn(async () => {
+        if (options.audioError) throw options.audioError;
+        return options.audio ?? null;
+      }),
+    };
+    return makeHarness({
+      toolRegistry,
+      agentMapper,
+      ...(options.featuredToolModels === false ? {} : { featuredToolModels: lookup }),
+    });
+  }
+
+  it('hides all gated tools when featured_tools is empty', async () => {
+    const { service } = make({ featuredTools: '[]', image: { id: 1 }, audio: { id: 2 } });
+    const ctx = await service.buildContext(10);
+    expect(ctx.tools.map((tool) => tool.getName())).not.toEqual(
+      expect.arrayContaining(['generate_image', 'edit_image', 'text_to_speech']),
+    );
+  });
+
+  it('keeps image tools when image_generation is configured and the image model is available', async () => {
+    const { service } = make({ featuredTools: '["image_generation"]', image: { id: 1 } });
+    const ctx = await service.buildContext(10);
+    const names = ctx.tools.map((tool) => tool.getName());
+    expect(names).toEqual(expect.arrayContaining(['generate_image', 'edit_image']));
+    expect(names).not.toContain('text_to_speech');
+  });
+
+  it('keeps text_to_speech when configured and the audio model is available', async () => {
+    const { service } = make({ featuredTools: '["text_to_speech"]', audio: { id: 2 } });
+    const ctx = await service.buildContext(10);
+    const names = ctx.tools.map((tool) => tool.getName());
+    expect(names).toContain('text_to_speech');
+    expect(names).not.toContain('generate_image');
+    expect(names).not.toContain('edit_image');
+  });
+
+  it('drops configured tools whose model is unavailable', async () => {
+    const { service } = make({ featuredTools: '["image_generation","text_to_speech"]', image: null, audio: { id: 2 } });
+    const ctx = await service.buildContext(10);
+    const names = ctx.tools.map((tool) => tool.getName());
+    expect(names).not.toContain('generate_image');
+    expect(names).not.toContain('edit_image');
+    expect(names).toContain('text_to_speech');
+  });
+
+  it('keeps other capabilities when one model lookup throws', async () => {
+    const { service } = make({
+      featuredTools: '["image_generation","text_to_speech"]',
+      imageError: new Error('db down'),
+      audio: { id: 2 },
+    });
+    const ctx = await service.buildContext(10);
+    const names = ctx.tools.map((tool) => tool.getName());
+    expect(names).not.toContain('generate_image');
+    expect(names).toContain('text_to_speech');
+  });
+
+  it('keeps all gated tools when the lookup port is not injected (legacy assembly)', async () => {
+    const { service } = make({ featuredTools: '["image_generation"]', featuredToolModels: false });
+    const ctx = await service.buildContext(10);
+    expect(ctx.tools.map((tool) => tool.getName())).toEqual(
+      expect.arrayContaining(['generate_image', 'edit_image', 'text_to_speech']),
+    );
   });
 });

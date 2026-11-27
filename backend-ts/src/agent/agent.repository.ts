@@ -92,6 +92,7 @@ export class MysqlAgentRepository implements AgentRepository {
         skillNames: agent.skillNames,
         mcpServerIds: agent.mcpServerIds,
         httpToolIds: agent.httpToolIds,
+        featuredTools: agent.featuredTools ?? null,
         gitAllowedDomains: agent.gitAllowedDomains ?? null,
         defaultModelId: agent.defaultModelId ?? null,
         isDefault: agent.isDefault ?? 0,
@@ -128,6 +129,7 @@ export class MysqlAgentRepository implements AgentRepository {
         skillNames: agent.skillNames ?? null,
         mcpServerIds: agent.mcpServerIds ?? null,
         httpToolIds: agent.httpToolIds ?? null,
+        featuredTools: agent.featuredTools ?? null,
         // 全量回写：'[]' 字符串原样保留（不能被 ?? null 折叠），否则无法表达「显式禁止」（技术方案 2026-11-06）
         gitAllowedDomains: agent.gitAllowedDomains ?? null,
         defaultModelId: agent.defaultModelId ?? null,

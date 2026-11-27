@@ -2,6 +2,9 @@
  * Agent 管理契约。
  * 注意：Agent 实体（含 configJson、systemPrompt 等内部字段）保留在后端，这里仅共享视图对象。
  */
+/** Agent 特色工具（管理后台多选）：一个值可对应一个或多个内置工具。 */
+export type AgentFeaturedTool = 'image_generation' | 'text_to_speech';
+
 export interface ExperienceVO {
   id?: number;
   content?: string;
@@ -42,6 +45,8 @@ export interface AgentVO {
   mcpServerIds?: number[];
   /** 关联的自定义 HTTP 工具 ID 列表（管理员在 Agent 表单多选；该 Agent 的会话可调用） */
   httpToolIds?: number[];
+  /** 特色工具（管理后台多选）：[] = 未启用 */
+  featuredTools?: AgentFeaturedTool[];
   /**
    * Git 凭据域白名单（技术方案 2026-11-06）：
    * null=未配置（跟随全局策略 gitToken.scopePolicy），[]=禁止注入任何 Git 凭据，非空=白名单。

@@ -1,5 +1,13 @@
-import type { ExperienceVO, SuggestedQuestionVO, AgentVO } from '@mao/contracts';
-export type { ExperienceVO, SuggestedQuestionVO, AgentVO };
+import type { ExperienceVO, SuggestedQuestionVO, AgentVO, AgentFeaturedTool } from '@mao/contracts';
+export type { ExperienceVO, SuggestedQuestionVO, AgentVO, AgentFeaturedTool };
+
+/** 路由校验 / 序列化共用；元素合法性由 satisfies 校验，联合穷尽性由下方 Exclude 断言守住。 */
+export const AGENT_FEATURED_TOOLS = ['image_generation', 'text_to_speech'] as const satisfies
+  readonly AgentFeaturedTool[];
+type _AllFeaturedToolsCovered =
+  Exclude<AgentFeaturedTool, (typeof AGENT_FEATURED_TOOLS)[number]> extends never ? true : never;
+const _featuredToolsCovered: _AllFeaturedToolsCovered = true;
+void _featuredToolsCovered;
 
 export interface Agent {
   id?: number;
@@ -14,6 +22,8 @@ export interface Agent {
   mcpServerIds?: string | null;
   /** 关联的自定义 HTTP 工具 ID 列表（JSON 数组字符串），为空表示不启用 */
   httpToolIds?: string | null;
+  /** 特色工具（JSON 数组字符串）：image_generation / text_to_speech；null / '[]' = 未启用 */
+  featuredTools?: string | null;
   /**
    * Git 凭据域白名单（JSON 数组字符串，技术方案 2026-11-06）：
    * null=未配置（跟随全局策略 gitToken.scopePolicy）；'[]'=显式禁止注入；非空=白名单。

@@ -509,6 +509,7 @@ describe('BackgroundSubagentManager.buildSubContext', () => {
       { getName: () => 'ask_user_questions' } as Tool,
       { getName: () => 'send_image' } as Tool,
       { getName: () => 'send_file' } as Tool,
+      { getName: () => 'text_to_speech' } as Tool,
       { getName: () => 'spawn_subagent' } as Tool,
     ];
     const manager = new BackgroundSubagentManager({

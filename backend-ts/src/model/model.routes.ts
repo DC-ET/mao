@@ -104,6 +104,20 @@ export function registerModelRoutes(app: FastifyInstance, deps: ModelRouteDeps):
     return sendOk(reply, { enabled });
   });
 
+  // Agent 特色工具可用性（技术方案 2026-11-27 §5.3.2）：只返回布尔与模型名，
+// 不返回 key / baseUrl。登录即可，不要求 model:read（Agent 管理员不一定有模型权限）。
+  app.get('/v1/models/availability', async (request, reply) => {
+    requireUserId(request);
+    const [image, audio] = await Promise.all([
+      modelService.findFirstActiveImageModel(),
+      modelService.findFirstActiveAudioModel(),
+    ]);
+    return sendOk(reply, {
+      image: { available: image != null, modelName: image?.name ?? null },
+      audio: { available: audio != null, modelName: audio?.name ?? null },
+    });
+  });
+
   app.get('/v1/models/default', async (request, reply) => {
     const reveal = await revealApiKey(request);
     const model = await modelService.getDefaultModel();

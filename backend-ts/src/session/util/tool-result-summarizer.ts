@@ -147,6 +147,8 @@ export function summarize(toolName: string | null | undefined, argumentsJson: st
       return summarizeGenerateImage(argumentsJson, result);
     case 'edit_image':
       return summarizeEditImage(argumentsJson, result);
+    case 'text_to_speech':
+      return summarizeTextToSpeech(argumentsJson, result);
     case 'send_wechat_image':
       return summarizeSendWechatImage(argumentsJson, result);
     case 'send_wechat_file':
@@ -491,6 +493,20 @@ function summarizeEditImage(argumentsJson: string | null | undefined, result: st
   const count = Array.isArray(node.images) ? node.images.length : 0;
   if (count > 0) return `${label} (${count} 张)`;
   return label;
+}
+
+function summarizeTextToSpeech(argumentsJson: string | null | undefined, result: string | null | undefined): string {
+  const text = extractJsonString(argumentsJson, 'text');
+  const label = `语音合成${text != null ? `: ${truncate(text, 30)}` : ''}`;
+  if (result == null) return label;
+  const node = asObj(parseJson(result));
+  if (!node) return label;
+  if (has(node, 'error')) {
+    const suffix = failureSuffix(node);
+    return suffix ? `${label}${suffix}` : `${label} (失败)`;
+  }
+  const sizeBytes = typeof node.size_bytes === 'number' && Number.isFinite(node.size_bytes) ? node.size_bytes : null;
+  return sizeBytes != null ? `${label} (${formatFileSize(sizeBytes)})` : label;
 }
 
 function summarizeSendWechatImage(argumentsJson: string | null | undefined, result: string | null | undefined): string {

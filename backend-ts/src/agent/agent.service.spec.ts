@@ -123,6 +123,28 @@ describe('AgentService', () => {
     expect(agentRepo.deleteById).toHaveBeenCalledWith(1);
   });
 
+  it('persists, preserves and clears featuredTools', async () => {
+    const existing = { ...agent(1, 'old', 0), featuredTools: '["image_generation"]' };
+    vi.mocked(agentRepo.findById).mockResolvedValue(existing);
+
+    const create = (featuredTools?: string[] | null) => service.createAgent(
+      7, 'A', null, 'p', null, null, null, null, null, 0, null,
+      undefined, undefined, undefined, undefined, featuredTools,
+    );
+    const created = await create(['image_generation', 'text_to_speech']);
+    expect(created.featuredTools).toBe('["image_generation","text_to_speech"]');
+    expect(await create([])).toBeDefined();
+    expect(agentRepo.insert).toHaveBeenLastCalledWith(expect.not.objectContaining({ featuredTools: expect.anything() }));
+
+    const update = (featuredTools?: string[] | null) => service.updateAgent(
+      7, 1, null, null, null, null, null, null, null, null, null,
+      undefined, undefined, undefined, undefined, undefined, featuredTools,
+    );
+    expect((await update(undefined)).featuredTools).toBe('["image_generation"]');
+    expect((await update(['text_to_speech'])).featuredTools).toBe('["text_to_speech"]');
+    expect((await update([])).featuredTools).toBeNull();
+  });
+
   it('删除 Agent 时先摘掉限定到该 Agent 的角色授权', async () => {
     const order: string[] = [];
     const cleaner = { deleteByAgentId: vi.fn(async () => { order.push('grants'); }) };

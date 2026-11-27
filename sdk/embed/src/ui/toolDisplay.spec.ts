@@ -14,6 +14,17 @@ describe('toolDisplay 展示名与入参摘要', () => {
     expect(getToolDisplayName('mcp__svc__do_thing')).toBe('svc.do_thing');
   });
 
+  it('text_to_speech 展示中文名并预览朗读文本', () => {
+    expect(getToolDisplayName('text_to_speech')).toBe('语音合成');
+    expect(getToolInputPreview('text_to_speech', { text: '你好，世界' })).toBe('你好，世界');
+    expect(getToolInputPreview('text_to_speech', { text: 'x'.repeat(80) })).toHaveLength(63);
+    expect(getToolInputPreview('text_to_speech', {})).toBe('');
+    // 截断点落在代理对中间时不能留下孤立高位代理（渲染成 U+FFFD）
+    const emojiPreview = getToolInputPreview('text_to_speech', { text: 'x'.repeat(59) + '😀' + 'y'.repeat(10) });
+    expect(emojiPreview.endsWith('...')).toBe(true);
+    expect(emojiPreview.replace(/\.{3}$/, '')).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+
   it('入参摘要按工具取关键字段', () => {
     expect(getToolInputPreview('shell', { command: 'git status' })).toBe('git status');
     expect(getToolInputPreview('read_file', { path: 'a/b.json' })).toBe('a/b.json');

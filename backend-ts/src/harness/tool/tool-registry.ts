@@ -41,6 +41,8 @@ import { OpenWebPageTool } from './impl/open-web-page-tool.js';
 import { DumpUserMessagesTool } from './impl/dump-user-messages-tool.js';
 import { GenerateImageTool } from './impl/generate-image-tool.js';
 import { EditImageTool } from './impl/edit-image-tool.js';
+import { TextToSpeechTool, type AudioModelLookup } from './impl/text-to-speech-tool.js';
+import type { LlmAdapter } from '../llm/chat-request.js';
 import { TaskCreateTool, TaskDeleteTool, TaskListTool, TaskUpdateTool } from './impl/task-tools.js';
 import {
   CreateScheduledTaskTool, DeleteScheduledTaskTool, ListScheduledTasksTool, UpdateScheduledTaskTool,
@@ -92,6 +94,10 @@ export interface DefaultToolRegistryDeps {
   webPage: WebPageConfig;
   runtimeDataResolver: RuntimeDataResolver;
   imageModelLookup: ImageModelLookup;
+  /** 语音模型查询（text_to_speech 用）；与 imageModelLookup 同口径。 */
+  audioModelLookup: AudioModelLookup;
+  /** LLM 适配器（text_to_speech 直连音频模型；由 RecordingLlmAdapter 自动记 llm_call）。 */
+  llmAdapter: LlmAdapter;
   /**
    * 图片调用流水记录器（技术方案 2026-11-24 D7）。可选依赖：未注入（精简单测 /
    * 精简装配）时 generate_image / edit_image 不记账，行为与改造前完全一致。
@@ -193,6 +199,7 @@ export function createDefaultToolRegistry(deps: DefaultToolRegistryDeps): ToolRe
     ),
     new GenerateImageTool(deps.imageModelLookup, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => ''), deps.uploadContextPath, deps.authResolver, deps.imageCallRecorder ?? null),
     new EditImageTool(deps.imageModelLookup, deps.pathSandbox, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => ''), deps.sendBytesSupport, deps.uploadContextPath, deps.authResolver, deps.imageCallRecorder ?? null),
+    new TextToSpeechTool(deps.audioModelLookup, deps.llmAdapter, deps.uploadDir, deps.getUploadBaseUrl ?? (async () => ''), deps.uploadContextPath),
     new TaskCreateTool(deps.sessionTodoMapper),
     new TaskListTool(deps.sessionTodoMapper),
     new TaskUpdateTool(deps.sessionTodoMapper),

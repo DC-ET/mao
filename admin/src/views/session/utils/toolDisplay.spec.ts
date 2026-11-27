@@ -24,6 +24,17 @@ describe('getToolDisplayName', () => {
     expect(getToolDisplayName('custom_tool')).toBe('custom_tool')
   })
 
+  it('text_to_speech 展示中文名并预览朗读文本', () => {
+    expect(getToolDisplayName('text_to_speech')).toBe('语音合成')
+    expect(getToolInputPreview('text_to_speech', { text: '你好，世界' })).toBe('你好，世界')
+    expect(getToolInputPreview('text_to_speech', { text: 'x'.repeat(80) })).toHaveLength(63)
+    expect(getToolInputPreview('text_to_speech', {})).toBe('')
+    // 截断点落在代理对中间时不能留下孤立高位代理（渲染成 U+FFFD）
+    const emojiPreview = getToolInputPreview('text_to_speech', { text: 'x'.repeat(59) + '😀' + 'y'.repeat(10) })
+    expect(emojiPreview.endsWith('...')).toBe(true)
+    expect(emojiPreview.replace(/\.{3}$/, '')).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
+  })
+
   it('dump_user_messages 展示中文名（曾裸显英文工具名）', () => {
     expect(getToolDisplayName('dump_user_messages')).toBe('导出用户消息')
   })
